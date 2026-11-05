@@ -268,6 +268,15 @@ class Fanout(Base):
         v = await self.watch()
         self.assertTrue(await nothing_binary(v))
 
+    async def test_the_status_says_whether_the_channel_is_set_up(self):
+        nobody = await Client().open("%s/watch/%s" % (RELAY, "none" + secrets.token_hex(4)))
+        self.clients.append(nobody)
+        self.assertFalse((await next_of(nobody, "relay"))["set"])
+        await self.tx()
+        await self.pause()
+        v = await self.watch()
+        self.assertTrue((await next_of(v, "relay"))["set"])
+
     async def test_the_transmitter_hears_how_many_watch(self):
         tx = await self.tx()
         self.assertEqual((await next_of(tx, "relay"))["viewers"], 0)

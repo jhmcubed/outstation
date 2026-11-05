@@ -33,7 +33,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Viewers
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open"}}`. In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "set"}}`. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
 - frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the chat so far, the poll and the sound's line.
 - `{"chat": {"id", "name", "text", "host", "who", "queued", "at"}}`, `{"unsay": id}`
 - `{"poll": {"id", "question", "options", "counts", "open", "left"}}`, `{"poll_gone": id}`

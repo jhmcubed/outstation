@@ -242,7 +242,8 @@ class Channel:
         open: the picture's going out (live, and not paused or minimised): the chat window's live light."""
         st = {"channel": self.name, "live": self.sender is not None, "viewers": len(self.viewers),
               "max": self.cap, "waiting": len(self.waiting),
-              "open": self.sender is not None and self.state == "open"}
+              "open": self.sender is not None and self.state == "open",
+              "set": self.key is not None}     # (someone has claimed it: Outside says "no portal here yet" when not)
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:

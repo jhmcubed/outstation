@@ -157,6 +157,7 @@ export class Channel extends DurableObject<Env> {
     const st: Record<string, unknown> = {
       channel: this.name, live, viewers: this.seated().length, max: this.cap(),
       waiting: this.waiting().length, open: live && this.meta.state === "open",
+      set: this.meta.keyHash !== null, // (the channel was handed out: Outside says "no portal here yet" when it wasn't)
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
