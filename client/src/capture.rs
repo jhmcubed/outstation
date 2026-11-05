@@ -33,6 +33,9 @@ const RESIZABLE_SIDE: (f64, f64) = (250.0, 410.0);
 /// every frame waits this long before it goes, and is dropped if the gate shuts meanwhile
 pub const HOLD_BACK: f64 = 0.5;
 pub const MAX_FPS: u32 = 60;
+/// small frames for lookers: this wide, this often
+pub const THUMB_WIDTH: u32 = 192;
+pub const THUMB_EVERY: f64 = 0.5;
 
 /// A frame: BGRA pixels, when it was taken, and how.
 pub struct Image {
@@ -50,6 +53,16 @@ impl Image {
         let _ = enc.encode(&self.bgra, self.w as u16, self.h as u16, jpeg_encoder::ColorType::Bgra);
         out
     }
+    /// A small frame for lookers (the open portals' tiles, the listening post, the live view): 192 px wide, the
+    /// same 4-byte stamp, then "TH", then the JPEG
+    pub fn thumb(&self, number: u32) -> Vec<u8> {
+        let j = self.shrunk(THUMB_WIDTH).jpeg(number, 55);
+        let mut out = j[..4].to_vec();
+        out.extend_from_slice(b"TH");
+        out.extend_from_slice(&j[4..]);
+        out
+    }
+
     pub fn black(&self) -> bool {
         self.bgra.chunks_exact(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0)
     }

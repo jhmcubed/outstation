@@ -41,8 +41,10 @@ pub fn start(settings: Shared, wake: impl Fn() + Send + 'static) -> Arc<Mutex<Fe
                 break;
             }
             match ws.recv() {
-                Ok(Got::Binary(b)) if b.len() > 6 && b[4] == 0xFF && b[5] == 0xD8 => {
-                    let mut d = jpeg_decoder::Decoder::new(&b[4..]);
+                // a small frame ("TH", then its JPEG), or a full one from a relay or capture without them
+                Ok(Got::Binary(b)) if b.len() > 8 && ((b[4] == b'T' && b[5] == b'H') || (b[4] == 0xFF && b[5] == 0xD8)) => {
+                    let at = if b[4] == b'T' { 6 } else { 4 };
+                    let mut d = jpeg_decoder::Decoder::new(&b[at..]);
                     if let (Ok(px), Some(info)) = (d.decode(), d.info()) {
                         if info.pixel_format == jpeg_decoder::PixelFormat::RGB24 {
                             let mut g = f.lock().unwrap();

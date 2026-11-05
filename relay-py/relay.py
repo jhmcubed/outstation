@@ -93,6 +93,7 @@ SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: ro
 NAME_MAX = 20
 PING_EVERY = 0.5                  # a ping a viewer every half second (1.5 until Jace asked for more, 11/05)
 POLL_OPTIONS, POLL_SECONDS = (2, 6), (10, 900)
+THUMB_FRESH = 3.0                 # a small frame this recent, and lookers get those instead of the full ones
 LOOK_EVERY = 0.5                  # a looker (the listening post's receiver) gets a frame at most this often
 SIGNAL_EVERY = 0.08               # a viewer's ✼ (the signal button): as often as a hand can press (Jace, 11/05: "allow for
                                   # spamming"), a dozen a second at most, so one script can't flood everyone's page
@@ -230,6 +231,8 @@ class Channel:
         self.state = "open"          # the capture's last {"state"}: sound passes only while open
         self.desks = set()           # Jace's chat windows
         self.dink_seen = {}          # a Dink post's hash -> when: the same one twice in a row is one event
+        self.last_thumb = None       # the newest small frame (4 bytes, b"TH", a small JPEG), for lookers only
+        self.thumb_at = 0.0
         self.lookers = set()         # the listening post's receivers: no seat, a frame or two a second while they ask
         self.chat = deque(maxlen=CHAT_KEPT)
         self.chat_id = 0
@@ -306,6 +309,16 @@ class Channel:
         return moved
 
     def deliver(self, msg):
+        # a small frame (11/05/2026: the open portals' tiles, the listening post, the client's live view): for lookers
+        # only, never a viewer, and never the last frame a newcomer gets
+        if isinstance(msg, (bytes, bytearray)) and len(msg) > 8 and msg[4:6] == b"TH":
+            self.last_thumb, self.thumb_at = msg, time.monotonic()
+            now, n = self.thumb_at, len(msg)
+            for v in list(self.lookers):
+                if v.look_frames and now - v.look_at >= LOOK_EVERY and v.send_nowait(msg):
+                    v.look_at = now
+                    self.out += n
+            return
         if isinstance(msg, str) and msg.startswith('{"report"'):
             self.reports.append(msg)
         elif isinstance(msg, str):
@@ -323,7 +336,8 @@ class Channel:
         for v in list(self.viewers):
             if v.send_nowait(msg):
                 self.out += n
-        if self.lookers and isinstance(msg, (bytes, bytearray)):
+        # (lookers get full frames only from a transmitter that sends no small ones: an older capture)
+        if self.lookers and isinstance(msg, (bytes, bytearray)) and time.monotonic() - self.thumb_at > THUMB_FRESH:
             now = time.monotonic()
             for v in list(self.lookers):
                 if v.look_frames and now - v.look_at >= LOOK_EVERY and v.send_nowait(msg):
@@ -563,8 +577,8 @@ class Relay:
                 if isinstance(msg, str) and msg.startswith('{"clip"'):
                     self.clip(ch)             # (the clip key, from the capture: never on to viewers)
                     continue
-                if isinstance(msg, (bytes, bytearray)):
-                    ch.keep(msg, self.replay_seconds)
+                if isinstance(msg, (bytes, bytearray)) and msg[4:6] != b"TH":
+                    ch.keep(msg, self.replay_seconds)      # (the replay buffer: full frames, never the small ones)
                 if self.delay > 0:
                     ch.held.append((time.monotonic() + self.delay, msg))
                 else:
@@ -599,9 +613,11 @@ class Relay:
                         continue
                     if isinstance(m, dict) and isinstance(m.get("look"), dict):
                         sock.look_frames = m["look"].get("frames") is True
-                        if sock.look_frames and ch.last_frame and ch.sender is not None:
-                            sock.send_nowait(ch.last_frame)
-                            sock.look_at = time.monotonic()
+                        if sock.look_frames and ch.sender is not None:
+                            fresh = ch.last_thumb if time.monotonic() - ch.thumb_at <= THUMB_FRESH else None
+                            if fresh or ch.last_frame:
+                                sock.send_nowait(fresh or ch.last_frame)
+                                sock.look_at = time.monotonic()
         finally:
             ch.lookers.discard(sock)
             if ch.key is None and not ch.viewers and not ch.waiting and not ch.desks and not ch.lookers \

@@ -729,6 +729,26 @@ class RoundTwo(Base):
             pass
         self.assertLessEqual(got, 1)
 
+    async def test_small_frames_go_to_lookers_only_and_take_the_full_ones_place(self):
+        tx = await self.tx()
+        look = await self.connect("watch", "look=1")
+        v = await self.watch()
+        await self.pause()
+        await look.send(json.dumps({"look": {"frames": True}}))
+        await self.pause()
+        thumb = struct.pack(">I", 7) + b"TH" + b"\xff\xd8 small"
+        full = struct.pack(">I", 7) + b"\xff\xd8 full"
+        await tx.send(thumb)
+        await tx.send(full)
+        self.assertEqual(await v.recv_data(), ("binary", full))       # a viewer: the full one only
+        self.assertEqual(await look.recv_data(), ("binary", thumb))   # a looker: the small one only
+        await asyncio.sleep(0.6)
+        await tx.send(full)                                           # (small ones recent: no full ones to lookers)
+        with self.assertRaises(asyncio.TimeoutError):
+            await look.recv_data(timeout=0.4)
+        late = await self.watch()
+        self.assertEqual(await late.recv_data(), ("binary", full))    # a newcomer's last frame is never a small one
+
     async def test_a_signal_reaches_everyone_as_often_as_a_hand_presses_but_no_flood(self):
         tx, desk, a, b = await self.room()
         await a.send(json.dumps({"signal": True}))

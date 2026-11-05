@@ -30,6 +30,7 @@ const POLL_OPTIONS = [2, 6], POLL_SECONDS = [10, 900];
 const POLL_KEPT = 90_000;
 const SOUND_HOLD = 500; // the capture's hold-back: a pause takes the last moment's sound back too
 const REPORTS_KEPT = 8;
+const THUMB_FRESH = 3000; // a small frame this recent, and lookers get those instead of the full ones
 const LOOK_EVERY = 500; // a looker (the listening post's receiver) gets a frame at most this often
 const SIGNAL_EVERY = 80; // a viewer's ✼: as often as a hand can press, a dozen a second at most (the flood guard)
 const GUESS_MIN_VALUE = 1_000_000; // a drop from the guessed boss this big ends a guess round by itself
@@ -106,6 +107,8 @@ export class Channel extends DurableObject<Env> {
   reports: string[] = [];
   lastData: string | null = null;
   lastFrame: ArrayBuffer | null = null;
+  lastThumb: ArrayBuffer | null = null; // the newest small frame (4 bytes, "TH", a small JPEG): for lookers only
+  thumbAt = 0;
   soundHeld: [number, ArrayBuffer][] = [];
   soundTimer: ReturnType<typeof setTimeout> | null = null;
   uploadTimer: ReturnType<typeof setInterval> | null = null;
@@ -421,8 +424,9 @@ export class Channel extends DurableObject<Env> {
       try { m = JSON.parse(msg); } catch { return; }
       if (m && typeof m.look === "object" && m.look) {
         a.lookFrames = m.look.frames === true;
-        if (a.lookFrames && this.lastFrame && this.live()) {
-          this.sendBinary(ws, this.lastFrame);
+        const fresh = this.lastThumb && Date.now() - this.thumbAt <= THUMB_FRESH ? this.lastThumb : null;
+        if (a.lookFrames && (fresh || this.lastFrame) && this.live()) {
+          this.sendBinary(ws, (fresh || this.lastFrame)!);
           a.lookAt = Date.now();
         }
         ws.serializeAttachment(a);
@@ -467,6 +471,15 @@ export class Channel extends DurableObject<Env> {
 
   deliver(msg: string | ArrayBuffer) {
     if (typeof msg === "string" && msg.startsWith('{"clip"')) return; // (the clip key: the client clips for itself)
+    if (typeof msg !== "string" && msg.byteLength > 8) {
+      const b = new Uint8Array(msg, 4, 2);
+      if (b[0] === 0x54 && b[1] === 0x48) { // "TH": a small frame, for lookers only, never a viewer
+        this.lastThumb = msg;
+        this.thumbAt = Date.now();
+        this.toLookers(msg);
+        return;
+      }
+    }
     if (typeof msg === "string" && msg.startsWith('{"report"')) {
       this.reports.push(msg);
       this.reports = this.reports.slice(-REPORTS_KEPT);
@@ -489,14 +502,19 @@ export class Channel extends DurableObject<Env> {
       for (const v of this.seated()) if (this.send(v, msg)) this.out += msg.length;
     } else {
       for (const v of this.seated()) if (this.sendBinary(v, msg)) this.out += msg.byteLength;
-      const now = Date.now();
-      for (const v of this.sockets("look")) {
-        const va = this.att(v);
-        if (va.lookFrames && now - (va.lookAt || 0) >= LOOK_EVERY && this.sendBinary(v, msg)) {
-          va.lookAt = now;
-          v.serializeAttachment(va);
-          this.out += msg.byteLength;
-        }
+      // (lookers get full frames only from a transmitter that sends no small ones)
+      if (Date.now() - this.thumbAt > THUMB_FRESH) this.toLookers(msg);
+    }
+  }
+
+  toLookers(msg: ArrayBuffer) {
+    const now = Date.now();
+    for (const v of this.sockets("look")) {
+      const va = this.att(v);
+      if (va.lookFrames && now - (va.lookAt || 0) >= LOOK_EVERY && this.sendBinary(v, msg)) {
+        va.lookAt = now;
+        v.serializeAttachment(va);
+        this.out += msg.byteLength;
       }
     }
   }

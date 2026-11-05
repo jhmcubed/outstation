@@ -23,6 +23,7 @@ Closing codes:
 ## The transmitter
 
 - **Binary:** a frame, a 4-byte big-endian number (the moment it was taken, in ms, wrapping), then a JPEG.
+- **A small frame:** the same 4 bytes, then `TH`, then a small JPEG (192 px wide), about twice a second. Lookers only: never sent to a viewer, never kept as the last frame. While small frames are coming (one in the last 3 s), lookers get them instead of the full ones.
 - **Text:** the game data, passed to viewers untouched. The last line is kept for whoever joins next.
   - `{"state": "open" | "shut"}`: the picture's gate. Sound passes only while it's open.
   - `{"report": {"type", "text", "at"}}`: a field report (from Dink). The last 8 are kept for late joiners.

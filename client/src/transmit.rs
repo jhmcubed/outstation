@@ -167,6 +167,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
     let (mut last_state, mut last_state_at, mut last_print) = (String::new(), Instant::now() - Duration::from_secs(10), Instant::now());
     let (mut sent, mut bytes_sent) = (0u32, 0usize);
     let mut held: VecDeque<(Instant, Vec<u8>)> = VecDeque::new();
+    let mut last_thumb = Instant::now() - Duration::from_secs(5);
     let mut last_seq: Option<u64> = None;
     let mut last_refresh = Instant::now();
     loop {
@@ -224,6 +225,11 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                         // the frame's number is the moment it was taken, so the page plays frames back as evenly
                         // as they were taken
                         held.push_back((Instant::now(), img.jpeg(capture::number(&img), s.quality)));
+                        // a small copy now and then, for lookers only (held back and gated like the rest)
+                        if last_thumb.elapsed().as_secs_f64() >= capture::THUMB_EVERY {
+                            held.push_back((Instant::now(), img.thumb(capture::number(&img))));
+                            last_thumb = Instant::now();
+                        }
                         last_seq = img.seq;
                     }
                 }
@@ -236,9 +242,11 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         }
         while held.front().is_some_and(|f| f.0.elapsed().as_secs_f64() >= HOLD_BACK) {
             let data = held.pop_front().unwrap().1;
-            bytes_sent += data.len();
-            sent += 1;
-            crate::clip::keep(&data);
+            if &data[4..6] != b"TH" {
+                bytes_sent += data.len();
+                sent += 1;
+                crate::clip::keep(&data); // (the replay buffer: full frames, never the small ones)
+            }
             if let Err(e) = ws.binary(data) {
                 return e;
             }

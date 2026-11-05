@@ -124,6 +124,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 - ✓ **Your own masks:** "edit masks" draws them over the game. They're blacked out before a frame is made: `client_live.py` checks a masked half arrives black. The mask key turns them off and on.
 - ✓ **The live view:** the portal as the site gets it, through the relay as a looker, and what viewers' pages say they've had (the relays' new `acked`). "the live view" off connects nothing.
 - ✓ **The tray:** minimising sends the window there, a click on the ✼ brings it back, and the ✼ is pink while live.
+- ✓ **Small frames for lookers:** a 192 px copy twice a second (`TH`), which the relays give lookers instead of full frames: 9 KB/s a looker where it was about 81.
 - ✓ **Dink posted twice** (an address listed twice in Dink): the same post within 10 s is one event, in the client and every relay.
 
 ## Still to do before the Python is retired
