@@ -1,0 +1,69 @@
+# A tagged version (v0.1.0 and on) builds the client on GitHub's own Windows machine, from this repository's code
+# alone, checks it (the unit tests and the safety check, on the very exe it publishes), and makes a release of it
+# with its SHA-256 and, once the repository is public, GitHub's build attestation (SAFETY.md, "Checking it yourself").
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    env:
+      RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-msvc
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Rust (MSVC)
+        run: rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+      - name: ninja
+        run: choco install ninja --no-progress -y
+      - name: the version matches the tag
+        shell: bash
+        run: |
+          v=$(grep -m1 '^version' client/Cargo.toml | cut -d'"' -f2)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "client/Cargo.toml says $v, the tag $GITHUB_REF_NAME"; exit 1; }
+      - name: build
+        run: cargo build --release --locked
+      - name: unit tests
+        run: cargo test --release --locked
+      - name: the safety check, on the exe being published
+        run: python tests/safety_check.py --list target/release/outside-portal.exe
+      - name: the files
+        shell: bash
+        run: |
+          mkdir out
+          cp target/release/outside-portal.exe out/
+          cp LICENSE SAFETY.md out/
+          cp client/assets/fonts/README.md out/FONTS.md
+          cd out
+          sha256sum outside-portal.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: GitHub's build attestation (public repositories)
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: out/outside-portal.exe
+      - name: the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sum=$(cut -d' ' -f1 out/SHA256SUMS.txt)
+          {
+            echo "Built by GitHub from commit $GITHUB_SHA, from this repository's code alone."
+            echo
+            echo "- SHA-256 of outside-portal.exe: \`$sum\`"
+            echo "- The safety check passed on this very file (the workflow's log lists every Windows function it imports)."
+            echo "- How to check it yourself: SAFETY.md, \"Checking it yourself\"."
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" out/outside-portal.exe out/SHA256SUMS.txt out/SAFETY.md out/LICENSE out/FONTS.md \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md

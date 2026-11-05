@@ -1,0 +1,5 @@
+# On Jace's PC: Rust's gnullvm toolchain linked by llvm-mingw (per-user, no admin; ghillie's tools/synth/env.sh).
+# GitHub's Windows runners build with MSVC instead (RUSTUP_TOOLCHAIN in the workflow).
+[toolchain]
+channel = "stable-x86_64-pc-windows-gnullvm"
+profile = "minimal"

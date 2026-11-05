@@ -28,3 +28,24 @@ jobs:
         run: python tests/protocol_test.py
         env:
           PORTAL_RELAY: worker
+
+  client:
+    runs-on: windows-2025
+    env:
+      RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-msvc
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Rust (MSVC)
+        run: rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+      - name: ninja
+        run: choco install ninja --no-progress -y
+      - name: build
+        run: cargo build --release --locked
+      - name: unit tests
+        run: cargo test --release --locked
+      - name: the safety check
+        run: python tests/safety_check.py target/release/outside-portal.exe
