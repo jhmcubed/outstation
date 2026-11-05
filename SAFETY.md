@@ -94,3 +94,4 @@ Everything it touches in Windows, by file:
 - `feed.rs`: the live view: your own channel watched through the relay.
 - `dink.rs`: a web server on `127.0.0.1` only.
 - `ui.rs`: its own windows (the see-through ones over RuneLite included), the tray icon, and Windows' symbol font. It acts only on windows of its own program, never on another that happens to share a title.
+- `cursor.rs`: the portal's own cursor (ghillie.wiki's ✼), made from its pixels with `CreateIconIndirect` and shown with `SetCursor`. To show it, each window of the portal's own program is wrapped with comctl32's `SetWindowSubclass` (found with `EnumWindows`, kept to windows whose process is the portal's). No other program's window is ever wrapped, RuneLite's least of all, and no hook is set: past the portal's windows the cursor is Windows' own.

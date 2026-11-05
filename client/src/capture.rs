@@ -403,7 +403,9 @@ pub struct Options {
 
 impl Options {
     pub fn of(s: &crate::settings::Settings) -> Options {
-        Options { view: s.view.clone(), mask: s.mask.clone(), width: s.width.max(16),
+        // (the fixed-size "blacked out" boxes are retired, 11/05/2026, Jace: a fixed size whatever the client's; your
+        // own masks do it. An old settings file's "mask" is kept as it was but no longer used.)
+        Options { view: s.view.clone(), mask: "none".into(), width: s.width.max(16),
                   method: s.method.clone(), interval_ms: 1000.0 / s.fps.clamp(1, MAX_FPS) as f64,
                   boxes: if s.masks_on { s.masks.clone() } else { Vec::new() } }
     }

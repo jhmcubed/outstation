@@ -52,13 +52,14 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, pings, and `{"upload": {"bps", "viewers"}}` each second while live. That's what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, pings, who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), and `{"upload": {"bps", "viewers"}}` each second while live. That's what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
 - `{"hide": id}`: takes a line back off everyone's page, late joiners included.
 - `{"block": who}` / `{"unblock": who}`: that viewer's number and device. Their lines and pings stop going anywhere.
 - `{"poll": {"question", "options": [2–6], "seconds": 10–900}}` and `{"poll_close": true}`. A closed poll's result stays 90 s, then `{"poll_gone"}`.
+- `{"chat_on": bool}`: off, viewers' lines go nowhere (the host's still go out); the status line's `chat` says so.
 - `{"cap": n}`: the channel's own cap on viewers (0 means none). On the Python relay it takes the place of `--max-viewers` for that channel. On Cloudflare the Worker's `MAX_VIEWERS` is a ceiling over it.
 
 ## The sound

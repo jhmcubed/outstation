@@ -72,8 +72,9 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         wake();
         let mut cap = s.max_viewers;
         let _ = ws.text(&format!("{{\"cap\": {}}}", cap));
-        let (mut pings, mut guess_min) = (s.pings_allowed, s.guess_min_value);
+        let (mut pings, mut guess_min, mut chat_on) = (s.pings_allowed, s.guess_min_value, s.chat_allowed);
         let _ = ws.text(&format!("{{\"pings\": {}}}", pings));
+        let _ = ws.text(&format!("{{\"chat_on\": {}}}", chat_on));
         let _ = ws.text(&format!("{{\"guess_min_value\": {}}}", guess_min));
         let mut checked = Instant::now();
         let ended = loop {
@@ -106,6 +107,10 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
                 if s.pings_allowed != pings {
                     pings = s.pings_allowed;
                     let _ = ws.text(&format!("{{\"pings\": {}}}", pings));
+                }
+                if s.chat_allowed != chat_on {
+                    chat_on = s.chat_allowed;
+                    let _ = ws.text(&format!("{{\"chat_on\": {}}}", chat_on));
                 }
                 if s.guess_min_value != guess_min {
                     guess_min = s.guess_min_value;

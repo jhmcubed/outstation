@@ -205,15 +205,6 @@ fn nv12(rgb: &[u8], fw: u32, w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-fn crop(src: &[u8], sw: u32, w: u32, h: u32) -> Vec<u8> {
-    let mut out = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h {
-        let i = (y * sw * 4) as usize;
-        out.extend_from_slice(&src[i..i + (w * 4) as usize]);
-    }
-    out
-}
-
 fn decode(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let mut d = jpeg_decoder::Decoder::new(jpeg);
     let px = d.decode().ok()?;

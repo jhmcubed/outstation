@@ -170,6 +170,15 @@ pub struct Settings {
     /// viewers may ping at all (the desk's {"pings"})
     #[serde(default = "d_true")]
     pub pings_allowed: bool,
+    /// viewers may chat at all (the desk's {"chat_on"}; the host's own lines go out either way)
+    #[serde(default = "d_true")]
+    pub chat_allowed: bool,
+    /// the look (theme.rs): the browns' tint, taupe 0 to brown 1 (none yet: jute's on this PC, else taupe), and
+    /// anyone's own colours, a role's key to "#rrggbb"
+    #[serde(default)]
+    pub tint: Option<f32>,
+    #[serde(default)]
+    pub colours: std::collections::BTreeMap<String, String>,
     /// the chat over the game, and where it sits (its top-left as a share of the game's width and height)
     #[serde(default = "d_true")]
     pub game_chat: bool,

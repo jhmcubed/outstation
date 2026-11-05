@@ -15,6 +15,7 @@
 mod capture;
 mod clip;
 mod clock;
+mod cursor;
 mod desk;
 mod dink;
 mod feed;
@@ -22,6 +23,7 @@ mod hotkeys;
 mod net;
 mod settings;
 mod sound;
+mod theme;
 mod transmit;
 mod ui;
 mod win;
@@ -84,6 +86,7 @@ fn main() {
     let opts = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(ui::TITLE)
+            .with_decorations(false) // (its own title bar, edges and cursor: ui.rs, cursor.rs)
             .with_inner_size([480.0, 640.0])
             .with_min_inner_size([380.0, 440.0])
             .with_icon(eframe::egui::IconData { rgba, width: w, height: h }),

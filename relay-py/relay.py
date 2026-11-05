@@ -43,6 +43,9 @@ my own chat box on my computer that i can respond back in"):
     {"hide": id}                          takes a line back off everyone's page
     {"block": who} / {"unblock": who}     a viewer's lines and pings stop going anywhere
     {"poll": {"question", "options": [2-6], "seconds"}}   / {"poll_close": true}
+    {"chat_on": bool}                     off: viewers' lines go nowhere (his still go out; the status line's "chat")
+  and gets {"viewers": [{"who", "name", "waiting"}]} whenever who's watching changes (a name as given, never
+  a device).
   Viewers may send (anything else they send is still thrown away):
     {"hello": {"name", "device"}}         their name in the chat; device: a random id the page keeps
     {"say": text}                         at most SAY_BURST lines in SAY_WINDOW seconds, SAY_MAX long
@@ -241,6 +244,7 @@ class Channel:
         self.blocked = set()         # viewers' "who" and devices
         self.bans = {}               # who -> {"who", "name", "tags"}: banned from the desk (blocked, their lines taken back)
         self.pings_on = True         # the desk's {"pings": false}: viewers' pings go nowhere
+        self.chat_on = True          # the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
         self.host_names = {name.lower()}
         self.sounder = None
         self.sound_info = None
@@ -263,7 +267,7 @@ class Channel:
               "max": self.cap, "waiting": len(self.waiting),
               "open": self.sender is not None and self.state == "open",
               "static": self.sender is not None and self.state == "static",
-              "set": self.key is not None, "pings": self.pings_on}     # (set: someone has claimed it; Outside says "no portal here yet" when not)
+              "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on}     # (set: someone has claimed it; Outside says "no portal here yet" when not)
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -272,12 +276,28 @@ class Channel:
 
     def tell_viewers(self):
         """The channel's status line to every viewer, the desks, and the transmitter (how many watch);
-        those in line hear it too, with their place."""
+        those in line hear it too, with their place. The desks get who's watching too."""
         line = self.status()
         for v in list(self.viewers) + list(self.desks) + list(self.lookers) + ([self.sender] if self.sender else []):
             v.send_nowait(line)
         for i, v in enumerate(list(self.waiting)):
             v.send_nowait(self.status(i + 1, you=getattr(v, "who", None)))
+        self.tell_watching()
+
+    def viewer_list(self):
+        """Who's watching, for the desk (11/05/2026, Jace: "add viewer list"): each viewer's number, the name it gave
+        in the chat ("visitor" until it gives one), and whether it's in line for a spot. Never a device or address."""
+        out = [{"who": v.who, "name": getattr(v, "name", "") or "visitor", "waiting": False}
+               for v in sorted(self.viewers, key=lambda v: getattr(v, "who", 0)) if hasattr(v, "who")]
+        out += [{"who": v.who, "name": getattr(v, "name", "") or "visitor", "waiting": True}
+                for v in self.waiting if hasattr(v, "who")]
+        return json.dumps({"viewers": out})
+
+    def tell_watching(self):
+        if self.desks:
+            line = self.viewer_list()
+            for d in list(self.desks):
+                d.send_nowait(line)
 
     def broadcast(self, line):
         """A line to every viewer, every desk and everyone in line for a spot (the chat, the poll, pings): those
@@ -685,6 +705,7 @@ class Relay:
             name = one_line(h.get("name"), NAME_MAX)
             # nobody may chat under the subject's own name (his lines are marked as his anyway)
             sock.name = name if name and name.lower() not in ch.host_names else "visitor"
+            ch.tell_watching()
             return
         # in line for a seat: chat and votes all the same (11/05/2026, Jace: "people who cannot view the live feed
         # of the stream can still send messages in the chat"); pings only once seated, with a frame to point at
@@ -695,7 +716,7 @@ class Relay:
             text = one_line(m.get("say"), SAY_MAX)
             while sock.says and now - sock.says[0] > SAY_WINDOW:
                 sock.says.popleft()
-            if not text or blocked or len(sock.says) >= SAY_BURST:
+            if not text or blocked or not ch.chat_on or len(sock.says) >= SAY_BURST:
                 return
             sock.says.append(now)
             ch.say(sock.name, text, who=sock.who, queued=sock not in ch.viewers)
@@ -758,6 +779,7 @@ class Relay:
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
         sock.send_nowait(ch.banned_line())
+        sock.send_nowait(ch.viewer_list())
         try:
             while True:
                 msg = await sock.recv()
@@ -826,6 +848,11 @@ class Relay:
         elif isinstance(m.get("pings"), bool):
             if m["pings"] != ch.pings_on:
                 ch.pings_on = m["pings"]
+                ch.tell_viewers()
+        elif isinstance(m.get("chat_on"), bool):
+            # (11/05/2026, Jace: "add ability to toggle chat off")
+            if m["chat_on"] != ch.chat_on:
+                ch.chat_on = m["chat_on"]
                 ch.tell_viewers()
         elif isinstance(m.get("cap"), int) and not isinstance(m["cap"], bool) and 0 <= m["cap"] <= 10000:
             # (outside-portal's addition: the channel's own cap on viewers, from the client's settings)

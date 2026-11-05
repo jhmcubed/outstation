@@ -8,7 +8,7 @@ use crate::capture::{self, Image};
 use crate::desk::{Desk, In};
 use crate::settings::{self, Settings, Shared, REPORTS};
 use crate::transmit::Transmit;
-use crate::{dink, sound, win};
+use crate::{dink, sound, theme, win};
 use eframe::egui::{self, Color32, FontId, RichText, Sense, Stroke, Vec2};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -16,20 +16,34 @@ use std::time::{Duration, Instant};
 
 // (its own title: ghillie's Python chat window is "the portal ✼ chat", and the two may be open at once)
 pub const TITLE: &str = "⊂λ,ｍ⊙ ✼ the portal";
-const ABYSS: Color32 = Color32::BLACK;
-const LIME: Color32 = Color32::from_rgb(0xb9, 0xff, 0x00);
-const BRIGHT: Color32 = Color32::from_rgb(0xe4, 0xff, 0x8a);
-const DIM: Color32 = Color32::from_rgb(0x3a, 0x55, 0x10);
-const TRACK: Color32 = Color32::from_rgb(0x0d, 0x14, 0x04);
-const TEAL: Color32 = Color32::from_rgb(0x04, 0x94, 0xaa);
-const CYAN: Color32 = Color32::from_rgb(0x2e, 0xe0, 0xf5);
-const PINK: Color32 = Color32::from_rgb(0xff, 0x69, 0xb4);
-const GREY: Color32 = Color32::from_rgb(0x99, 0x99, 0x99);
-const WHEN: Color32 = Color32::from_rgb(0x66, 0x66, 0x66);
-const TEXT: Color32 = Color32::from_rgb(0xdd, 0xdd, 0xdd);
-const FIELD: Color32 = Color32::from_rgb(0x05, 0x08, 0x05);
+// the colours, as the look has them now (theme.rs: jute's browns at the tint, or anyone's own)
+#[allow(non_snake_case)] fn ABYSS() -> Color32 { theme::pal().bg }
+#[allow(non_snake_case)] fn LIME() -> Color32 { theme::pal().lime }
+#[allow(non_snake_case)] fn BRIGHT() -> Color32 { theme::mix(theme::pal().lime, Color32::WHITE, 0.55) }
+#[allow(non_snake_case)] fn DIM() -> Color32 { theme::pal().line }
+#[allow(non_snake_case)] fn TRACK() -> Color32 { theme::pal().well }
+#[allow(non_snake_case)] fn TEAL() -> Color32 { theme::pal().teal }
+#[allow(non_snake_case)] fn CYAN() -> Color32 { theme::pal().cyan }
+#[allow(non_snake_case)] fn PINK() -> Color32 { theme::pal().pink }
+#[allow(non_snake_case)] fn GREY() -> Color32 { theme::pal().dim }
+#[allow(non_snake_case)] fn WHEN() -> Color32 { theme::pal().faint }
+#[allow(non_snake_case)] fn TEXT() -> Color32 { theme::pal().text }
+#[allow(non_snake_case)] fn FIELD() -> Color32 { theme::pal().inset }
+/// quiet words (where the black look had them in the lines' dim lime)
+#[allow(non_snake_case)] fn QUIET() -> Color32 { theme::pal().faint }
 const DRAWER_W: f32 = 560.0;
-const LABELS: &[(&str, &str)] = &[("off", "off"), ("game", "the game"), ("all", "everything")];
+const MIN_W: f32 = 400.0;
+// (11/05/2026, Jace: "everything" sounded as if it took the microphone too; it's the game and the rest of the PC's
+// own sound, never a microphone)
+const LABELS: &[(&str, &str)] = &[("off", "off"), ("game", "the game"), ("all", "game + desktop")];
+const TITLE_H: f32 = 30.0;
+/// the pings' choice: (its place, its words, what it does)
+const PINGS: [(u8, &str, &str); 3] = [
+    (0, "off", "viewers' clicks on the picture go nowhere"),
+    (1, "the site", "a ring on every viewer's page where someone pointed"),
+    (2, "the site + my screen", "on viewers' pages, and a ring over your RuneLite too: only on this PC, never in the stream"),
+];
+const EDGE: f32 = 6.0;
 
 fn body(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Proportional) }
 fn title_font(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Name("title".into())) }
@@ -51,6 +65,8 @@ fn append(j: &mut egui::text::LayoutJob, text: &str, size: f32, colour: Color32,
         if strike { f.strikethrough = Stroke::new(1.0, colour); }
         j.append(run, 0.0, f);
     };
+    // (an ellipsis as three of the font's own dots: from the symbol font it stood taller than the words round it)
+    let text = text.replace('…', "...");
     for c in text.chars() {
         let is = c as u32 > 0xff;
         if is != sym && !run.is_empty() {
@@ -65,6 +81,53 @@ fn append(j: &mut egui::text::LayoutJob, text: &str, size: f32, colour: Color32,
 
 fn rich(text: &str, size: f32, colour: Color32) -> egui::WidgetText {
     job(text, size, colour).into()
+}
+
+/// How wide words are, laid out in one line.
+fn text_w(ui: &egui::Ui, text: &str, size: f32) -> f32 {
+    ui.painter().layout_job(job(text, size, TEXT())).size().x
+}
+
+/// How wide a checkbox with these words (14 px) is.
+fn check_w(ui: &egui::Ui, text: &str) -> f32 {
+    ui.spacing().icon_width + ui.spacing().icon_spacing + text_w(ui, text, 14.0) + 2.0
+}
+
+/// How wide a small button with these words is.
+fn button_w(ui: &egui::Ui, text: &str) -> f32 {
+    text_w(ui, text, 14.0) + 14.0
+}
+
+/// Words that wrap at `width`.
+fn wrapped(text: &str, size: f32, colour: Color32, width: f32) -> egui::WidgetText {
+    let mut j = job(text, size, colour);
+    j.wrap.max_width = width;
+    j.into()
+}
+
+/// Rows for things this wide in `avail`: as many to a row as fit (at least one), in order.
+fn flow(widths: &[f32], avail: f32, gap: f32) -> Vec<std::ops::Range<usize>> {
+    let mut rows = Vec::new();
+    let (mut start, mut used) = (0, 0.0f32);
+    for (i, w) in widths.iter().enumerate() {
+        let need = if i == start { *w } else { used + gap + w };
+        if i > start && need > avail {
+            rows.push(start..i);
+            start = i;
+            used = *w;
+        } else {
+            used = need;
+        }
+    }
+    if start < widths.len() { rows.push(start..widths.len()); }
+    rows
+}
+
+/// A hover box's words (the field kit's tooltip: the words, wrapping at the box's width).
+fn tip(text: &str) -> egui::WidgetText {
+    let mut j = job(text, 14.0, TEXT());
+    j.wrap.max_width = 320.0;
+    j.into()
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -157,10 +220,20 @@ pub struct App {
     feed: Arc<Mutex<crate::feed::Feed>>,
     feed_tex: Option<(egui::TextureHandle, Instant)>,
     acked: Option<u64>,
-    tray_live: Option<bool>,
+    tray_live: Option<Option<usize>>, // (the tray's ✼ as last set: None lime, Some(step) the pulse)
     tray_click: std::sync::mpsc::Receiver<()>,
     editing_masks: bool,
     mask_drag: Option<MaskDrag>,
+    // the window's own frame: the smallest size last asked of Windows (the drawer open or not, the size in %), and
+    // the edge the hand is on
+    min_sent: Option<(Drawer, u32)>,
+    born: Instant,
+    edge: Option<egui::viewport::ResizeDirection>,
+    // who's watching (the relay's {"viewers"}), and whether the list is open
+    viewer_list: Vec<Value>,
+    show_viewers: bool,
+    // the look as last applied (the tint, anyone's own colours)
+    look: (Option<f32>, std::collections::BTreeMap<String, String>),
 }
 
 /// a mask being drawn (from where the hand went down) or moved (which one, and where it was held)
@@ -174,17 +247,31 @@ struct TrayItems {
     quit: tray_icon::menu::MenuItem,
 }
 
-/// The ✼ in hotpink, for the tray while live: every lit pixel's colour moved to pink, its shape and edges kept
-pub fn pink_icon() -> (Vec<u8>, u32, u32) {
+/// The ✼ in one colour, for the tray: every lit pixel's colour moved to it, its shape and edges kept, all at `alpha`
+/// (lime while not live; hotpink pulsing while live: 11/05/2026, Jace)
+pub fn tinted(colour: Color32, alpha: f32) -> (Vec<u8>, u32, u32) {
     let (mut px, w, h) = icon_rgba();
     for p in px.chunks_exact_mut(4) {
         let lum = (p[0] as f32 * 0.3 + p[1] as f32 * 0.59 + p[2] as f32 * 0.11) / 255.0;
         let k = (lum * 1.25).min(1.0);
-        p[0] = (255.0 * k) as u8;
-        p[1] = (105.0 * k) as u8;
-        p[2] = (180.0 * k) as u8;
+        p[0] = (colour.r() as f32 * k) as u8;
+        p[1] = (colour.g() as f32 * k) as u8;
+        p[2] = (colour.b() as f32 * k) as u8;
+        p[3] = (p[3] as f32 * alpha) as u8;
     }
     (px, w, h)
+}
+
+/// the tray's pulse while live: a step every 100 ms, 1.2 s round, its brightness eased from full to 30% and back
+const TRAY_STEPS: usize = 12;
+fn tray_frame(step: Option<usize>) -> (Vec<u8>, u32, u32) {
+    match step {
+        None => tinted(LIME(), 1.0),
+        Some(i) => {
+            let a = 0.65 + 0.35 * (i as f32 / TRAY_STEPS as f32 * std::f32::consts::TAU).cos();
+            tinted(PINK(), a)
+        }
+    }
 }
 
 pub fn icon_rgba() -> (Vec<u8>, u32, u32) {
@@ -201,7 +288,7 @@ impl App {
                dink: Arc<Mutex<dink::Status>>) -> App {
         let ctx = cc.egui_ctx.clone();
         fonts(&ctx);
-        style(&ctx);
+        style(&ctx, &settings.get());
         let wake = ctx.clone();
         let desk = Desk::start(settings.clone(), move || wake.request_repaint());
         let wake2 = ctx.clone();
@@ -281,6 +368,8 @@ impl App {
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0,
             feed, feed_tex: None, acked: None, tray_live: None, tray_click, editing_masks: false, mask_drag: None,
+            min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
+            look: (s.tint, s.colours.clone()),
         };
         if !s.attached() {
             if let Some(code) = win::paste_text().filter(|c| c.trim().starts_with("portal1:")) {
@@ -376,6 +465,9 @@ impl App {
         } else if let Some(b) = m.get("banned").and_then(|x| x.as_array()) {
             self.banned = b.iter().map(|v| (v.get("who").and_then(|x| x.as_i64()).unwrap_or(0),
                                             v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string())).collect();
+        } else if let Some(v) = m.get("viewers").and_then(|x| x.as_array()) {
+            // (who's watching, each time it changes: the desk's own list)
+            self.viewer_list = v.clone();
         } else if let Some(u) = m.get("upload") {
             self.portal_bps = u.get("bps").and_then(|x| x.as_u64());
             self.acked = u.get("acked").and_then(|x| x.as_u64());
@@ -414,22 +506,22 @@ impl App {
         let s = self.settings.get();
         let tx = self.tx.status.lock().unwrap().clone();
         if let Some(why) = &tx.stopped {
-            return (format!("stopped: {}", why), PINK);
+            return (format!("stopped: {}", why), PINK());
         }
         if !self.up {
-            return if self.started.elapsed().as_secs() < 8 { ("starting the portal…".into(), GREY) }
-                   else { ("the relay isn't answering (it keeps trying)".into(), GREY) };
+            return if self.started.elapsed().as_secs() < 8 { ("starting the portal…".into(), GREY()) }
+                   else { ("the relay isn't answering (it keeps trying)".into(), GREY()) };
         }
         if !s.on_air {
-            ("off air · the stream's ended".into(), GREY)
+            ("off air · the stream's ended".into(), GREY())
         } else if self.live && self.open {
-            (format!("live · {} watching", self.viewers), PINK)
+            (format!("live · {} watching", self.viewers), PINK())
         } else if self.live && self.static_on {
-            (format!("static · viewers see \"signal obscured\", the sound going on (the static key) · {} watching", self.viewers), TEAL)
+            (format!("static · viewers see \"signal obscured\", the sound going on (the static key) · {} watching", self.viewers), TEAL())
         } else if self.live {
-            (format!("paused · RuneLite minimised or closed · {} watching", self.viewers), TEAL)
+            (format!("paused · RuneLite minimised or closed · {} watching", self.viewers), TEAL())
         } else {
-            ("going live: looking for RuneLite…".into(), GREY)
+            ("going live: looking for RuneLite…".into(), GREY())
         }
     }
 
@@ -479,12 +571,17 @@ impl App {
         win::show_window(TITLE);
     }
 
-    fn sync_tray(&mut self) {
+    fn sync_tray(&mut self, ctx: &egui::Context) {
         let live = self.up && self.live && self.open && self.settings.get().on_air;
-        if self.tray_live != Some(live) {
-            self.tray_live = Some(live);
+        // (while live, a step of the pulse every 100 ms: the tray's ✼ beats even with the window in the tray)
+        let step = live.then(|| if crate::cursor::still() { 0 } else {
+            (self.born.elapsed().as_millis() / 100) as usize % TRAY_STEPS
+        });
+        if live { ctx.request_repaint_after(Duration::from_millis(100)); }
+        if self.tray_live != Some(step) {
+            self.tray_live = Some(step);
             if let Some(t) = &self.tray {
-                let (rgba, w, h) = if live { pink_icon() } else { icon_rgba() };
+                let (rgba, w, h) = tray_frame(step);
                 if let Ok(i) = tray_icon::Icon::from_rgba(rgba, w, h) {
                     let _ = t.set_icon(Some(i));
                 }
@@ -515,7 +612,7 @@ fn make_tray(_s: &Settings) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) 
     }
     let menu = Menu::new();
     let _ = menu.append_items(&[&open, &live, &snd, &PredefinedMenuItem::separator(), &quit]);
-    let (rgba, w, h) = icon_rgba();
+    let (rgba, w, h) = tray_frame(None);
     let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok();
     let mut b = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("the portal");
     if let Some(i) = icon {
@@ -551,61 +648,112 @@ fn fonts(ctx: &egui::Context) {
     ctx.set_fonts(f);
 }
 
-fn style(ctx: &egui::Context) {
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = ABYSS;
-    v.window_fill = ABYSS;
-    v.extreme_bg_color = FIELD;
-    v.override_text_color = Some(TEXT);
-    v.selection.bg_fill = TEAL;
-    v.selection.stroke = Stroke::new(1.0, LIME);
-    v.text_cursor.stroke = Stroke::new(2.0, LIME);
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, DIM);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, TEAL);
-    v.widgets.active.bg_stroke = Stroke::new(1.0, LIME);
-    v.widgets.inactive.weak_bg_fill = ABYSS;
-    v.widgets.hovered.weak_bg_fill = ABYSS;
-    v.widgets.active.weak_bg_fill = ABYSS;
-    v.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
-    v.widgets.hovered.corner_radius = egui::CornerRadius::ZERO;
-    v.widgets.active.corner_radius = egui::CornerRadius::ZERO;
-    v.widgets.noninteractive.corner_radius = egui::CornerRadius::ZERO;
-    v.menu_corner_radius = egui::CornerRadius::ZERO;
-    v.window_corner_radius = egui::CornerRadius::ZERO;
-    ctx.set_visuals(v);
+/// The look (theme.rs, jute's), then the portal's own text sizes and spacing.
+fn style(ctx: &egui::Context, st: &Settings) {
+    theme::set(ctx, look_tint(st), &st.colours);
     ctx.all_styles_mut(|s| {
         s.text_styles.insert(egui::TextStyle::Body, body(16.0));
         s.text_styles.insert(egui::TextStyle::Button, body(16.0));
         s.text_styles.insert(egui::TextStyle::Small, body(14.0));
         s.spacing.item_spacing = Vec2::new(6.0, 4.0);
+        // (a scrollbar of its own width beside what it scrolls, never over it: 11/05/2026, the settings' words had
+        // been under it)
+        s.spacing.scroll = egui::style::ScrollStyle::solid();
+        s.spacing.tooltip_width = 340.0;
+        s.interaction.tooltip_delay = 0.25;
+        s.animation_time = 0.12;
     });
 }
 
-/// A button as the station's: lime words in a thin dim edge, teal on hover; `lit` for the one in use.
+/// The browns' tint: the one picked here, else jute's on this PC, else taupe.
+fn look_tint(st: &Settings) -> f32 {
+    st.tint.or_else(theme::jute_tint).unwrap_or(0.0).clamp(0.0, 1.0)
+}
+
+/// A button as jute's: lime words on a dark well in a thin line, teal under the hand; `lit` for the one in use
+/// (its well lit lime-dark, its edge lime).
 fn button(ui: &mut egui::Ui, text: &str, small: bool, lit: Option<bool>) -> egui::Response {
-    let colour = match lit { Some(true) => LIME, Some(false) => GREY, None => LIME };
-    let edge = match lit { Some(true) => LIME, _ => DIM };
+    let colour = match lit { Some(true) => LIME(), Some(false) => GREY(), None => LIME() };
+    let edge = match lit { Some(true) => LIME(), _ => DIM() };
     let sz = if small { 14.0 } else { 16.0 };
     let galley = ui.painter().layout_job(job(text, sz, colour));
-    let size = galley.size() + Vec2::new(12.0, 4.0);
+    let size = Vec2::new(galley.size().x + 14.0, (sz * 1.5).round());
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hover = resp.hovered();
     let p = ui.painter();
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0, if hover { TEAL } else { edge }), egui::StrokeKind::Inside);
-    let g = ui.painter().layout_job(job(text, sz, if hover { TEAL } else { colour }));
+    let pal = theme::pal();
+    let fill = if hover { theme::mix(pal.well, pal.teal, 0.3) } else if lit == Some(true) { theme::mix(pal.well, pal.lime_dim, 0.6) } else { pal.well };
+    p.rect_filled(rect, 2.0, fill);
+    p.rect_stroke(rect, 2.0, Stroke::new(1.0, if hover { TEAL() } else { edge }), egui::StrokeKind::Inside);
+    let g = ui.painter().layout_job(job(text, sz, if hover { Color32::WHITE } else { colour }));
     p.galley(rect.center() - g.size() / 2.0, g, colour);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn pink_button(ui: &mut egui::Ui, text: &str, pink: bool) -> egui::Response {
-    let (colour, edge) = if pink { (PINK, PINK) } else { (GREY, DIM) };
+    let (colour, edge) = if pink { (PINK(), PINK()) } else { (GREY(), DIM()) };
     let g = ui.painter().layout_no_wrap(text.to_string(), body(16.0), colour);
-    let (rect, resp) = ui.allocate_exact_size(g.size() + Vec2::new(12.0, 4.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 14.0, 24.0), Sense::click());
     let hover = resp.hovered();
-    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, if hover { TEAL } else { edge }), egui::StrokeKind::Inside);
-    let g = ui.painter().layout_no_wrap(text.to_string(), body(16.0), if hover { TEAL } else { colour });
+    let pal = theme::pal();
+    let fill = if hover { theme::mix(pal.well, pal.teal, 0.3) } else if pink { theme::mix(pal.well, pal.pink, 0.18) } else { pal.well };
+    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, if hover { TEAL() } else { edge }), egui::StrokeKind::Inside);
+    let g = ui.painter().layout_no_wrap(text.to_string(), body(16.0), if hover { Color32::WHITE } else { colour });
     ui.painter().galley(rect.center() - g.size() / 2.0, g, colour);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The site's star (field-kit.js's, arms of 3 and diagonals of 2), on a 2-point grid round `c`.
+fn pixel_star(p: &egui::Painter, c: egui::Pos2, colour: Color32) {
+    let c = egui::pos2(c.x.round(), c.y.round());
+    let mut cells = vec![(0, 0)];
+    for a in 1..=3 {
+        cells.extend([(a, 0), (-a, 0), (0, a), (0, -a)]);
+        if a <= 2 { cells.extend([(a, a), (-a, a), (a, -a), (-a, -a)]); }
+    }
+    for (x, y) in cells {
+        let at = egui::pos2(c.x + x as f32 * 2.0 - 1.0, c.y + y as f32 * 2.0 - 1.0);
+        p.rect_filled(egui::Rect::from_min_size(at, Vec2::splat(2.0)), 0.0, colour);
+    }
+}
+
+/// The title bar's own minimise (0), fill the screen (1; `maxed`: give it back) and close (2), drawn on the
+/// 2-point grid: lime, teal under the hand, the close pink.
+fn control(ui: &mut egui::Ui, which: u8, maxed: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(30.0, 24.0), Sense::click());
+    let hover = resp.hovered();
+    let c = if hover { if which == 2 { PINK() } else { TEAL() } } else { LIME() };
+    let p = ui.painter();
+    if hover { p.rect_stroke(rect, 0.0, Stroke::new(1.0, c), egui::StrokeKind::Inside); }
+    let m = egui::pos2(rect.center().x.round(), rect.center().y.round());
+    let cell = |x: f32, y: f32| egui::Rect::from_min_size(egui::pos2(m.x + x - 1.0, m.y + y - 1.0), Vec2::splat(2.0));
+    let sq = |x: f32, y: f32, w: f32| egui::Rect::from_min_size(egui::pos2(m.x + x, m.y + y), Vec2::splat(w));
+    match which {
+        0 => { p.rect_filled(egui::Rect::from_min_size(egui::pos2(m.x - 5.0, m.y + 3.0), Vec2::new(10.0, 2.0)), 0.0, c); }
+        1 if maxed => {
+            p.rect_stroke(sq(-5.0, -2.0, 8.0), 0.0, Stroke::new(2.0, c), egui::StrokeKind::Inside);
+            p.rect_filled(egui::Rect::from_min_size(egui::pos2(m.x - 2.0, m.y - 5.0), Vec2::new(8.0, 2.0)), 0.0, c);
+            p.rect_filled(egui::Rect::from_min_size(egui::pos2(m.x + 4.0, m.y - 5.0), Vec2::new(2.0, 8.0)), 0.0, c);
+        }
+        1 => { p.rect_stroke(sq(-5.0, -5.0, 10.0), 0.0, Stroke::new(2.0, c), egui::StrokeKind::Inside); }
+        _ => {
+            for i in -2..=2 {
+                let k = i as f32 * 2.0;
+                p.rect_filled(cell(k, k), 0.0, c);
+                p.rect_filled(cell(k, -k), 0.0, c);
+            }
+        }
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A light as Outside's: a dot of 3.5 in a glow (its box-shadow, 4 px and 10 px), all at `a`.
+fn glow(p: &egui::Painter, c: egui::Pos2, colour: Color32, a: f32) {
+    for (r, k) in [(9.0, 0.07), (7.5, 0.12), (6.0, 0.2), (4.8, 0.35)] {
+        p.circle_filled(c, r, colour.gamma_multiply(k * a));
+    }
+    p.circle_filled(c, 3.5, colour.gamma_multiply(a));
 }
 
 /// Blocks on the 2 px grid, as the station's bars: `on` of `cells` lit.
@@ -617,13 +765,14 @@ fn blocks(ui: &mut egui::Ui, cells: usize, fills: impl Fn(usize) -> Color32, h: 
     }
 }
 
-/// A stepped bar: click or drag along it, the wheel or the arrow keys step it.
-fn bar(ui: &mut egui::Ui, label: &str, unit: &str, lo: u32, hi: u32, step: u32, value: &mut u32) -> bool {
+/// A stepped bar: click or drag along it, or the arrow keys step it (never the wheel, which scrolls the drawer).
+fn bar(ui: &mut egui::Ui, label: &str, unit: &str, lo: u32, hi: u32, step: u32, value: &mut u32, hint: &str) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(rich(&label, 16.0, LIME));
+        let r = ui.label(rich(&label, 16.0, LIME()));
+        if !hint.is_empty() { r.on_hover_text(tip(hint)); }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(rich(&format!("{} {}", value, unit).trim().to_string(), 16.0, LIME));
+            ui.label(rich(&format!("{} {}", value, unit).trim().to_string(), 16.0, LIME()));
         });
     });
     let w = ui.available_width();
@@ -637,25 +786,18 @@ fn bar(ui: &mut egui::Ui, label: &str, unit: &str, lo: u32, hi: u32, step: u32, 
         if v != *value { *value = v; changed = true; }
         resp.request_focus();
     }
-    if resp.hovered() {
-        let d = ui.input(|i| i.smooth_scroll_delta.y);
-        if d != 0.0 {
-            let v = if d > 0.0 { (*value + step).min(hi) } else { value.saturating_sub(step).max(lo) };
-            if v != *value { *value = v; changed = true; }
-        }
-    }
     if resp.has_focus() {
         let (l, r) = ui.input(|i| (i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight)));
         if l && *value > lo { *value = value.saturating_sub(step).max(lo); changed = true; }
         if r && *value < hi { *value = (*value + step).min(hi); changed = true; }
     }
     let p = ui.painter();
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0, if resp.hovered() || resp.has_focus() { TEAL } else { DIM }), egui::StrokeKind::Inside);
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0, if resp.hovered() || resp.has_focus() { TEAL() } else { DIM() }), egui::StrokeKind::Inside);
     let cells = (((rect.width() - 4.0) / 6.0) as usize).max(8);
     let on = (cells as f32 * (*value - lo) as f32 / (hi - lo).max(1) as f32).round() as usize;
     for i in 0..cells {
         let x = rect.left() + 3.0 + i as f32 * 6.0;
-        let fill = if i + 1 == on { BRIGHT } else if i < on { LIME } else { TRACK };
+        let fill = if i + 1 == on { BRIGHT() } else if i < on { LIME() } else { TRACK() };
         p.rect_filled(egui::Rect::from_min_size(egui::pos2(x, rect.top() + 4.0), Vec2::new(4.0, rect.height() - 8.0)), 0.0, fill);
     }
     ui.add_space(8.0);
@@ -663,7 +805,7 @@ fn bar(ui: &mut egui::Ui, label: &str, unit: &str, lo: u32, hi: u32, step: u32, 
 }
 
 fn field(ui: &mut egui::Ui, text: &mut String, width: f32, hint: &str, secret: bool) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(rich(&hint, 16.0, WHEN))
+    ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(rich(&hint, 16.0, WHEN()))
         .password(secret).font(body(16.0)).text_color(Color32::from_rgb(0xee, 0xee, 0xee)))
 }
 
@@ -714,13 +856,13 @@ impl SettingsPanel {
         let saved = (s.fps.clamp(1, 60), s.width.clamp(192, 1536), s.quality.clamp(10, 95), s.max_viewers.clamp(1, 20));
         let mut p = SettingsPanel { fps: saved.0, width: saved.1, quality: saved.2, viewers: saved.3, saved,
                                     sample: None, sample_note: String::new(), taking: Arc::new(Mutex::new(None)),
-                                    shown: None, status: (String::new(), DIM), listening: None };
+                                    shown: None, status: (String::new(), QUIET()), listening: None };
         p.take_sample(s);
         p
     }
 
     fn take_sample(&mut self, s: &Settings) {
-        self.status = ("taking a sample from RuneLite…".into(), DIM);
+        self.status = ("taking a sample from RuneLite…".into(), QUIET());
         let (slot, s) = (self.taking.clone(), s.clone());
         std::thread::spawn(move || {
             *slot.lock().unwrap() = Some(capture::sample(&s));
@@ -734,29 +876,29 @@ impl SettingsPanel {
             match got {
                 Ok(img) => {
                     self.sample_note = format!("a sample of RuneLite as it is now, the game {} px wide", img.w);
-                    self.status = (self.sample_note.clone(), DIM);
+                    self.status = (self.sample_note.clone(), QUIET());
                     self.sample = Some(Arc::new(img));
                     self.shown = None;
                 }
-                Err(why) => self.status = (format!("no sample: {}. The numbers below wait for one (open RuneLite, then take a new sample).", why), DIM),
+                Err(why) => self.status = (format!("no sample: {}. The numbers below wait for one (open RuneLite, then take a new sample).", why), QUIET()),
             }
         }
-        ui.label(rich("the stream's settings", 16.0, LIME));
+        ui.label(rich("the stream's settings", 16.0, LIME()));
         if self.values() != self.saved {
-            ui.label(rich("not saved", 14.0, PINK));
+            ui.label(rich("not saved", 14.0, PINK()));
         } else {
-            ui.label(rich("what the portal sends, and what it costs", 16.0, DIM));
+            ui.label(rich("what the portal sends, and what it costs", 16.0, QUIET()));
         }
         ui.add_space(8.0);
-        bar(ui, "frames a second", "a second", 1, 60, 1, &mut self.fps);
-        bar(ui, "width", "px", 192, 1536, 16, &mut self.width);
+        bar(ui, "frames a second", "a second", 1, 60, 1, &mut self.fps, "how many pictures a second viewers get: more is smoother, and each one costs upload (on your own relay, for every viewer)");
+        bar(ui, "width", "px", 192, 1536, 16, &mut self.width, "the picture's width as it leaves this PC (never wider than the game itself): wider is sharper, and heavier");
         let mut q = self.quality as u32;
-        if bar(ui, "quality", "", 10, 95, 1, &mut q) { self.quality = q as u8; }
-        bar(ui, "viewers at once", "at most", 1, 20, 1, &mut self.viewers);
+        if bar(ui, "quality", "", 10, 95, 1, &mut q, "each picture's JPEG quality: higher is cleaner and heavier; below about 50 the edges start to smear") { self.quality = q as u8; }
+        bar(ui, "viewers at once", "at most", 1, 20, 1, &mut self.viewers, "how many can watch at once; the rest wait in line for a spot (and can still chat)");
         // the picture as viewers get it, scaled to fit with hard pixels
-        let boxsize = Vec2::new(512.0, 300.0);
+        let boxsize = Vec2::new(ui.available_width().min(512.0), 300.0);
         let (rect, _) = ui.allocate_exact_size(boxsize, Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, FIELD);
+        ui.painter().rect_filled(rect, 0.0, FIELD());
         let mut weight = format!("{} a second, {} px wide, quality {}, {} watching at most", self.fps, self.width, self.quality, self.viewers);
         if let Some(img) = &self.sample {
             let key = (self.width.min(img.w), 0, self.quality);
@@ -784,7 +926,7 @@ impl SettingsPanel {
                 }
             }
         }
-        ui.label(rich(&weight, 16.0, LIME));
+        ui.label(rich(&weight, 16.0, LIME()));
         ui.add_space(4.0);
         ui.add(egui::Label::new(rich(&self.status.0.clone(), 16.0, self.status.1)).wrap());
         ui.add_space(6.0);
@@ -792,7 +934,7 @@ impl SettingsPanel {
             if button(ui, "take a new sample", false, None).clicked() { self.take_sample(&settings.get()); }
             if button(ui, "as saved", false, None).clicked() {
                 (self.fps, self.width, self.quality, self.viewers) = self.saved;
-                self.status = ("as saved".into(), DIM);
+                self.status = ("as saved".into(), QUIET());
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if button(ui, "save", false, None).clicked() {
@@ -800,9 +942,9 @@ impl SettingsPanel {
                     match settings.update(|s| { s.fps = f; s.width = w; s.quality = q; s.max_viewers = v; }) {
                         Ok(()) => {
                             self.saved = self.values();
-                            self.status = ("saved: it all takes at once, the viewer cap too".into(), LIME);
+                            self.status = ("saved: it all takes at once, the viewer cap too".into(), LIME());
                         }
-                        Err(e) => self.status = (format!("couldn't save: {}", e), PINK),
+                        Err(e) => self.status = (format!("couldn't save: {}", e), PINK()),
                     }
                 }
             });
@@ -818,32 +960,32 @@ impl SettingsPanel {
     fn round_two(&mut self, ui: &mut egui::Ui, settings: &Shared) {
         let s = settings.get();
         let mut replay = s.replay_seconds.min(30);
-        if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay) {
+        if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the portal sent, kept in memory only, so the clip key can save them. 0 keeps nothing.") {
             let _ = settings.update(|x| x.replay_seconds = replay);
-            self.status = (if replay == 0 { "the replay buffer: off".into() } else { format!("the replay buffer: the last {} s (the clip key, or \"clip\", saves them)", replay) }, LIME);
+            self.status = (if replay == 0 { "the replay buffer: off".into() } else { format!("the replay buffer: the last {} s (the clip key, or \"clip\", saves them)", replay) }, LIME());
         }
-        ui.label(rich("hotkeys", 16.0, LIME));
+        ui.label(rich("hotkeys", 16.0, LIME())).on_hover_text(tip("keys that work wherever you are, RuneLite included. The portal is told of these keys only (Windows' RegisterHotKey), never anything else you type."));
         const HOTKEYS: [(&str, &str); 4] = [("static key", "shows viewers static, the sound going on"),
-                                            ("sound key", "the sound: off, the game, everything"),
+                                            ("sound key", "the sound: off, the game, game + desktop"),
                                             ("clip key", "saves the replay buffer as a clip"),
                                             ("mask key", "your own masks off and on")];
         let current = [s.static_key.clone(), s.sound_key.clone(), s.clip_key.clone(), s.mask_key.clone()];
         for (i, (label, what)) in HOTKEYS.iter().enumerate() {
             ui.horizontal(|ui| {
-                ui.add_sized([86.0, 18.0], egui::Label::new(rich(label, 16.0, LIME)));
-                let shown = if self.listening == Some(i) { ("press a key…".to_string(), PINK) } else { (win::key_name(&current[i]), Color32::WHITE) };
+                ui.add_sized([86.0, 18.0], egui::Label::new(rich(label, 16.0, LIME())));
+                let shown = if self.listening == Some(i) { ("press a key…".to_string(), PINK()) } else { (win::key_name(&current[i]), Color32::WHITE) };
                 ui.add_sized([110.0, 18.0], egui::Label::new(rich(&shown.0, 16.0, shown.1)));
                 if button(ui, if self.listening == Some(i) { "never mind" } else { "change" }, true, None).clicked() {
                     self.listening = if self.listening == Some(i) { None } else { Some(i) };
                 }
-                ui.label(rich(what, 14.0, DIM));
+                ui.label(rich(what, 14.0, QUIET()));
             });
         }
         if let Some(i) = self.listening {
             // the next key pressed (egui hears most; Pause and Scroll Lock are here as buttons, as egui can't hear them)
             let mut got: Option<String> = None;
             ui.horizontal(|ui| {
-                ui.label(rich("or:", 14.0, GREY));
+                ui.label(rich("or:", 14.0, GREY()));
                 for (name, label) in [("pause", "Pause"), ("scrolllock", "Scroll Lock"), ("numlock", "Num Lock"), ("capslock", "Caps Lock")] {
                     if button(ui, label, true, None).clicked() { got = Some(name.into()); }
                 }
@@ -859,23 +1001,88 @@ impl SettingsPanel {
                 let vk = win::key_code(&name);
                 let taken = (0..4).find(|j| *j != i && win::key_code(&current[*j]) == vk);
                 if let Some(j) = taken {
-                    self.status = (format!("{} is already the {}", win::key_name(&name), HOTKEYS[j].0), PINK);
+                    self.status = (format!("{} is already the {}", win::key_name(&name), HOTKEYS[j].0), PINK());
                 } else {
                     let _ = settings.update(|x| match i { 0 => x.static_key = name.clone(), 1 => x.sound_key = name.clone(),
                                                           2 => x.clip_key = name.clone(), _ => x.mask_key = name.clone() });
-                    self.status = (format!("the {} is {} now (it takes at once)", HOTKEYS[i].0, win::key_name(&name)), LIME);
+                    self.status = (format!("the {} is {} now (it takes at once)", HOTKEYS[i].0, win::key_name(&name)), LIME());
                 }
                 self.listening = None;
             }
         }
         ui.add_space(8.0);
-        ui.label(rich("text and size", 16.0, LIME));
+        ui.label(rich("text and size", 16.0, LIME()));
         let mut chat = s.chat_size.round() as u32;
-        if bar(ui, "the chat's text", "px", 10, 40, 1, &mut chat) { let _ = settings.update(|x| x.chat_size = chat as f32); }
+        if bar(ui, "the chat's text", "px", 10, 40, 1, &mut chat, "the size of the chat's words in this window") { let _ = settings.update(|x| x.chat_size = chat as f32); }
         let mut over = s.game_chat_size.round() as u32;
-        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over) { let _ = settings.update(|x| x.game_chat_size = over as f32); }
-        let mut scale = (s.ui_scale * 100.0).round() as u32;
-        if bar(ui, "everything here (text, buttons)", "%", 75, 200, 5, &mut scale) { let _ = settings.update(|x| x.ui_scale = scale as f32 / 100.0); }
+        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over, "the size of the words over RuneLite") { let _ = settings.update(|x| x.game_chat_size = over as f32); }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich("this window's size:", 16.0, LIME())).on_hover_text(tip("everything in this window, bigger or smaller: its words, buttons and boxes"));
+            let now = (s.ui_scale * 100.0).round() as u32;
+            for pc in [75u32, 90, 100, 110, 125, 150, 175, 200] {
+                if button(ui, &format!("{}%", pc), true, Some(now == pc)).clicked() {
+                    let _ = settings.update(|x| x.ui_scale = pc as f32 / 100.0);
+                }
+            }
+        });
+        ui.add_space(10.0);
+        self.look(ui, settings);
+    }
+
+    /// The look: jute's tint strip (taupe to brown), and anyone's own colours for any part.
+    fn look(&mut self, ui: &mut egui::Ui, settings: &Shared) {
+        let s = settings.get();
+        ui.label(rich("the look", 16.0, LIME())).on_hover_text(tip("jute's and bale's browns. The strip moves them all from taupe to a deeper brown; each colour below can be your own instead."));
+        // the strip: the plate's colour all along the tint, a lime mark where it is
+        let tint = look_tint(&s);
+        let (tr, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width().min(360.0), 16.0), Sense::click_and_drag());
+        let resp = resp.on_hover_text(tip(&format!("the tint: {:.0}% toward brown. Drag or click along it; double-click for taupe.", tint * 100.0)));
+        let n = 48;
+        for i in 0..n {
+            let x0 = tr.left() + tr.width() * i as f32 / n as f32;
+            let x1 = tr.left() + tr.width() * (i + 1) as f32 / n as f32;
+            ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(x0, tr.top()), egui::pos2(x1 + 0.5, tr.bottom())), 0.0,
+                                     theme::plate_at(i as f32 / (n - 1) as f32));
+        }
+        ui.painter().rect_stroke(tr, 2.0, Stroke::new(1.0, if resp.hovered() || resp.dragged() { TEAL() } else { DIM() }), egui::StrokeKind::Outside);
+        let mx = tr.left() + tr.width() * tint;
+        ui.painter().rect_filled(egui::Rect::from_center_size(egui::pos2(mx, tr.center().y), Vec2::new(3.0, tr.height() + 5.0)), 1.0, LIME());
+        if resp.double_clicked() {
+            let _ = settings.update(|x| x.tint = Some(0.0));
+        } else if resp.dragged() || resp.clicked() {
+            if let Some(q) = resp.interact_pointer_pos() {
+                let t = ((q.x - tr.left()) / tr.width()).clamp(0.0, 1.0);
+                let _ = settings.update(|x| x.tint = Some((t * 1000.0).round() / 1000.0));
+            }
+        }
+        ui.add_space(6.0);
+        // each part's colour: a click opens the picker; × gives it back to the look
+        egui::Grid::new("colours").num_columns(3).spacing(Vec2::new(10.0, 4.0)).show(ui, |ui| {
+            for (key, name, what) in theme::ROLES {
+                let own = s.colours.get(*key).cloned();
+                ui.label(rich(name, 14.0, if own.is_some() { LIME() } else { GREY() })).on_hover_text(tip(what));
+                let mut c = theme::role(key);
+                if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed() {
+                    let (k, v) = (key.to_string(), theme::hex(c));
+                    let _ = settings.update(|x| { x.colours.insert(k, v); });
+                }
+                if own.is_some() {
+                    if button(ui, "×", true, None).on_hover_text(tip("back to the look's own")).clicked() {
+                        let k = key.to_string();
+                        let _ = settings.update(|x| { x.colours.remove(&k); });
+                    }
+                } else {
+                    ui.label("");
+                }
+                ui.end_row();
+            }
+        });
+        if !s.colours.is_empty() || s.tint.is_some() {
+            ui.add_space(4.0);
+            if button(ui, "as jute", true, None).on_hover_text(tip("every colour back to jute's, at jute's tint on this PC (or taupe)")).clicked() {
+                let _ = settings.update(|x| { x.colours.clear(); x.tint = None; });
+            }
+        }
     }
 }
 
@@ -911,53 +1118,60 @@ fn decode(jpg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 /// The rest of the capture's and the channel's settings (what settings.json held by hand).
 fn more(ui: &mut egui::Ui, settings: &Shared) {
-    egui::CollapsingHeader::new(rich("more", 16.0, LIME)).id_salt("more").show(ui, |ui| {
+    egui::CollapsingHeader::new(rich("more", 16.0, LIME())).id_salt("more").show(ui, |ui| {
         let mut s = settings.get();
         let before = serde_json::to_string(&s).unwrap_or_default();
-        let choice = |ui: &mut egui::Ui, label: &str, value: &mut String, options: &[(&str, &str)]| {
-            ui.horizontal(|ui| {
-                ui.label(rich(&label, 16.0, GREY));
-                for (v, l) in options {
-                    if button(ui, l, true, Some(value == v)).clicked() { *value = v.to_string(); }
+        let choice = |ui: &mut egui::Ui, label: &str, value: &mut String, options: &[(&str, &str, &str)]| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(rich(&label, 16.0, GREY()));
+                for (v, l, t) in options {
+                    if button(ui, l, true, Some(value == v)).on_hover_text(tip(t)).clicked() { *value = v.to_string(); }
                 }
             });
         };
-        choice(ui, "what goes out:", &mut s.view, &[("canvas", "the whole game"), ("viewport", "fixed mode's 3D view")]);
-        choice(ui, "blacked out:", &mut s.mask, &[("none", "nothing"), ("chat", "the chat"), ("side", "the side panel"), ("both", "both")]);
-        choice(ui, "taken by:", &mut s.method, &[("auto", "the first that works"), ("gpu", "Windows Graphics Capture"), ("gdi", "PrintWindow")]);
-        ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY));
-        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY));
-        ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY));
+        choice(ui, "what goes out:", &mut s.view, &[
+            ("canvas", "the whole game", "everything in RuneLite's game area: the world, the minimap, the side panel and the chat"),
+            ("viewport", "fixed mode's 3D view", "only with RuneLite's Fixed layout (Classic, 765 × 503): just the 3D world in its frame, without the minimap, side panel and chat round it. In Resizable mode it changes nothing; use masks there.")]);
+        choice(ui, "taken by:", &mut s.method, &[
+            ("auto", "the first that works", "Windows Graphics Capture, else PrintWindow, else the screen"),
+            ("gpu", "Windows Graphics Capture", "the graphics card's own copy of RuneLite's window: the quickest, and it never needs the window in front"),
+            ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
+        ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
+            .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
+        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY()))
+            .on_hover_text(tip("the window goes to the ✼ by the clock; a click on it brings the window back"));
+        ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
+            .on_hover_text(tip("the picture stops at the login screen (your username never shows): RuneLite has to put it in its title for the portal to tell"));
         ui.horizontal(|ui| {
-            ui.label(rich("clips go to:", 16.0, GREY));
+            ui.label(rich("clips go to:", 16.0, GREY())).on_hover_text(tip("the folder the clip key and \"clip\" save to (empty: Videos\\outside-portal)"));
             let hint = crate::clip::default_folder().display().to_string();
             field(ui, &mut s.clip_folder, 260.0, &hint, false);
         });
         ui.horizontal(|ui| {
-            ui.label(rich("a drop guess is decided by a drop worth:", 16.0, GREY));
+            ui.label(rich("a drop guess is decided by a drop worth:", 16.0, GREY())).on_hover_text(tip("a guess round ends on the first drop from its boss worth this much, as Dink reports it"));
             ui.add(egui::DragValue::new(&mut s.guess_min_value).speed(10000.0).suffix(" gp"));
         });
         ui.horizontal(|ui| {
-            ui.label(rich("each sound bus:", 16.0, GREY));
+            ui.label(rich("each sound bus:", 16.0, GREY())).on_hover_text(tip("the sound's quality, for each of its two busses: 96 is plenty for the game"));
             ui.add(egui::DragValue::new(&mut s.sound_kbps).range(32..=256).suffix(" kbit/s"));
-            ui.label(rich("your upload:", 16.0, GREY));
+            ui.label(rich("your upload:", 16.0, GREY())).on_hover_text(tip("your connection's upload speed: the upload bar's full width"));
             ui.add(egui::DragValue::new(&mut s.upload_mbit).range(1.0..=10000.0).suffix(" Mbit/s"));
         });
         ui.horizontal(|ui| {
-            ui.label(rich("RuneLite's title starts:", 16.0, GREY));
+            ui.label(rich("RuneLite's title starts:", 16.0, GREY())).on_hover_text(tip("the portal finds RuneLite's window by its title: change it only if yours is renamed"));
             field(ui, &mut s.title, 140.0, "RuneLite", false);
         });
         ui.add_space(6.0);
-        ui.label(rich("the channel", 16.0, LIME));
+        ui.label(rich("the channel", 16.0, LIME()));
         ui.horizontal(|ui| {
-            ui.label(rich("your name in the chat:", 16.0, GREY));
+            ui.label(rich("your name in the chat:", 16.0, GREY()));
             field(ui, &mut s.chat_name, 160.0, &s.channel.clone(), false);
         });
         ui.horizontal(|ui| {
-            ui.label(rich("watch code (empty: anyone):", 16.0, GREY));
+            ui.label(rich("watch code (empty: anyone):", 16.0, GREY())).on_hover_text(tip("a code viewers need in their link to watch. Empty: anyone with your Outside page can."));
             field(ui, &mut s.code, 140.0, "", false);
         });
-        ui.label(rich(&format!("relay {} · channel {}", s.relay, s.channel), 14.0, DIM));
+        ui.label(rich(&format!("relay {} · channel {}", s.relay, s.channel), 14.0, QUIET()));
         let detach = button(ui, "attach another code…", true, None).clicked();
         if detach {
             s.key.clear();
@@ -975,36 +1189,36 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     let st = app.dink.lock().unwrap().clone();
     let mut s = app.settings.get();
     let before = serde_json::to_string(&s).unwrap_or_default();
-    ui.label(rich("Dink: what goes into your broadcast", 16.0, LIME));
+    ui.label(rich("Dink: what goes into your broadcast", 16.0, LIME()));
     ui.add_space(4.0);
     match (&st.listening, &st.error) {
         (Some(url), _) => {
-            ui.label(rich("Dink's address (in RuneLite: Dink ▸ Primary Webhook URLs, on a line of its own):", 16.0, GREY));
+            ui.label(rich("Dink's address (in RuneLite: Dink ▸ Primary Webhook URLs, on a line of its own):", 16.0, GREY()));
             ui.horizontal(|ui| {
-                ui.label(rich(&url, 16.0, LIME));
+                ui.label(rich(&url, 16.0, LIME()));
                 if button(ui, "copy", true, None).clicked() {
                     win::copy_text(url);
                     app.note("Dink's address is on the clipboard");
                 }
             });
         }
-        (None, Some(e)) => { ui.label(rich(&format!("not listening: {}", e), 16.0, PINK)); }
-        _ => { ui.label(rich("starting…", 16.0, GREY)); }
+        (None, Some(e)) => { ui.label(rich(&format!("not listening: {}", e), 16.0, PINK())); }
+        _ => { ui.label(rich("starting…", 16.0, GREY())); }
     }
     ui.horizontal(|ui| {
-        ui.label(rich("its port:", 16.0, GREY));
+        ui.label(rich("its port:", 16.0, GREY()));
         ui.add(egui::DragValue::new(&mut s.dink.port).range(1024..=65535));
     });
     match &st.last {
-        Some((kind, at, went)) => ui.label(rich(&format!("heard from Dink {} ago: {} (to {})", ago(at.elapsed()), kind, went), 16.0, TEAL)),
-        None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY)),
+        Some((kind, at, went)) => ui.label(rich(&format!("heard from Dink {} ago: {} (to {})", ago(at.elapsed()), kind, went), 16.0, TEAL())),
+        None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY())),
     };
     ui.add_space(8.0);
-    ui.label(rich("on your portal", 16.0, LIME));
+    ui.label(rich("on your portal", 16.0, LIME()));
     egui::Grid::new("kinds").num_columns(2).spacing(Vec2::new(18.0, 2.0)).show(ui, |ui| {
         for (i, k) in REPORTS.iter().enumerate() {
             let mut on = s.dink.kind_on(k);
-            let colour = if on { TEXT } else { GREY };
+            let colour = if on { TEXT() } else { GREY() };
             if ui.checkbox(&mut on, rich(&kind_label(k), 16.0, colour)).changed() {
                 s.dink.kinds.insert(k.to_string(), Value::Bool(on));
             }
@@ -1012,17 +1226,17 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         }
     });
     ui.horizontal(|ui| {
-        ui.label(rich("loot: a stack worth at least", 16.0, GREY));
+        ui.label(rich("loot: a stack worth at least", 16.0, GREY()));
         ui.add(egui::DragValue::new(&mut s.dink.loot_min).range(0..=2_147_483_647u64).speed(1000.0).suffix(" gp"));
     });
     ui.horizontal(|ui| {
-        ui.label(rich("kill counts: every", 16.0, GREY));
+        ui.label(rich("kill counts: every", 16.0, GREY()));
         ui.add(egui::DragValue::new(&mut s.dink.kc_every).range(1..=1000));
-        ui.label(rich("(and always the first, and personal bests)", 16.0, GREY));
+        ui.label(rich("(and always the first, and personal bests)", 16.0, GREY()));
     });
-    ui.label(rich("never, whatever's ticked: anything naming another player (trades, chat, player kills, a PvP killer), and screenshots", 14.0, DIM));
+    ui.label(rich("never, whatever's ticked: anything naming another player (trades, chat, player kills, a PvP killer), and screenshots", 14.0, QUIET()));
     ui.add_space(10.0);
-    ui.label(rich("on to your Discord too", 16.0, LIME));
+    ui.label(rich("on to your Discord too", 16.0, LIME()));
     forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
     if serde_json::to_string(&s).unwrap_or_default() != before {
         let _ = app.settings.update(|x| *x = s);
@@ -1035,7 +1249,7 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
     }
     let mut url = rules.get("discord").and_then(|x| x.as_array()).and_then(|a| a.first()).and_then(|x| x.as_str()).unwrap_or("").to_string();
     ui.horizontal(|ui| {
-        ui.label(rich("webhook:", 16.0, GREY));
+        ui.label(rich("webhook:", 16.0, GREY()));
         let was = url.clone();
         field(ui, &mut url, 300.0, "https://discord.com/api/webhooks/…", !*shown);
         if button(ui, if *shown { "hide" } else { "show" }, true, None).clicked() { *shown = !*shown; }
@@ -1044,7 +1258,7 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
         }
     });
     if url.trim().is_empty() {
-        ui.label(rich("(none: nothing goes to Discord. Anyone with a webhook's address can post to its server, so it stays on this PC.)", 14.0, DIM));
+        ui.label(rich("(none: nothing goes to Discord. Anyone with a webhook's address can post to its server, so it stays on this PC.)", 14.0, QUIET()));
         return;
     }
     let f = rules.get_mut("forward").filter(|x| x.is_object()).is_some();
@@ -1057,7 +1271,7 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
     egui::Grid::new("forward").num_columns(2).spacing(Vec2::new(18.0, 2.0)).show(ui, |ui| {
         for (i, k) in kinds.iter().enumerate() {
             let mut on = match fw.get(*k) { Some(Value::Bool(b)) => *b, Some(Value::Object(_)) => true, _ => false };
-            let colour = if on { TEXT } else { GREY };
+            let colour = if on { TEXT() } else { GREY() };
             if ui.checkbox(&mut on, rich(&kind_label(k), 16.0, colour)).changed() {
                 let v = match (*k, on) {
                     ("LOOT", true) => json!({"minValue": 1000000, "allow": []}),
@@ -1071,13 +1285,13 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
     });
     if let Some(Value::Object(l)) = fw.get_mut("LOOT") {
         ui.horizontal(|ui| {
-            ui.label(rich("loot to Discord: a stack worth", 16.0, GREY));
+            ui.label(rich("loot to Discord: a stack worth", 16.0, GREY()));
             let mut v = l.get("minValue").and_then(|x| x.as_u64()).unwrap_or(0);
             if ui.add(egui::DragValue::new(&mut v).speed(10000.0).suffix(" gp")).changed() { l.insert("minValue".into(), json!(v)); }
         });
         let mut allow = l.get("allow").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
         ui.horizontal(|ui| {
-            ui.label(rich("or these items (commas, * wildcards):", 16.0, GREY));
+            ui.label(rich("or these items (commas, * wildcards):", 16.0, GREY()));
             if field(ui, &mut allow, 220.0, "", false).changed() {
                 l.insert("allow".into(), json!(allow.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).collect::<Vec<_>>()));
             }
@@ -1085,21 +1299,21 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
     }
     if let Some(Value::Object(k)) = fw.get_mut("KILL_COUNT") {
         ui.horizontal(|ui| {
-            ui.label(rich("kill counts to Discord: every", 16.0, GREY));
+            ui.label(rich("kill counts to Discord: every", 16.0, GREY()));
             let mut v = k.get("every").and_then(|x| x.as_u64()).unwrap_or(25);
             if ui.add(egui::DragValue::new(&mut v).range(1..=10000)).changed() { k.insert("every".into(), json!(v)); }
-            ui.label(rich("laps every", 16.0, GREY));
+            ui.label(rich("laps every", 16.0, GREY()));
             let mut l = k.get("lapsEvery").and_then(|x| x.as_u64()).unwrap_or(1000);
             if ui.add(egui::DragValue::new(&mut l).range(1..=100000)).changed() { k.insert("lapsEvery".into(), json!(l)); }
         });
         ui.horizontal(|ui| {
             let mut first = k.get("first").and_then(|x| x.as_bool()).unwrap_or(true);
-            if ui.checkbox(&mut first, rich("the first", 16.0, GREY)).changed() { k.insert("first".into(), json!(first)); }
+            if ui.checkbox(&mut first, rich("the first", 16.0, GREY())).changed() { k.insert("first".into(), json!(first)); }
             let mut pb = k.get("personalBest").and_then(|x| x.as_bool()).unwrap_or(true);
-            if ui.checkbox(&mut pb, rich("personal bests", 16.0, GREY)).changed() { k.insert("personalBest".into(), json!(pb)); }
+            if ui.checkbox(&mut pb, rich("personal bests", 16.0, GREY())).changed() { k.insert("personalBest".into(), json!(pb)); }
         });
     }
-    ui.label(rich("Discord gets Dink's own post, as Dink sent it, screenshot and all. Every kind ticked here goes whole, so keep those notifiers' thresholds in Dink as you want Discord to have them.", 14.0, DIM));
+    ui.label(rich("Discord gets Dink's own post, as Dink sent it, screenshot and all. Every kind ticked here goes whole, so keep those notifiers' thresholds in Dink as you want Discord to have them.", 14.0, QUIET()));
 }
 
 fn kind_label(k: &str) -> &'static str {
@@ -1133,11 +1347,11 @@ const SAFE: &[&str] = &[
 
 fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(24.0);
-    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(26.0)).color(LIME));
+    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(26.0)).color(LIME()));
     let _ = rich;
     ui.add_space(10.0);
-    ui.label(rich("this receiver is not attached to a channel yet.", 16.0, GREY));
-    ui.label(rich("paste the attach code you were given (it starts portal1:).", 16.0, GREY));
+    ui.label(rich("this receiver is not attached to a channel yet.", 16.0, GREY()));
+    ui.label(rich("paste the attach code you were given (it starts portal1:).", 16.0, GREY()));
     ui.add_space(8.0);
     ui.add(egui::TextEdit::multiline(&mut app.attach_code).desired_rows(3).desired_width(f32::INFINITY).font(body(14.0)));
     ui.add_space(6.0);
@@ -1159,17 +1373,17 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         if button(ui, if app.by_hand { "by hand ◂" } else { "by hand ▸" }, true, None).clicked() { app.by_hand = !app.by_hand; }
     });
     if !app.attach_note.is_empty() {
-        ui.label(rich(&app.attach_note.clone(), 16.0, PINK));
+        ui.label(rich(&app.attach_note.clone(), 16.0, PINK()));
     }
     if app.by_hand {
         ui.add_space(8.0);
-        ui.label(rich("a relay of your own (relay-py), or one you were told about:", 16.0, GREY));
+        ui.label(rich("a relay of your own (relay-py), or one you were told about:", 16.0, GREY()));
         let (r, c, k, w) = &mut app.hand;
         egui::Grid::new("hand").num_columns(2).show(ui, |ui| {
-            ui.label(rich("relay", 16.0, GREY)); field(ui, r, 300.0, "ws://127.0.0.1:8786", false); ui.end_row();
-            ui.label(rich("channel", 16.0, GREY)); field(ui, c, 200.0, "your player's name", false); ui.end_row();
-            ui.label(rich("key", 16.0, GREY)); field(ui, k, 200.0, "8 characters or more", true); ui.end_row();
-            ui.label(rich("watch code", 16.0, GREY)); field(ui, w, 200.0, "(empty: anyone)", false); ui.end_row();
+            ui.label(rich("relay", 16.0, GREY())); field(ui, r, 300.0, "ws://127.0.0.1:8786", false); ui.end_row();
+            ui.label(rich("channel", 16.0, GREY())); field(ui, c, 200.0, "your player's name", false); ui.end_row();
+            ui.label(rich("key", 16.0, GREY())); field(ui, k, 200.0, "8 characters or more", true); ui.end_row();
+            ui.label(rich("watch code", 16.0, GREY())); field(ui, w, 200.0, "(empty: anyone)", false); ui.end_row();
         });
         if button(ui, "use these", false, None).clicked() {
             let (r, c, k, w) = app.hand.clone();
@@ -1181,15 +1395,15 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     ui.add_space(14.0);
-    egui::CollapsingHeader::new(rich("is it safe for my account?", 16.0, LIME)).id_salt("safe").show(ui, |ui| {
+    egui::CollapsingHeader::new(rich("is it safe for my account?", 16.0, LIME())).id_salt("safe").show(ui, |ui| {
         for line in SAFE {
-            ui.add(egui::Label::new(rich(line, 14.0, GREY)).wrap());
+            ui.add(egui::Label::new(rich(line, 14.0, GREY())).wrap());
         }
-        ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md", 14.0, TEAL)).wrap());
+        ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md", 14.0, TEAL())).wrap());
     });
     if let Some(p) = settings::ghillie_path() {
         ui.add_space(14.0);
-        ui.label(rich("ghillie's own portal settings are on this PC:", 16.0, GREY));
+        ui.label(rich("ghillie's own portal settings are on this PC:", 16.0, GREY()));
         if button(ui, "take them (its relay, channel, key and Discord rules)", true, None).clicked() {
             match settings::from_ghillie(&p) {
                 Some(g) => {
@@ -1213,7 +1427,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.settings.refresh();
         self.drain(ctx);
-        self.sync_tray();
+        self.sync_tray(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
             let s = self.settings.get();
             if s.on_air && self.live {
@@ -1230,6 +1444,14 @@ impl eframe::App for App {
             && ctx.input(|i| i.viewport().minimized) == Some(true) {
             self.hidden = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        // the look (the tint, anyone's own colours), whenever they change
+        {
+            let st = self.settings.get();
+            if self.look.0 != st.tint || self.look.1 != st.colours {
+                self.look = (st.tint, st.colours.clone());
+                style(ctx, &st);
+            }
         }
         // the interface's size (text, buttons and all), from the settings
         let scale = self.settings.get().ui_scale.clamp(0.75, 2.0);
@@ -1259,27 +1481,49 @@ impl eframe::App for App {
             && !self.asking_close && !listening && !self.moving_chat && !self.editing_masks {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        let frame = egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 10));
+        let frame = egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(12, 10));
+        // the window's own frame (11/05/2026, Jace: "a complete custom gui"): its title bar, its edges, its border.
+        // Its whole area filled first, so no corner or margin is ever see-through to what's behind.
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.content_rect(), 0.0, ABYSS());
+        self.edge = self.edge_at(&ctx);
+        self.min_size(&ctx);
+        egui::Panel::top("titlebar").frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 4, top: 2, bottom: 0 }))
+            .show_separator_line(false).show(ui, |ui| self.title_bar(ui));
         if !self.settings.get().attached() {
             egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| attach_screen(self, ui));
             self.pings_ui(&ctx);
+            self.frame_done(&ctx);
             return;
         }
         if self.drawer != Drawer::None {
-            egui::Panel::right("drawer").exact_size(DRAWER_W).frame(egui::Frame::new().fill(ABYSS).stroke(Stroke::new(1.0, DIM))
-                .inner_margin(egui::Margin::symmetric(18, 12))).show(ui, |ui| {
-                egui::ScrollArea::vertical().id_salt("drawer_scroll").show(ui, |ui| {
-                    if self.drawer == Drawer::Settings {
-                        if let Some(p) = &mut self.panel { p.ui(ui, &self.settings); }
-                    } else {
-                        dink_drawer(self, ui);
-                    }
-                });
+            // (a plate of its own, as jute's sections are)
+            let pal = theme::pal();
+            // (the panel itself filled to its edges, the plate drawn inside it: 11/05/2026, a plate as the panel's own
+            // frame had left its margin and its rounded corners unpainted, and the window is see-through there)
+            let _ = pal;
+            egui::Panel::right("drawer").exact_size(DRAWER_W).show_separator_line(false)
+                .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 0, right: 8, top: 2, bottom: 10 })).show(ui, |ui| {
+                let at = ui.painter().add(egui::Shape::Noop);
+                let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    egui::ScrollArea::vertical().id_salt("drawer_scroll").auto_shrink([false, false]).show(ui, |ui| {
+                        if self.drawer == Drawer::Settings {
+                            if let Some(p) = &mut self.panel { p.ui(ui, &self.settings); }
+                        } else {
+                            dink_drawer(self, ui);
+                        }
+                    });
+                }).response.rect;
+                ui.painter().set(at, theme::plate(r));
             });
         }
-        egui::Panel::top("top").frame(frame).show(ui, |ui| self.top(ui));
-        egui::Panel::bottom("answer").frame(egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 8))).show(ui, |ui| self.answer(ui));
-        egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| {
+        egui::Panel::top("top").show_separator_line(false)
+            // (its top 2 in, the answer row's bottom 10 in: the drawer's plate keeps the same lines, 11/05/2026)
+            .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 8, right: 8, top: 2, bottom: 6 })).show(ui, |ui| self.top(ui));
+        egui::Panel::bottom("answer").show_separator_line(false)
+            .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 10 })).show(ui, |ui| self.answer(ui));
+        egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(10, 0))).show(ui, |ui| {
+            self.viewers_ui(ui);
             self.poll_ui(ui);
             self.guess_ui(ui);
             self.banned_ui(ui);
@@ -1289,14 +1533,130 @@ impl eframe::App for App {
             self.close_modal(&ctx);
         }
         self.pings_ui(&ctx);
+        self.frame_done(&ctx);
     }
 }
 
 impl App {
+    // ---- the window's own frame ----
+
+    /// The title bar: the star and the title, dragged to move the window (a double click fills the screen or gives
+    /// it back), and its own minimise, fill and close.
+    fn title_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TITLE_H), Sense::click_and_drag());
+        let resp = resp.on_hover_cursor(egui::CursorIcon::Default);
+        let maxed = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        if self.edge.is_none() {
+            if resp.double_clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maxed));
+            } else if resp.drag_started_by(egui::PointerButton::Primary) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+        }
+        let p = ui.painter();
+        pixel_star(p, egui::pos2(rect.left() + 8.0, rect.center().y), LIME());
+        let room = rect.width() - 24.0 - 3.0 * 32.0;
+        let words = if p.layout_no_wrap(TITLE.to_string(), title_font(20.0), LIME()).size().x <= room { TITLE } else { "the portal" };
+        let title = p.layout_no_wrap(words.to_string(), title_font(20.0), LIME());
+        // (lime lettering over RuneScape's shadow, as jute's titles)
+        let at = egui::pos2(rect.left() + 22.0, rect.center().y - title.size().y / 2.0);
+        let shade = p.layout_no_wrap(words.to_string(), title_font(20.0), theme::pal().shadow);
+        p.galley(at + Vec2::new(1.0, 1.0), shade, theme::pal().shadow);
+        p.galley(at, title, LIME());
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        child.spacing_mut().item_spacing.x = 2.0;
+        if control(&mut child, 2, false).on_hover_text(rich("close", 14.0, GREY())).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        let fill = if maxed { "give the screen back" } else { "fill the screen" };
+        if control(&mut child, 1, maxed).on_hover_text(rich(fill, 14.0, GREY())).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maxed));
+        }
+        let tray = self.tray.is_some() && self.settings.get().minimize_to_tray;
+        let min = if tray { "into the tray (the stream goes on)" } else { "minimise" };
+        if control(&mut child, 0, false).on_hover_text(rich(min, 14.0, GREY())).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
+    /// The edge (or corner) the hand is on, 6 points in from the window's side, unless it fills the screen.
+    fn edge_at(&self, ctx: &egui::Context) -> Option<egui::viewport::ResizeDirection> {
+        use egui::viewport::ResizeDirection as D;
+        if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) { return None; }
+        let r = ctx.content_rect();
+        let p = ctx.input(|i| i.pointer.hover_pos())?;
+        let (l, rt, t, b) = (p.x - r.left() < EDGE, r.right() - p.x < EDGE, p.y - r.top() < EDGE, r.bottom() - p.y < EDGE);
+        // (the corners a little larger, as Windows' own are)
+        let c = EDGE * 3.0;
+        let (lc, rc, tc, bc) = (p.x - r.left() < c, r.right() - p.x < c, p.y - r.top() < c, r.bottom() - p.y < c);
+        Some(if (t && lc) || (l && tc) { D::NorthWest }
+             else if (t && rc) || (rt && tc) { D::NorthEast }
+             else if (b && lc) || (l && bc) { D::SouthWest }
+             else if (b && rc) || (rt && bc) { D::SouthEast }
+             else if l { D::West } else if rt { D::East } else if t { D::North } else if b { D::South }
+             else { return None })
+    }
+
+    /// The smallest the window may be, so nothing in it is ever pushed out of sight or drawn over another part: with
+    /// a drawer open, the drawer and the window beside it (11/05/2026: shrunk from the right, the drawer had covered
+    /// the chat). In points, so it grows with the window's size in %.
+    fn min_size(&mut self, ctx: &egui::Context) {
+        let key = (self.drawer, (self.zoom * 100.0).round() as u32);
+        if self.min_sent == Some(key) { return; }
+        self.min_sent = Some(key);
+        let min = if self.drawer == Drawer::None { Vec2::new(MIN_W, 460.0) } else { Vec2::new(MIN_W + DRAWER_W, 640.0) };
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min));
+        // (and if it's smaller now, it grows to fit)
+        if let Some(r) = ctx.input(|i| i.viewport().inner_rect) {
+            if r.width() < min.x - 0.5 || r.height() < min.y - 0.5 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(r.width().max(min.x), r.height().max(min.y))));
+            }
+        }
+    }
+
+    /// After everything's drawn: the edges' resize (the hand pressed on one), the border, and the cursor.
+    fn frame_done(&mut self, ctx: &egui::Context) {
+        use egui::viewport::ResizeDirection as D;
+        if let Some(d) = self.edge {
+            ctx.set_cursor_icon(match d {
+                D::West | D::East => egui::CursorIcon::ResizeHorizontal,
+                D::North | D::South => egui::CursorIcon::ResizeVertical,
+                D::NorthWest | D::SouthEast => egui::CursorIcon::ResizeNwSe,
+                D::NorthEast | D::SouthWest => egui::CursorIcon::ResizeNeSw,
+            });
+            if ctx.input(|i| i.pointer.primary_pressed()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(d));
+            }
+        }
+        if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("edge")));
+            p.rect_stroke(ctx.content_rect(), 0.0, Stroke::new(1.0, DIM()), egui::StrokeKind::Inside);
+        }
+        crate::cursor::adopt();
+        crate::cursor::follow(ctx, crate::cursor::still());
+    }
+
+    /// The stream's plate: who's watching, the drawers, the live light and going live, the upload, the live view,
+    /// the sound, and the switches. Every row wraps rather than run out of the window, and what belongs together
+    /// wraps together (a switch and its button).
     fn top(&mut self, ui: &mut egui::Ui) {
+        let at = ui.painter().add(egui::Shape::Noop);
+        let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            self.top_inner(ui);
+        }).response.rect;
+        ui.painter().set(at, theme::plate(r));
+    }
+
+    fn top_inner(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(22.0)).color(LIME));
+            let open = self.show_viewers;
+            let words = format!("watching: {} {}", self.viewers, if open { "▾" } else { "▸" });
+            if button(ui, &words, true, Some(open)).on_hover_text(tip("who's watching now, and who's in line for a spot (names as they gave them in the chat)")).clicked() {
+                self.show_viewers = !open;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let s_open = self.drawer == Drawer::Settings;
                 let signals = self.signals;
@@ -1304,39 +1664,45 @@ impl App {
                 let d_open = self.drawer == Drawer::Dink;
                 if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
                 if signals > 0 {
-                    ui.label(rich(&format!("✼ {}", signals), 14.0, PINK)).on_hover_text("viewers' signals since this opened");
+                    ui.label(rich(&format!("✼ {}", signals), 14.0, PINK())).on_hover_text(tip("viewers' signals since this opened"));
                 }
             });
         });
         ui.add_space(6.0);
-        // the live light, what's happening, and going live
+        // the live light, what's happening (beside it, wrapping), and going live
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
             let c = rect.center();
             let on = self.settings.get().on_air;
             if self.up && self.live && self.open && on {
-                const STEPS: [f32; 8] = [3.0, 4.0, 5.0, 6.0, 7.0, 6.0, 5.0, 4.0];
-                let beat = (ui.input(|i| i.time) / 0.11) as usize;
-                let r = STEPS[beat % STEPS.len()];
-                if r >= 6.0 {
-                    ui.painter().circle_stroke(c, r + 2.0, Stroke::new(2.0, Color32::from_rgb(0x5a, 0x21, 0x40)));
-                }
-                ui.painter().circle_filled(c, r, PINK);
+                // as Outside's while transmitting (outside.css, .outside-signal.transmitting .outside-live): a hotpink
+                // dot in its own glow, fading to 15% and back every half second, eased (11/05/2026, Jace: "smoother")
+                let a = if crate::cursor::still() { 1.0 } else {
+                    (0.575 + 0.425 * (ui.input(|i| i.time) * std::f64::consts::TAU / 0.5).cos()) as f32
+                };
+                glow(ui.painter(), c, PINK(), a);
+                if !crate::cursor::still() { ui.ctx().request_repaint_after(Duration::from_millis(33)); }
             } else if self.up && self.live && on {
-                ui.painter().circle_filled(c, 5.0, TEAL);
+                glow(ui.painter(), c, TEAL(), 1.0);
             } else {
-                ui.painter().circle_stroke(c, 5.0, Stroke::new(2.0, Color32::from_rgb(0x55, 0x55, 0x55)));
+                ui.painter().circle_stroke(c, 4.5, Stroke::new(2.0, WHEN()));
             }
             let (text, colour) = self.status_line();
             let ending = on && self.up && self.live;
+            let go = if ending { "end stream" } else { "go live" };
+            let bw = ui.painter().layout_no_wrap(go.to_string(), body(16.0), LIME()).size().x + 14.0 + 10.0;
+            let w = (ui.available_width() - bw).max(40.0);
+            ui.allocate_ui_with_layout(Vec2::new(w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_width(w);
+                ui.add(egui::Label::new(rich(&text, 14.0, colour)).wrap());
+            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if pink_button(ui, if ending { "end stream" } else { "go live" }, !ending).clicked() { self.go_live(); }
-                ui.add(egui::Label::new(rich(&text, 14.0, colour)).truncate());
+                if pink_button(ui, go, !ending).clicked() { self.go_live(); }
             });
         });
         ui.add_space(4.0);
         // the upload: the portal's share (the relay's count) and this PC's in all (Windows' own count)
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let s = self.settings.get();
             let cap = if s.upload_mbit > 0.0 { s.upload_mbit } else { 40.0 };
             let pc = *self.pc_bps.lock().unwrap();
@@ -1344,7 +1710,7 @@ impl App {
             let cells = 22;
             let on = ((cells as f64 * share).round() as usize).min(cells);
             let portal_on = if self.up { ((cells as f64 * self.portal_bps.unwrap_or(0) as f64 / (cap * 1e6)).round() as usize).min(on) } else { 0 };
-            blocks(ui, cells, |i| if share > 0.8 && i < on { PINK } else if i < portal_on { LIME } else if i < on { TEAL } else { TRACK }, 12.0);
+            blocks(ui, cells, |i| if share > 0.8 && i < on { PINK() } else if i < portal_on { LIME() } else if i < on { TEAL() } else { TRACK() }, 12.0);
             let mbit = |b: Option<u64>| b.map(|b| format!("{:.1}", b as f64 / 1e6)).unwrap_or_else(|| "…".into());
             let mut parts = Vec::new();
             if self.up && self.portal_bps.is_some() {
@@ -1352,60 +1718,125 @@ impl App {
                 parts.push(format!("{} {}", who, mbit(self.portal_bps)));
             }
             parts.push(format!("this PC {} of {} Mbit/s", mbit(pc), cap));
-            ui.label(rich(&format!("upload: {}", parts.join(" · ")), 14.0, if share > 0.8 { PINK } else { GREY }));
+            // (its words beside the bar when they fit, else under it, whole)
+            let text = format!("upload: {}", parts.join(" · "));
+            if text_w(ui, &text, 14.0) > ui.available_width() { ui.end_row(); }
+            ui.add(egui::Label::new(wrapped(&text, 14.0, if share > 0.8 { PINK() } else { GREY() }, ui.available_width())))
+                .on_hover_text(tip("lime: what the portal sends; teal: the rest of this PC's upload; pink: past 80% of your upload (its speed is set in settings ▸ more)"));
         });
         self.live_view(ui);
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let s = self.settings.get();
-            ui.label(rich("sound:", 14.0, GREY));
-            for (m, l) in LABELS {
-                if button(ui, l, true, Some(sound::mode_of(&s.sound) == *m)).clicked() {
+            ui.label(rich("sound:", 14.0, GREY()));
+            const TIPS: [&str; 3] = ["no sound goes out",
+                                     "RuneLite's own sound only",
+                                     "RuneLite's sound, and as a second bus viewers can turn down on their own, the rest of what this PC plays (music, videos, the voice chat you hear). Never a microphone."];
+            for (i, (m, l)) in LABELS.iter().enumerate() {
+                if button(ui, l, true, Some(sound::mode_of(&s.sound) == *m)).on_hover_text(tip(TIPS[i])).clicked() {
                     let m = m.to_string();
                     if let Err(e) = self.settings.update(|s| s.sound = m) { self.note(format!("couldn't save the sound's mode: {}", e)); }
                 }
             }
         });
-        // what shows over RuneLite (a see-through window of the portal's own, never in the game), and whether viewers
-        // may ping at all
+        // what viewers may do, what shows over RuneLite (see-through windows of the portal's own, never in the
+        // stream), and your masks
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            let s = self.settings.get();
-            let (mut p, mut st, mut allowed, mut over) = (s.pings, s.signals, s.pings_allowed, s.game_chat);
-            if ui.checkbox(&mut allowed, rich("viewers may ping", 14.0, GREY)).changed() {
-                let _ = self.settings.update(|s| s.pings_allowed = allowed);
-            }
-            if ui.checkbox(&mut p, rich("pings on my screen", 14.0, GREY)).changed() {
-                let _ = self.settings.update(|s| s.pings = p);
-            }
-            if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY)).changed() {
-                let _ = self.settings.update(|s| s.signals = st);
-            }
-            if ui.checkbox(&mut over, rich("chat over the game", 14.0, GREY)).changed() {
-                let _ = self.settings.update(|s| s.game_chat = over);
-            }
-            if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat)).clicked() {
-                if !self.moving_chat && frame_rect(&s).is_none() {
-                    self.note("RuneLite isn't open (or it's minimised): open it, then move the chat over it");
-                } else {
-                    self.moving_chat = !self.moving_chat;
+        let s = self.settings.get();
+        let masks = if s.masks.is_empty() { "masks".to_string() } else { format!("masks ({})", s.masks.len()) };
+        let gap = ui.spacing().item_spacing.x;
+        let small = 4.0; // (the gap inside a piece)
+        let widths = [
+            check_w(ui, "viewers may chat"),
+            text_w(ui, "pings:", 14.0) + PINGS.iter().map(|(_, l, _)| small + button_w(ui, l)).sum::<f32>(),
+            0.0,
+            check_w(ui, "✼ on my screen"),
+            check_w(ui, "chat over the game") + gap + button_w(ui, if self.moving_chat { "done" } else { "move it" }),
+            check_w(ui, &masks) + gap + button_w(ui, if self.editing_masks { "done" } else { "edit masks" }),
+        ];
+        let _ = small;
+        let pieces: Vec<usize> = (0..widths.len()).filter(|i| *i != 2).collect();
+        let w2: Vec<f32> = pieces.iter().map(|i| widths[*i]).collect();
+        for row in flow(&w2, ui.available_width(), gap + 4.0) {
+            let row: Vec<usize> = row.map(|k| pieces[k]).collect();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap + 4.0;
+                for i in row { self.switch(ui, i, &s, &masks); }
+            });
+        }
+    }
+
+    /// One of the switches (in `top_inner`'s order): what viewers may do, what shows over RuneLite (see-through
+    /// windows of the portal's own, never in the stream), and your masks, each with its button where it has one.
+    fn switch(&mut self, ui: &mut egui::Ui, i: usize, s: &Settings, masks: &str) {
+        let gap = ui.spacing().item_spacing.x - 4.0;
+        match i {
+            0 => {
+                let mut talk = s.chat_allowed;
+                if ui.checkbox(&mut talk, rich("viewers may chat", 14.0, GREY()))
+                    .on_hover_text(tip("off: viewers' lines go nowhere, and their pages say the chat is off. Your own lines still go out.")).changed() {
+                    let _ = self.settings.update(|s| s.chat_allowed = talk);
                 }
             }
-            // your own masks: boxes blacked out of every frame before it leaves this PC
-            let mut on = s.masks_on;
-            let label = if s.masks.is_empty() { "masks".to_string() } else { format!("masks ({})", s.masks.len()) };
-            if ui.checkbox(&mut on, rich(&label, 14.0, GREY)).on_hover_text(format!("the {} key turns them off and on", win::key_name(&s.mask_key))).changed() {
-                let _ = self.settings.update(|x| x.masks_on = on);
+            1 => {
+                // (11/05/2026, Jace: "viewers may ping" and "pings on my screen" read as the same thing: one choice now.
+                // Off: viewers' pings go nowhere; the site: on viewers' pages only; and my screen: a ring over RuneLite
+                // too, on this PC only, never in the stream.)
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(rich("pings:", 14.0, GREY())).on_hover_text(tip("a viewer's click on the picture: a ring where they pointed"));
+                let now = if !s.pings_allowed { 0 } else if !s.pings { 1 } else { 2 };
+                for (k, (_, l, t)) in PINGS.iter().enumerate() {
+                    if button(ui, l, true, Some(now == k)).on_hover_text(tip(t)).clicked() {
+                        let _ = self.settings.update(|s| { s.pings_allowed = k > 0; s.pings = k == 2; });
+                    }
+                }
+                ui.spacing_mut().item_spacing.x = gap + 4.0;
             }
-            if button(ui, if self.editing_masks { "done" } else { "edit masks" }, true, Some(self.editing_masks)).clicked() {
-                if !self.editing_masks && frame_rect(&s).is_none() {
-                    self.note("RuneLite isn't open (or it's minimised): open it, then draw the masks over it");
-                } else {
-                    self.editing_masks = !self.editing_masks;
-                    self.mask_drag = None;
+            2 => {}
+            3 => {
+                let mut st = s.signals;
+                if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY()))
+                    .on_hover_text(tip("each viewer's ✼ rising over RuneLite. Only on this PC.")).changed() {
+                    let _ = self.settings.update(|s| s.signals = st);
                 }
             }
-        });
+            4 => {
+                let mut over = s.game_chat;
+                ui.spacing_mut().item_spacing.x = gap;
+                if ui.checkbox(&mut over, rich("chat over the game", 14.0, GREY()))
+                    .on_hover_text(tip("the newest lines over RuneLite, fading after 20 s. Only on this PC: it's never in the stream.")).changed() {
+                    let _ = self.settings.update(|s| s.game_chat = over);
+                }
+                if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat))
+                    .on_hover_text(tip("drag the chat over the game where you want it; Enter or done keeps it")).clicked() {
+                    if !self.moving_chat && frame_rect(s).is_none() {
+                        self.note("RuneLite isn't open (or it's minimised): open it, then move the chat over it");
+                    } else {
+                        self.moving_chat = !self.moving_chat;
+                    }
+                }
+                ui.spacing_mut().item_spacing.x = gap + 4.0;
+            }
+            _ => {
+                // your own masks: boxes blacked out of every frame before it leaves this PC
+                let mut on = s.masks_on;
+                ui.spacing_mut().item_spacing.x = gap;
+                if ui.checkbox(&mut on, rich(masks, 14.0, GREY()))
+                    .on_hover_text(tip(&format!("boxes blacked out of every frame before it leaves this PC, so what's under them is never sent. The {} key turns them off and on.", win::key_name(&s.mask_key)))).changed() {
+                    let _ = self.settings.update(|x| x.masks_on = on);
+                }
+                if button(ui, if self.editing_masks { "done" } else { "edit masks" }, true, Some(self.editing_masks))
+                    .on_hover_text(tip("draw boxes over RuneLite (drag), move them, right-click one to take it away")).clicked() {
+                    if !self.editing_masks && frame_rect(s).is_none() {
+                        self.note("RuneLite isn't open (or it's minimised): open it, then draw the masks over it");
+                    } else {
+                        self.editing_masks = !self.editing_masks;
+                        self.mask_drag = None;
+                    }
+                }
+                ui.spacing_mut().item_spacing.x = gap + 4.0;
+            }
+        }
     }
 
     /// The live view: the portal as the site gets it, small, beside how much viewers' pages say they've had.
@@ -1413,15 +1844,9 @@ impl App {
     fn live_view(&mut self, ui: &mut egui::Ui) {
         let s = self.settings.get();
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let mut on = s.live_view;
-            if ui.checkbox(&mut on, rich("the live view", 14.0, GREY)).on_hover_text("the portal as the site gets it, through the relay (off: it costs nothing)").changed() {
-                let _ = self.settings.update(|x| x.live_view = on);
-                if !on { self.feed_tex = None; }
-            }
-            if !on {
-                return;
-            }
+        // what's come through, first (its words go beside the switch when they fit, else under it)
+        let mut words = None;
+        if s.live_view {
             let (frame, rate, connected) = {
                 let mut f = self.feed.lock().unwrap();
                 f.came.retain(|t| t.elapsed() < Duration::from_secs(4));
@@ -1436,16 +1861,34 @@ impl App {
                 }
             }
             let fresh = self.feed_tex.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(3));
-            let words = if !connected {
-                "the live view: reaching the relay…".to_string()
+            let text = if !connected {
+                "reaching the relay…".to_string()
             } else if fresh {
                 let had = match self.acked { Some(b) if b > 0 => format!(" · viewers' pages have had {:.1} Mbit/s", b as f64 / 1e6), _ => if self.viewers > 0 { " · viewers: not heard from yet".into() } else { " · nobody watching".into() } };
                 format!("the site's view: {:.1} a second through the relay{}", rate, had)
             } else {
                 "the site's view: nothing coming through (off air, static, or paused)".to_string()
             };
-            ui.label(rich(&words, 14.0, if fresh { LIME } else { GREY }));
-        });
+            words = Some((text, if fresh { LIME() } else { GREY() }));
+        }
+        let gap = ui.spacing().item_spacing.x;
+        let beside = words.as_ref().is_some_and(|(t, _)| check_w(ui, "the live view") + gap + text_w(ui, t, 14.0) <= ui.available_width());
+        let mut toggle = |ui: &mut egui::Ui, feed_tex: &mut Option<(egui::TextureHandle, Instant)>| {
+            let mut on = s.live_view;
+            if ui.checkbox(&mut on, rich("the live view", 14.0, GREY())).on_hover_text(tip("the portal as the site gets it, through the relay as a viewer's page would (off: not connected at all, so it costs nothing)")).changed() {
+                let _ = self.settings.update(|x| x.live_view = on);
+                if !on { *feed_tex = None; }
+            }
+        };
+        if beside {
+            ui.horizontal(|ui| {
+                toggle(ui, &mut self.feed_tex);
+                if let Some((t, c)) = &words { ui.label(rich(t, 14.0, *c)); }
+            });
+        } else {
+            toggle(ui, &mut self.feed_tex);
+            if let Some((t, c)) = &words { ui.add(egui::Label::new(wrapped(t, 14.0, *c, ui.available_width()))); }
+        }
         if s.live_view {
             if let Some((t, at)) = &self.feed_tex {
                 let size = t.size_vec2();
@@ -1454,7 +1897,7 @@ impl App {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
                 let tint = if at.elapsed() < Duration::from_secs(3) { Color32::WHITE } else { Color32::from_gray(70) };
                 ui.painter().image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
-                ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, DIM), egui::StrokeKind::Outside);
+                ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, DIM()), egui::StrokeKind::Outside);
             }
         }
     }
@@ -1462,7 +1905,7 @@ impl App {
     fn chat(&mut self, ui: &mut egui::Ui) {
         let mut act: Option<Value> = None;
         let mut notes = Vec::new();
-        egui::Frame::new().stroke(Stroke::new(1.0, DIM)).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+        egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
                 let size = self.settings.get().chat_size.clamp(10.0, 40.0);
@@ -1478,19 +1921,20 @@ impl App {
                     let c = |x: Color32| if l.hidden { gone } else { x };
                     let _ = &fmt;
                     if l.note {
-                        append(&mut job, &format!("✼ {}", l.text), size, if l.ping { CYAN } else { GREY }, false);
+                        append(&mut job, &format!("✼ {}", l.text), size, if l.ping { CYAN() } else { GREY() }, false);
                     } else {
-                        append(&mut job, &l.name, size, c(if l.host { LIME } else { CYAN }), l.hidden);
+                        append(&mut job, &l.name, size, c(if l.host { LIME() } else { CYAN() }), l.hidden);
                         if l.queued { append(&mut job, " (in line)", size, c(Color32::from_rgb(0x77, 0x77, 0x77)), l.hidden); }
-                        append(&mut job, &format!("  {}", l.text), size, c(TEXT), l.hidden);
-                        append(&mut job, &format!("  {}", l.when), size * 0.85, c(WHEN), l.hidden);
+                        append(&mut job, &format!("  {}", l.text), size, c(TEXT()), l.hidden);
+                        append(&mut job, &format!("  {}", l.when), size * 0.85, c(WHEN()), l.hidden);
                     }
                     job.wrap.max_width = ui.available_width();
-                    let mut r = ui.add(egui::Label::new(job).sense(Sense::click()));
+                    // (right-clickable, but not a button: the plain star over it)
+                    let mut r = ui.add(egui::Label::new(job).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::Default);
                     if let Some(id) = l.id {
                         let (who, host, name) = (l.who, l.host, l.name.clone());
                         if !l.hidden {
-                            r = r.on_hover_text("right-click: take it back, or ban this viewer");
+                            r = r.on_hover_text(tip("right-click: take it back, or ban this viewer"));
                         }
                         r.context_menu(|ui| {
                             if ui.button("take this line back off everyone's page").clicked() { act = Some(json!({"hide": id})); ui.close(); }
@@ -1513,9 +1957,18 @@ impl App {
     }
 
     fn answer(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let w = ui.available_width() - 300.0;
-            let r = field(ui, &mut self.entry, w.max(80.0), "", false);
+        // (narrow: the line across the window, the buttons under it)
+        let narrow = ui.available_width() < 470.0;
+        let mut line: Option<egui::Response> = None;
+        if narrow {
+            line = Some(field(ui, &mut self.entry, ui.available_width(), "say something", false));
+            ui.add_space(4.0);
+        }
+        ui.horizontal_wrapped(|ui| {
+            let r = match line.take() { Some(r) => r, None => {
+                let w = ui.available_width() - 290.0;
+                field(ui, &mut self.entry, w.max(80.0), "say something", false)
+            } };
             let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if button(ui, "send", false, None).clicked() || enter {
                 let text = self.entry.trim().to_string();
@@ -1541,14 +1994,14 @@ impl App {
     fn guess_ui(&mut self, ui: &mut egui::Ui) {
         if let Some((boss, what)) = &mut self.guess_form {
             let (mut go, mut drop) = (false, false);
-            egui::Frame::new().stroke(Stroke::new(1.0, PINK)).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
-                ui.label(rich("drop guesses: the boss (as Dink names it)", 14.0, GREY));
+            egui::Frame::new().stroke(Stroke::new(1.0, PINK())).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+                ui.label(rich("drop guesses: the boss (as Dink names it)", 14.0, GREY()));
                 field(ui, boss, ui.available_width(), "Vorkath", false);
-                ui.label(rich("what they're guessing (a unique, the pet…)", 14.0, GREY));
+                ui.label(rich("what they're guessing (a unique, the pet…)", 14.0, GREY()));
                 field(ui, what, ui.available_width(), "the next good drop", false);
+                let least = self.settings.get().guess_min_value;
+                ui.add(egui::Label::new(rich(&format!("decided by a drop worth {} or more from it, or by \"it dropped\"", gp(least)), 14.0, GREY())).wrap());
                 ui.horizontal(|ui| {
-                    let least = self.settings.get().guess_min_value;
-                    ui.label(rich(&format!("decided by a drop worth {} or more from it, or by \"it dropped\"", gp(least)), 14.0, GREY));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "open it", true, None).clicked() { go = true; }
                         if button(ui, "never mind", true, None).clicked() { drop = true; }
@@ -1572,10 +2025,10 @@ impl App {
         let result = g.get("result").filter(|r| !r.is_null()).cloned();
         let open = g.get("open").and_then(|x| x.as_bool()).unwrap_or(false);
         let mut send: Option<Value> = None;
-        egui::Frame::new().stroke(Stroke::new(1.0, if result.is_none() { PINK } else { DIM })).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+        egui::Frame::new().stroke(Stroke::new(1.0, if result.is_none() { PINK() } else { DIM() })).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let s = |k: &str| g.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-                ui.label(rich(&format!("drop guesses · {}: {}", s("boss"), s("what")), 16.0, if result.is_none() { PINK } else { GREY }));
+                ui.label(rich(&format!("drop guesses · {}: {}", s("boss"), s("what")), 16.0, if result.is_none() { PINK() } else { GREY() }));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if button(ui, "call it off", true, None).clicked() { send = Some(json!({"guess_off": true})); }
                     if result.is_none() {
@@ -1596,22 +2049,68 @@ impl App {
                                 g.get("count").and_then(|x| x.as_u64()).unwrap_or(0),
                                 if open { "" } else { " · guesses closed, waiting for the drop" }),
             };
-            ui.add(egui::Label::new(rich(&text, 14.0, TEXT)).wrap());
+            ui.add(egui::Label::new(rich(&text, 14.0, TEXT())).wrap());
         });
         if let Some(m) = send { self.desk.send(m); }
         ui.add_space(6.0);
     }
 
     /// the banned, each with its unban
+    /// Who's watching (11/05/2026, Jace: "add viewer list"): the relay's list, those with a spot first, then those in
+    /// line, each by the name they gave (a viewer who hasn't given one is "visitor"). Right-click one to ban them.
+    fn viewers_ui(&mut self, ui: &mut egui::Ui) {
+        if !self.show_viewers {
+            return;
+        }
+        let mut act: Option<(Value, String)> = None;
+        let banned: Vec<i64> = self.banned.iter().map(|b| b.0).collect();
+        egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let watching: Vec<&Value> = self.viewer_list.iter().filter(|v| !v.get("waiting").and_then(|x| x.as_bool()).unwrap_or(false)).collect();
+            let waiting: Vec<&Value> = self.viewer_list.iter().filter(|v| v.get("waiting").and_then(|x| x.as_bool()).unwrap_or(false)).collect();
+            if self.viewer_list.is_empty() {
+                ui.label(rich(if self.up { "nobody's watching" } else { "the relay isn't answering" }, 14.0, GREY()));
+            }
+            egui::ScrollArea::vertical().id_salt("viewers").max_height(150.0).auto_shrink([false, true]).show(ui, |ui| {
+                for (group, list) in [("watching", &watching), ("in line for a spot", &waiting)] {
+                    if list.is_empty() { continue; }
+                    ui.label(rich(&format!("{} ({})", group, list.len()), 14.0, LIME()));
+                    ui.horizontal_wrapped(|ui| {
+                        for v in list.iter() {
+                            let who = v.get("who").and_then(|x| x.as_i64()).unwrap_or(0);
+                            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("visitor").to_string();
+                            let r = ui.add(egui::Label::new(rich(&name, 14.0, CYAN())).sense(Sense::click()))
+                                .on_hover_cursor(egui::CursorIcon::Default)
+                                .on_hover_text(tip(&format!("viewer {} · right-click to ban them", who)));
+                            r.context_menu(|ui| {
+                                if banned.contains(&who) {
+                                    if ui.button(format!("unban {}", name)).clicked() { act = Some((json!({"unban": who}), format!("unbanned {}", name))); ui.close(); }
+                                } else if ui.button(format!("ban {} (every line of theirs taken back)", name)).clicked() {
+                                    act = Some((json!({"ban": who}), format!("banned {}", name)));
+                                    ui.close();
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+        });
+        ui.add_space(6.0);
+        if let Some((m, n)) = act {
+            self.desk.send(m);
+            self.note(n);
+        }
+    }
+
     fn banned_ui(&mut self, ui: &mut egui::Ui) {
         if self.banned.is_empty() {
             return;
         }
         let mut unban = None;
-        egui::CollapsingHeader::new(rich(&format!("banned ({})", self.banned.len()), 14.0, GREY)).id_salt("banned").show(ui, |ui| {
+        egui::CollapsingHeader::new(rich(&format!("banned ({})", self.banned.len()), 14.0, GREY())).id_salt("banned").show(ui, |ui| {
             for (who, name) in &self.banned {
                 ui.horizontal(|ui| {
-                    ui.label(rich(name, 14.0, TEXT));
+                    ui.label(rich(name, 14.0, TEXT()));
                     if button(ui, "unban", true, None).clicked() { unban = Some((*who, name.clone())); }
                 });
             }
@@ -1626,17 +2125,17 @@ impl App {
         if let Some(f) = &mut self.poll_form {
             let mut send = false;
             let mut drop = false;
-            egui::Frame::new().stroke(Stroke::new(1.0, LIME)).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
-                ui.label(rich("the question", 14.0, GREY));
+            egui::Frame::new().stroke(Stroke::new(1.0, LIME())).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+                ui.label(rich("the question", 14.0, GREY()));
                 field(ui, &mut f.question, ui.available_width(), "", false);
-                ui.label(rich("the options, one a line (2 to 6)", 14.0, GREY));
+                ui.label(rich("the options, one a line (2 to 6)", 14.0, GREY()));
                 ui.add(egui::TextEdit::multiline(&mut f.options).desired_rows(4).desired_width(f32::INFINITY));
                 ui.horizontal(|ui| {
-                    ui.label(rich("open for", 14.0, GREY));
+                    ui.label(rich("open for", 14.0, GREY()));
                     egui::ComboBox::from_id_salt("secs").selected_text(f.seconds.to_string()).show_ui(ui, |ui| {
                         for s in [30, 60, 90, 120, 180, 300, 600] { ui.selectable_value(&mut f.seconds, s, s.to_string()); }
                     });
-                    ui.label(rich("seconds", 14.0, GREY));
+                    ui.label(rich("seconds", 14.0, GREY()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "send it out", true, None).clicked() { send = true; }
                         if button(ui, "never mind", true, None).clicked() { drop = true; }
@@ -1665,15 +2164,15 @@ impl App {
         let most = counts.iter().cloned().max().unwrap_or(0);
         let mut close = false;
         let mut dismiss = false;
-        egui::Frame::new().stroke(Stroke::new(1.0, if open { LIME } else { DIM })).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+        egui::Frame::new().stroke(Stroke::new(1.0, if open { LIME() } else { DIM() })).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let q = p.get("question").and_then(|x| x.as_str()).filter(|q| !q.is_empty()).unwrap_or("a poll");
-                ui.label(rich(&format!("{}{}", q, if open { "" } else { " · closed" }), 16.0, if open { LIME } else { GREY }));
+                ui.label(rich(&format!("{}{}", q, if open { "" } else { " · closed" }), 16.0, if open { LIME() } else { GREY() }));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if open {
                         if button(ui, "close it", true, None).clicked() { close = true; }
                         let left = self.poll_ends.saturating_duration_since(Instant::now()).as_secs();
-                        ui.label(rich(&format!("{} s left", left), 14.0, GREY));
+                        ui.label(rich(&format!("{} s left", left), 14.0, GREY()));
                     } else if button(ui, "×", true, None).clicked() {
                         dismiss = true;
                     }
@@ -1683,10 +2182,10 @@ impl App {
                 let won = !open && most > 0 && *n == most;
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::new(150.0, 18.0), Sense::hover());
-                    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, o, body(14.0), if won { PINK } else { TEXT });
+                    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, o, body(14.0), if won { PINK() } else { TEXT() });
                     let lit = (28.0 * *n as f64 / total as f64).round() as usize;
-                    blocks(ui, 28, |i| if i < lit { if won { PINK } else { LIME } } else { ABYSS }, 10.0);
-                    ui.label(rich(&n.to_string(), 14.0, GREY));
+                    blocks(ui, 28, |i| if i < lit { if won { PINK() } else { LIME() } } else { ABYSS() }, 10.0);
+                    ui.label(rich(&n.to_string(), 14.0, GREY()));
                 });
             }
         });
@@ -1696,9 +2195,9 @@ impl App {
     }
 
     fn close_modal(&mut self, ctx: &egui::Context) {
-        egui::Modal::new(egui::Id::new("closing")).frame(egui::Frame::new().fill(ABYSS).stroke(Stroke::new(1.0, LIME))
+        egui::Modal::new(egui::Id::new("closing")).frame(egui::Frame::new().fill(ABYSS()).stroke(Stroke::new(1.0, LIME()))
             .inner_margin(egui::Margin::same(16))).show(ctx, |ui| {
-            ui.label(rich("the portal is live.", 16.0, LIME));
+            ui.label(rich("the portal is live.", 16.0, LIME()));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if button(ui, "end the stream and close", false, None).clicked() {
@@ -1754,9 +2253,9 @@ impl App {
             let p = ui.painter();
             if moving {
                 p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
-                p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME), egui::StrokeKind::Inside);
-                p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME);
-                p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the portal's window, to keep it there", body(14.0), GREY);
+                p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
+                p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
+                p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the portal's window, to keep it there", body(14.0), GREY());
                 let resp = ui.interact(rect, ui.id().with("drag"), Sense::click_and_drag());
                 if resp.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -1770,7 +2269,7 @@ impl App {
             // newest at the bottom, each with a dark rim; lit, then dim after 20 s, then gone
             let mut yy = rect.bottom() - 6.0;
             for (age, name, text, host) in lines.iter().rev() {
-                let (cn, ct) = if *age < 20.0 { (if *host { LIME } else { CYAN }, Color32::from_rgb(0xf0, 0xf0, 0xf0)) } else { (DIM, Color32::from_rgb(0x6a, 0x6a, 0x6a)) };
+                let (cn, ct) = if *age < 20.0 { (if *host { LIME() } else { CYAN() }, Color32::from_rgb(0xf0, 0xf0, 0xf0)) } else { (theme::pal().lime_dim, Color32::from_rgb(0x6a, 0x6a, 0x6a)) };
                 let mut j = egui::text::LayoutJob::default();
                 append(&mut j, name, size, cn, false);
                 append(&mut j, &format!("  {}", text), size, ct, false);
@@ -1787,6 +2286,7 @@ impl App {
                 p.galley(at, g, ct);
                 if yy < rect.top() + 10.0 { break; }
             }
+            crate::cursor::follow(ui.ctx(), crate::cursor::still());
         });
         if moving {
             if let Some((px, py)) = put {
@@ -1844,7 +2344,7 @@ impl App {
                     MaskDrag::New(start) => {
                         let r2 = egui::Rect::from_two_pos(start, p);
                         ui.painter().rect_filled(r2, 0.0, Color32::from_black_alpha(230));
-                        ui.painter().rect_stroke(r2, 0.0, Stroke::new(2.0, PINK), egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(r2, 0.0, Stroke::new(2.0, PINK()), egui::StrokeKind::Inside);
                     }
                     _ => {}
                 }
@@ -1871,17 +2371,18 @@ impl App {
             if ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) { done = true; }
             // what goes out: the masks black, a thin pink edge round each and round the game
             let p = ui.painter();
-            p.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0, LIME), egui::StrokeKind::Inside);
+            p.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
             for m in &masks {
                 let mr = to_rect(m);
                 p.rect_filled(mr, 0.0, Color32::BLACK);
-                p.rect_stroke(mr, 0.0, Stroke::new(1.0, PINK), egui::StrokeKind::Inside);
+                p.rect_stroke(mr, 0.0, Stroke::new(1.0, PINK()), egui::StrokeKind::Inside);
             }
             let hint = "drag to cover what shouldn't go out · drag a box to move it · right-click one to take it away · Enter or \"done\" when they're right";
             let at = egui::pos2(rect.center().x, rect.top() + 18.0);
-            let g = p.layout_no_wrap(hint.into(), body(16.0), LIME);
+            let g = p.layout_no_wrap(hint.into(), body(16.0), LIME());
             p.rect_filled(egui::Rect::from_center_size(at, g.size() + Vec2::new(16.0, 8.0)), 0.0, Color32::from_black_alpha(220));
-            p.galley(at - g.size() / 2.0, g, LIME);
+            p.galley(at - g.size() / 2.0, g, LIME());
+            crate::cursor::follow(ui.ctx(), crate::cursor::still());
         });
         self.mask_drag = drag;
         if masks != s.masks && (changed || matches!(drag, Some(MaskDrag::Move(..)))) {
@@ -1914,7 +2415,7 @@ impl App {
                 let k = (age / 1.2).min(1.0);
                 let step = (k * 8.0).floor() / 8.0; // (in steps, the dither's way, not a glide)
                 let at = egui::pos2(rect.left() + x * rect.width(), rect.top() + rect.height() * (0.78 - 0.45 * step));
-                let colour = if step < 0.6 { LIME } else if step < 0.9 { DIM } else { Color32::from_rgb(0x22, 0x33, 0x0a) };
+                let colour = if step < 0.6 { LIME() } else if step < 0.9 { theme::pal().lime_dim } else { Color32::from_rgb(0x22, 0x33, 0x0a) };
                 let big = 34.0 + 10.0 * (1.0 - step);
                 p.text(at + Vec2::new(2.0, 2.0), egui::Align2::CENTER_CENTER, "✼", symbol_font(big), Color32::from_rgb(10, 10, 10));
                 p.text(at, egui::Align2::CENTER_CENTER, "✼", symbol_font(big), colour);
@@ -1938,8 +2439,8 @@ impl App {
             let k = (p.at.elapsed().as_secs_f32() / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
             let step = (k * 6.0).floor();
             let kk = step / 6.0;
-            let colour = if step < 3.6 { LIME } else { DIM };
-            let name_colour = if step < 6.0 { LIME } else { DIM };
+            let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
+            let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
             let pos = egui::pos2(p.x / ppp - WIDE / 2.0, p.y / ppp - TALL / 2.0);
             let builder = egui::ViewportBuilder::default().with_title("the portal ✼ ping").with_decorations(false)
                 .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)

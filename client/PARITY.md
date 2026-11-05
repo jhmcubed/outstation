@@ -27,7 +27,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
    - The same frame as `capture.py`'s, 768×430: a mean difference of 0.8 in 255, a second apart.
    - PrintWindow and the screen fallback are written but not yet tried on a machine without Windows Graphics Capture.
    - Cost: a frame takes 4.8 ms against Python's 3.5 (2.9 ms crop and shrink, 1.6 ms JPEG, against OpenCV's 2.2 and libjpeg-turbo's 0.8). At 30 a second that's 14% of a core against 11%.
-4. ◐ **The masks** (chat, side, both) in both layouts: written from `capture.py`'s numbers, not yet compared picture to picture.
+4. **The masks** (chat, side, both): retired on 11/05/2026 at Jace's word (a fixed size whatever the client's); your own masks take their place.
 5. ✓ **Width** (never wider than the game), quality, 1–60 a second, paced to fixed deadlines.
 6. ✓ **A frame** is 4 bytes, the ms it was taken on the portal's clock, then the JPEG.
 7. ✓ **The gate:** no window, minimised, paused, or (if asked) logged out. The pause key is now `RegisterHotKey` (`hotkeys.rs`), not a look at the keyboard every 20 ms (SAFETY.md). The press itself is ◐: not tried by hand yet.
@@ -125,6 +125,11 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 - ✓ **The live view:** the portal as the site gets it, through the relay as a looker, and what viewers' pages say they've had (the relays' new `acked`). "the live view" off connects nothing.
 - ✓ **The tray:** minimising sends the window there, a click on the ✼ brings it back, and the ✼ is pink while live.
 - ✓ **Small frames for lookers:** a 192 px copy twice a second (`TH`), which the relays give lookers instead of full frames: 9 KB/s a looker where it was about 81.
+- ✓ **The chat switch:** "viewers may chat" (the desk's `{"chat_on"}`): viewers' lines go nowhere while it's off, the host's still go out, and pages say so.
+- ✓ **The viewer list:** "watching: n ▸", from the relays' `{"viewers"}` (names as given, never a device); right-click to ban.
+- ✓ **A window of its own:** its own title bar, edges and border, and ghillie.wiki's cursor (`cursor.rs`), on the portal's own windows only.
+- ✓ **jute's look** (`theme.rs`): the browns, plates and tint strip, and anyone's own colours.
+- ✓ **"blacked out" retired:** the fixed-size chat and side boxes, in favour of your own masks (an old setting is ignored).
 - ✓ **Dink posted twice** (an address listed twice in Dink): the same post within 10 s is one event, in the client and every relay.
 
 ## Still to do before the Python is retired

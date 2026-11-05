@@ -54,7 +54,7 @@ pub fn start(settings: Shared) -> Arc<Mutex<Status>> {
 pub fn label(m: &str) -> &'static str {
     match m {
         "game" => "the game",
-        "all" => "the game and everything else",
+        "all" => "the game + the desktop's sound",
         _ => "off",
     }
 }

@@ -93,6 +93,7 @@ interface Meta {
   state: string; // the capture's last {"state"}: sound passes only while "open"
   bans?: { who: number; name: string; tags: string[] }[]; // banned from the desk: blocked, their lines taken back
   pingsOff?: boolean; // the desk's {"pings": false}: viewers' pings go nowhere
+  chatOff?: boolean; // the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
@@ -189,6 +190,7 @@ export class Channel extends DurableObject<Env> {
       static: live && this.meta.state === "static",
       set: this.meta.keyHash !== null, // (the channel was handed out: Outside says "no portal here yet" when it wasn't)
       pings: !this.meta.pingsOff,
+      chat: !this.meta.chatOff,
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
@@ -199,6 +201,25 @@ export class Channel extends DurableObject<Env> {
     const line = this.status();
     for (const ws of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look"), ...this.sockets("transmit")]) this.send(ws, line);
     this.waiting().forEach((ws, i) => this.send(ws, this.status(i + 1, this.att(ws).who)));
+    this.tellWatching();
+  }
+
+  /** Who's watching, for the desk (11/05/2026, Jace: "add viewer list"): each viewer's number, the name it gave in
+   *  the chat ("visitor" until it gives one), and whether it's in line. Never a device or address. */
+  viewerList(): string {
+    const one = (ws: WebSocket, waiting: boolean) => {
+      const a = this.att(ws);
+      return { who: a.who || 0, name: a.name || "visitor", waiting };
+    };
+    const seated = this.seated().map((ws) => one(ws, false)).sort((x, y) => x.who - y.who);
+    return pyjson({ viewers: [...seated, ...this.waiting().map((ws) => one(ws, true))] });
+  }
+
+  tellWatching() {
+    const desks = this.sockets("desk");
+    if (!desks.length) return;
+    const line = this.viewerList();
+    for (const d of desks) this.send(d, line);
   }
 
   broadcast(line: string) {
@@ -382,6 +403,7 @@ export class Channel extends DurableObject<Env> {
     this.send(ws, this.status());
     this.lateJoiner(ws, "desk");
     this.send(ws, this.bannedLine());
+    this.send(ws, this.viewerList());
   }
 
   bannedLine(): string {
@@ -606,6 +628,7 @@ export class Channel extends DurableObject<Env> {
       const name = oneLine(m.hello.name, NAME_MAX);
       a.name = name && !this.meta.hostNames.includes(name.toLowerCase()) ? name : "visitor";
       ws.serializeAttachment(a);
+      this.tellWatching();
       return;
     }
     // in line for a seat: chat and votes all the same; pings only once seated, with a frame to point at
@@ -614,7 +637,7 @@ export class Channel extends DurableObject<Env> {
     if ("say" in m) {
       const text = oneLine(m.say, SAY_MAX);
       const says = (a.says || []).filter((t) => now - t <= SAY_WINDOW);
-      if (!text || blocked || says.length >= SAY_BURST) {
+      if (!text || blocked || this.meta.chatOff || says.length >= SAY_BURST) {
         a.says = says;
         ws.serializeAttachment(a);
         return;
@@ -743,6 +766,13 @@ export class Channel extends DurableObject<Env> {
     } else if (typeof m.pings === "boolean") {
       if (!m.pings !== !!this.meta.pingsOff) {
         this.meta.pingsOff = !m.pings;
+        this.saveMeta();
+        this.tellViewers();
+      }
+    } else if (typeof m.chat_on === "boolean") {
+      // (11/05/2026, Jace: "add ability to toggle chat off")
+      if (!m.chat_on !== !!this.meta.chatOff) {
+        this.meta.chatOff = !m.chat_on;
         this.saveMeta();
         this.tellViewers();
       }

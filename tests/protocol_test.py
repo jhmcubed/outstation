@@ -689,6 +689,44 @@ class Moderation(Base):
         self.assertEqual((await next_of(desk, "ping"))["name"], "moss")
 
 
+    async def test_the_chat_switched_off_takes_no_viewer_lines_but_the_hosts(self):
+        tx, desk, a, b = await self.room()
+        await desk.send(json.dumps({"chat_on": False}))
+        st = await next_of(a, "relay")
+        while st["chat"]:
+            st = await next_of(a, "relay")
+        await a.send(json.dumps({"say": "anyone there"}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "chat", timeout=0.5)
+        await desk.send(json.dumps({"say": "the chat's off for a bit"}))
+        self.assertTrue((await next_of(a, "chat"))["host"])
+        await desk.send(json.dumps({"chat_on": True}))
+        while not (await next_of(a, "relay"))["chat"]:
+            pass
+        await a.send(json.dumps({"say": "back again"}))
+        line = await next_of(desk, "chat")
+        while line.get("host"):
+            line = await next_of(desk, "chat")
+        self.assertEqual(line["text"], "back again")
+
+    async def test_the_desk_hears_who_is_watching_by_name(self):
+        tx, desk, a, b = await self.room()
+        names = []
+        for _ in range(20):
+            v = await next_of(desk, "viewers")
+            names = sorted(x["name"] for x in v)
+            if names == ["fern", "moss"]:
+                break
+        self.assertEqual(names, ["fern", "moss"])
+        self.assertTrue(all(set(x) == {"who", "name", "waiting"} for x in v))   # (never a device)
+        b.close()
+        for _ in range(20):
+            v = await next_of(desk, "viewers")
+            if [x["name"] for x in v] == ["moss"]:
+                break
+        self.assertEqual([x["name"] for x in v], ["moss"])
+
+
 class RoundTwo(Base):
     """main's round two (11/05/2026): lookers, the signal button, drop guesses, the static key."""
 
