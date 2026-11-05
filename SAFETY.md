@@ -10,9 +10,10 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 | play for you: press keys, click, move the mouse? | **No.** It has no way to send a key or a click. |
 | see your password, bank PIN or account? | **No.** It never asks for your Jagex login. It sees only what's drawn in RuneLite's window, as a stream does, so press **Pause** before typing a bank PIN: nothing goes out while paused, and the half second before the press is taken back. |
 | read what RuneLite and Jagex say to each other? | **No.** |
-| watch your keyboard? | **No.** Windows tells it only when one of its own two keys is pressed: Pause (pause the picture) and Scroll Lock (the sound). |
+| watch your keyboard? | **No.** Windows tells it only when one of its own four keys is pressed: the static key (Pause), the sound key (Scroll Lock), the clip key (Insert) and the mask key (End). You can change each. |
+| show something you'd rather keep to yourself? | **Only what you allow.** Draw your own masks over any part of the game (the chat, the map, the world number): those parts are blacked out on your PC, before a frame is made, so they never leave it. The mask key turns them off and on. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. |
-| let viewers control anything? | **No.** Viewers can chat, vote in your polls, and point at a spot. The ring is drawn in a see-through window of the portal's own, over RuneLite, never in it. You can switch it off. |
+| let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. The ring, the ✼ and the chat over the game are drawn in see-through windows of the portal's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off, and "viewers may ping" switches pings off altogether. |
 
 **What it reads:**
 - **RuneLite's window, as pictures.** It uses Windows Graphics Capture, the way OBS's Window Capture and Discord's screen share do.
@@ -24,6 +25,8 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 - **Your picture, sound and chat:** only to the relay in your attach code.
 - **Dink's posts:** only to the portal on your own PC (`127.0.0.1`, which nothing outside your PC can reach). They go on to your Discord webhook if you set one.
 - **GitHub:** once on opening, to see whether there's a newer version. "more ▸" in the settings turns that off.
+
+Clips (the replay buffer) are written on your own PC, into Videos\outside-portal, by Windows' own video encoder. Nothing about them is sent anywhere. The live view in the window watches your own portal through the relay, as any viewer would.
 
 Nothing else. The safety check below proves the program has no other address in it.
 
@@ -86,6 +89,8 @@ Everything it touches in Windows, by file:
   - finding RuneLite's window and its process (window titles, the process list)
   - your network's byte counter (`GetIfTable2`)
   - the clipboard (for the attach code and Dink's address)
-- `hotkeys.rs`: `RegisterHotKey` for its two keys.
+- `hotkeys.rs`: `RegisterHotKey` for its four keys.
+- `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder.
+- `feed.rs`: the live view: your own channel watched through the relay.
 - `dink.rs`: a web server on `127.0.0.1` only.
-- `ui.rs`: its own windows, the tray icon, and Windows' symbol font.
+- `ui.rs`: its own windows (the see-through ones over RuneLite included), the tray icon, and Windows' symbol font. It acts only on windows of its own program, never on another that happens to share a title.

@@ -498,6 +498,9 @@ class Relay:
         if method == "POST" and len(path) == 2 and path[0] == "dink":
             await self.dink(reader, writer, headers, path[1], q.get("key", ""))
             return
+        if method == "GET" and not key and url.path == "/channels":
+            await self.channel_list(writer)
+            return
         if method in ("GET", "HEAD") and not key:
             await self.page(writer, url.path, method == "HEAD")
             return
@@ -861,6 +864,22 @@ class Relay:
                 for v in list(ch.viewers):
                     v.send_nowait(ch.sound_info)
                 self.log("no sound  %s" % name)
+
+    async def channel_list(self, writer):
+        """The open portals (11/05/2026, Jace: "a page ... that shows all active connected public portals"): every channel
+        that's set up and has no watch code, live ones first, with whether each is live. Anyone may read it (the
+        public side too); a channel with a watch code is never listed."""
+        rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
+                 "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers)}
+                for ch in self.channels.values() if ch.key is not None and not ch.code]
+        rows.sort(key=lambda r: (not r["live"], r["channel"]))
+        body = json.dumps({"channels": rows}).encode()
+        writer.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
+                      "Access-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" % len(body)).encode() + body)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
 
     async def page(self, writer, path, head_only=False):
         """The watching page itself, so a friend needs only this relay's address."""

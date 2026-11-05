@@ -91,6 +91,21 @@ export default {
 
     if (parts[0] === "admin" && parts[1] === "channels") return admin(request, env, parts);
 
+    // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)
+    if (request.method === "GET" && url.pathname === "/channels") {
+      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+      const names = ((await (await dir.fetch("https://dir/")).json()) as { channel: string }[]).map((c) => c.channel);
+      const rows = await Promise.all(names.map(async (n) => {
+        try {
+          const r = await channelStub(env, n).fetch(toChannel(new Request(url.toString()), n, "/_status"));
+          return (await r.json()) as { channel: string; set: boolean; code: boolean; live: boolean; open: boolean; static: boolean; viewers: number };
+        } catch { return null; }
+      }));
+      const open = rows.filter((r) => r && r.set && !r.code).map((r) => ({ channel: r!.channel, live: r!.live, open: r!.open, static: r!.static, viewers: r!.viewers }));
+      open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
+      return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
+    }
+
     if (request.method === "POST" && parts.length === 2 && parts[0] === "dink" && NAME.test(parts[1])) {
       const n = parseInt(request.headers.get("content-length") || "0") || 0;
       if (n > MAX_POST) return new Response(null, { status: 413 });

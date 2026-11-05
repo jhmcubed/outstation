@@ -285,6 +285,23 @@ class Fanout(Base):
             pass
 
 
+class Listed(Base):
+    async def test_the_open_portals_are_listed_and_a_coded_one_never(self):
+        tx = await self.tx("")
+        await self.pause()
+        def listed():
+            with urllib.request.urlopen(http_url() + "/channels", timeout=10) as r:
+                self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+                return {c["channel"]: c for c in json.load(r)["channels"]}
+        got = await asyncio.to_thread(listed)
+        self.assertIn(self.ch, got)
+        self.assertTrue(got[self.ch]["live"])
+        tx.close()
+        await self.tx("a-code")
+        await self.pause(2)
+        self.assertNotIn(self.ch, await asyncio.to_thread(listed))
+
+
 class Keys(Base):
     async def test_the_wrong_key_cant_take_a_channel(self):
         await self.tx()

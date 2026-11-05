@@ -282,6 +282,12 @@ export class Channel extends DurableObject<Env> {
     if (role === "watch" && q.get("look") === "1") role = "look";
 
     if (role === "_mint") return this.mint();
+    if (role === "_status") {
+      const live = this.live();
+      return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
+                             open: live && this.meta.state === "open", static: live && this.meta.state === "static",
+                             viewers: this.seated().length });
+    }
     if (role === "_revoke") return this.revoke();
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
 

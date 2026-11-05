@@ -97,8 +97,37 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 37. ◐ **The tray:** open, go live / end stream, the sound's modes, quit. Closing while live asks: end the stream, keep it going in the tray, or never mind. Not yet clicked.
 38. ✓ **By hand ▸:** a relay-py of your own (and so Tailscale Funnel, as now). `client_live.py` ran the client against relay-py.
 
+## Main's round two (jhmcubed/ghillie#90, 11/05/2026), and after
+
+39. ✓ **The static key** (Pause): viewers see static, "signal obscured", while the sound and chat go on (`{"state": "static"}`). ◐ Not pressed by hand yet.
+40. ✓ **Every hotkey changeable:** the static, sound, clip and mask keys, in the settings drawer. Press "change", then the key (Escape keeps the old one). Pause, Scroll Lock, Num Lock and Caps Lock are buttons, since egui can't hear them. A key already in use is refused. Each takes at once (`RegisterHotKey`).
+41. ✓ **The replay buffer,** 0 to 30 s, and clips as .mp4.
+    - The Python's relay kept and wrote them; a relay on Cloudflare can't write to a PC, so here the client keeps exactly what it sent and writes the clip itself.
+    - It uses Windows' own H.264 and AAC (Media Foundation), both busses mixed by their stamps, into `clip_folder` (Videos\outside-portal).
+    - `--clip-selftest DIR`: two seconds, 60 frames, the tone at its level (checked with PyAV).
+    - ◐ Not tried on a real stream yet.
+42. ◐ **The chat over the game:**
+    - the newest 7 lines over RuneLite, fading after 20 s, in a see-through click-through window
+    - "move it" turns it into a box to drag, kept with "done" or Enter as a share of the game (`game_chat_at`, read from the Python's settings too)
+    - its text size its own
+    - Written and built; not looked at over the game yet.
+43. ✓ **The signal button:** the window counts each ✼. As Jace asked later ("allow for spamming"), each also rises over RuneLite (◐ not seen there yet; "✼ on my screen" turns it off). The relays' limit is now a flood guard of about 12 a second.
+44. ✓ **Drop guesses:** the form (the boss, what's guessed) and the round (its count, "stop guesses", "it dropped", "call it off", the result). The relays decide them from Dink's counts and loot; the Worker has them too. `guess_min_value` goes to the relay as the desk's `{"guess_min_value"}`.
+45. **Picture in picture, and the listening post tuned to the portal:** both the page's own (`outside-portal.js`, `portal-feed.js`). The Worker serves lookers, so they work against Cloudflare.
+46. **The chat window opening with the stream:** the client is the window.
+
+**Asked for in the same days, beyond the Python:**
+- ✓ **Bans:** "ban" in a line's menu takes back every line of theirs and blocks their device; "banned (n)" lists them, each with "unban". The relays send the list.
+- ✓ **Hiding a line:** "take this line back".
+- ✓ **"viewers may ping":** the desk's `{"pings"}`; viewers' pings go nowhere while it's off.
+- ✓ **Sizes:** the chat's text, the chat over the game's, and the whole window's (75–200%).
+- ✓ **Your own masks:** "edit masks" draws them over the game. They're blacked out before a frame is made: `client_live.py` checks a masked half arrives black. The mask key turns them off and on.
+- ✓ **The live view:** the portal as the site gets it, through the relay as a looker, and what viewers' pages say they've had (the relays' new `acked`). "the live view" off connects nothing.
+- ✓ **The tray:** minimising sends the window there, a click on the ✼ brings it back, and the ✼ is pink while live.
+- ✓ **Dink posted twice** (an address listed twice in Dink): the same post within 10 s is one event, in the client and every relay.
+
 ## Still to do before the Python is retired
 
-- Everything marked ◐, by hand on Jace's PC with his real RuneLite and real viewers.
+- Everything marked ◐, by hand on Jace's PC with his real RuneLite and real viewers. Including: pressing each hotkey, the chat over the game moved, a mask drawn, a clip of a real stream, the tray minimise and the pink ✼.
 - The client on a Windows account without Python or Rust.
 - The field station starting the client in place of `start.py`. (ghillie's `tools/launcher`.)
