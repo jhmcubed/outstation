@@ -72,6 +72,9 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         wake();
         let mut cap = s.max_viewers;
         let _ = ws.text(&format!("{{\"cap\": {}}}", cap));
+        let (mut pings, mut guess_min) = (s.pings_allowed, s.guess_min_value);
+        let _ = ws.text(&format!("{{\"pings\": {}}}", pings));
+        let _ = ws.text(&format!("{{\"guess_min_value\": {}}}", guess_min));
         let mut checked = Instant::now();
         let ended = loop {
             match ws.recv() {
@@ -98,6 +101,15 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
                 if s.max_viewers != cap {
                     cap = s.max_viewers;
                     let _ = ws.text(&format!("{{\"cap\": {}}}", cap));
+                }
+                // viewers' pings, allowed or not, and what decides a drop guess: at once, too
+                if s.pings_allowed != pings {
+                    pings = s.pings_allowed;
+                    let _ = ws.text(&format!("{{\"pings\": {}}}", pings));
+                }
+                if s.guess_min_value != guess_min {
+                    guess_min = s.guess_min_value;
+                    let _ = ws.text(&format!("{{\"guess_min_value\": {}}}", guess_min));
                 }
             }
         };

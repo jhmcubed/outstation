@@ -98,6 +98,7 @@ SIGNAL_EVERY = 1.0                # a viewer's ✼ (the signal button) at most o
 GUESS_MIN_VALUE = 1_000_000       # a drop from the guessed boss this big ends a guess round by itself (settings' guess_min_value)
 GUESS_KEPT = 120.0                # a decided round's result stays this long
 POLL_KEPT = 90.0                  # a closed poll's result stays this long, then {"poll_gone"} (Jace, 11/05)
+DINK_SAME = 10.0                  # the same Dink post again within this long is dropped (a webhook listed twice in Dink)
 SOUND_HOLD = 0.5                  # the capture's HOLD_BACK: a pause takes the last moment's sound back too
 CONTROL = re.compile(r"[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]")
 # Dink's notification kinds that pass to viewers (none of them name another player,
@@ -227,6 +228,7 @@ class Channel:
         self.reports = deque(maxlen=8)
         self.state = "open"          # the capture's last {"state"}: sound passes only while open
         self.desks = set()           # Jace's chat windows
+        self.dink_seen = {}          # a Dink post's hash -> when: the same one twice in a row is one event
         self.lookers = set()         # the listening post's receivers: no seat, a frame or two a second while they ask
         self.chat = deque(maxlen=CHAT_KEPT)
         self.chat_id = 0
@@ -899,6 +901,16 @@ class Relay:
             return await answer("403 Forbidden")
         content_type = headers.get("content-type", "")
         payload = dink_payload(content_type, body)
+        # (Dink posts each event once to each address it lists: listed twice, every event came twice, to the portal and
+        # on to Discord. 11/05/2026: his profile had this relay's address on two lines)
+        now = time.monotonic()
+        seen = hashlib.sha1(json.dumps(payload, sort_keys=True).encode() if payload is not None else body).hexdigest()
+        for k in [k for k, t in ch.dink_seen.items() if now - t > DINK_SAME]:
+            del ch.dink_seen[k]
+        if seen in ch.dink_seen:
+            self.log("dink      %s  the same post again: dropped" % name)
+            return await answer("204 No Content")
+        ch.dink_seen[seen] = now
         if self.forward is not None and self.forward.wants(payload):
             # Dink's own post, untouched, at once (the portal's delay is the portal's)
             self.log("forward   %s  %s to Discord" % (name, payload.get("type")))

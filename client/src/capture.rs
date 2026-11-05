@@ -489,6 +489,9 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
     Ok((img, layout))
 }
 
+/// why nothing goes out while the static key is down (viewers see static, and the sound goes on)
+pub const STATIC_WHY: &str = "static (the static key)";
+
 /// None when a frame may go, else why not.
 pub fn gate(hwnd: Option<HWND>, title: &str, s: &crate::settings::Settings, paused: bool) -> Option<String> {
     let Some(h) = hwnd else { return Some("no RuneLite window".into()) };
@@ -496,7 +499,7 @@ pub fn gate(hwnd: Option<HWND>, title: &str, s: &crate::settings::Settings, paus
         return Some("minimised".into());
     }
     if paused {
-        return Some("paused (the Pause key)".into());
+        return Some(STATIC_WHY.into());
     }
     if s.only_logged_in && !crate::win::logged_in(title, &s.title) {
         return Some("not logged in".into());

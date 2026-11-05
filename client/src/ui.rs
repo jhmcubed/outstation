@@ -86,6 +86,12 @@ struct PollForm { question: String, options: String, seconds: u32 }
 
 struct Ping { at: Instant, x: f32, y: f32, name: String, n: u64 }
 
+/// a viewer's ✼ rising over RuneLite (the signal button: as many as they like)
+struct Star { at: Instant, x: f32, name: String }
+
+/// a line over the game: when it came, its name, its words, whether it's the host's
+struct OverLine { at: Instant, name: String, text: String, host: bool }
+
 /// The settings drawer: four bars, a sample of RuneLite as viewers would get it, and what it costs.
 struct SettingsPanel {
     fps: u32,
@@ -98,6 +104,7 @@ struct SettingsPanel {
     taking: Arc<Mutex<Option<Result<Image, String>>>>,
     shown: Option<(egui::TextureHandle, (u32, u32), f64, (u32, u32, u8))>,
     status: (String, Color32),
+    listening: Option<usize>,
 }
 
 pub struct App {
@@ -135,6 +142,17 @@ pub struct App {
     newer: Arc<Mutex<Option<String>>>,
     told_newer: bool,
     webhook_shown: bool,
+    // main's round two (11/05/2026)
+    static_on: bool,
+    signals: u32,
+    stars: Vec<Star>,
+    guess: Option<Value>,
+    guess_form: Option<(String, String)>,
+    banned: Vec<(i64, String)>,
+    over: Vec<OverLine>,
+    history_until: Instant,
+    moving_chat: bool,
+    zoom: f32,
 }
 
 struct TrayItems {
@@ -219,6 +237,8 @@ impl App {
             hand: (s.relay.clone(), s.channel.clone(), String::new(), s.code.clone()),
             pings: Vec::new(), ping_n: 0, asking_close: false, quitting: false, hidden: false,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
+            static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
+            over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0,
         };
         if !s.attached() {
             if let Some(code) = win::paste_text().filter(|c| c.trim().starts_with("portal1:")) {
@@ -246,6 +266,7 @@ impl App {
             match m {
                 In::Up(name) => {
                     self.up = true;
+                    self.history_until = Instant::now() + Duration::from_millis(800); // (the chat so far: not over the game again)
                     self.note(format!("connected · your lines go out as {}", name));
                 }
                 In::Down => { self.up = false; self.live = false; self.open = false; }
@@ -263,6 +284,7 @@ impl App {
             self.live = r.get("live").and_then(|x| x.as_bool()).unwrap_or(false);
             self.viewers = r.get("viewers").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             self.open = r.get("open").and_then(|x| x.as_bool()).unwrap_or(false);
+            self.static_on = r.get("static").and_then(|x| x.as_bool()).unwrap_or(false);
         } else if let Some(c) = m.get("chat") {
             let id = c.get("id").and_then(|x| x.as_i64());
             if id.is_some() && self.lines.iter().any(|l| l.id == id) {
@@ -277,6 +299,11 @@ impl App {
                 text: c.get("text").and_then(|x| x.as_str()).unwrap_or("").into(),
                 when: local_hhmm(at), hidden: false, note: false, ping: false,
             });
+            if Instant::now() > self.history_until {
+                self.over.push(OverLine { at: Instant::now(), name: c.get("name").and_then(|x| x.as_str()).unwrap_or("").into(),
+                                          text: c.get("text").and_then(|x| x.as_str()).unwrap_or("").into(), host });
+                if self.over.len() > 7 { self.over.remove(0); }
+            }
             if !host {
                 win::flash(TITLE);
             }
@@ -288,6 +315,21 @@ impl App {
         } else if m.get("poll_gone").is_some() {
             // a closed poll's result goes after a minute and a half (the relay's POLL_KEPT)
             self.poll = None;
+        } else if let Some(sg) = m.get("signal") {
+            // the signal button, as often as they like: counted, and a ✼ over RuneLite
+            self.signals += 1;
+            if self.settings.get().signals && self.stars.len() < 60 {
+                let who = sg.get("who").and_then(|x| x.as_u64()).unwrap_or(0) as f32;
+                let x = 0.25 + ((who * 0.618 + self.signals as f32 * 0.137) % 1.0) * 0.5;
+                self.stars.push(Star { at: Instant::now(), x, name: sg.get("name").and_then(|x| x.as_str()).unwrap_or("").into() });
+            }
+        } else if let Some(g) = m.get("guess") {
+            self.guess = Some(g.clone());
+        } else if m.get("guess_gone").is_some() {
+            self.guess = None;
+        } else if let Some(b) = m.get("banned").and_then(|x| x.as_array()) {
+            self.banned = b.iter().map(|v| (v.get("who").and_then(|x| x.as_i64()).unwrap_or(0),
+                                            v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string())).collect();
         } else if let Some(u) = m.get("upload") {
             self.portal_bps = u.get("bps").and_then(|x| x.as_u64());
         } else if let Some(p) = m.get("ping") {
@@ -335,8 +377,10 @@ impl App {
             ("off air · the stream's ended".into(), GREY)
         } else if self.live && self.open {
             (format!("live · {} watching", self.viewers), PINK)
+        } else if self.live && self.static_on {
+            (format!("static · viewers see \"signal obscured\", the sound going on (the static key) · {} watching", self.viewers), TEAL)
         } else if self.live {
-            (format!("paused · the Pause key, or RuneLite minimised · {} watching", self.viewers), TEAL)
+            (format!("paused · RuneLite minimised or closed · {} watching", self.viewers), TEAL)
         } else {
             ("going live: looking for RuneLite…".into(), GREY)
         }
@@ -612,7 +656,7 @@ impl SettingsPanel {
         let saved = (s.fps.clamp(1, 60), s.width.clamp(192, 1536), s.quality.clamp(10, 95), s.max_viewers.clamp(1, 20));
         let mut p = SettingsPanel { fps: saved.0, width: saved.1, quality: saved.2, viewers: saved.3, saved,
                                     sample: None, sample_note: String::new(), taking: Arc::new(Mutex::new(None)),
-                                    shown: None, status: (String::new(), DIM) };
+                                    shown: None, status: (String::new(), DIM), listening: None };
         p.take_sample(s);
         p
     }
@@ -706,8 +750,96 @@ impl SettingsPanel {
             });
         });
         ui.add_space(12.0);
+        self.round_two(ui, settings);
+        ui.add_space(12.0);
         more(ui, settings);
     }
+
+    /// The replay buffer, the hotkeys (pressed to change), the chat's text sizes and the window's size: each saved
+    /// and taken at once.
+    fn round_two(&mut self, ui: &mut egui::Ui, settings: &Shared) {
+        let s = settings.get();
+        let mut replay = s.replay_seconds.min(30);
+        if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay) {
+            let _ = settings.update(|x| x.replay_seconds = replay);
+            self.status = (if replay == 0 { "the replay buffer: off".into() } else { format!("the replay buffer: the last {} s (the clip key, or \"clip\", saves them)", replay) }, LIME);
+        }
+        ui.label(rich("hotkeys", 16.0, LIME));
+        const HOTKEYS: [(&str, &str); 3] = [("static key", "shows viewers static, the sound going on"),
+                                            ("sound key", "the sound: off, the game, everything"),
+                                            ("clip key", "saves the replay buffer as a clip")];
+        let current = [s.static_key.clone(), s.sound_key.clone(), s.clip_key.clone()];
+        for (i, (label, what)) in HOTKEYS.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add_sized([86.0, 18.0], egui::Label::new(rich(label, 16.0, LIME)));
+                let shown = if self.listening == Some(i) { ("press a key…".to_string(), PINK) } else { (win::key_name(&current[i]), Color32::WHITE) };
+                ui.add_sized([110.0, 18.0], egui::Label::new(rich(&shown.0, 16.0, shown.1)));
+                if button(ui, if self.listening == Some(i) { "never mind" } else { "change" }, true, None).clicked() {
+                    self.listening = if self.listening == Some(i) { None } else { Some(i) };
+                }
+                ui.label(rich(what, 14.0, DIM));
+            });
+        }
+        if let Some(i) = self.listening {
+            // the next key pressed (egui hears most; Pause and Scroll Lock are here as buttons, as egui can't hear them)
+            let mut got: Option<String> = None;
+            ui.horizontal(|ui| {
+                ui.label(rich("or:", 14.0, GREY));
+                for (name, label) in [("pause", "Pause"), ("scrolllock", "Scroll Lock"), ("numlock", "Num Lock"), ("capslock", "Caps Lock")] {
+                    if button(ui, label, true, None).clicked() { got = Some(name.into()); }
+                }
+            });
+            let pressed = ui.input(|inp| inp.events.iter().find_map(|e| match e {
+                egui::Event::Key { key, pressed: true, modifiers, .. } if modifiers.is_none() => Some(*key),
+                _ => None,
+            }));
+            if let Some(k) = pressed {
+                if k == egui::Key::Escape { self.listening = None; } else if let Some(n) = key_of(k) { got = Some(n); }
+            }
+            if let Some(name) = got {
+                let vk = win::key_code(&name);
+                let taken = (0..3).find(|j| *j != i && win::key_code(&current[*j]) == vk);
+                if let Some(j) = taken {
+                    self.status = (format!("{} is already the {}", win::key_name(&name), HOTKEYS[j].0), PINK);
+                } else {
+                    let _ = settings.update(|x| match i { 0 => x.static_key = name.clone(), 1 => x.sound_key = name.clone(), _ => x.clip_key = name.clone() });
+                    self.status = (format!("the {} is {} now (it takes at once)", HOTKEYS[i].0, win::key_name(&name)), LIME);
+                }
+                self.listening = None;
+            }
+        }
+        ui.add_space(8.0);
+        ui.label(rich("text and size", 16.0, LIME));
+        let mut chat = s.chat_size.round() as u32;
+        if bar(ui, "the chat's text", "px", 10, 40, 1, &mut chat) { let _ = settings.update(|x| x.chat_size = chat as f32); }
+        let mut over = s.game_chat_size.round() as u32;
+        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over) { let _ = settings.update(|x| x.game_chat_size = over as f32); }
+        let mut scale = (s.ui_scale * 100.0).round() as u32;
+        if bar(ui, "everything here (text, buttons)", "%", 75, 200, 5, &mut scale) { let _ = settings.update(|x| x.ui_scale = scale as f32 / 100.0); }
+    }
+}
+
+/// a key egui heard, as a hotkey's name (only keys that make sense alone: not letters or digits, which you type)
+fn key_of(k: egui::Key) -> Option<String> {
+    use egui::Key::*;
+    let n = match k {
+        Insert => "insert", Home => "home", End => "end", PageUp => "pageup", PageDown => "pagedown", Delete => "delete",
+        F1 => "f1", F2 => "f2", F3 => "f3", F4 => "f4", F5 => "f5", F6 => "f6", F7 => "f7", F8 => "f8", F9 => "f9",
+        F10 => "f10", F11 => "f11", F12 => "f12", F13 => "f13", F14 => "f14", F15 => "f15", F16 => "f16", F17 => "f17",
+        F18 => "f18", F19 => "f19", F20 => "f20", F21 => "f21", F22 => "f22", F23 => "f23", F24 => "f24",
+        _ => return None,
+    };
+    Some(n.into())
+}
+
+fn gp(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 { out.push(','); }
+        out.push(c);
+    }
+    out
 }
 
 fn decode(jpg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
@@ -735,8 +867,15 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         choice(ui, "taken by:", &mut s.method, &[("auto", "the first that works"), ("gpu", "Windows Graphics Capture"), ("gdi", "PrintWindow")]);
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY));
         ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY));
-        choice(ui, "the pause key:", &mut s.pause_key, &[("pause", "Pause"), ("scrolllock", "Scroll Lock"), ("f12", "F12")]);
-        choice(ui, "the sound key:", &mut s.sound_key, &[("scrolllock", "Scroll Lock"), ("pause", "Pause"), ("f12", "F12")]);
+        ui.horizontal(|ui| {
+            ui.label(rich("clips go to:", 16.0, GREY));
+            let hint = crate::clip::default_folder().display().to_string();
+            field(ui, &mut s.clip_folder, 260.0, &hint, false);
+        });
+        ui.horizontal(|ui| {
+            ui.label(rich("a drop guess is decided by a drop worth:", 16.0, GREY));
+            ui.add(egui::DragValue::new(&mut s.guess_min_value).speed(10000.0).suffix(" gp"));
+        });
         ui.horizontal(|ui| {
             ui.label(rich("each sound bus:", 16.0, GREY));
             ui.add(egui::DragValue::new(&mut s.sound_kbps).range(32..=256).suffix(" kbit/s"));
@@ -1022,9 +1161,21 @@ impl eframe::App for App {
                 if self.hidden { self.show(ctx); }
             }
         }
-        // the pings' windows: about 0.6 s each
+        if let Some(n) = crate::clip::take_note() {
+            self.note(n);
+        }
+        // the interface's size (text, buttons and all), from the settings
+        let scale = self.settings.get().ui_scale.clamp(0.75, 2.0);
+        if (scale - self.zoom).abs() > 0.001 {
+            self.zoom = scale;
+            ctx.set_zoom_factor(scale);
+        }
+        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game 20 s, then dim, then gone
         self.pings.retain(|p| p.at.elapsed() < Duration::from_millis(640));
-        ctx.request_repaint_after(Duration::from_millis(if self.pings.is_empty() { 110 } else { 30 }));
+        self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
+        self.over.retain(|l| l.at.elapsed() < Duration::from_millis(21_500));
+        let busy = !self.pings.is_empty() || !self.stars.is_empty();
+        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else { 110 }));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1036,7 +1187,9 @@ impl eframe::App for App {
                 self.note(format!("a newer version is out ({}): github.com/jhmcubed/outside-portal/releases", tag));
             }
         }
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.poll_form.is_none() && !self.asking_close {
+        let listening = self.panel.as_ref().is_some_and(|p| p.listening.is_some());
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.poll_form.is_none() && self.guess_form.is_none()
+            && !self.asking_close && !listening && !self.moving_chat {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         let frame = egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 10));
@@ -1061,6 +1214,8 @@ impl eframe::App for App {
         egui::Panel::bottom("answer").frame(egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 8))).show(ui, |ui| self.answer(ui));
         egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| {
             self.poll_ui(ui);
+            self.guess_ui(ui);
+            self.banned_ui(ui);
             self.chat(ui);
         });
         if self.asking_close {
@@ -1077,9 +1232,13 @@ impl App {
             ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(22.0)).color(LIME));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let s_open = self.drawer == Drawer::Settings;
+                let signals = self.signals;
                 if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
                 let d_open = self.drawer == Drawer::Dink;
                 if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
+                if signals > 0 {
+                    ui.label(rich(&format!("✼ {}", signals), 14.0, PINK)).on_hover_text("viewers' signals since this opened");
+                }
             });
         });
         ui.add_space(6.0);
@@ -1138,12 +1297,32 @@ impl App {
                     if let Err(e) = self.settings.update(|s| s.sound = m) { self.note(format!("couldn't save the sound's mode: {}", e)); }
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut p = s.pings;
-                if ui.checkbox(&mut p, rich("pings on my screen", 14.0, GREY)).changed() {
-                    let _ = self.settings.update(|s| s.pings = p);
+        });
+        // what shows over RuneLite (a see-through window of the portal's own, never in the game), and whether viewers
+        // may ping at all
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let s = self.settings.get();
+            let (mut p, mut st, mut allowed, mut over) = (s.pings, s.signals, s.pings_allowed, s.game_chat);
+            if ui.checkbox(&mut allowed, rich("viewers may ping", 14.0, GREY)).changed() {
+                let _ = self.settings.update(|s| s.pings_allowed = allowed);
+            }
+            if ui.checkbox(&mut p, rich("pings on my screen", 14.0, GREY)).changed() {
+                let _ = self.settings.update(|s| s.pings = p);
+            }
+            if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY)).changed() {
+                let _ = self.settings.update(|s| s.signals = st);
+            }
+            if ui.checkbox(&mut over, rich("chat over the game", 14.0, GREY)).changed() {
+                let _ = self.settings.update(|s| s.game_chat = over);
+            }
+            if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat)).clicked() {
+                if !self.moving_chat && frame_rect(&s).is_none() {
+                    self.note("RuneLite isn't open (or it's minimised): open it, then move the chat over it");
+                } else {
+                    self.moving_chat = !self.moving_chat;
                 }
-            });
+            }
         });
     }
 
@@ -1153,6 +1332,8 @@ impl App {
         egui::Frame::new().stroke(Stroke::new(1.0, DIM)).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                let size = self.settings.get().chat_size.clamp(10.0, 40.0);
+                let banned: Vec<i64> = self.banned.iter().map(|b| b.0).collect();
                 for l in &self.lines {
                     let mut job = egui::text::LayoutJob::default();
                     let fmt = |c: Color32, strike: bool| egui::TextFormat {
@@ -1164,22 +1345,30 @@ impl App {
                     let c = |x: Color32| if l.hidden { gone } else { x };
                     let _ = &fmt;
                     if l.note {
-                        append(&mut job, &format!("✼ {}", l.text), 16.0, if l.ping { CYAN } else { GREY }, false);
+                        append(&mut job, &format!("✼ {}", l.text), size, if l.ping { CYAN } else { GREY }, false);
                     } else {
-                        append(&mut job, &l.name, 16.0, c(if l.host { LIME } else { CYAN }), l.hidden);
-                        if l.queued { append(&mut job, " (in line)", 16.0, c(Color32::from_rgb(0x77, 0x77, 0x77)), l.hidden); }
-                        append(&mut job, &format!("  {}", l.text), 16.0, c(TEXT), l.hidden);
-                        append(&mut job, &format!("  {}", l.when), 16.0, c(WHEN), l.hidden);
+                        append(&mut job, &l.name, size, c(if l.host { LIME } else { CYAN }), l.hidden);
+                        if l.queued { append(&mut job, " (in line)", size, c(Color32::from_rgb(0x77, 0x77, 0x77)), l.hidden); }
+                        append(&mut job, &format!("  {}", l.text), size, c(TEXT), l.hidden);
+                        append(&mut job, &format!("  {}", l.when), size * 0.85, c(WHEN), l.hidden);
                     }
                     job.wrap.max_width = ui.available_width();
-                    let r = ui.add(egui::Label::new(job).sense(Sense::click()));
+                    let mut r = ui.add(egui::Label::new(job).sense(Sense::click()));
                     if let Some(id) = l.id {
-                        let (who, host) = (l.who, l.host);
+                        let (who, host, name) = (l.who, l.host, l.name.clone());
+                        if !l.hidden {
+                            r = r.on_hover_text("right-click: take it back, or ban this viewer");
+                        }
                         r.context_menu(|ui| {
                             if ui.button("take this line back off everyone's page").clicked() { act = Some(json!({"hide": id})); ui.close(); }
                             if !host && who != 0 {
-                                if ui.button("block this viewer").clicked() { act = Some(json!({"block": who})); notes.push(format!("blocked viewer {}", who)); ui.close(); }
-                                if ui.button("unblock this viewer").clicked() { act = Some(json!({"unblock": who})); notes.push(format!("unblocked viewer {}", who)); ui.close(); }
+                                if banned.contains(&who) {
+                                    if ui.button(format!("unban {}", name)).clicked() { act = Some(json!({"unban": who})); notes.push(format!("unbanned {}", name)); ui.close(); }
+                                } else if ui.button(format!("ban {} (every line of theirs taken back)", name)).clicked() {
+                                    act = Some(json!({"ban": who}));
+                                    notes.push(format!("banned {}", name));
+                                    ui.close();
+                                }
                             }
                         });
                     }
@@ -1192,7 +1381,7 @@ impl App {
 
     fn answer(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let w = ui.available_width() - 150.0;
+            let w = ui.available_width() - 300.0;
             let r = field(ui, &mut self.entry, w.max(80.0), "", false);
             let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if button(ui, "send", false, None).clicked() || enter {
@@ -1205,7 +1394,99 @@ impl App {
             if button(ui, "a poll…", false, None).clicked() {
                 self.poll_form = Some(PollForm { question: String::new(), options: String::new(), seconds: 60 });
             }
+            if button(ui, "a guess…", false, None).clicked() {
+                self.guess_form = Some((String::new(), String::new()));
+            }
+            if button(ui, "clip", false, None).on_hover_text("the replay buffer saved as a clip (the clip key does the same)").clicked() {
+                crate::clip::save(&self.settings.get().clip_folder);
+            }
         });
+    }
+
+    /// the drop guesses: a round for a boss, viewers guessing the kill the next good drop lands on (the relay decides
+    /// it from Dink's kill counts and loot)
+    fn guess_ui(&mut self, ui: &mut egui::Ui) {
+        if let Some((boss, what)) = &mut self.guess_form {
+            let (mut go, mut drop) = (false, false);
+            egui::Frame::new().stroke(Stroke::new(1.0, PINK)).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+                ui.label(rich("drop guesses: the boss (as Dink names it)", 14.0, GREY));
+                field(ui, boss, ui.available_width(), "Vorkath", false);
+                ui.label(rich("what they're guessing (a unique, the pet…)", 14.0, GREY));
+                field(ui, what, ui.available_width(), "the next good drop", false);
+                ui.horizontal(|ui| {
+                    let least = self.settings.get().guess_min_value;
+                    ui.label(rich(&format!("decided by a drop worth {} or more from it, or by \"it dropped\"", gp(least)), 14.0, GREY));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if button(ui, "open it", true, None).clicked() { go = true; }
+                        if button(ui, "never mind", true, None).clicked() { drop = true; }
+                    });
+                });
+            });
+            if go {
+                let (b, w) = (boss.trim().to_string(), what.trim().to_string());
+                if b.is_empty() {
+                    self.note("a guess round needs a boss");
+                } else if self.desk.send(json!({"guess_open": {"boss": b, "what": w}})) {
+                    self.guess_form = None;
+                } else {
+                    self.note("not sent: the relay isn't answering");
+                }
+            }
+            if drop { self.guess_form = None; }
+            ui.add_space(6.0);
+        }
+        let Some(g) = self.guess.clone() else { return };
+        let result = g.get("result").filter(|r| !r.is_null()).cloned();
+        let open = g.get("open").and_then(|x| x.as_bool()).unwrap_or(false);
+        let mut send: Option<Value> = None;
+        egui::Frame::new().stroke(Stroke::new(1.0, if result.is_none() { PINK } else { DIM })).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let s = |k: &str| g.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                ui.label(rich(&format!("drop guesses · {}: {}", s("boss"), s("what")), 16.0, if result.is_none() { PINK } else { GREY }));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, "call it off", true, None).clicked() { send = Some(json!({"guess_off": true})); }
+                    if result.is_none() {
+                        if button(ui, "it dropped", true, None).clicked() { send = Some(json!({"guess_drop": true})); }
+                        if open && button(ui, "stop guesses", true, None).clicked() { send = Some(json!({"guess_close": true})); }
+                    }
+                });
+            });
+            let text = match &result {
+                Some(r) => {
+                    let winners: Vec<String> = r.get("winners").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.to_string()).collect()).unwrap_or_default();
+                    format!("{} at kill {} · {}", r.get("item").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).unwrap_or("the drop"),
+                            r.get("kc").map(|x| x.to_string()).unwrap_or_else(|| "?".into()),
+                            if winners.is_empty() { "no guesses".to_string() } else { format!("closest: {} ({} off)", winners.join(", "), r.get("off").map(|x| x.to_string()).unwrap_or_default()) })
+                }
+                None => format!("kill count now: {} · {} guessed{}",
+                                g.get("kc").filter(|x| !x.is_null()).map(|x| x.to_string()).unwrap_or_else(|| "not heard yet (Dink's kill count, every kill)".into()),
+                                g.get("count").and_then(|x| x.as_u64()).unwrap_or(0),
+                                if open { "" } else { " · guesses closed, waiting for the drop" }),
+            };
+            ui.add(egui::Label::new(rich(&text, 14.0, TEXT)).wrap());
+        });
+        if let Some(m) = send { self.desk.send(m); }
+        ui.add_space(6.0);
+    }
+
+    /// the banned, each with its unban
+    fn banned_ui(&mut self, ui: &mut egui::Ui) {
+        if self.banned.is_empty() {
+            return;
+        }
+        let mut unban = None;
+        egui::CollapsingHeader::new(rich(&format!("banned ({})", self.banned.len()), 14.0, GREY)).id_salt("banned").show(ui, |ui| {
+            for (who, name) in &self.banned {
+                ui.horizontal(|ui| {
+                    ui.label(rich(name, 14.0, TEXT));
+                    if button(ui, "unban", true, None).clicked() { unban = Some((*who, name.clone())); }
+                });
+            }
+        });
+        if let Some((who, name)) = unban {
+            self.desk.send(json!({"unban": who}));
+            self.note(format!("unbanned {}", name));
+        }
     }
 
     fn poll_ui(&mut self, ui: &mut egui::Ui) {
@@ -1303,8 +1584,126 @@ impl App {
         });
     }
 
+    /// The chat over the game: the newest lines over RuneLite (its top-left corner, or where it was moved), in a
+    /// see-through window clicks pass through; "move it" makes it a box to drag, "done" or Enter keeps it there.
+    fn over_ui(&mut self, ctx: &egui::Context) {
+        let s = self.settings.get();
+        if !s.game_chat && !self.moving_chat {
+            return;
+        }
+        let Some((l, t, r, b)) = frame_rect(&s) else { return };
+        if self.over.is_empty() && !self.moving_chat {
+            return;
+        }
+        let ppp = ctx.pixels_per_point();
+        let (wide, tall) = (560.0 / ppp * (s.game_chat_size / 20.0).max(0.6), 210.0 / ppp * (s.game_chat_size / 20.0).max(0.6));
+        let (gx, gy) = match s.game_chat_at {
+            Some([fx, fy]) => (l as f32 + fx as f32 * (r - l) as f32, t as f32 + fy as f32 * (b - t) as f32),
+            None => (l as f32 + 12.0, t as f32 + 40.0),
+        };
+        // (kept on the game: never off its right or bottom edge)
+        let x = gx.min((r as f32 - wide * ppp).max(l as f32));
+        let y = gy.min((b as f32 - tall * ppp).max(t as f32));
+        let moving = self.moving_chat;
+        let mut builder = egui::ViewportBuilder::default().with_title("the portal ✼ chat over the game").with_decorations(false)
+            .with_transparent(true).with_always_on_top().with_mouse_passthrough(!moving).with_taskbar(false)
+            .with_resizable(false).with_inner_size(Vec2::new(wide, tall));
+        if !moving {
+            builder = builder.with_position(egui::pos2(x / ppp, y / ppp)).with_active(false);
+        }
+        let size = s.game_chat_size.clamp(10.0, 48.0);
+        let lines: Vec<(f32, String, String, bool)> = self.over.iter().map(|o| (o.at.elapsed().as_secs_f32(), o.name.clone(), o.text.clone(), o.host)).collect();
+        let mut done = false;
+        let mut put: Option<(f32, f32)> = None;
+        let id = egui::ViewportId::from_hash_of("over the game");
+        ctx.show_viewport_immediate(id, builder, |ui, _| {
+            let rect = ui.max_rect();
+            let p = ui.painter();
+            if moving {
+                p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
+                p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME), egui::StrokeKind::Inside);
+                p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME);
+                p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the portal's window, to keep it there", body(14.0), GREY);
+                let resp = ui.interact(rect, ui.id().with("drag"), Sense::click_and_drag());
+                if resp.drag_started() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) { done = true; }
+                if let Some(outer) = ui.input(|i| i.viewport().outer_rect) {
+                    put = Some((outer.min.x * ppp, outer.min.y * ppp));
+                }
+                return;
+            }
+            // newest at the bottom, each with a dark rim; lit, then dim after 20 s, then gone
+            let mut yy = rect.bottom() - 6.0;
+            for (age, name, text, host) in lines.iter().rev() {
+                let (cn, ct) = if *age < 20.0 { (if *host { LIME } else { CYAN }, Color32::from_rgb(0xf0, 0xf0, 0xf0)) } else { (DIM, Color32::from_rgb(0x6a, 0x6a, 0x6a)) };
+                let mut j = egui::text::LayoutJob::default();
+                append(&mut j, name, size, cn, false);
+                append(&mut j, &format!("  {}", text), size, ct, false);
+                j.wrap.max_width = rect.width() - 16.0;
+                let mut shadow = j.clone();
+                for sec in shadow.sections.iter_mut() { sec.format.color = Color32::from_rgb(10, 10, 10); }
+                let g = ui.painter().layout_job(j);
+                let gs = ui.painter().layout_job(shadow);
+                let at = egui::pos2(rect.left() + 8.0, yy - g.size().y);
+                for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
+                    p.galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
+                }
+                yy -= g.size().y + 4.0;
+                p.galley(at, g, ct);
+                if yy < rect.top() + 10.0 { break; }
+            }
+        });
+        if moving {
+            if let Some((px, py)) = put {
+                let fx = ((px - l as f32) / (r - l).max(1) as f32).clamp(0.0, 0.98);
+                let fy = ((py - t as f32) / (b - t).max(1) as f32).clamp(0.0, 0.98);
+                if s.game_chat_at.map_or(true, |a| (a[0] as f32 - fx).abs() > 0.001 || (a[1] as f32 - fy).abs() > 0.001) {
+                    let _ = self.settings.update(|x| x.game_chat_at = Some([(fx as f64 * 1e4).round() / 1e4, (fy as f64 * 1e4).round() / 1e4]));
+                }
+            }
+            if done { self.moving_chat = false; }
+        }
+    }
+
+    /// Each ✼ a viewer sends, rising over RuneLite with their name (as many as they like), in one see-through window
+    /// over the game that clicks pass through.
+    fn stars_ui(&mut self, ctx: &egui::Context) {
+        if self.stars.is_empty() {
+            return;
+        }
+        let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
+        let ppp = ctx.pixels_per_point();
+        let (w, h) = ((r - l) as f32 / ppp, (b - t) as f32 / ppp);
+        let builder = egui::ViewportBuilder::default().with_title("the portal ✼ signals").with_decorations(false)
+            .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
+            .with_resizable(false).with_active(false).with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp))
+            .with_inner_size(Vec2::new(w, h));
+        let stars: Vec<(f32, f32, String)> = self.stars.iter().map(|s| (s.at.elapsed().as_secs_f32(), s.x, s.name.clone())).collect();
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("signals"), builder, |ui, _| {
+            let rect = ui.max_rect();
+            let p = ui.painter();
+            for (age, x, name) in &stars {
+                let k = (age / 1.2).min(1.0);
+                let step = (k * 8.0).floor() / 8.0; // (in steps, the dither's way, not a glide)
+                let at = egui::pos2(rect.left() + x * rect.width(), rect.top() + rect.height() * (0.78 - 0.45 * step));
+                let colour = if step < 0.6 { LIME } else if step < 0.9 { DIM } else { Color32::from_rgb(0x22, 0x33, 0x0a) };
+                let big = 34.0 + 10.0 * (1.0 - step);
+                p.text(at + Vec2::new(2.0, 2.0), egui::Align2::CENTER_CENTER, "✼", symbol_font(big), Color32::from_rgb(10, 10, 10));
+                p.text(at, egui::Align2::CENTER_CENTER, "✼", symbol_font(big), colour);
+                if !name.is_empty() && step < 0.7 {
+                    p.text(at + Vec2::new(1.0, big * 0.6 + 1.0), egui::Align2::CENTER_TOP, name, body(16.0), Color32::from_rgb(10, 10, 10));
+                    p.text(at + Vec2::new(0.0, big * 0.6), egui::Align2::CENTER_TOP, name, body(16.0), colour);
+                }
+            }
+        });
+    }
+
     /// A ring that grows over the spot, with the viewer's name, in a see-through window that clicks pass through.
     fn pings_ui(&mut self, ctx: &egui::Context) {
+        self.over_ui(ctx);
+        self.stars_ui(ctx);
         const WIDE: f32 = 520.0;
         const TALL: f32 = 160.0;
         let ppp = ctx.pixels_per_point();

@@ -366,6 +366,18 @@ class Dink(Base):
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.4)
 
+    async def test_the_same_post_twice_is_one_event(self):
+        # (11/05/2026: a Dink with this address listed twice posted every event twice)
+        await self.tx()
+        v = await self.watch()
+        await self.pause()
+        body = json.dumps({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Cooking": 71}}}).encode()
+        for _ in range(2):
+            self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, "application/json"), 204)
+        self.assertEqual(json.loads((await v.recv_data())[1])["report"]["type"], "LEVEL")
+        with self.assertRaises(asyncio.TimeoutError):
+            await v.recv_data(timeout=0.5)
+
     async def test_a_report_sent_by_the_transmitter_reaches_viewers_and_late_ones(self):
         # (the client takes Dink's posts itself and sends reports this way)
         tx = await self.tx()

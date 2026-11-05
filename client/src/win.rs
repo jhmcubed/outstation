@@ -141,12 +141,32 @@ impl WindowCache {
 
 // ---- keys ----
 
+/// The keys a hotkey may be, by name (the Python portal's names, and its settings' key codes)
+pub const KEYS: &[(&str, i32, &str)] = &[
+    ("pause", 0x13, "Pause"), ("scrolllock", 0x91, "Scroll Lock"), ("insert", 0x2D, "Insert"), ("home", 0x24, "Home"),
+    ("end", 0x23, "End"), ("pageup", 0x21, "Page Up"), ("pagedown", 0x22, "Page Down"), ("delete", 0x2E, "Delete"),
+    ("capslock", 0x14, "Caps Lock"), ("numlock", 0x90, "Num Lock"),
+];
+
+/// A hotkey's name to show: "Pause", "F9", or its code
+pub fn key_name(name: &str) -> String {
+    match key_code(name) {
+        Some(vk) => KEYS.iter().find(|k| k.1 == vk).map(|k| k.2.to_string())
+            .or_else(|| (0x70..=0x87).contains(&vk).then(|| format!("F{}", vk - 0x6F)))
+            .unwrap_or_else(|| format!("key {}", vk)),
+        None => "none".into(),
+    }
+}
+
 pub fn key_code(name: &str) -> Option<i32> {
-    let t = name.trim().to_lowercase();
+    let t = name.trim().to_lowercase().replace(' ', "");
+    if let Some(k) = KEYS.iter().find(|k| k.0 == t) {
+        return Some(k.1);
+    }
+    if let Some(n) = t.strip_prefix('f').and_then(|n| n.parse::<i32>().ok()).filter(|n| (1..=24).contains(n)) {
+        return Some(0x6F + n);
+    }
     match t.as_str() {
-        "pause" => Some(0x13),
-        "scrolllock" => Some(0x91),
-        "f12" => Some(0x7B),
         _ => {
             if let Some(h) = t.strip_prefix("0x") { i32::from_str_radix(h, 16).ok() } else { t.parse().ok() }
         }

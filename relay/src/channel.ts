@@ -833,10 +833,17 @@ export class Channel extends DurableObject<Env> {
 
   // Dink (a fallback: the client normally takes Dink's posts itself and sends reports as the transmitter)
 
+  dinkSeen = new Map<string, number>(); // a Dink post -> when: the same one again within 10 s is dropped
+
   async dink(request: Request, key: string, ip: string): Promise<Response> {
     const no = await this.checkKey(key, ip);
     if (no) return new Response(null, { status: 403 });
     const payload = await dinkPayload(request);
+    // (Dink posts each event once to each address it lists: listed twice, every event came twice)
+    const now = Date.now(), seen = JSON.stringify(payload);
+    for (const [k, t] of this.dinkSeen) if (now - t > 10_000) this.dinkSeen.delete(k);
+    if (this.dinkSeen.has(seen)) return new Response(null, { status: 204 });
+    this.dinkSeen.set(seen, now);
     const report = dinkReport(payload);
     if (report) this.deliver(pyjson({ report }));
     this.dinkCounts(payload);

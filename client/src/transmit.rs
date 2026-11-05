@@ -27,7 +27,7 @@ pub struct Status {
 
 pub struct Transmit {
     pub status: Arc<Mutex<Status>>,
-    /// the Pause key's state: paused, nothing goes out
+    /// the static key's state: no picture goes out, viewers see static, the sound and chat go on
     pub paused: Arc<AtomicBool>,
 }
 
@@ -191,6 +191,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             last_refresh = Instant::now();
         }
         let s = settings.get();
+        crate::clip::set_seconds(s.replay_seconds);
         if !s.on_air {
             return "the stream ended".into();
         }
@@ -237,11 +238,13 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             let data = held.pop_front().unwrap().1;
             bytes_sent += data.len();
             sent += 1;
+            crate::clip::keep(&data);
             if let Err(e) = ws.binary(data) {
                 return e;
             }
         }
-        let state = if why.is_none() { "open" } else { "shut" };
+        // (static: the static key, which viewers see as static, the sound still going; shut: anything else)
+        let state = match &why { None => "open", Some(w) if w == capture::STATIC_WHY => "static", _ => "shut" };
         if state != last_state || last_state_at.elapsed().as_secs_f64() > 1.0 {
             if let Err(e) = ws.text(&format!("{{\"state\": \"{}\"}}", state)) {
                 return e;

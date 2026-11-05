@@ -4,6 +4,7 @@
 //!     outside-portal.exe                      the window (and the tray)
 //!     outside-portal.exe --once frame.png     one frame to a file, nothing sent
 //!     outside-portal.exe --bench 60           what a frame costs, stage by stage, nothing sent
+//!     outside-portal.exe --clip-selftest DIR  a two-second clip from made-up frames and a tone, into DIR
 //!     outside-portal.exe --settings <file>    another settings file (one window per file)
 //!     outside-portal.exe --show-settings      open with the settings drawer out
 //!
@@ -12,6 +13,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod capture;
+mod clip;
 mod clock;
 mod desk;
 mod dink;
@@ -41,6 +43,14 @@ fn main() {
         win::console();
         match capture::once(&shared.get(), &file) {
             Ok(note) => println!("{}", note),
+            Err(e) => { eprintln!("{}", e); std::process::exit(1); }
+        }
+        return;
+    }
+    if let Some(dir) = arg_after(&args, "--clip-selftest") {
+        win::console();
+        match clip::selftest(std::path::Path::new(&dir)) {
+            Ok(p) => println!("{}", p.display()),
             Err(e) => { eprintln!("{}", e); std::process::exit(1); }
         }
         return;

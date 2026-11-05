@@ -72,6 +72,19 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     }
     let _ = req.respond(tiny_http::Response::empty(204));
     let Some(payload) = payload(&content_type, &body) else { return };
+    // (Dink posts each event once to each address it lists: listed twice, every event came twice. The same post
+    // again within 10 s is one event)
+    {
+        static SEEN: std::sync::OnceLock<Mutex<Vec<(String, Instant)>>> = std::sync::OnceLock::new();
+        let mut seen = SEEN.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap();
+        seen.retain(|(_, t)| t.elapsed() < Duration::from_secs(10));
+        let key = payload.to_string();
+        if seen.iter().any(|(k, _)| *k == key) {
+            crate::transmit::log("dink: the same post again: dropped (is this address listed twice in Dink?)");
+            return;
+        }
+        seen.push((key, Instant::now()));
+    }
     let s = settings.get();
     let kind = payload.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let mut went = Vec::new();

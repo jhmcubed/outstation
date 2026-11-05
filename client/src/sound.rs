@@ -148,6 +148,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
                     Err(_) => {}
                 }
                 while let Some(m) = queue.pop_front() {
+                    crate::clip::keep(&m);
                     if let Err(e) = ws.binary(m) { failed = Some(e); break; }
                 }
                 if failed.is_some() { break; }

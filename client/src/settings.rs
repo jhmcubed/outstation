@@ -24,7 +24,21 @@ fn d_view() -> String { "canvas".into() }
 fn d_mask() -> String { "none".into() }
 fn d_method() -> String { "auto".into() }
 fn d_title() -> String { "RuneLite".into() }
-fn d_pause_key() -> String { "pause".into() }
+fn d_static_key() -> String { "pause".into() }
+fn d_clip_key() -> String { "insert".into() }
+fn d_chat_size() -> f32 { 16.0 }
+fn d_game_chat_size() -> f32 { 20.0 }
+fn d_guess_min() -> u64 { 1_000_000 }
+fn d_scale() -> f32 { 1.0 }
+
+/// A hotkey as the Python portal's settings hold it: a name ("pause") or a Windows key code (45).
+fn de_key<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::String(s) => s,
+        Value::Number(n) => format!("0x{:x}", n.as_u64().unwrap_or(0)),
+        _ => String::new(),
+    })
+}
 fn d_true() -> bool { true }
 fn d_sound() -> String { "off".into() }
 fn d_sound_key() -> String { "scrolllock".into() }
@@ -97,8 +111,18 @@ pub struct Settings {
     /// the start of RuneLite's window title
     #[serde(default = "d_title")]
     pub title: String,
-    #[serde(default = "d_pause_key")]
-    pub pause_key: String,
+    /// the static key (round two: it replaced the pause key): viewers see static, the sound and chat go on
+    #[serde(default = "d_static_key", alias = "pause_key", deserialize_with = "de_key")]
+    pub static_key: String,
+    /// the clip key: the replay buffer saved as a clip
+    #[serde(default = "d_clip_key", deserialize_with = "de_key")]
+    pub clip_key: String,
+    /// the replay buffer: the last 0 to 30 seconds kept here, for a clip (0 keeps nothing)
+    #[serde(default)]
+    pub replay_seconds: u32,
+    /// where clips go (empty: Videos\outside-portal)
+    #[serde(default)]
+    pub clip_folder: String,
     #[serde(default)]
     pub only_logged_in: bool,
     /// go live / end stream
@@ -107,7 +131,7 @@ pub struct Settings {
     /// "off", "game" or "all"
     #[serde(default = "d_sound")]
     pub sound: String,
-    #[serde(default = "d_sound_key")]
+    #[serde(default = "d_sound_key", deserialize_with = "de_key")]
     pub sound_key: String,
     #[serde(default = "d_kbps")]
     pub sound_kbps: u32,
@@ -120,6 +144,28 @@ pub struct Settings {
     /// pings shown over RuneLite
     #[serde(default = "d_true")]
     pub pings: bool,
+    /// viewers' ✼ (the signal button) shown over RuneLite
+    #[serde(default = "d_true")]
+    pub signals: bool,
+    /// the whole window's size: text, buttons and all (1.0 as made)
+    #[serde(default = "d_scale")]
+    pub ui_scale: f32,
+    /// viewers may ping at all (the desk's {"pings"})
+    #[serde(default = "d_true")]
+    pub pings_allowed: bool,
+    /// the chat over the game, and where it sits (its top-left as a share of the game's width and height)
+    #[serde(default = "d_true")]
+    pub game_chat: bool,
+    #[serde(default)]
+    pub game_chat_at: Option<[f64; 2]>,
+    /// the chat's text size: in this window, and over the game
+    #[serde(default = "d_chat_size")]
+    pub chat_size: f32,
+    #[serde(default = "d_game_chat_size")]
+    pub game_chat_size: f32,
+    /// a drop from the guessed boss worth this much decides a guess round
+    #[serde(default = "d_guess_min")]
+    pub guess_min_value: u64,
     #[serde(default)]
     pub dink: Dink,
     /// look on GitHub for a newer version when the window opens (it never updates itself)
@@ -275,7 +321,25 @@ pub fn from_ghillie(p: &Path) -> Option<Settings> {
     if let Some(x) = arg("--mask") { s.mask = x; }
     if let Some(x) = arg("--method") { s.method = x; }
     if let Some(x) = arg("--title") { s.title = x; }
-    if let Some(x) = arg("--pause-key") { s.pause_key = x; }
+    if let Some(x) = arg("--pause-key") { s.static_key = x; }
+    // round two's (11/05/2026): the hotkeys, the replay buffer, the chat over the game, the guesses
+    let key = |k: &str| match v.get(k) {
+        Some(Value::String(x)) if !x.is_empty() => Some(x.clone()),
+        Some(Value::Number(n)) => n.as_u64().map(|n| format!("0x{:x}", n)),
+        _ => None,
+    };
+    if let Some(x) = key("static_key") { s.static_key = x; }
+    if let Some(x) = key("sound_key") { s.sound_key = x; }
+    if let Some(x) = key("clip_key") { s.clip_key = x; }
+    if let Some(n) = v.get("replay_seconds").and_then(|x| x.as_u64()) { s.replay_seconds = n.min(30) as u32; }
+    if let Some(x) = st("clip_folder") { s.clip_folder = x; }
+    if let Some(b) = v.get("game_chat").and_then(|x| x.as_bool()) { s.game_chat = b; }
+    if let Some(a) = v.get("game_chat_at").and_then(|x| x.as_array()) {
+        if let (Some(x), Some(y)) = (a.first().and_then(|x| x.as_f64()), a.get(1).and_then(|x| x.as_f64())) {
+            s.game_chat_at = Some([x, y]);
+        }
+    }
+    if let Some(n) = v.get("guess_min_value").and_then(|x| x.as_u64()) { s.guess_min_value = n; }
     if cap.iter().any(|x| x == "--only-logged-in") { s.only_logged_in = true; }
     // and his Discord forwarding rules (forward.json beside it)
     if let Some(f) = p.parent().map(|d| d.join("forward.json")) {
