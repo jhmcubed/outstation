@@ -17,6 +17,7 @@ mod clip;
 mod clock;
 mod desk;
 mod dink;
+mod feed;
 mod hotkeys;
 mod net;
 mod settings;

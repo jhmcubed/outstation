@@ -28,8 +28,12 @@ from wsmini import Client  # noqa: E402
 EXE = os.path.join(ROOT, "target", "release", "outside-portal.exe")
 
 
-def picture(title, path):
-    """The window's own drawing (PrintWindow), as capture.py takes RuneLite's."""
+TITLE = "⊂λ,ｍ⊙ ✼ the portal"
+
+
+def picture(title, path, pid=None):
+    """The window's own drawing (PrintWindow), as capture.py takes RuneLite's. pid: only that process's windows (his
+    own Python chat window may be open beside it)."""
     try:
         from PIL import Image
     except ImportError:
@@ -37,10 +41,25 @@ def picture(title, path):
     import ctypes
     import ctypes.wintypes as W
     u, g = ctypes.windll.user32, ctypes.windll.gdi32
-    u.FindWindowW.restype = ctypes.c_void_p
-    h = u.FindWindowW(None, title)
-    if not h:
+    # the largest window with this title (the client's see-through overlays can carry it too)
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def each(hw, _):
+        n = u.GetWindowTextLengthW(ctypes.c_void_p(hw))
+        buf = ctypes.create_unicode_buffer(n + 1)
+        u.GetWindowTextW(ctypes.c_void_p(hw), buf, n + 1)
+        owner = ctypes.c_ulong()
+        u.GetWindowThreadProcessId(ctypes.c_void_p(hw), ctypes.byref(owner))
+        if buf.value == title and (pid is None or owner.value == pid):
+            rr = W.RECT()
+            u.GetWindowRect(ctypes.c_void_p(hw), ctypes.byref(rr))
+            found.append(((rr.right - rr.left) * (rr.bottom - rr.top), hw))
+        return True
+    u.EnumWindows(proc(each), None)
+    if not found:
         return False
+    h = max(found)[1]
     r = W.RECT()
     u.GetWindowRect(ctypes.c_void_p(h), ctypes.byref(r))
     w, ht = r.right - r.left, r.bottom - r.top
@@ -59,6 +78,17 @@ def picture(title, path):
     return True
 
 
+def masked(jpeg):
+    """The frame's left half black (the mask) and its right half not: (left's brightest, right's mean)."""
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(jpeg)).convert("L")
+    w, h = im.size
+    left = im.crop((0, 0, w // 2 - 2, h))
+    right = im.crop((w // 2 + 2, 0, w, h))
+    return [max(left.getextrema()), round(sum(right.getdata()) / (right.size[0] * right.size[1]), 1)]
+
+
 async def main():
     pt.setUpModule()
     folder = tempfile.mkdtemp(prefix="portal-client-")
@@ -73,7 +103,9 @@ async def main():
     dink_port = pt.free_port()
     with open(settings, "w", encoding="utf-8") as f:
         json.dump({"relay": pt.RELAY, "channel": channel, "key": key, "fps": 12, "width": 384, "quality": 60,
-                   "sound": "all", "pings": True, "dink": {"port": dink_port}, "max_viewers": 5}, f)
+                   "sound": "all", "pings": True, "dink": {"port": dink_port}, "max_viewers": 5,
+                   # your own masks: the left half blacked out (checked in a frame below)
+                   "masks": [[0.0, 0.0, 0.5, 1.0]], "masks_on": True}, f)
     proc = subprocess.Popen([EXE, "--settings", settings])
     results = {}
     try:
@@ -93,6 +125,8 @@ async def main():
                     sound_packets += 1
                 else:
                     frames += 1
+                    if frames == 10:
+                        results["masked"] = masked(payload[4:])
                 got += len(payload)
                 await v.send(json.dumps({"got": got}))
             elif kind == "text":
@@ -125,7 +159,7 @@ async def main():
                     headers={"Content-Type": "application/json"}), timeout=5).read())
                 posted = True
             if time.monotonic() - t0 > 8 and "picture" not in results:
-                results["picture"] = picture("the portal ✼ chat", os.path.join(folder, "client_live.png"))
+                results["picture"] = picture(TITLE, os.path.join(folder, "client_live.png"), proc.pid)
         results.update(frames=frames, states=sorted(set(states)), sound=sound_info, sound_packets=sound_packets,
                        live=live, chats=[c["text"] for c in chats], pings=len(pings))
         v.close()
@@ -136,7 +170,7 @@ async def main():
     print("settings and picture in", folder)
     ok = results["frames"] > 20 and results["live"] and "open" in results["states"] \
         and results["chats"] == ["hello from the test"] and results["pings"] == 1 \
-        and results.get("report", {}).get("type") == "LEVEL" and results["sound"] is not None and results["cap"] == 5
+        and results.get("report", {}).get("type") == "LEVEL" and results["sound"] is not None and results["cap"] == 5         and results.get("masked", [255])[0] <= 16 and results["masked"][1] > 20
     print("ok" if ok else "NOT OK")
     return 0 if ok else 1
 

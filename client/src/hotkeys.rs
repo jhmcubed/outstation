@@ -1,9 +1,10 @@
-//! The three hotkeys (main's round two, 11/05/2026, Jace: "replace the pause key with a static key and allow for
+//! The four hotkeys (main's round two, 11/05/2026, Jace: "replace the pause key with a static key and allow for
 //! changing the hotkey in the settings"):
 //!   - the static key (Pause by default): viewers see the portal's static, "signal obscured", while the sound and the
 //!     chat go on
 //!   - the sound key (Scroll Lock): off, the game, everything
 //!   - the clip key (Insert): the replay buffer saved as a clip
+//!   - the mask key (End): your own masks off and on
 //! Each is changed in the settings and taken at once.
 //!
 //! Through Windows' RegisterHotKey: Windows tells this program when one of its own keys is pressed, and nothing else.
@@ -20,16 +21,17 @@ use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_H
 const STATIC: i32 = 1;
 const SOUND: i32 = 2;
 const CLIP: i32 = 3;
-const NAMES: [&str; 3] = ["static", "sound", "clip"];
+const MASK: i32 = 4;
+const NAMES: [&str; 4] = ["static", "sound", "clip", "mask"];
 
 pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
     std::thread::spawn(move || {
-        let mut held: [Option<u32>; 3] = [None, None, None];
-        let mut taken_told: [Option<u32>; 3] = [None, None, None];
+        let mut held: [Option<u32>; 4] = [None; 4];
+        let mut taken_told: [Option<u32>; 4] = [None; 4];
         loop {
             let s = settings.get();
-            let want = [&s.static_key, &s.sound_key, &s.clip_key].map(|k| crate::win::key_code(k).map(|v| v as u32));
-            for i in 0..3 {
+            let want = [&s.static_key, &s.sound_key, &s.clip_key, &s.mask_key].map(|k| crate::win::key_code(k).map(|v| v as u32));
+            for i in 0..4 {
                 // one key can't be two: the first of them keeps it
                 let w = if (0..i).any(|j| want[j] == want[i]) { None } else { want[i] };
                 if w != held[i] {
@@ -67,6 +69,11 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                             crate::transmit::log(&format!("sound: {}", crate::sound::label(m)));
                         }
                         CLIP => crate::clip::save(&settings.get().clip_folder),
+                        MASK => {
+                            let on = !settings.get().masks_on;
+                            let _ = settings.update(|s| s.masks_on = on);
+                            crate::transmit::log(if on { "masks: on" } else { "masks: off (everything goes out)" });
+                        }
                         _ => {}
                     }
                 }

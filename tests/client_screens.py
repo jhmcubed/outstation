@@ -27,7 +27,7 @@ async def shot(folder, settings, name, extra=(), during=None, wait=4.0):
         if during:
             await during()
             await asyncio.sleep(1.5)
-        ok = cl.picture("the portal ✼ chat", os.path.join(folder, name + ".png"))
+        ok = cl.picture(cl.TITLE, os.path.join(folder, name + ".png"), proc.pid)
         print(name, "ok" if ok else "no window")
     finally:
         proc.terminate()

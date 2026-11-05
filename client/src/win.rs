@@ -304,10 +304,36 @@ pub fn first_copy(tag: &str, title: &str) -> bool {
     true
 }
 
-pub fn show_window(title: &str) {
-    let t = wide(title);
+/// The portal's own window: the largest top-level window with exactly this title belonging to this program (one of
+/// its own processes, outside-portal.exe), never another program's window that happens to share a title
+pub fn find_main(title: &str) -> Option<HWND> {
+    struct Found<'a> { title: &'a str, best: Option<(i64, HWND)>, procs: std::collections::HashMap<u32, (u32, String)>, me: String }
+    unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
+        let f = unsafe { &mut *(l.0 as *mut Found) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(h, Some(&mut pid)); }
+        let ours = f.procs.get(&pid).is_some_and(|p| p.1 == f.me);
+        if ours && text(h) == f.title {
+            let (a, b, c, d) = rect(h);
+            let area = (c - a) as i64 * (d - b) as i64;
+            if f.best.map_or(true, |x| area > x.0) {
+                f.best = Some((area, h));
+            }
+        }
+        BOOL(1)
+    }
+    let me = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+        .unwrap_or_else(|| "outside-portal.exe".into());
+    let mut f = Found { title, best: None, procs: processes(), me };
     unsafe {
-        if let Ok(h) = FindWindowW(PCWSTR::null(), PCWSTR(t.as_ptr())) {
+        let _ = EnumWindows(Some(each), LPARAM(&mut f as *mut Found as isize));
+    }
+    f.best.map(|x| x.1)
+}
+
+pub fn show_window(title: &str) {
+    unsafe {
+        if let Some(h) = find_main(title) {
             let _ = ShowWindow(h, SW_SHOW);
             let _ = ShowWindow(h, SW_RESTORE);
             let _ = SetForegroundWindow(h);
@@ -317,9 +343,8 @@ pub fn show_window(title: &str) {
 
 /// The taskbar button flashes until the window is looked at.
 pub fn flash(title: &str) {
-    let t = wide(title);
     unsafe {
-        if let Ok(h) = FindWindowW(PCWSTR::null(), PCWSTR(t.as_ptr())) {
+        if let Some(h) = find_main(title) {
             if GetForegroundWindow() == h {
                 return;
             }

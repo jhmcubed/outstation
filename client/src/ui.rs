@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-pub const TITLE: &str = "the portal ✼ chat";
+// (its own title: ghillie's Python chat window is "the portal ✼ chat", and the two may be open at once)
+pub const TITLE: &str = "⊂λ,ｍ⊙ ✼ the portal";
 const ABYSS: Color32 = Color32::BLACK;
 const LIME: Color32 = Color32::from_rgb(0xb9, 0xff, 0x00);
 const BRIGHT: Color32 = Color32::from_rgb(0xe4, 0xff, 0x8a);
@@ -153,13 +154,37 @@ pub struct App {
     history_until: Instant,
     moving_chat: bool,
     zoom: f32,
+    feed: Arc<Mutex<crate::feed::Feed>>,
+    feed_tex: Option<(egui::TextureHandle, Instant)>,
+    acked: Option<u64>,
+    tray_live: Option<bool>,
+    tray_click: std::sync::mpsc::Receiver<()>,
+    editing_masks: bool,
+    mask_drag: Option<MaskDrag>,
 }
+
+/// a mask being drawn (from where the hand went down) or moved (which one, and where it was held)
+#[derive(Clone, Copy)]
+enum MaskDrag { New(egui::Pos2), Move(usize, egui::Vec2) }
 
 struct TrayItems {
     open: tray_icon::menu::MenuItem,
     live: tray_icon::menu::MenuItem,
     modes: Vec<(String, tray_icon::menu::CheckMenuItem)>,
     quit: tray_icon::menu::MenuItem,
+}
+
+/// The ✼ in hotpink, for the tray while live: every lit pixel's colour moved to pink, its shape and edges kept
+pub fn pink_icon() -> (Vec<u8>, u32, u32) {
+    let (mut px, w, h) = icon_rgba();
+    for p in px.chunks_exact_mut(4) {
+        let lum = (p[0] as f32 * 0.3 + p[1] as f32 * 0.59 + p[2] as f32 * 0.11) / 255.0;
+        let k = (lum * 1.25).min(1.0);
+        p[0] = (255.0 * k) as u8;
+        p[1] = (105.0 * k) as u8;
+        p[2] = (180.0 * k) as u8;
+    }
+    (px, w, h)
 }
 
 pub fn icon_rgba() -> (Vec<u8>, u32, u32) {
@@ -179,6 +204,8 @@ impl App {
         style(&ctx);
         let wake = ctx.clone();
         let desk = Desk::start(settings.clone(), move || wake.request_repaint());
+        let wake2 = ctx.clone();
+        let feed = crate::feed::start(settings.clone(), move || wake2.request_repaint());
         // this PC's whole upload, a second at a time
         let pc_bps = Arc::new(Mutex::new(None));
         {
@@ -207,6 +234,20 @@ impl App {
             tray_icon::menu::MenuEvent::set_event_handler(Some(move |e| {
                 let _ = tray_tx.send(e);
                 ctx.request_repaint();
+            }));
+        }
+        // a click on the tray's ✼ opens the window too
+        let (click_tx, tray_click) = std::sync::mpsc::channel();
+        {
+            let ctx = ctx.clone();
+            tray_icon::TrayIconEvent::set_event_handler(Some(move |e: tray_icon::TrayIconEvent| {
+                let opened = matches!(e, tray_icon::TrayIconEvent::Click { button: tray_icon::MouseButton::Left,
+                                                                            button_state: tray_icon::MouseButtonState::Up, .. }
+                                         | tray_icon::TrayIconEvent::DoubleClick { .. });
+                if opened {
+                    let _ = click_tx.send(());
+                    ctx.request_repaint();
+                }
             }));
         }
         let (tray, tray_items) = make_tray(&settings.get());
@@ -239,6 +280,7 @@ impl App {
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0,
+            feed, feed_tex: None, acked: None, tray_live: None, tray_click, editing_masks: false, mask_drag: None,
         };
         if !s.attached() {
             if let Some(code) = win::paste_text().filter(|c| c.trim().starts_with("portal1:")) {
@@ -276,6 +318,10 @@ impl App {
         }
         while let Ok(e) = self.tray_rx.try_recv() {
             self.tray_event(ctx, e);
+        }
+        if self.tray_click.try_recv().is_ok() {
+            while self.tray_click.try_recv().is_ok() {}
+            self.show(ctx);
         }
     }
 
@@ -332,6 +378,7 @@ impl App {
                                             v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string())).collect();
         } else if let Some(u) = m.get("upload") {
             self.portal_bps = u.get("bps").and_then(|x| x.as_u64());
+            self.acked = u.get("acked").and_then(|x| x.as_u64());
         } else if let Some(p) = m.get("ping") {
             let name = p.get("name").and_then(|x| x.as_str()).unwrap_or("a visitor").to_string();
             self.lines.push(Line { id: None, who: 0, host: false, name: String::new(), queued: false,
@@ -427,11 +474,22 @@ impl App {
     fn show(&mut self, ctx: &egui::Context) {
         self.hidden = false;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         // (brought to the front by Windows' own call, never egui's Focus: winit's focus sends a pretend Alt key)
         win::show_window(TITLE);
     }
 
-    fn sync_tray(&self) {
+    fn sync_tray(&mut self) {
+        let live = self.up && self.live && self.open && self.settings.get().on_air;
+        if self.tray_live != Some(live) {
+            self.tray_live = Some(live);
+            if let Some(t) = &self.tray {
+                let (rgba, w, h) = if live { pink_icon() } else { icon_rgba() };
+                if let Ok(i) = tray_icon::Icon::from_rgba(rgba, w, h) {
+                    let _ = t.set_icon(Some(i));
+                }
+            }
+        }
         let Some(items) = &self.tray_items else { return };
         let s = self.settings.get();
         items.live.set_text(if s.on_air && self.up && self.live { "end stream" } else { "go live" });
@@ -765,10 +823,11 @@ impl SettingsPanel {
             self.status = (if replay == 0 { "the replay buffer: off".into() } else { format!("the replay buffer: the last {} s (the clip key, or \"clip\", saves them)", replay) }, LIME);
         }
         ui.label(rich("hotkeys", 16.0, LIME));
-        const HOTKEYS: [(&str, &str); 3] = [("static key", "shows viewers static, the sound going on"),
+        const HOTKEYS: [(&str, &str); 4] = [("static key", "shows viewers static, the sound going on"),
                                             ("sound key", "the sound: off, the game, everything"),
-                                            ("clip key", "saves the replay buffer as a clip")];
-        let current = [s.static_key.clone(), s.sound_key.clone(), s.clip_key.clone()];
+                                            ("clip key", "saves the replay buffer as a clip"),
+                                            ("mask key", "your own masks off and on")];
+        let current = [s.static_key.clone(), s.sound_key.clone(), s.clip_key.clone(), s.mask_key.clone()];
         for (i, (label, what)) in HOTKEYS.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.add_sized([86.0, 18.0], egui::Label::new(rich(label, 16.0, LIME)));
@@ -798,11 +857,12 @@ impl SettingsPanel {
             }
             if let Some(name) = got {
                 let vk = win::key_code(&name);
-                let taken = (0..3).find(|j| *j != i && win::key_code(&current[*j]) == vk);
+                let taken = (0..4).find(|j| *j != i && win::key_code(&current[*j]) == vk);
                 if let Some(j) = taken {
                     self.status = (format!("{} is already the {}", win::key_name(&name), HOTKEYS[j].0), PINK);
                 } else {
-                    let _ = settings.update(|x| match i { 0 => x.static_key = name.clone(), 1 => x.sound_key = name.clone(), _ => x.clip_key = name.clone() });
+                    let _ = settings.update(|x| match i { 0 => x.static_key = name.clone(), 1 => x.sound_key = name.clone(),
+                                                          2 => x.clip_key = name.clone(), _ => x.mask_key = name.clone() });
                     self.status = (format!("the {} is {} now (it takes at once)", HOTKEYS[i].0, win::key_name(&name)), LIME);
                 }
                 self.listening = None;
@@ -866,6 +926,7 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         choice(ui, "blacked out:", &mut s.mask, &[("none", "nothing"), ("chat", "the chat"), ("side", "the side panel"), ("both", "both")]);
         choice(ui, "taken by:", &mut s.method, &[("auto", "the first that works"), ("gpu", "Windows Graphics Capture"), ("gdi", "PrintWindow")]);
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY));
+        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY));
         ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY));
         ui.horizontal(|ui| {
             ui.label(rich("clips go to:", 16.0, GREY));
@@ -1164,6 +1225,12 @@ impl eframe::App for App {
         if let Some(n) = crate::clip::take_note() {
             self.note(n);
         }
+        // minimised: into the tray (the tray's "open the portal" brings it back), the stream going on
+        if !self.hidden && self.tray.is_some() && self.settings.get().minimize_to_tray
+            && ctx.input(|i| i.viewport().minimized) == Some(true) {
+            self.hidden = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
         // the interface's size (text, buttons and all), from the settings
         let scale = self.settings.get().ui_scale.clamp(0.75, 2.0);
         if (scale - self.zoom).abs() > 0.001 {
@@ -1189,7 +1256,7 @@ impl eframe::App for App {
         }
         let listening = self.panel.as_ref().is_some_and(|p| p.listening.is_some());
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.poll_form.is_none() && self.guess_form.is_none()
-            && !self.asking_close && !listening && !self.moving_chat {
+            && !self.asking_close && !listening && !self.moving_chat && !self.editing_masks {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         let frame = egui::Frame::new().fill(ABYSS).inner_margin(egui::Margin::symmetric(12, 10));
@@ -1287,6 +1354,7 @@ impl App {
             parts.push(format!("this PC {} of {} Mbit/s", mbit(pc), cap));
             ui.label(rich(&format!("upload: {}", parts.join(" · ")), 14.0, if share > 0.8 { PINK } else { GREY }));
         });
+        self.live_view(ui);
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let s = self.settings.get();
@@ -1323,7 +1391,72 @@ impl App {
                     self.moving_chat = !self.moving_chat;
                 }
             }
+            // your own masks: boxes blacked out of every frame before it leaves this PC
+            let mut on = s.masks_on;
+            let label = if s.masks.is_empty() { "masks".to_string() } else { format!("masks ({})", s.masks.len()) };
+            if ui.checkbox(&mut on, rich(&label, 14.0, GREY)).on_hover_text(format!("the {} key turns them off and on", win::key_name(&s.mask_key))).changed() {
+                let _ = self.settings.update(|x| x.masks_on = on);
+            }
+            if button(ui, if self.editing_masks { "done" } else { "edit masks" }, true, Some(self.editing_masks)).clicked() {
+                if !self.editing_masks && frame_rect(&s).is_none() {
+                    self.note("RuneLite isn't open (or it's minimised): open it, then draw the masks over it");
+                } else {
+                    self.editing_masks = !self.editing_masks;
+                    self.mask_drag = None;
+                }
+            }
         });
+    }
+
+    /// The live view: the portal as the site gets it, small, beside how much viewers' pages say they've had.
+    /// "the live view" switches it off (not connected at all, so it costs nothing).
+    fn live_view(&mut self, ui: &mut egui::Ui) {
+        let s = self.settings.get();
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let mut on = s.live_view;
+            if ui.checkbox(&mut on, rich("the live view", 14.0, GREY)).on_hover_text("the portal as the site gets it, through the relay (off: it costs nothing)").changed() {
+                let _ = self.settings.update(|x| x.live_view = on);
+                if !on { self.feed_tex = None; }
+            }
+            if !on {
+                return;
+            }
+            let (frame, rate, connected) = {
+                let mut f = self.feed.lock().unwrap();
+                f.came.retain(|t| t.elapsed() < Duration::from_secs(4));
+                let rate = f.came.len() as f32 / 4.0;
+                (f.frame.take(), rate, f.connected)
+            };
+            if let Some((rgb, w, h, at)) = frame {
+                let img = egui::ColorImage::from_rgb([w as usize, h as usize], &rgb);
+                match &mut self.feed_tex {
+                    Some((t, when)) => { t.set(img, egui::TextureOptions::NEAREST); *when = at; }
+                    None => self.feed_tex = Some((ui.ctx().load_texture("live view", img, egui::TextureOptions::NEAREST), at)),
+                }
+            }
+            let fresh = self.feed_tex.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(3));
+            let words = if !connected {
+                "the live view: reaching the relay…".to_string()
+            } else if fresh {
+                let had = match self.acked { Some(b) if b > 0 => format!(" · viewers' pages have had {:.1} Mbit/s", b as f64 / 1e6), _ => if self.viewers > 0 { " · viewers: not heard from yet".into() } else { " · nobody watching".into() } };
+                format!("the site's view: {:.1} a second through the relay{}", rate, had)
+            } else {
+                "the site's view: nothing coming through (off air, static, or paused)".to_string()
+            };
+            ui.label(rich(&words, 14.0, if fresh { LIME } else { GREY }));
+        });
+        if s.live_view {
+            if let Some((t, at)) = &self.feed_tex {
+                let size = t.size_vec2();
+                let w = 192.0f32.min(size.x);
+                let h = size.y * w / size.x.max(1.0);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+                let tint = if at.elapsed() < Duration::from_secs(3) { Color32::WHITE } else { Color32::from_gray(70) };
+                ui.painter().image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+                ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, DIM), egui::StrokeKind::Outside);
+            }
+        }
     }
 
     fn chat(&mut self, ui: &mut egui::Ui) {
@@ -1667,6 +1800,99 @@ impl App {
         }
     }
 
+    /// Drawing your own masks, in a window laid over the game: drag on the game to cover a part of it, drag a box to
+    /// move it, right-click one to take it away; Enter or "done" when they're right. Each is kept as a share of the
+    /// game's size, so it stays put when RuneLite is resized.
+    fn masks_ui(&mut self, ctx: &egui::Context) {
+        if !self.editing_masks {
+            return;
+        }
+        let s = self.settings.get();
+        let Some((l, t, r, b)) = frame_rect(&s) else { self.editing_masks = false; return };
+        let ppp = ctx.pixels_per_point();
+        let (w, h) = ((r - l) as f32 / ppp, (b - t) as f32 / ppp);
+        let builder = egui::ViewportBuilder::default().with_title("the portal ✼ masks").with_decorations(false)
+            .with_transparent(true).with_always_on_top().with_taskbar(false).with_resizable(false)
+            .with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp)).with_inner_size(Vec2::new(w, h));
+        let mut masks = s.masks.clone();
+        let mut drag = self.mask_drag;
+        let mut changed = false;
+        let mut done = false;
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("masks"), builder, |ui, _| {
+            let rect = ui.max_rect();
+            let share = |p: egui::Pos2| (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0));
+            let to_rect = |m: &[f64; 4]| egui::Rect::from_min_size(
+                egui::pos2(rect.left() + m[0] as f32 * rect.width(), rect.top() + m[1] as f32 * rect.height()),
+                Vec2::new(m[2] as f32 * rect.width(), m[3] as f32 * rect.height()));
+            let resp = ui.interact(rect, ui.id().with("masks"), Sense::click_and_drag());
+            if resp.drag_started() {
+                if let Some(p) = resp.interact_pointer_pos() {
+                    drag = Some(match masks.iter().rposition(|m| to_rect(m).contains(p)) {
+                        Some(i) => MaskDrag::Move(i, p - to_rect(&masks[i]).min),
+                        None => MaskDrag::New(p),
+                    });
+                }
+            }
+            let now = ui.input(|i| i.pointer.interact_pos());
+            if let (Some(d), Some(p)) = (drag, now) {
+                match d {
+                    MaskDrag::Move(i, off) if i < masks.len() => {
+                        let (x, y) = share(p - off);
+                        masks[i][0] = (x as f64).min(1.0 - masks[i][2]);
+                        masks[i][1] = (y as f64).min(1.0 - masks[i][3]);
+                    }
+                    MaskDrag::New(start) => {
+                        let r2 = egui::Rect::from_two_pos(start, p);
+                        ui.painter().rect_filled(r2, 0.0, Color32::from_black_alpha(230));
+                        ui.painter().rect_stroke(r2, 0.0, Stroke::new(2.0, PINK), egui::StrokeKind::Inside);
+                    }
+                    _ => {}
+                }
+            }
+            if resp.drag_stopped() {
+                if let (Some(MaskDrag::New(start)), Some(p)) = (drag, now) {
+                    let (a, b2) = (share(start), share(p));
+                    let (x, y, mw, mh) = (a.0.min(b2.0), a.1.min(b2.1), (a.0 - b2.0).abs(), (a.1 - b2.1).abs());
+                    if mw > 0.005 && mh > 0.005 {
+                        masks.push([x as f64, y as f64, mw as f64, mh as f64].map(|v| (v * 1e4).round() / 1e4));
+                    }
+                }
+                drag = None;
+                changed = true;
+            }
+            if resp.secondary_clicked() {
+                if let Some(p) = resp.interact_pointer_pos() {
+                    if let Some(i) = masks.iter().rposition(|m| to_rect(m).contains(p)) {
+                        masks.remove(i);
+                        changed = true;
+                    }
+                }
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) { done = true; }
+            // what goes out: the masks black, a thin pink edge round each and round the game
+            let p = ui.painter();
+            p.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0, LIME), egui::StrokeKind::Inside);
+            for m in &masks {
+                let mr = to_rect(m);
+                p.rect_filled(mr, 0.0, Color32::BLACK);
+                p.rect_stroke(mr, 0.0, Stroke::new(1.0, PINK), egui::StrokeKind::Inside);
+            }
+            let hint = "drag to cover what shouldn't go out · drag a box to move it · right-click one to take it away · Enter or \"done\" when they're right";
+            let at = egui::pos2(rect.center().x, rect.top() + 18.0);
+            let g = p.layout_no_wrap(hint.into(), body(16.0), LIME);
+            p.rect_filled(egui::Rect::from_center_size(at, g.size() + Vec2::new(16.0, 8.0)), 0.0, Color32::from_black_alpha(220));
+            p.galley(at - g.size() / 2.0, g, LIME);
+        });
+        self.mask_drag = drag;
+        if masks != s.masks && (changed || matches!(drag, Some(MaskDrag::Move(..)))) {
+            let _ = self.settings.update(|x| x.masks = masks.clone());
+        }
+        if done {
+            self.editing_masks = false;
+            self.mask_drag = None;
+        }
+    }
+
     /// Each ✼ a viewer sends, rising over RuneLite with their name (as many as they like), in one see-through window
     /// over the game that clicks pass through.
     fn stars_ui(&mut self, ctx: &egui::Context) {
@@ -1704,6 +1930,7 @@ impl App {
     fn pings_ui(&mut self, ctx: &egui::Context) {
         self.over_ui(ctx);
         self.stars_ui(ctx);
+        self.masks_ui(ctx);
         const WIDE: f32 = 520.0;
         const TALL: f32 = 160.0;
         let ppp = ctx.pixels_per_point();

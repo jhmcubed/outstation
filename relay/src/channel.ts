@@ -31,7 +31,7 @@ const POLL_KEPT = 90_000;
 const SOUND_HOLD = 500; // the capture's hold-back: a pause takes the last moment's sound back too
 const REPORTS_KEPT = 8;
 const LOOK_EVERY = 500; // a looker (the listening post's receiver) gets a frame at most this often
-const SIGNAL_EVERY = 1000; // a viewer's ✼ (the signal button) at most once a second
+const SIGNAL_EVERY = 80; // a viewer's ✼: as often as a hand can press, a dozen a second at most (the flood guard)
 const GUESS_MIN_VALUE = 1_000_000; // a drop from the guessed boss this big ends a guess round by itself
 const GUESS_KEPT = 120_000; // a decided round's result stays this long
 const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused for a minute
@@ -110,6 +110,8 @@ export class Channel extends DurableObject<Env> {
   soundTimer: ReturnType<typeof setTimeout> | null = null;
   uploadTimer: ReturnType<typeof setInterval> | null = null;
   out = 0; // bytes sent to viewers (frames, sound, lines), for the desk's upload line
+  acked = 0; // bytes viewers say they've had ({"got"}): proof the site is getting it
+  ackedSeen: [number, number] = [0, Date.now()];
   outSeen: [number, number] = [0, Date.now()];
   wrong = new Map<string, number[]>();
   flow = new WeakMap<WebSocket, { sent: number; got: number }>();
@@ -526,8 +528,12 @@ export class Channel extends DurableObject<Env> {
     this.outSeen = [this.out, now];
     const desks = this.sockets("desk");
     if (!desks.length) return;
+    const [had, hadAt] = this.ackedSeen;
+    this.ackedSeen = [this.acked, now];
+    // acked: what viewers' pages say they've had, a second at a time (the client's live view)
     const line = pyjson({ upload: { bps: Math.floor(((this.out - was) * 8) / Math.max(0.001, (now - at) / 1000)),
-                                    viewers: this.seated().length } });
+                                    viewers: this.seated().length,
+                                    acked: Math.floor(((this.acked - had) * 8) / Math.max(0.001, (now - hadAt) / 1000)) } });
     for (const d of desks) this.send(d, line);
   }
 
@@ -565,6 +571,7 @@ export class Channel extends DurableObject<Env> {
     if (typeof m.got === "number" && Number.isFinite(m.got)) {
       let f = this.flow.get(ws);
       if (!f) this.flow.set(ws, (f = { sent: 0, got: 0 }));
+      if (m.got > f.got) this.acked += m.got - f.got;
       f.got = m.got;
       if (f.got > f.sent) f.sent = f.got; // (the object slept and woke since: start the count again from theirs)
       return;

@@ -30,6 +30,7 @@ fn d_chat_size() -> f32 { 16.0 }
 fn d_game_chat_size() -> f32 { 20.0 }
 fn d_guess_min() -> u64 { 1_000_000 }
 fn d_scale() -> f32 { 1.0 }
+fn d_mask_key() -> String { "end".into() }
 
 /// A hotkey as the Python portal's settings hold it: a name ("pause") or a Windows key code (45).
 fn de_key<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -117,6 +118,16 @@ pub struct Settings {
     /// the clip key: the replay buffer saved as a clip
     #[serde(default = "d_clip_key", deserialize_with = "de_key")]
     pub clip_key: String,
+    /// your own masks (11/05/2026, Jace: "mask a custom area of their screen if there is something they don't want shown
+    /// on their client"): boxes blacked out of every frame before it leaves this PC, each [x, y, w, h] as a share of the
+    /// frame (so they stay put when RuneLite is resized)
+    #[serde(default)]
+    pub masks: Vec<[f64; 4]>,
+    /// whether they're on (the mask key turns them off and on)
+    #[serde(default = "d_true")]
+    pub masks_on: bool,
+    #[serde(default = "d_mask_key", deserialize_with = "de_key")]
+    pub mask_key: String,
     /// the replay buffer: the last 0 to 30 seconds kept here, for a clip (0 keeps nothing)
     #[serde(default)]
     pub replay_seconds: u32,
@@ -144,6 +155,12 @@ pub struct Settings {
     /// pings shown over RuneLite
     #[serde(default = "d_true")]
     pub pings: bool,
+    /// minimising the window sends it to the tray (the stream goes on)
+    #[serde(default = "d_true")]
+    pub minimize_to_tray: bool,
+    /// the live view: the portal as the site gets it, small, in the window (off: not connected at all)
+    #[serde(default = "d_true")]
+    pub live_view: bool,
     /// viewers' ✼ (the signal button) shown over RuneLite
     #[serde(default = "d_true")]
     pub signals: bool,

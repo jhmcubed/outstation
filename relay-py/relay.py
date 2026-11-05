@@ -94,7 +94,8 @@ NAME_MAX = 20
 PING_EVERY = 0.5                  # a ping a viewer every half second (1.5 until Jace asked for more, 11/05)
 POLL_OPTIONS, POLL_SECONDS = (2, 6), (10, 900)
 LOOK_EVERY = 0.5                  # a looker (the listening post's receiver) gets a frame at most this often
-SIGNAL_EVERY = 1.0                # a viewer's ✼ (the signal button) at most once a second
+SIGNAL_EVERY = 0.08               # a viewer's ✼ (the signal button): as often as a hand can press (Jace, 11/05: "allow for
+                                  # spamming"), a dozen a second at most, so one script can't flood everyone's page
 GUESS_MIN_VALUE = 1_000_000       # a drop from the guessed boss this big ends a guess round by itself (settings' guess_min_value)
 GUESS_KEPT = 120.0                # a decided round's result stays this long
 POLL_KEPT = 90.0                  # a closed poll's result stays this long, then {"poll_gone"} (Jace, 11/05)
@@ -242,6 +243,8 @@ class Channel:
         self.sound_info = None
         self.sound_held = deque()
         self.out = 0                 # bytes sent to viewers so far (frames, sound, lines): his upload, for the desk
+        self.acked = 0               # bytes viewers say they've had ({"got"}): proof the site is getting it
+        self.acked_seen = (0, time.monotonic())
         self.replay = deque()        # (arrival, message): the last replay_seconds of frames and sound, for a clip
         self.kc = {}                 # boss (lower case) -> (its name, the kill count Dink last told of)
         self.guess = None            # the drop guess round (11/05/2026): see from_desk's guess_open
@@ -648,6 +651,13 @@ class Relay:
         if not isinstance(m, dict):
             return
         now = time.monotonic()
+        if isinstance(m.get("got"), int) and not isinstance(m["got"], bool):
+            # what this viewer has had so far (the page's flow control line): counted, for the desk's "viewers have it"
+            last = getattr(sock, "got_last", 0)
+            if m["got"] > last:
+                ch.acked += m["got"] - last
+            sock.got_last = m["got"]
+            return
         if isinstance(m.get("hello"), dict):
             h = m["hello"]
             dev = h.get("device")
@@ -1034,9 +1044,13 @@ class Relay:
             for ch in list(self.channels.values()):
                 was, at = ch.out_seen
                 ch.out_seen = (ch.out, now)
+                had, had_at = ch.acked_seen
+                ch.acked_seen = (ch.acked, now)
                 if ch.desks:
+                    # acked: what viewers' pages say they've had, a second at a time (the client's live view)
                     line = json.dumps({"upload": {"bps": int((ch.out - was) * 8 / max(0.001, now - at)),
-                                                  "viewers": len(ch.viewers)}})
+                                                  "viewers": len(ch.viewers),
+                                                  "acked": int((ch.acked - had) * 8 / max(0.001, now - had_at))}})
                     for d in list(ch.desks):
                         d.send_nowait(line)
 

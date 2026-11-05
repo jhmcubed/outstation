@@ -384,12 +384,15 @@ pub struct Options {
     pub width: u32,
     pub method: String,
     pub interval_ms: f64,
+    /// your own masks, while they're on: [x, y, w, h] as shares of the frame
+    pub boxes: Vec<[f64; 4]>,
 }
 
 impl Options {
     pub fn of(s: &crate::settings::Settings) -> Options {
         Options { view: s.view.clone(), mask: s.mask.clone(), width: s.width.max(16),
-                  method: s.method.clone(), interval_ms: 1000.0 / s.fps.clamp(1, MAX_FPS) as f64 }
+                  method: s.method.clone(), interval_ms: 1000.0 / s.fps.clamp(1, MAX_FPS) as f64,
+                  boxes: if s.masks_on { s.masks.clone() } else { Vec::new() } }
     }
 }
 
@@ -479,6 +482,14 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
         if side { black(gw - RESIZABLE_SIDE.0, gh - RESIZABLE_SIDE.1, RESIZABLE_SIDE.0, RESIZABLE_SIDE.1, d * f); }
         "resizable".to_string()
     };
+    // your own masks: blacked out here, so nothing under them ever leaves this PC
+    let (fw, fh) = (img.w as f64, img.h as f64);
+    for m in &o.boxes {
+        img.fill((m[0] * fw).floor() as i64, (m[1] * fh).floor() as i64, ((m[0] + m[2]) * fw).ceil() as i64, ((m[1] + m[3]) * fh).ceil() as i64);
+    }
+    if !o.boxes.is_empty() {
+        layout += &format!(", {} of your own masks", o.boxes.len());
+    }
     layout += &format!(", {}x{} canvas, {}", cw, ch,
                        if o.mask == "none" { "nothing blacked out".to_string() } else { format!("{} blacked out", o.mask) });
     if let Some(tm) = times {

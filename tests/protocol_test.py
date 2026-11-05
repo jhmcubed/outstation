@@ -591,6 +591,17 @@ class Talk(Base):
         self.assertGreater(up["bps"], 200000)
         self.assertEqual(up["viewers"], 2)
 
+    async def test_the_desk_hears_what_viewers_say_they_have(self):
+        tx, desk, a, b = await self.setup_room()
+        frame = struct.pack(">I", 5) + b"\xff\xd8" + b"x" * 10000
+        for _ in range(4):
+            await tx.send(frame)
+        await a.send(json.dumps({"got": 4 * len(frame)}))
+        up = await next_of(desk, "upload", timeout=3)
+        while not up.get("acked"):
+            up = await next_of(desk, "upload", timeout=3)
+        self.assertGreater(up["acked"], 100000)
+
     async def test_the_desk_hears_when_the_picture_is_paused_and_back(self):
         tx, desk, a, b = await self.setup_room()
         await tx.send('{"state": "shut"}')
@@ -701,7 +712,7 @@ class RoundTwo(Base):
             pass
         self.assertLessEqual(got, 1)
 
-    async def test_a_signal_reaches_everyone_once_a_second_at_most(self):
+    async def test_a_signal_reaches_everyone_as_often_as_a_hand_presses_but_no_flood(self):
         tx, desk, a, b = await self.room()
         await a.send(json.dumps({"signal": True}))
         await a.send(json.dumps({"signal": True}))
