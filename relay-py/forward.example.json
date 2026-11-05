@@ -1,0 +1,33 @@
+{
+  "_note": "The relay's Dink-to-Discord rules (tools/portal/forward.py), from Jace's ::dinkexport of 11/04/2026: what his friends' Discord got then. The real file is ~/Documents/ghillie portal/forward.json, with the webhook URL in discord; never in the repo. Loot and kill count are re-checked here, so Dink's own loot value and kill count interval can be loosened for the portal. Every other kind marked true is forwarded whole, so keep those notifiers' Dink thresholds as they were, or Discord gets the looser ones too.",
+  "discord": [],
+  "forward": {
+    "DEATH": true,
+    "COLLECTION": true,
+    "LEVEL": true,
+    "QUEST": true,
+    "CLUE": true,
+    "COMBAT_ACHIEVEMENT": true,
+    "ACHIEVEMENT_DIARY": true,
+    "PET": true,
+    "BARBARIAN_ASSAULT_GAMBLE": true,
+    "PLAYER_KILL": true,
+    "LOOT": {
+      "minValue": 1000000,
+      "allow": ["aaaaaagold ring", "awakener's orb", "chromium ingot", "blood quartz", "ice quartz", "magus vestige", "shadow quartz"]
+    },
+    "KILL_COUNT": {"every": 25, "lapsEvery": 1000, "first": true, "personalBest": true},
+    "SLAYER": false,
+    "SPEEDRUN": false,
+    "XP_MILESTONE": false,
+    "GRAND_EXCHANGE": false,
+    "TRADE": false,
+    "CHAT": false,
+    "GROUP_STORAGE": false,
+    "EXTERNAL_PLUGIN": false,
+    "LEAGUES_AREA": false,
+    "LEAGUES_RELIC": false,
+    "LEAGUES_TASK": false,
+    "LEAGUES_MASTERY": false
+  }
+}

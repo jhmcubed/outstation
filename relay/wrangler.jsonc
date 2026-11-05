@@ -1,0 +1,22 @@
+// The portal's relay (src/index.ts). No account ids or secrets here: `wrangler login` holds the account,
+// and the owner's admin token is a secret (`wrangler secret put ADMIN_TOKEN`; locally, .dev.vars).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "outside-portal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHANNEL", "class_name": "Channel" },
+      { "name": "DIRECTORY", "class_name": "Directory" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] }
+  ],
+  "vars": {
+    "MAX_VIEWERS": "0"
+  },
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,30 @@
+name: tests
+on:
+  push:
+  pull_request:
+
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: the Worker's packages
+        working-directory: relay
+        run: npm ci
+      - name: the Worker's types
+        working-directory: relay
+        run: npx tsc --noEmit
+      - name: the Python relay's own tests
+        run: python relay-py/test_relay.py
+      - name: the protocol, against the Python relay
+        run: python tests/protocol_test.py
+      - name: the protocol, against the Worker (wrangler dev)
+        run: python tests/protocol_test.py
+        env:
+          PORTAL_RELAY: worker
