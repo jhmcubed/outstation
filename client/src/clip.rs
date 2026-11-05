@@ -115,22 +115,19 @@ pub fn write(items: &[(Instant, Vec<u8>)], folder: &std::path::Path, name: Optio
     pics.sort_by_key(|p| p.0);
     let t_end = pics.last().unwrap().0 + 40;
 
-    // the picture: each frame decoded, at its own time, never two at the same one
+    let t0 = Instant::now();
+    // the picture: the frames' times (each decoded only as it's written, never all at once), never two at one time
     let first = decode(pics[0].1).ok_or("the first frame wouldn't decode")?;
     let (w, h) = (first.1 / 2 * 2, first.2 / 2 * 2); // (H.264 wants even sizes)
-    let mut video: Vec<(i64, Vec<u8>)> = Vec::new();
+    let mut video: Vec<(i64, &[u8])> = Vec::new();
     let mut last = -1;
     for (t, jpeg) in &pics {
         if *t <= last { continue; }
         last = *t;
-        let Some((rgb, fw, fh)) = decode(jpeg) else { continue };
-        let mut bgra: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[2], p[1], p[0], 255]).collect();
-        if (fw, fh) != (w, h) {
-            bgra = if fw >= w && fh >= h { crop(&bgra, fw, w, h) } else { crate::capture::resize(&bgra, fw, fh, w, h) };
-        }
-        video.push((*t, bgra));
+        video.push((*t, *jpeg));
     }
 
+    let t1 = Instant::now();
     // the sound: every bus's packets decoded and laid on one timeline by their stamps, mixed
     let n = ((t_end.max(0) as usize) * RATE / 1000).max(1);
     let mut mix = vec![0i32; n * 2];
@@ -163,6 +160,7 @@ pub fn write(items: &[(Instant, Vec<u8>)], folder: &std::path::Path, name: Optio
         }
     }
     let audio: Vec<i16> = mix.into_iter().map(|x| x.clamp(-32768, 32767) as i16).collect();
+    let t2 = Instant::now();
 
     std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
     let file = match name {
@@ -170,7 +168,41 @@ pub fn write(items: &[(Instant, Vec<u8>)], folder: &std::path::Path, name: Optio
         None => folder.join(format!("clip {}.mp4", stamp_now())),
     };
     mp4(&file, w, h, &video, &audio, t_end).map_err(|e| format!("Windows' encoder refused it ({})", e))?;
+    crate::transmit::log(&format!("clip: {} frames {}x{}, {:.1} s of sound mixed in {:.1} s, written in {:.1} s ({:.1} s in all)",
+                                  video.len(), w, h, t_end as f64 / 1000.0, (t2 - t1).as_secs_f64(),
+                                  t2.elapsed().as_secs_f64(), t0.elapsed().as_secs_f64()));
     Ok(file)
+}
+
+/// A frame as H.264 wants it in: NV12 (a full-size Y plane, then U and V together at half size; BT.601, limited
+/// range), w and h even. Converting here keeps Windows from slotting in a slow converter of its own.
+fn nv12(rgb: &[u8], fw: u32, w: u32, h: u32) -> Vec<u8> {
+    let (w, h, fw) = (w as usize, h as usize, fw as usize);
+    let mut out = vec![0u8; w * h * 3 / 2];
+    let (yp, uv) = out.split_at_mut(w * h);
+    for y in 0..h {
+        let row = &rgb[y * fw * 3..];
+        for x in 0..w {
+            let (r, g, b) = (row[x * 3] as i32, row[x * 3 + 1] as i32, row[x * 3 + 2] as i32);
+            yp[y * w + x] = (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16).clamp(0, 255) as u8;
+        }
+    }
+    for y in (0..h).step_by(2) {
+        for x in (0..w).step_by(2) {
+            let (mut r, mut g, mut b) = (0i32, 0i32, 0i32);
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let i = ((y + dy) * fw + x + dx) * 3;
+                r += rgb[i] as i32;
+                g += rgb[i + 1] as i32;
+                b += rgb[i + 2] as i32;
+            }
+            let (r, g, b) = (r / 4, g / 4, b / 4);
+            let j = (y / 2) * w + x;
+            uv[j] = (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
+            uv[j + 1] = (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
+        }
+    }
+    out
 }
 
 fn crop(src: &[u8], sw: u32, w: u32, h: u32) -> Vec<u8> {
@@ -199,7 +231,7 @@ fn stamp_now() -> String {
 }
 
 /// H.264 and AAC into an .mp4, through Media Foundation's sink writer.
-fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, Vec<u8>)], audio: &[i16], t_end_ms: i64) -> windows::core::Result<()> {
+fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, &[u8])], audio: &[i16], t_end_ms: i64) -> windows::core::Result<()> {
     use windows::core::HSTRING;
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
@@ -208,7 +240,13 @@ fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, Vec<u8>)], audio: 
         MFStartup(0x0002_0070, MFSTARTUP_FULL)?;
         let result = (|| -> windows::core::Result<()> {
             let _ = std::fs::remove_file(path);
-            let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, None)?;
+            // (the graphics card's encoder where there is one; and no waiting on the writer's own pacing)
+            let mut attrs: Option<IMFAttributes> = None;
+            MFCreateAttributes(&mut attrs, 2)?;
+            let attrs = attrs.unwrap();
+            attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+            attrs.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
+            let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attrs)?;
             let size = ((w as u64) << 32) | h as u64;
             let ratio = |a: u32, b: u32| ((a as u64) << 32) | b as u64;
 
@@ -223,12 +261,12 @@ fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, Vec<u8>)], audio: 
             let vs = writer.AddStream(&vo)?;
             let vi = MFCreateMediaType()?;
             vi.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            vi.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
+            vi.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
             vi.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
             vi.SetUINT64(&MF_MT_FRAME_SIZE, size)?;
             vi.SetUINT64(&MF_MT_FRAME_RATE, ratio(30, 1))?;
             vi.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, ratio(1, 1))?;
-            vi.SetUINT32(&MF_MT_DEFAULT_STRIDE, w * 4)?; // (top-down rows)
+            vi.SetUINT32(&MF_MT_DEFAULT_STRIDE, w)?;
             writer.SetInputMediaType(vs, &vi, None)?;
 
             let ao = MFCreateMediaType()?;
@@ -263,19 +301,32 @@ fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, Vec<u8>)], audio: 
                 s.SetSampleDuration(d100)?;
                 Ok(s)
             };
-            for (i, (t, px)) in video.iter().enumerate() {
-                let next = video.get(i + 1).map(|v| v.0).unwrap_or(t_end_ms);
-                writer.WriteSample(vs, &sample(px, t * 10_000, (next - t).max(1) * 10_000)?)?;
-            }
+            // the picture and the sound written together, in time order: an .mp4 interleaves them, and given all the
+            // picture first the writer would hold it all back waiting for the sound (the slow clip, 11/05/2026)
             let step = 1024usize;
             let bytes: &[u8] = std::slice::from_raw_parts(audio.as_ptr() as *const u8, audio.len() * 2);
             let frames = audio.len() / 2;
-            let mut k = 0;
-            while k < frames {
-                let m = step.min(frames - k);
-                writer.WriteSample(aus, &sample(&bytes[k * 4..(k + m) * 4], (k as i64) * 10_000_000 / RATE as i64,
-                                                (m as i64) * 10_000_000 / RATE as i64)?)?;
-                k += m;
+            let (mut vi_at, mut k) = (0usize, 0usize);
+            while vi_at < video.len() || k < frames {
+                let vt = video.get(vi_at).map(|v| v.0 * 10_000);
+                let at = (k as i64) * 10_000_000 / RATE as i64;
+                if vt.is_some_and(|vt| k >= frames || vt <= at) {
+                    let (t, jpeg) = video[vi_at];
+                    let next = video.get(vi_at + 1).map(|v| v.0).unwrap_or(t_end_ms);
+                    vi_at += 1;
+                    let Some((rgb, fw, fh)) = decode(jpeg) else { continue };
+                    let rgb = if fw >= w && fh >= h { rgb } else {
+                        let bgra: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[2], p[1], p[0], 255]).collect();
+                        crate::capture::resize(&bgra, fw, fh, w, h).chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]).collect()
+                    };
+                    let stride = if fw >= w && fh >= h { fw } else { w };
+                    let px = nv12(&rgb, stride, w, h);
+                    writer.WriteSample(vs, &sample(&px, t * 10_000, (next - t).max(1) * 10_000)?)?;
+                } else {
+                    let m = step.min(frames - k);
+                    writer.WriteSample(aus, &sample(&bytes[k * 4..(k + m) * 4], at, (m as i64) * 10_000_000 / RATE as i64)?)?;
+                    k += m;
+                }
             }
             writer.Finalize()?;
             Ok(())
@@ -290,23 +341,31 @@ pub fn selftest(folder: &std::path::Path) -> Result<std::path::PathBuf, String> 
     let mut items = Vec::new();
     let t = 1000u32;
     let now = Instant::now();
-    for i in 0..60u32 {
-        let (w, h) = (384u32, 216u32);
+    // (CLIP_TEST="seconds,width": a clip the size of a real one, for timing)
+    let (secs, width): (u32, u32) = std::env::var("CLIP_TEST").ok().and_then(|v| {
+        let mut p = v.split(',').map(|x| x.trim().parse::<u32>().ok());
+        Some((p.next()??, p.next()??))
+    }).unwrap_or((2, 384));
+    let frames = secs * 30;
+    for i in 0..frames {
+        let (w, h) = (width, width * 9 / 16);
         let mut px = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {
             for x in 0..w {
                 let j = ((y * w + x) * 4) as usize;
-                let block = x >= 10 + i * 5 && x < 46 + i * 5 && (90..126).contains(&y);
+                let bx = (i * 5) % (w - 50);
+                let block = x >= 10 + bx && x < 46 + bx && (90..126).contains(&y);
                 px[j..j + 4].copy_from_slice(if block { &[0, 255, 185, 255] } else { &[25, 40, 20, 255] });
             }
         }
         let img = crate::capture::Image { bgra: px, w, h, taken: now, seq: None };
         items.push((now, img.jpeg(t + i * 33, 80)));
     }
+    let packets_n = (secs as usize) * 50;
     let mut enc = opus::Encoder::new(RATE as u32, opus::Channels::Stereo, opus::Application::Audio).map_err(|e| e.to_string())?;
     let mut packets = Vec::new();
     let mut buf = vec![0u8; 4000];
-    for f in 0..100usize {
+    for f in 0..packets_n {
         let frame: Vec<i16> = (0..960).flat_map(|k| {
             let s = (0.2 * (2.0 * std::f64::consts::PI * 440.0 * ((f * 960 + k) as f64) / RATE as f64).sin() * 32767.0) as i16;
             [s, s]
