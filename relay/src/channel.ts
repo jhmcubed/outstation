@@ -74,6 +74,8 @@ interface Meta {
   blocked: string[]; // "w:<who>" and "d:<device>"
   soundInfo: string | null;
   state: string; // the capture's last {"state"}: sound passes only while "open"
+  bans?: { who: number; name: string; tags: string[] }[]; // banned from the desk: blocked, their lines taken back
+  pingsOff?: boolean; // the desk's {"pings": false}: viewers' pings go nowhere
 }
 
 export class Channel extends DurableObject<Env> {
@@ -158,6 +160,7 @@ export class Channel extends DurableObject<Env> {
       channel: this.name, live, viewers: this.seated().length, max: this.cap(),
       waiting: this.waiting().length, open: live && this.meta.state === "open",
       set: this.meta.keyHash !== null, // (the channel was handed out: Outside says "no portal here yet" when it wasn't)
+      pings: !this.meta.pingsOff,
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
@@ -327,6 +330,24 @@ export class Channel extends DurableObject<Env> {
     }
     this.send(ws, this.status());
     this.lateJoiner(ws, "desk");
+    this.send(ws, this.bannedLine());
+  }
+
+  bannedLine(): string {
+    return pyjson({ banned: (this.meta.bans || []).map((b) => ({ who: b.who, name: b.name })) });
+  }
+
+  tellBanned() {
+    const line = this.bannedLine();
+    for (const d of this.sockets("desk")) this.send(d, line);
+  }
+
+  lastName(who: number): string {
+    for (let i = this.chat.length - 1; i >= 0; i--) {
+      const c = JSON.parse(this.chat[i][1]).chat;
+      if (c.who === who) return c.name;
+    }
+    return "";
   }
 
   openSound(ws: WebSocket) {
@@ -519,7 +540,7 @@ export class Channel extends DurableObject<Env> {
     } else if (m.ping && typeof m.ping === "object") {
       const { x, y } = m.ping;
       const ok = (c: unknown) => typeof c === "number" && c >= 0 && c <= 1;
-      if (blocked || now - (a.lastPing || 0) < PING_EVERY || !ok(x) || !ok(y)) return;
+      if (blocked || this.meta.pingsOff || now - (a.lastPing || 0) < PING_EVERY || !ok(x) || !ok(y)) return;
       a.lastPing = now;
       ws.serializeAttachment(a);
       this.broadcast(pyjson({ ping: { x: Math.round(x * 1e4) / 1e4, y: Math.round(y * 1e4) / 1e4,
@@ -565,6 +586,37 @@ export class Channel extends DurableObject<Env> {
       this.schedule();
     } else if (m.poll_close && this.poll && this.poll.open) {
       this.closePoll();
+    } else if (Number.isInteger(m.ban)) {
+      // banned: blocked (their device too), and every line of theirs taken back off everyone's page
+      const who = m.ban as number;
+      const tags = new Set(["w:" + who]);
+      let name = "";
+      for (const v of this.sockets("watch")) {
+        const va = this.att(v);
+        if (va.who === who) {
+          if (va.device) tags.add("d:" + va.device);
+          name = va.name || name;
+        }
+      }
+      name = name || this.lastName(who) || "visitor";
+      this.meta.blocked = [...new Set([...this.meta.blocked, ...tags])];
+      this.meta.bans = [...(this.meta.bans || []).filter((b) => b.who !== who), { who, name, tags: [...tags] }];
+      this.saveMeta();
+      for (const [id] of this.chat.filter(([, line]) => JSON.parse(line).chat.who === who)) this.unsay(id);
+      this.tellBanned();
+    } else if (Number.isInteger(m.unban)) {
+      const gone = (this.meta.bans || []).find((b) => b.who === m.unban);
+      const tags = new Set(gone ? gone.tags : ["w:" + m.unban]);
+      this.meta.blocked = this.meta.blocked.filter((t) => !tags.has(t));
+      this.meta.bans = (this.meta.bans || []).filter((b) => b.who !== m.unban);
+      this.saveMeta();
+      this.tellBanned();
+    } else if (typeof m.pings === "boolean") {
+      if (!m.pings !== !!this.meta.pingsOff) {
+        this.meta.pingsOff = !m.pings;
+        this.saveMeta();
+        this.tellViewers();
+      }
     } else if (Number.isInteger(m.cap) && m.cap >= 0 && m.cap <= 10_000) {
       // (an addition to relay.py's protocol: the channel's own cap on viewers, from the client's settings)
       this.meta.cap = m.cap;

@@ -228,6 +228,8 @@ class Channel:
         self.poll = None             # {"id", "question", "options", "votes": {device: pick}, "ends", "open"}
         self.poll_id = 0
         self.blocked = set()         # viewers' "who" and devices
+        self.bans = {}               # who -> {"who", "name", "tags"}: banned from the desk (blocked, their lines taken back)
+        self.pings_on = True         # the desk's {"pings": false}: viewers' pings go nowhere
         self.host_names = {name.lower()}
         self.sounder = None
         self.sound_info = None
@@ -243,7 +245,7 @@ class Channel:
         st = {"channel": self.name, "live": self.sender is not None, "viewers": len(self.viewers),
               "max": self.cap, "waiting": len(self.waiting),
               "open": self.sender is not None and self.state == "open",
-              "set": self.key is not None}     # (someone has claimed it: Outside says "no portal here yet" when not)
+              "set": self.key is not None, "pings": self.pings_on}     # (someone has claimed it: Outside says "no portal here yet" when not)
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -332,6 +334,23 @@ class Channel:
         self.chat = deque(((i, l) for i, l in self.chat if i != cid), maxlen=CHAT_KEPT)
         if len(self.chat) != before:
             self.broadcast(json.dumps({"unsay": cid}))
+
+    def last_name(self, who):
+        """The name a viewer last spoke under, from the chat so far."""
+        for _, line in reversed(self.chat):
+            c = json.loads(line)["chat"]
+            if c.get("who") == who:
+                return c.get("name", "")
+        return ""
+
+    def banned_line(self):
+        """The banned viewers, for the desks (their numbers and names; never a device)."""
+        return json.dumps({"banned": [{"who": b["who"], "name": b["name"]} for b in self.bans.values()]})
+
+    def tell_banned(self):
+        line = self.banned_line()
+        for d in list(self.desks):
+            d.send_nowait(line)
 
     def poll_line(self):
         p = self.poll
@@ -553,7 +572,7 @@ class Relay:
                 ch.tell_poll()
         elif isinstance(m.get("ping"), dict):
             x, y = m["ping"].get("x"), m["ping"].get("y")
-            if blocked or now - sock.last_ping < PING_EVERY or not all(
+            if blocked or not ch.pings_on or now - sock.last_ping < PING_EVERY or not all(
                     isinstance(c, (int, float)) and not isinstance(c, bool) and 0 <= c <= 1 for c in (x, y)):
                 return
             sock.last_ping = now
@@ -586,6 +605,7 @@ class Relay:
         self.log("desk      %s  (%d open)" % (name, len(ch.desks)))
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
+        sock.send_nowait(ch.banned_line())
         try:
             while True:
                 msg = await sock.recv()
@@ -635,6 +655,26 @@ class Relay:
             ch.tell_poll()
         elif m.get("poll_close") and ch.poll and ch.poll["open"]:
             ch.close_poll()
+        elif isinstance(m.get("ban"), int) and not isinstance(m["ban"], bool):
+            # banned: blocked (their device too), and every line of theirs taken back off everyone's page
+            who = m["ban"]
+            found = [v for v in list(ch.viewers) + list(ch.waiting) if v.who == who]
+            tags = {who} | {v.device for v in found if v.device}
+            ch.blocked |= tags
+            name = next((getattr(v, "name", "") for v in found), "") or ch.last_name(who) or "visitor"
+            ch.bans[who] = {"who": who, "name": name, "tags": sorted(tags, key=str)}
+            for cid in [i for i, line in ch.chat if json.loads(line)["chat"].get("who") == who]:
+                ch.unsay(cid)
+            self.log("banned    %s  viewer %d" % (ch.name, who))
+            ch.tell_banned()
+        elif isinstance(m.get("unban"), int) and not isinstance(m["unban"], bool):
+            gone = ch.bans.pop(m["unban"], None)
+            ch.blocked -= set(gone["tags"]) if gone else {m["unban"]}
+            ch.tell_banned()
+        elif isinstance(m.get("pings"), bool):
+            if m["pings"] != ch.pings_on:
+                ch.pings_on = m["pings"]
+                ch.tell_viewers()
         elif isinstance(m.get("cap"), int) and not isinstance(m["cap"], bool) and 0 <= m["cap"] <= 10000:
             # (outside-portal's addition: the channel's own cap on viewers, from the client's settings)
             ch.own_cap = m["cap"]
@@ -832,6 +872,61 @@ def clean(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def short(v, most=60):
+    return clean(str(v))[:most] if isinstance(v, (str, int, float)) and not isinstance(v, bool) else None
+
+
+def number(v):
+    try:
+        return int(v) if not isinstance(v, bool) and v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def report_data(kind, extra):
+    """The numbers a report carries for the portal's readings (the boss and its count, levels, the log's count, the
+    loot): only fields that can't name another player. Never "party", a player kill's source, or a dropper."""
+    d = {}
+    if kind == "KILL_COUNT":
+        d = {"boss": short(extra.get("boss")), "count": number(extra.get("count")), "pb": bool(extra.get("isPersonalBest"))}
+    elif kind == "LEVEL":
+        skills = extra.get("levelledSkills") if isinstance(extra.get("levelledSkills"), dict) else {}
+        d["skills"] = {short(k, 20): number(v) for k, v in list(skills.items())[:24] if short(k, 20) and number(v) is not None}
+        every = extra.get("allSkills") if isinstance(extra.get("allSkills"), dict) else {}
+        levels = [number(v) for v in every.values()]
+        if every and all(x is not None for x in levels):
+            d["total"] = sum(levels)
+        combat = extra.get("combatLevel")
+        if isinstance(combat, dict) and number(combat.get("value")) is not None:
+            d["combat"] = number(combat.get("value"))
+    elif kind == "LOOT":
+        items = [i for i in (extra.get("items") or []) if isinstance(i, dict)][:12]
+        d["items"] = [{"name": short(i.get("name")), "quantity": number(i.get("quantity")) or 0,
+                       "price": number(i.get("priceEach")) or 0} for i in items if short(i.get("name"))]
+        d["value"] = sum(i["quantity"] * i["price"] for i in d["items"])
+        if str(extra.get("category", "")).upper() != "PLAYER":
+            d["source"] = short(extra.get("source"))
+    elif kind == "COLLECTION":
+        d = {"item": short(extra.get("itemName")), "done": number(extra.get("completedEntries")),
+             "total": number(extra.get("totalEntries"))}
+    elif kind == "PET":
+        d = {"pet": short(extra.get("petName")), "duplicate": bool(extra.get("duplicate")),
+             "milestone": short(extra.get("milestone"))}
+    elif kind == "QUEST":
+        d = {"quest": short(extra.get("questName")), "done": number(extra.get("completedQuests")),
+             "total": number(extra.get("totalQuests"))}
+    elif kind == "CLUE":
+        d = {"tier": short(extra.get("clueType")), "count": number(extra.get("numberCompleted"))}
+    elif kind == "SLAYER":
+        d = {"task": short(extra.get("slayerTask")), "done": number(extra.get("slayerCompleted")),
+             "points": number(extra.get("slayerPoints"))}
+    elif kind == "COMBAT_ACHIEVEMENT":
+        d = {"tier": short(extra.get("tier")), "task": short(extra.get("task"))}
+    elif kind == "ACHIEVEMENT_DIARY":
+        d = {"area": short(extra.get("area")), "tier": short(extra.get("difficulty"))}
+    return {k: v for k, v in d.items() if v is not None and v != {} and v != []}
+
+
 def dink_report(p):
     if not isinstance(p, dict) or p.get("type") not in REPORTS:
         return None
@@ -843,7 +938,13 @@ def dink_report(p):
     extra = p.get("extra") if isinstance(p.get("extra"), dict) else {}
     if p["type"] == "DEATH" and (extra.get("isPvp") or extra.get("pvp") or extra.get("killerName")):
         text = ""
-    return {"type": p["type"], "text": clean(str(text))[:200], "at": int(time.time())}
+    if p["type"] == "LOOT" and str(extra.get("category", "")).upper() == "PLAYER":
+        text = ""                # (a player kill's loot names the player: its text never goes)
+    r = {"type": p["type"], "text": clean(str(text))[:200], "at": int(time.time())}
+    data = report_data(p["type"], extra)
+    if data:
+        r["data"] = data
+    return r
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,

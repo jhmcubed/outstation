@@ -28,7 +28,62 @@ export const REPORTS = new Set([
   "LEAGUES_TASK", "GRAND_EXCHANGE",
 ]);
 
-export function dinkReport(p: any): { type: string; text: string; at: number } | null {
+const short = (v: unknown, most = 60): string | undefined =>
+  typeof v === "string" || (typeof v === "number" && Number.isFinite(v)) ? Array.from(cleanDink(String(v))).slice(0, most).join("") : undefined;
+const number = (v: unknown): number | undefined => {
+  if (typeof v === "boolean" || v === null || v === undefined) return undefined;
+  const n = typeof v === "number" ? v : parseInt(String(v));
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+};
+
+// The numbers a report carries for the portal's readings: only fields that can't name another player. Never "party",
+// a player kill's source, or a dropper. (relay-py's report_data, the same.)
+export function reportData(kind: string, extra: any): Record<string, unknown> {
+  let d: Record<string, unknown> = {};
+  if (kind === "KILL_COUNT") {
+    d = { boss: short(extra.boss), count: number(extra.count), pb: !!extra.isPersonalBest };
+  } else if (kind === "LEVEL") {
+    const skills = extra.levelledSkills && typeof extra.levelledSkills === "object" ? extra.levelledSkills : {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(skills).slice(0, 24)) {
+      const name = short(k, 20), lv = number(v);
+      if (name && lv !== undefined) out[name] = lv;
+    }
+    d.skills = out;
+    const every = extra.allSkills && typeof extra.allSkills === "object" ? Object.values(extra.allSkills).map(number) : [];
+    if (every.length && every.every((x) => x !== undefined)) d.total = (every as number[]).reduce((a, b) => a + b, 0);
+    if (extra.combatLevel && typeof extra.combatLevel === "object" && number(extra.combatLevel.value) !== undefined) {
+      d.combat = number(extra.combatLevel.value);
+    }
+  } else if (kind === "LOOT") {
+    const items = (Array.isArray(extra.items) ? extra.items : []).filter((i: any) => i && typeof i === "object").slice(0, 12);
+    const list = items.filter((i: any) => short(i.name)).map((i: any) => ({ name: short(i.name), quantity: number(i.quantity) || 0, price: number(i.priceEach) || 0 }));
+    d.items = list;
+    d.value = list.reduce((s: number, i: any) => s + i.quantity * i.price, 0);
+    if (String(extra.category || "").toUpperCase() !== "PLAYER") d.source = short(extra.source);
+  } else if (kind === "COLLECTION") {
+    d = { item: short(extra.itemName), done: number(extra.completedEntries), total: number(extra.totalEntries) };
+  } else if (kind === "PET") {
+    d = { pet: short(extra.petName), duplicate: !!extra.duplicate, milestone: short(extra.milestone) };
+  } else if (kind === "QUEST") {
+    d = { quest: short(extra.questName), done: number(extra.completedQuests), total: number(extra.totalQuests) };
+  } else if (kind === "CLUE") {
+    d = { tier: short(extra.clueType), count: number(extra.numberCompleted) };
+  } else if (kind === "SLAYER") {
+    d = { task: short(extra.slayerTask), done: number(extra.slayerCompleted), points: number(extra.slayerPoints) };
+  } else if (kind === "COMBAT_ACHIEVEMENT") {
+    d = { tier: short(extra.tier), task: short(extra.task) };
+  } else if (kind === "ACHIEVEMENT_DIARY") {
+    d = { area: short(extra.area), tier: short(extra.difficulty) };
+  }
+  for (const k of Object.keys(d)) {
+    const v = d[k];
+    if (v === undefined || v === null || (Array.isArray(v) && !v.length) || (typeof v === "object" && !Array.isArray(v) && !Object.keys(v as object).length)) delete d[k];
+  }
+  return d;
+}
+
+export function dinkReport(p: any): { type: string; text: string; at: number; data?: Record<string, unknown> } | null {
   if (!p || typeof p !== "object" || !REPORTS.has(p.type)) return null;
   let text = "";
   const embeds = Array.isArray(p.embeds) ? p.embeds : [];
@@ -38,8 +93,12 @@ export function dinkReport(p: any): { type: string; text: string; at: number } |
   text = text || p.content || "";
   const extra = p.extra && typeof p.extra === "object" ? p.extra : {};
   if (p.type === "DEATH" && (extra.isPvp || extra.pvp || extra.killerName)) text = "";
-  return { type: p.type, text: Array.from(cleanDink(String(text))).slice(0, 200).join(""),
-           at: Math.floor(Date.now() / 1000) };
+  if (p.type === "LOOT" && String(extra.category || "").toUpperCase() === "PLAYER") text = ""; // (it names the player)
+  const r: { type: string; text: string; at: number; data?: Record<string, unknown> } =
+    { type: p.type, text: Array.from(cleanDink(String(text))).slice(0, 200).join(""), at: Math.floor(Date.now() / 1000) };
+  const data = reportData(p.type, extra);
+  if (Object.keys(data).length) r.data = data;
+  return r;
 }
 
 // JSON as Python's json.dumps writes it (", " and ": ", everything past ASCII escaped), so a line from this

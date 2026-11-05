@@ -591,6 +591,108 @@ class Talk(Base):
             pass
 
 
+class Moderation(Base):
+    """A ban, the banned list, and pings switched off (11/05/2026, Jace: "allow for banning of viewers, hiding of
+    messages, and the ability to toggle viewer pings in the client")."""
+
+    async def room(self):
+        tx = await self.tx()
+        desk = await self.desk()
+        a, b = await self.watch(), await self.watch()
+        await a.send(json.dumps({"hello": {"name": "moss", "device": "device-mod-aaaa"}}))
+        await b.send(json.dumps({"hello": {"name": "fern", "device": "device-mod-bbbb"}}))
+        await self.pause()
+        return tx, desk, a, b
+
+    async def test_a_ban_takes_back_every_line_and_the_desk_hears_the_list(self):
+        tx, desk, a, b = await self.room()
+        self.assertEqual(await next_of(desk, "banned"), [])
+        await a.send(json.dumps({"say": "one"}))
+        await a.send(json.dumps({"say": "two"}))
+        await b.send(json.dumps({"say": "fine"}))
+        lines = [await next_of(desk, "chat") for _ in range(3)]
+        mine = [l for l in lines if l["name"] == "moss"]          # (two viewers' lines may arrive in either order)
+        who = mine[0]["who"]
+        await desk.send(json.dumps({"ban": who}))
+        gone = {await next_of(b, "unsay"), await next_of(b, "unsay")}
+        self.assertEqual(gone, {l["id"] for l in mine})
+        self.assertEqual(await next_of(desk, "banned"), [{"who": who, "name": "moss"}])
+        await a.send(json.dumps({"say": "three"}))
+        await b.send(json.dumps({"say": "still fine"}))
+        self.assertEqual((await next_of(desk, "chat"))["text"], "still fine")
+        late = await self.watch()
+        texts = []
+        try:
+            while True:
+                texts.append((await next_of(late, "chat", timeout=0.4))["text"])
+        except asyncio.TimeoutError:
+            pass
+        self.assertEqual(texts, ["fine", "still fine"])
+        await desk.send(json.dumps({"unban": who}))
+        self.assertEqual(await next_of(desk, "banned"), [])
+        await a.send(json.dumps({"say": "back"}))
+        self.assertEqual((await next_of(desk, "chat"))["text"], "back")
+
+    async def test_pings_switched_off_go_nowhere_and_viewers_hear_it(self):
+        tx, desk, a, b = await self.room()
+        await desk.send(json.dumps({"pings": False}))
+        st = await next_of(a, "relay")
+        while st["pings"]:
+            st = await next_of(a, "relay")
+        await a.send(json.dumps({"ping": {"x": 0.5, "y": 0.5}}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "ping", timeout=0.5)
+        await desk.send(json.dumps({"pings": True}))
+        while not (await next_of(a, "relay"))["pings"]:
+            pass
+        await a.send(json.dumps({"ping": {"x": 0.5, "y": 0.5}}))
+        self.assertEqual((await next_of(desk, "ping"))["name"], "moss")
+
+
+class ReportData(Base):
+    """The numbers a report carries, for the portal's readings, and nothing naming another player."""
+
+    async def dink(self, payload):
+        self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), json.dumps(payload).encode(),
+                                    "application/json"), 204)
+
+    async def test_a_kill_count_carries_the_boss_and_count_and_never_the_party(self):
+        await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "kc", "extra": {"boss": "Vorkath", "count": 1240,
+                         "isPersonalBest": False, "party": ["someone else"]}})
+        r = json.loads((await v.recv_data())[1])["report"]
+        self.assertEqual(r["data"], {"boss": "Vorkath", "count": 1240, "pb": False})
+
+    async def test_levels_the_log_and_loot(self):
+        await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Cooking": 70},
+                         "allSkills": {"Cooking": 70, "Attack": 99}, "combatLevel": {"value": 90, "increased": False}}})
+        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage",
+                         "completedEntries": 812, "totalEntries": 1568, "dropperName": "someone"}})
+        await self.dink({"type": "LOOT", "content": "loot", "extra": {"source": "Vorkath", "category": "NPC",
+                         "items": [{"name": "Dragon bones", "quantity": 2, "priceEach": 3000}]}})
+        got = [json.loads((await v.recv_data())[1])["report"]["data"] for _ in range(3)]
+        self.assertEqual(got[0], {"skills": {"Cooking": 70}, "total": 169, "combat": 90})
+        self.assertEqual(got[1], {"item": "Draconic visage", "done": 812, "total": 1568})
+        self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000}], "value": 6000,
+                                  "source": "Vorkath"})
+
+    async def test_a_player_kills_loot_names_nobody(self):
+        await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "LOOT", "content": "x has looted from SomePlayer", "extra": {"source": "SomePlayer",
+                         "category": "PLAYER", "items": [{"name": "Coins", "quantity": 5000, "priceEach": 1}]}})
+        r = json.loads((await v.recv_data())[1])["report"]
+        self.assertEqual(r["text"], "")
+        self.assertNotIn("source", r["data"])
+        self.assertEqual(r["data"]["value"], 5000)
+
+
 class Sound(Base):
     def packet(self, bus=1):
         return struct.pack(">I", 99) + b"AU" + bytes([bus, 1]) + struct.pack(">H", 3) + b"opu"
