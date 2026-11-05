@@ -93,6 +93,10 @@ SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: ro
 NAME_MAX = 20
 PING_EVERY = 0.5                  # a ping a viewer every half second (1.5 until Jace asked for more, 11/05)
 POLL_OPTIONS, POLL_SECONDS = (2, 6), (10, 900)
+LOOK_EVERY = 0.5                  # a looker (the listening post's receiver) gets a frame at most this often
+SIGNAL_EVERY = 1.0                # a viewer's ✼ (the signal button) at most once a second
+GUESS_MIN_VALUE = 1_000_000       # a drop from the guessed boss this big ends a guess round by itself (settings' guess_min_value)
+GUESS_KEPT = 120.0                # a decided round's result stays this long
 POLL_KEPT = 90.0                  # a closed poll's result stays this long, then {"poll_gone"} (Jace, 11/05)
 SOUND_HOLD = 0.5                  # the capture's HOLD_BACK: a pause takes the last moment's sound back too
 CONTROL = re.compile(r"[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]")
@@ -223,6 +227,7 @@ class Channel:
         self.reports = deque(maxlen=8)
         self.state = "open"          # the capture's last {"state"}: sound passes only while open
         self.desks = set()           # Jace's chat windows
+        self.lookers = set()         # the listening post's receivers: no seat, a frame or two a second while they ask
         self.chat = deque(maxlen=CHAT_KEPT)
         self.chat_id = 0
         self.poll = None             # {"id", "question", "options", "votes": {device: pick}, "ends", "open"}
@@ -235,6 +240,10 @@ class Channel:
         self.sound_info = None
         self.sound_held = deque()
         self.out = 0                 # bytes sent to viewers so far (frames, sound, lines): his upload, for the desk
+        self.replay = deque()        # (arrival, message): the last replay_seconds of frames and sound, for a clip
+        self.kc = {}                 # boss (lower case) -> (its name, the kill count Dink last told of)
+        self.guess = None            # the drop guess round (11/05/2026): see from_desk's guess_open
+        self.guess_id = 0
         self.out_seen = (0, time.monotonic())
 
     def status(self, place=0, you=None):
@@ -245,7 +254,8 @@ class Channel:
         st = {"channel": self.name, "live": self.sender is not None, "viewers": len(self.viewers),
               "max": self.cap, "waiting": len(self.waiting),
               "open": self.sender is not None and self.state == "open",
-              "set": self.key is not None, "pings": self.pings_on}     # (someone has claimed it: Outside says "no portal here yet" when not)
+              "static": self.sender is not None and self.state == "static",
+              "set": self.key is not None, "pings": self.pings_on}     # (set: someone has claimed it; Outside says "no portal here yet" when not)
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -256,7 +266,7 @@ class Channel:
         """The channel's status line to every viewer, the desks, and the transmitter (how many watch);
         those in line hear it too, with their place."""
         line = self.status()
-        for v in list(self.viewers) + list(self.desks) + ([self.sender] if self.sender else []):
+        for v in list(self.viewers) + list(self.desks) + list(self.lookers) + ([self.sender] if self.sender else []):
             v.send_nowait(line)
         for i, v in enumerate(list(self.waiting)):
             v.send_nowait(self.status(i + 1, you=getattr(v, "who", None)))
@@ -308,11 +318,28 @@ class Channel:
         for v in list(self.viewers):
             if v.send_nowait(msg):
                 self.out += n
+        if self.lookers and isinstance(msg, (bytes, bytearray)):
+            now = time.monotonic()
+            for v in list(self.lookers):
+                if v.look_frames and now - v.look_at >= LOOK_EVERY and v.send_nowait(msg):
+                    v.look_at = now
+                    self.out += n
+
+    def keep(self, msg, seconds):
+        """The replay buffer: frames and sound as they came, the last `seconds` of them (0: none kept)."""
+        if seconds <= 0:
+            if self.replay:
+                self.replay.clear()
+            return
+        now = time.monotonic()
+        self.replay.append((now, msg))
+        while self.replay and now - self.replay[0][0] > seconds:
+            self.replay.popleft()
 
     def deliver_sound(self, msg):
         """Sound only while the picture is live and open (a pause or a minimise takes it too)."""
-        if self.sender is None or self.state != "open":
-            return
+        if self.sender is None or self.state not in ("open", "static"):
+            return                   # (static: the picture obscured by his static key, the sound going on)
         n = len(msg)
         for v in list(self.viewers):
             if v.send_nowait(msg):
@@ -378,6 +405,39 @@ class Channel:
             sock.send_nowait(self.poll_line())
         if self.sound_info and sock not in self.desks:
             sock.send_nowait(self.sound_info)
+        if self.guess:
+            sock.send_nowait(self.guess_line())
+
+    # the drop guesses (11/05/2026, Jace: "add drop guesses"): he opens a round for a boss, and viewers guess the kill
+    # count the next good drop lands on (one guess a device). Dink's kill counts keep the count; a drop from that boss
+    # worth guess_min_value (Dink's LOOT) or his "it dropped" decides it, the closest guess winning
+
+    def now_kc(self, boss):
+        got = self.kc.get(str(boss).lower())
+        return got[1] if got else None
+
+    def guess_line(self):
+        g = self.guess
+        out = {"id": g["id"], "boss": g["boss"], "what": g["what"], "open": g["open"], "kc": self.now_kc(g["boss"]),
+               "count": len(g["guesses"]), "result": g.get("result")}
+        return json.dumps({"guess": out})
+
+    def tell_guess(self):
+        if self.guess:
+            self.broadcast(self.guess_line())
+
+    def decide_guess(self, kc, item):
+        g = self.guess
+        if not g or g.get("result"):
+            return
+        picks = [(abs(v["kc"] - kc), v["name"], v["kc"]) for v in g["guesses"].values()] if kc is not None else []
+        best = min((p[0] for p in picks), default=None)
+        winners = sorted({n for off, n, _ in picks if off == best}) if best is not None else []
+        g["open"] = False
+        g["result"] = {"kc": kc, "item": item, "winners": winners, "off": best, "at": time.monotonic()}
+        self.tell_guess()
+        if winners:
+            self.say("✼", "%s at kill %s: %s guessed closest (%s off)" % (item or "the drop", kc, ", ".join(winners), best), host=True)
 
 
 class Relay:
@@ -388,6 +448,10 @@ class Relay:
         self.max_viewers = max_viewers
         self.channels = {}
         self.next_who = 0            # each viewer's number in the chat, for the desk's block
+        self.replay_seconds = 0      # settings.json's replay_seconds (0 to 30), read again while running
+        self.guess_min_value = GUESS_MIN_VALUE
+        self.clip_folder = None      # settings.json's clip_folder (clip.py's default when it's missing)
+        self.clipping = False
         self.log = log
         self.forward = forward       # forward.Forward: Dink's posts on to Discord, by rules
 
@@ -452,7 +516,10 @@ class Relay:
             elif role == "sound":
                 await self.sound(sock, name, q.get("key", ""))
             else:
-                await self.watch(sock, name, q.get("code", ""))
+                if q.get("look") == "1":
+                    await self.look(sock, name, q.get("code", ""))
+                else:
+                    await self.watch(sock, name, q.get("code", ""))
         except (Closed, asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
@@ -485,6 +552,11 @@ class Relay:
         try:
             while True:
                 msg = await sock.recv()
+                if isinstance(msg, str) and msg.startswith('{"clip"'):
+                    self.clip(ch)             # (the clip key, from the capture: never on to viewers)
+                    continue
+                if isinstance(msg, (bytes, bytearray)):
+                    ch.keep(msg, self.replay_seconds)
                 if self.delay > 0:
                     ch.held.append((time.monotonic() + self.delay, msg))
                 else:
@@ -494,6 +566,39 @@ class Relay:
                 ch.sender = None
                 self.log("off air   %s" % name)
                 ch.tell_viewers()
+
+    async def look(self, sock, name, code):
+        """A looker (11/05/2026: the listening post's receiver tuned to the portal, public/portal-feed.js): it takes no
+        seat and isn't counted as watching, so it never keeps a viewer out or costs his upload a viewer's share. It
+        hears the status lines (live, open, static), and frames only while it asks ({"look": {"frames": true}}), at
+        most one every LOOK_EVERY seconds. No chat, no sound."""
+        ch = self.channels.get(name)
+        if ch is not None and ch.code and code != ch.code:
+            await sock.close(4003, "wrong watch code")
+            return
+        if ch is None:
+            ch = self.channels[name] = Channel(name, None)
+        sock.look_frames, sock.look_at = False, 0.0
+        ch.lookers.add(sock)
+        sock.send_nowait(ch.status())
+        try:
+            while True:
+                msg = await sock.recv()
+                if isinstance(msg, str) and len(msg) <= VIEWER_TEXT:
+                    try:
+                        m = json.loads(msg)
+                    except ValueError:
+                        continue
+                    if isinstance(m, dict) and isinstance(m.get("look"), dict):
+                        sock.look_frames = m["look"].get("frames") is True
+                        if sock.look_frames and ch.last_frame and ch.sender is not None:
+                            sock.send_nowait(ch.last_frame)
+                            sock.look_at = time.monotonic()
+        finally:
+            ch.lookers.discard(sock)
+            if ch.key is None and not ch.viewers and not ch.waiting and not ch.desks and not ch.lookers \
+                    and self.channels.get(name) is ch:
+                del self.channels[name]
 
     async def watch(self, sock, name, code):
         ch = self.channels.get(name)
@@ -506,7 +611,7 @@ class Relay:
         sock.code = code
         self.next_who += 1
         sock.who, sock.device, sock.name = self.next_who, "", "visitor"
-        sock.says, sock.last_ping = deque(), 0.0
+        sock.says, sock.last_ping, sock.last_signal = deque(), 0.0, 0.0
         cap = ch.cap = self.cap_for(ch)
         if cap and (len(ch.viewers) >= cap or ch.waiting):
             # full: in line for a seat (it used to be told 4009 and sent away), status lines only
@@ -570,6 +675,22 @@ class Relay:
                     and not isinstance(pick, bool) and 0 <= pick < len(p["options"]):
                 p["votes"][sock.device or "who:%d" % sock.who] = pick
                 ch.tell_poll()
+        elif m.get("signal") is True:
+            # the signal button: a ✼ over everyone's frame (and a count in his chat window), once a second at most
+            if blocked or now - sock.last_signal < SIGNAL_EVERY:
+                return
+            sock.last_signal = now
+            ch.broadcast(json.dumps({"signal": {"name": sock.name, "who": sock.who}}))
+        elif isinstance(m.get("guess"), dict):
+            g, v = ch.guess, m["guess"]
+            kc = v.get("kc")
+            if not g or not g["open"] or v.get("id") != g["id"] or blocked or not isinstance(kc, int) or isinstance(kc, bool):
+                return
+            now_kc = ch.now_kc(g["boss"]) or 0
+            if not (now_kc < kc <= now_kc + 100000):
+                return                       # (a kill still to come)
+            g["guesses"][sock.device or "who:%d" % sock.who] = {"kc": kc, "name": sock.name}
+            ch.tell_guess()
         elif isinstance(m.get("ping"), dict):
             x, y = m["ping"].get("x"), m["ping"].get("y")
             if blocked or not ch.pings_on or now - sock.last_ping < PING_EVERY or not all(
@@ -680,6 +801,25 @@ class Relay:
             ch.own_cap = m["cap"]
             ch.seat_waiting(ch.own_cap)
             ch.tell_viewers()
+        elif m.get("clip"):
+            self.clip(ch)
+        elif isinstance(m.get("guess_open"), dict):
+            boss = one_line(m["guess_open"].get("boss"), 40)
+            if not boss:
+                return
+            ch.guess_id += 1
+            ch.guess = {"id": ch.guess_id, "boss": boss, "what": one_line(m["guess_open"].get("what"), 60) or "the next good drop",
+                        "open": True, "guesses": {}}
+            self.log("guess     %s  %s" % (ch.name, boss))
+            ch.tell_guess()
+        elif m.get("guess_close") and ch.guess and ch.guess["open"]:
+            ch.guess["open"] = False         # (no more guesses; still waiting for the drop)
+            ch.tell_guess()
+        elif m.get("guess_drop") and ch.guess and not ch.guess.get("result"):
+            ch.decide_guess(ch.now_kc(ch.guess["boss"]), one_line(m.get("item") if isinstance(m.get("item"), str) else "", 60))
+        elif m.get("guess_off") and ch.guess:
+            gone, ch.guess = ch.guess["id"], None
+            ch.broadcast(json.dumps({"guess_gone": gone}))
 
     async def sound(self, sock, name, key):
         """The sound (sound.py), beside the picture: held, then let through only while the picture is open."""
@@ -696,6 +836,7 @@ class Relay:
                 if isinstance(msg, bytes):
                     if len(msg) > 8 and msg[4:6] == b"AU":
                         ch.sound_held.append((time.monotonic() + self.delay + SOUND_HOLD, msg))
+                        ch.keep(msg, self.replay_seconds)
                 elif msg.startswith('{"sound"') and len(msg) <= VIEWER_TEXT:
                     ch.sound_info = msg
                     for v in list(ch.viewers):
@@ -762,6 +903,7 @@ class Relay:
             # Dink's own post, untouched, at once (the portal's delay is the portal's)
             self.log("forward   %s  %s to Discord" % (name, payload.get("type")))
             asyncio.ensure_future(self.forward.send(body, content_type))
+        self.dink_counts(ch, payload)
         report = dink_report(payload)
         if report:
             line = json.dumps({"report": report})
@@ -771,6 +913,70 @@ class Relay:
             else:
                 ch.deliver(line)
         await answer("204 No Content")
+
+    def dink_counts(self, ch, p):
+        """Dink's kill counts and loot, for the drop guesses: the count kept per boss, and a big enough drop from the
+        guessed boss deciding the round."""
+        if not isinstance(p, dict):
+            return
+        extra = p.get("extra") if isinstance(p.get("extra"), dict) else {}
+        if p.get("type") == "KILL_COUNT":
+            boss = str(extra.get("boss") or "").strip()
+            try:
+                count = int(extra.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if boss and count > 0:
+                ch.kc[boss.lower()] = (boss, count)
+                if ch.guess and ch.guess["boss"].lower() == boss.lower():
+                    ch.tell_guess()
+        elif p.get("type") == "LOOT" and ch.guess and not ch.guess.get("result"):
+            source = str(extra.get("source") or "").strip().lower()
+            if source != ch.guess["boss"].lower():
+                return
+            best = None
+            for i in extra.get("items") or []:
+                try:
+                    worth = int(i.get("quantity", 0)) * int(i.get("priceEach", 0))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if worth >= self.guess_min_value and (best is None or worth > best[0]):
+                    best = (worth, str(i.get("name") or "a drop"))
+            if best:
+                kc = extra.get("killCount")
+                try:
+                    kc = int(kc) if kc is not None else ch.now_kc(source)
+                except (TypeError, ValueError):
+                    kc = ch.now_kc(source)
+                ch.decide_guess(kc, best[1])
+
+    def clip(self, ch):
+        """The replay buffer saved as a clip (clip.py), on a thread of its own; the desks hear where it went."""
+        def tell(what):
+            line = json.dumps({"clip": what})
+            for d in list(ch.desks):
+                d.send_nowait(line)
+        if self.clipping:
+            return tell({"error": "a clip is still being written"})
+        if not self.replay_seconds:
+            return tell({"error": "the replay buffer is off (its seconds in the settings)"})
+        items = list(ch.replay)
+        if not items:
+            return tell({"error": "nothing in the replay buffer yet"})
+        self.clipping = True
+        tell({"writing": True, "seconds": round(items[-1][0] - items[0][0], 1)})
+
+        async def go():
+            try:
+                import clip as clipmod
+                path = await asyncio.to_thread(clipmod.write, items, self.clip_folder)
+                self.log("clip      %s  %s" % (ch.name, path))
+                tell({"saved": path})
+            except Exception as e:           # (PyAV missing, a disk full: said, never the relay down)
+                tell({"error": "couldn't write the clip: %s" % e})
+            finally:
+                self.clipping = False
+        asyncio.ensure_future(go())
 
     async def watch_settings(self, path, every=2.0):
         """max_viewers from a settings file (start.py's ~/Documents/ghillie portal/settings.json),
@@ -784,7 +990,17 @@ class Relay:
                 if (st.st_mtime, st.st_size) != seen:
                     seen = (st.st_mtime, st.st_size)
                     with open(path, encoding="utf-8") as f:
-                        n = int(json.load(f).get("max_viewers", self.max_viewers) or 0)
+                        sj = json.load(f)
+                    n = int(sj.get("max_viewers", self.max_viewers) or 0)
+                    rs = max(0, min(30, int(sj.get("replay_seconds", 0) or 0)))
+                    if rs != self.replay_seconds:
+                        self.log("replay    %s" % ("off" if not rs else "the last %d s" % rs))
+                        self.replay_seconds = rs
+                    self.clip_folder = sj.get("clip_folder") or None
+                    try:
+                        self.guess_min_value = int(sj.get("guess_min_value", GUESS_MIN_VALUE))
+                    except (TypeError, ValueError):
+                        pass
                     if n != self.max_viewers:
                         self.log("max viewers %s" % (n or "no limit"))
                         self.max_viewers = max(0, n)
@@ -822,6 +1038,9 @@ class Relay:
                     ch.deliver_sound(ch.sound_held.popleft()[1])
                 if ch.poll and ch.poll["open"] and now >= ch.poll["ends"]:
                     ch.close_poll()
+                if ch.guess and ch.guess.get("result") and now >= ch.guess["result"]["at"] + GUESS_KEPT:
+                    gone, ch.guess = ch.guess["id"], None
+                    ch.broadcast(json.dumps({"guess_gone": gone}))
                 elif ch.poll and not ch.poll["open"] and now >= ch.poll["closed"] + POLL_KEPT:
                     # a closed poll's result stays a little, then goes for everyone (late joiners too)
                     gone, ch.poll = ch.poll["id"], None

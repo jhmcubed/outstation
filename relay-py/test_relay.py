@@ -511,6 +511,32 @@ class Full(RelayTest):
         finally:
             task.cancel()
 
+    async def test_a_looker_takes_no_seat_and_gets_few_frames_only_when_it_asks(self):
+        self.relay.max_viewers = 1
+        tx = await self.connect("/transmit/sburb?key=secret-key")
+        look = await self.connect("/watch/sburb?look=1")
+        seated = await self.connect("/watch/sburb")
+        st = await self.last_status(seated)
+        self.assertNotIn("seat", st)                         # the one viewer has the one seat: the looker took none
+        self.assertEqual(st["viewers"], 1)
+        frame = struct.pack(">I", 1) + b"\xff\xd8 frame"
+        await tx.send(frame)
+        with self.assertRaises(asyncio.TimeoutError):
+            await look.recv_data(timeout=0.3)             # not asked for frames yet
+        await look.send(json.dumps({"look": {"frames": True}}))
+        self.assertEqual(await look.recv_data(), ("binary", frame))   # the last one at once
+        for _ in range(6):
+            await tx.send(frame)
+            await asyncio.sleep(0.05)
+        got = 0
+        try:
+            while True:
+                k, _ = await look.recv_data(timeout=0.3)
+                got += k == "binary"
+        except asyncio.TimeoutError:
+            pass
+        self.assertLessEqual(got, 1)                         # six frames in 0.3 s: one at most, by LOOK_EVERY
+
     async def test_anyone_may_watch_when_the_channel_has_no_code(self):
         await self.connect("/transmit/sburb?key=secret-key&code=")
         await asyncio.sleep(0.05)
@@ -725,6 +751,42 @@ class Talk(RelayTest):
             if k == "binary":
                 raise AssertionError("someone in line got a frame")
 
+    async def test_a_signal_reaches_everyone_once_a_second_at_most(self):
+        tx, desk, a, b = await self.setup_room()
+        await a.send(json.dumps({"signal": True}))
+        await a.send(json.dumps({"signal": True}))          # too soon
+        self.assertEqual((await next_of(b, "signal"))["name"], "moss")
+        self.assertEqual((await next_of(desk, "signal"))["name"], "moss")
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "signal", timeout=0.4)
+
+    async def test_a_drop_guess_round_kept_by_dink_and_decided_by_a_drop(self):
+        tx, desk, a, b = await self.setup_room()
+
+        async def dink(payload):
+            body = json.dumps(payload).encode()
+            self.assertEqual(await post(self.port, "/dink/sburb?key=secret-key", body, "application/json"), 204)
+        await dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 40}})
+        await desk.send(json.dumps({"guess_open": {"boss": "vorkath", "what": "a unique"}}))
+        g = await next_of(a, "guess")
+        self.assertEqual((g["boss"], g["kc"], g["open"], g["count"]), ("vorkath", 40, True, 0))
+        await a.send(json.dumps({"guess": {"id": g["id"], "kc": 45}}))
+        await b.send(json.dumps({"guess": {"id": g["id"], "kc": 52}}))
+        await b.send(json.dumps({"guess": {"id": g["id"], "kc": 39}}))        # already past: thrown away
+        while (await next_of(desk, "guess"))["count"] != 2:
+            pass
+        await dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 47}})
+        await dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "items": [
+            {"name": "Vorki", "quantity": 1, "priceEach": 0}, {"name": "Draconic visage", "quantity": 1, "priceEach": 2500000}]}})
+        while True:
+            g = await next_of(b, "guess")
+            if g["result"]:
+                break
+        self.assertEqual((g["result"]["kc"], g["result"]["item"], g["result"]["winners"], g["result"]["off"]),
+                         (47, "Draconic visage", ["moss"], 2))
+        line = await next_of(b, "chat")
+        self.assertIn("moss guessed closest", line["text"])
+
     async def test_the_desk_hears_what_the_portal_uploads_each_second(self):
         tx, desk, a, b = await self.setup_room()
         frame = struct.pack(">I", 5) + b"\xff\xd8" + b"x" * 10000
@@ -779,6 +841,23 @@ class Sound(RelayTest):
                 break
         self.assertEqual(payload, self.packet())
         self.assertGreaterEqual(time.monotonic() - t0, relay.SOUND_HOLD - 0.05)
+
+    async def test_static_keeps_the_sound_going_and_says_so(self):
+        tx = await self.connect("/transmit/sburb?key=secret-key")
+        snd = await self.connect("/sound/sburb?key=secret-key")
+        desk = await self.connect("/desk/sburb?key=secret-key&name=sburb")
+        v = await self.connect("/watch/sburb")
+        await tx.send('{"state": "static"}')             # his static key: the picture obscured
+        st = await next_of(desk, "relay")
+        while not st.get("static"):
+            st = await next_of(desk, "relay")
+        self.assertFalse(st["open"])
+        await snd.send(self.packet())
+        while True:
+            k, payload = await v.recv(timeout=relay.SOUND_HOLD + 1)
+            if k == "binary":
+                break
+        self.assertEqual(payload, self.packet())          # heard all the same
 
     async def test_paused_or_off_air_nothing_is_heard(self):
         tx = await self.connect("/transmit/sburb?key=secret-key")

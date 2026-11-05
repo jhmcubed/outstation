@@ -30,6 +30,10 @@ const POLL_OPTIONS = [2, 6], POLL_SECONDS = [10, 900];
 const POLL_KEPT = 90_000;
 const SOUND_HOLD = 500; // the capture's hold-back: a pause takes the last moment's sound back too
 const REPORTS_KEPT = 8;
+const LOOK_EVERY = 500; // a looker (the listening post's receiver) gets a frame at most this often
+const SIGNAL_EVERY = 1000; // a viewer's ✼ (the signal button) at most once a second
+const GUESS_MIN_VALUE = 1_000_000; // a drop from the guessed boss this big ends a guess round by itself
+const GUESS_KEPT = 120_000; // a decided round's result stays this long
 const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused for a minute
 const OPEN = 1; // WebSocket.OPEN
 // Flow control: a viewer says {"got": <binary bytes received so far>} about once a second, and past this much
@@ -37,7 +41,7 @@ const OPEN = 1; // WebSocket.OPEN
 // shows no send buffer to read, and a viewer that stops reading would otherwise pile up in the object's memory.)
 const WINDOW = 4 * 1024 * 1024;
 
-type Role = "transmit" | "watch" | "desk" | "sound" | "refused";
+type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "refused";
 
 interface Att {
   role: Role;
@@ -50,6 +54,18 @@ interface Att {
   says?: number[];
   lastPing?: number;
   host?: string; // a desk's name in the chat
+  lastSignal?: number;
+  lookFrames?: boolean; // a looker asking for frames
+  lookAt?: number;
+}
+
+interface Guess {
+  id: number;
+  boss: string;
+  what: string;
+  open: boolean;
+  guesses: Record<string, { kc: number; name: string }>;
+  result?: { kc: number | null; item: string; winners: string[]; off: number | null; at: number };
 }
 
 interface Poll {
@@ -76,6 +92,9 @@ interface Meta {
   state: string; // the capture's last {"state"}: sound passes only while "open"
   bans?: { who: number; name: string; tags: string[] }[]; // banned from the desk: blocked, their lines taken back
   pingsOff?: boolean; // the desk's {"pings": false}: viewers' pings go nowhere
+  guessId?: number;
+  guessMin?: number; // the desk's {"guess_min_value"}
+  kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
 }
 
 export class Channel extends DurableObject<Env> {
@@ -83,6 +102,7 @@ export class Channel extends DurableObject<Env> {
   meta!: Meta;
   chat: [number, string][] = [];
   poll: Poll | null = null;
+  guess: Guess | null = null;
   reports: string[] = [];
   lastData: string | null = null;
   lastFrame: ArrayBuffer | null = null;
@@ -97,7 +117,8 @@ export class Channel extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports"]);
+      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess"]);
+      this.guess = (got.get("guess") as Guess) || null;
       this.name = (got.get("name") as string) || "";
       this.meta = (got.get("meta") as Meta) || {
         keyHash: null, code: "", cap: 0, chatId: 0, pollId: 0, nextWho: 0, seq: 0,
@@ -114,6 +135,7 @@ export class Channel extends DurableObject<Env> {
   saveMeta() { this.ctx.storage.put("meta", this.meta); }
   saveChat() { this.ctx.storage.put("chat", this.chat); }
   savePoll() { this.poll ? this.ctx.storage.put("poll", this.poll) : this.ctx.storage.delete("poll"); }
+  saveGuess() { this.guess ? this.ctx.storage.put("guess", this.guess) : this.ctx.storage.delete("guess"); }
 
   // who's here
 
@@ -159,6 +181,7 @@ export class Channel extends DurableObject<Env> {
     const st: Record<string, unknown> = {
       channel: this.name, live, viewers: this.seated().length, max: this.cap(),
       waiting: this.waiting().length, open: live && this.meta.state === "open",
+      static: live && this.meta.state === "static",
       set: this.meta.keyHash !== null, // (the channel was handed out: Outside says "no portal here yet" when it wasn't)
       pings: !this.meta.pingsOff,
     };
@@ -169,7 +192,7 @@ export class Channel extends DurableObject<Env> {
 
   tellViewers() {
     const line = this.status();
-    for (const ws of [...this.seated(), ...this.sockets("desk"), ...this.sockets("transmit")]) this.send(ws, line);
+    for (const ws of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look"), ...this.sockets("transmit")]) this.send(ws, line);
     this.waiting().forEach((ws, i) => this.send(ws, this.status(i + 1, this.att(ws).who)));
   }
 
@@ -203,6 +226,7 @@ export class Channel extends DurableObject<Env> {
   lateJoiner(ws: WebSocket, role: Role) {
     for (const [, line] of this.chat) this.send(ws, line);
     if (this.poll) this.send(ws, this.pollLine());
+    if (this.guess) this.send(ws, this.guessLine());
     if (this.meta.soundInfo && role !== "desk") this.send(ws, this.meta.soundInfo);
   }
 
@@ -252,14 +276,15 @@ export class Channel extends DurableObject<Env> {
     }
     const ip = request.headers.get("cf-connecting-ip") || "";
     const q = url.searchParams;
-    const [, role] = url.pathname.split("/");
+    let [, role] = url.pathname.split("/");
+    if (role === "watch" && q.get("look") === "1") role = "look";
 
     if (role === "_mint") return this.mint();
     if (role === "_revoke") return this.revoke();
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
 
     // the key first, so a refused socket never counts as the channel's, even for a moment
-    const no = role === "watch" ? null : await this.checkKey(q.get("key") || "", ip);
+    const no = role === "watch" || role === "look" ? null : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
@@ -270,6 +295,8 @@ export class Channel extends DurableObject<Env> {
       this.close(ws, no[0], no[1]);
     } else if (role === "watch") {
       this.openWatch(ws, a, q.get("code") || "");
+    } else if (role === "look") {
+      this.openLook(ws, a, q.get("code") || "");
     } else {
       if (role === "transmit") {
         this.openTransmit(ws, q.get("code") || "");
@@ -320,6 +347,19 @@ export class Channel extends DurableObject<Env> {
     this.tellViewers();
   }
 
+  // A looker (the listening post's receiver tuned to the portal, portal-feed.js): no seat, not counted as watching. It
+  // hears the status lines, and frames only while it asks ({"look": {"frames": true}}), at most one every LOOK_EVERY.
+  openLook(ws: WebSocket, a: Att, code: string) {
+    if (this.meta.code && code !== this.meta.code) {
+      this.close(ws, 4003, "wrong watch code");
+      return;
+    }
+    a.lookFrames = false;
+    a.lookAt = 0;
+    ws.serializeAttachment(a);
+    this.send(ws, this.status());
+  }
+
   openDesk(ws: WebSocket, a: Att, hostName: string) {
     const host = oneLine(hostName, NAME_MAX) || this.name;
     a.host = host;
@@ -368,6 +408,18 @@ export class Channel extends DurableObject<Env> {
     } else if (a.role === "desk") {
       if (typeof msg === "string") this.fromDesk(a.host || this.name, msg);
     } else if (a.role === "sound") this.fromSound(msg);
+    else if (a.role === "look" && typeof msg === "string" && msg.length <= VIEWER_TEXT) {
+      let m: any;
+      try { m = JSON.parse(msg); } catch { return; }
+      if (m && typeof m.look === "object" && m.look) {
+        a.lookFrames = m.look.frames === true;
+        if (a.lookFrames && this.lastFrame && this.live()) {
+          this.sendBinary(ws, this.lastFrame);
+          a.lookAt = Date.now();
+        }
+        ws.serializeAttachment(a);
+      }
+    }
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string) {
@@ -406,6 +458,7 @@ export class Channel extends DurableObject<Env> {
   }
 
   deliver(msg: string | ArrayBuffer) {
+    if (typeof msg === "string" && msg.startsWith('{"clip"')) return; // (the clip key: the client clips for itself)
     if (typeof msg === "string" && msg.startsWith('{"report"')) {
       this.reports.push(msg);
       this.reports = this.reports.slice(-REPORTS_KEPT);
@@ -428,6 +481,15 @@ export class Channel extends DurableObject<Env> {
       for (const v of this.seated()) if (this.send(v, msg)) this.out += msg.length;
     } else {
       for (const v of this.seated()) if (this.sendBinary(v, msg)) this.out += msg.byteLength;
+      const now = Date.now();
+      for (const v of this.sockets("look")) {
+        const va = this.att(v);
+        if (va.lookFrames && now - (va.lookAt || 0) >= LOOK_EVERY && this.sendBinary(v, msg)) {
+          va.lookAt = now;
+          v.serializeAttachment(va);
+          this.out += msg.byteLength;
+        }
+      }
     }
   }
 
@@ -451,7 +513,7 @@ export class Channel extends DurableObject<Env> {
     while (this.soundHeld.length && this.soundHeld[0][0] <= now) {
       const msg = this.soundHeld.shift()![1];
       // only while the picture is live and open (a pause or a minimise takes it too)
-      if (!this.live() || this.meta.state !== "open") continue;
+      if (!this.live() || (this.meta.state !== "open" && this.meta.state !== "static")) continue; // (static: the sound goes on)
       for (const v of this.seated()) if (this.sendBinary(v, msg)) this.out += msg.byteLength;
     }
     if (this.soundHeld.length) {
@@ -537,6 +599,20 @@ export class Channel extends DurableObject<Env> {
         this.savePoll();
         this.tellPoll();
       }
+    } else if (m.signal === true) {
+      // the signal button: a ✼ over everyone's frame (and a count in the client), once a second at most
+      if (blocked || now - (a.lastSignal || 0) < SIGNAL_EVERY) return;
+      a.lastSignal = now;
+      ws.serializeAttachment(a);
+      this.broadcast(pyjson({ signal: { name: a.name || "visitor", who: a.who } }));
+    } else if (m.guess && typeof m.guess === "object") {
+      const g = this.guess, kc = m.guess.kc;
+      if (!g || !g.open || m.guess.id !== g.id || blocked || !Number.isInteger(kc)) return;
+      const nowKc = this.nowKc(g.boss) || 0;
+      if (!(nowKc < kc && kc <= nowKc + 100000)) return; // (a kill still to come)
+      g.guesses[a.device || "who:" + a.who] = { kc, name: a.name || "visitor" };
+      this.saveGuess();
+      this.tellGuess();
     } else if (m.ping && typeof m.ping === "object") {
       const { x, y } = m.ping;
       const ok = (c: unknown) => typeof c === "number" && c >= 0 && c <= 1;
@@ -611,6 +687,28 @@ export class Channel extends DurableObject<Env> {
       this.meta.bans = (this.meta.bans || []).filter((b) => b.who !== m.unban);
       this.saveMeta();
       this.tellBanned();
+    } else if (m.guess_open && typeof m.guess_open === "object") {
+      const boss = oneLine(m.guess_open.boss, 40);
+      if (!boss) return;
+      this.meta.guessId = (this.meta.guessId || 0) + 1;
+      this.saveMeta();
+      this.guess = { id: this.meta.guessId, boss, what: oneLine(m.guess_open.what, 60) || "the next good drop", open: true, guesses: {} };
+      this.saveGuess();
+      this.tellGuess();
+    } else if (m.guess_close && this.guess && this.guess.open) {
+      this.guess.open = false; // (no more guesses; still waiting for the drop)
+      this.saveGuess();
+      this.tellGuess();
+    } else if (m.guess_drop && this.guess && !this.guess.result) {
+      this.decideGuess(this.nowKc(this.guess.boss), oneLine(typeof m.item === "string" ? m.item : "", 60));
+    } else if (m.guess_off && this.guess) {
+      const gone = this.guess.id;
+      this.guess = null;
+      this.saveGuess();
+      this.broadcast(pyjson({ guess_gone: gone }));
+    } else if (Number.isInteger(m.guess_min_value) && m.guess_min_value >= 0) {
+      this.meta.guessMin = m.guess_min_value;
+      this.saveMeta();
     } else if (typeof m.pings === "boolean") {
       if (!m.pings !== !!this.meta.pingsOff) {
         this.meta.pingsOff = !m.pings;
@@ -636,6 +734,66 @@ export class Channel extends DurableObject<Env> {
 
   tellPoll() { if (this.poll) this.broadcast(this.pollLine()); }
 
+  // the drop guesses: he opens a round for a boss, and viewers guess the kill count the next good drop lands on (one
+  // guess a device). Dink's kill counts keep the count; a drop from that boss worth guess_min_value, or his "it
+  // dropped", decides it, the closest guess winning. (relay.py's, the same.)
+  nowKc(boss: string): number | null {
+    const got = (this.meta.kc || {})[String(boss).toLowerCase()];
+    return got ? got[1] : null;
+  }
+
+  guessLine(): string {
+    const g = this.guess!;
+    return pyjson({ guess: { id: g.id, boss: g.boss, what: g.what, open: g.open, kc: this.nowKc(g.boss),
+                             count: Object.keys(g.guesses).length,
+                             result: g.result ? { kc: g.result.kc, item: g.result.item, winners: g.result.winners, off: g.result.off } : null } });
+  }
+
+  tellGuess() { if (this.guess) this.broadcast(this.guessLine()); }
+
+  decideGuess(kc: number | null, item: string) {
+    const g = this.guess;
+    if (!g || g.result) return;
+    const picks = kc === null ? [] : Object.values(g.guesses).map((v) => ({ off: Math.abs(v.kc - kc), name: v.name }));
+    const best = picks.length ? Math.min(...picks.map((p) => p.off)) : null;
+    const winners = best === null ? [] : [...new Set(picks.filter((p) => p.off === best).map((p) => p.name))].sort();
+    g.open = false;
+    g.result = { kc, item, winners, off: best, at: Date.now() };
+    this.saveGuess();
+    this.tellGuess();
+    if (winners.length) {
+      this.say("✼", `${item || "the drop"} at kill ${kc}: ${winners.join(", ")} guessed closest (${best} off)`, true);
+    }
+    this.schedule();
+  }
+
+  // Dink's kill counts and loot, for the guesses: the count kept per boss, and a big enough drop deciding the round
+  dinkCounts(p: any) {
+    if (!p || typeof p !== "object") return;
+    const extra = p.extra && typeof p.extra === "object" ? p.extra : {};
+    if (p.type === "KILL_COUNT") {
+      const boss = String(extra.boss || "").trim(), count = parseInt(extra.count) || 0;
+      if (boss && count > 0) {
+        this.meta.kc = { ...(this.meta.kc || {}), [boss.toLowerCase()]: [boss, count] };
+        this.saveMeta();
+        if (this.guess && this.guess.boss.toLowerCase() === boss.toLowerCase()) this.tellGuess();
+      }
+    } else if (p.type === "LOOT" && this.guess && !this.guess.result) {
+      const source = String(extra.source || "").trim().toLowerCase();
+      if (source !== this.guess.boss.toLowerCase()) return;
+      const least = this.meta.guessMin ?? GUESS_MIN_VALUE;
+      let best: [number, string] | null = null;
+      for (const i of Array.isArray(extra.items) ? extra.items : []) {
+        const worth = (parseInt(i?.quantity) || 0) * (parseInt(i?.priceEach) || 0);
+        if (worth >= least && (!best || worth > best[0])) best = [worth, String(i?.name || "a drop")];
+      }
+      if (best) {
+        const kc = Number.isInteger(parseInt(extra.killCount)) ? parseInt(extra.killCount) : this.nowKc(source);
+        this.decideGuess(kc, best[1]);
+      }
+    }
+  }
+
   closePoll() {
     this.poll!.open = false;
     this.poll!.closed = Date.now();
@@ -647,21 +805,30 @@ export class Channel extends DurableObject<Env> {
   pollKept(): number { return (parseFloat(this.env.POLL_KEPT_SECONDS || "") * 1000) || POLL_KEPT; }
 
   // the poll's ending and its going, by alarm (an alarm outlasts a sleep)
+  guessKept(): number { return (parseFloat(this.env.POLL_KEPT_SECONDS || "") * 1000) || GUESS_KEPT; }
+
   schedule() {
-    const p = this.poll;
-    if (!p) return;
-    this.ctx.storage.setAlarm(p.open ? p.ends : (p.closed || 0) + this.pollKept());
+    const due: number[] = [];
+    const p = this.poll, g = this.guess;
+    if (p) due.push(p.open ? p.ends : (p.closed || 0) + this.pollKept());
+    if (g && g.result) due.push(g.result.at + this.guessKept());
+    if (due.length) this.ctx.storage.setAlarm(Math.min(...due));
   }
 
   async alarm() {
-    const p = this.poll, now = Date.now();
-    if (!p) return;
-    if (p.open && now >= p.ends - 5) this.closePoll();
-    else if (!p.open && now >= (p.closed || 0) + this.pollKept() - 5) {
+    const p = this.poll, g = this.guess, now = Date.now();
+    if (p && p.open && now >= p.ends - 5) this.closePoll();
+    else if (p && !p.open && now >= (p.closed || 0) + this.pollKept() - 5) {
       this.poll = null;
       this.savePoll();
       this.broadcast(pyjson({ poll_gone: p.id }));
-    } else this.schedule();
+    }
+    if (g && g.result && now >= g.result.at + this.guessKept() - 5) {
+      this.guess = null;
+      this.saveGuess();
+      this.broadcast(pyjson({ guess_gone: g.id }));
+    }
+    this.schedule();
   }
 
   // Dink (a fallback: the client normally takes Dink's posts itself and sends reports as the transmitter)
@@ -669,8 +836,10 @@ export class Channel extends DurableObject<Env> {
   async dink(request: Request, key: string, ip: string): Promise<Response> {
     const no = await this.checkKey(key, ip);
     if (no) return new Response(null, { status: 403 });
-    const report = dinkReport(await dinkPayload(request));
+    const payload = await dinkPayload(request);
+    const report = dinkReport(payload);
     if (report) this.deliver(pyjson({ report }));
+    this.dinkCounts(payload);
     return new Response(null, { status: 204 });
   }
 

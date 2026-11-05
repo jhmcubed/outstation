@@ -649,6 +649,100 @@ class Moderation(Base):
         self.assertEqual((await next_of(desk, "ping"))["name"], "moss")
 
 
+class RoundTwo(Base):
+    """main's round two (11/05/2026): lookers, the signal button, drop guesses, the static key."""
+
+    async def room(self):
+        tx = await self.tx()
+        desk = await self.desk()
+        a, b = await self.watch(), await self.watch()
+        await a.send(json.dumps({"hello": {"name": "moss", "device": "device-two-aaaa"}}))
+        await b.send(json.dumps({"hello": {"name": "fern", "device": "device-two-bbbb"}}))
+        await self.pause()
+        return tx, desk, a, b
+
+    async def test_a_looker_takes_no_seat_and_gets_few_frames_only_when_it_asks(self):
+        tx = await self.tx()
+        d = await self.desk()
+        await d.send(json.dumps({"cap": 1}))
+        await self.pause()
+        look = await self.connect("watch", "look=1")
+        seated = await self.watch()
+        st = await last_status(seated)
+        self.assertNotIn("seat", st)
+        self.assertEqual(st["viewers"], 1)
+        frame = struct.pack(">I", 1) + b"\xff\xd8 frame"
+        await tx.send(frame)
+        with self.assertRaises(asyncio.TimeoutError):
+            await look.recv_data(timeout=0.3)
+        await look.send(json.dumps({"look": {"frames": True}}))
+        self.assertEqual(await look.recv_data(), ("binary", frame))
+        for _ in range(6):
+            await tx.send(frame)
+            await asyncio.sleep(0.05)
+        got = 0
+        try:
+            while True:
+                k, _ = await look.recv_data(timeout=0.3)
+                got += k == "binary"
+        except asyncio.TimeoutError:
+            pass
+        self.assertLessEqual(got, 1)
+
+    async def test_a_signal_reaches_everyone_once_a_second_at_most(self):
+        tx, desk, a, b = await self.room()
+        await a.send(json.dumps({"signal": True}))
+        await a.send(json.dumps({"signal": True}))
+        self.assertEqual((await next_of(b, "signal"))["name"], "moss")
+        self.assertEqual((await next_of(desk, "signal"))["name"], "moss")
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "signal", timeout=0.4)
+
+    async def test_a_drop_guess_round_kept_by_dink_and_decided_by_a_drop(self):
+        tx, desk, a, b = await self.room()
+
+        async def dink(payload):
+            self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), json.dumps(payload).encode(),
+                                        "application/json"), 204)
+        await dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 40}})
+        await desk.send(json.dumps({"guess_open": {"boss": "vorkath", "what": "a unique"}}))
+        g = await next_of(a, "guess")
+        self.assertEqual((g["boss"], g["kc"], g["open"], g["count"]), ("vorkath", 40, True, 0))
+        await a.send(json.dumps({"guess": {"id": g["id"], "kc": 45}}))
+        await b.send(json.dumps({"guess": {"id": g["id"], "kc": 52}}))
+        await b.send(json.dumps({"guess": {"id": g["id"], "kc": 39}}))
+        while (await next_of(desk, "guess"))["count"] != 2:
+            pass
+        await dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 47}})
+        await dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "items": [
+            {"name": "Vorki", "quantity": 1, "priceEach": 0}, {"name": "Draconic visage", "quantity": 1, "priceEach": 2500000}]}})
+        while True:
+            g = await next_of(b, "guess")
+            if g["result"]:
+                break
+        self.assertEqual((g["result"]["kc"], g["result"]["item"], g["result"]["winners"], g["result"]["off"]),
+                         (47, "Draconic visage", ["moss"], 2))
+        self.assertIn("moss guessed closest", (await next_of(b, "chat"))["text"])
+
+    async def test_static_keeps_the_sound_going_and_says_so(self):
+        tx = await self.tx()
+        snd = await self.connect("sound", "key=" + self.key)
+        desk = await self.desk()
+        v = await self.watch()
+        await tx.send('{"state": "static"}')
+        st = await next_of(desk, "relay")
+        while not st.get("static"):
+            st = await next_of(desk, "relay")
+        self.assertFalse(st["open"])
+        packet = struct.pack(">I", 99) + b"AU" + bytes([1, 1]) + struct.pack(">H", 3) + b"opu"
+        await snd.send(packet)
+        while True:
+            k, payload = await v.recv(timeout=SOUND_HOLD + 1)
+            if k == "binary":
+                break
+        self.assertEqual(payload, packet)
+
+
 class ReportData(Base):
     """The numbers a report carries, for the portal's readings, and nothing naming another player."""
 
