@@ -238,6 +238,11 @@ pub struct App {
     look: (Option<f32>, std::collections::BTreeMap<String, String>),
     // the broadcast's title as it's being typed (it goes out on Enter, or when the box is left)
     title_edit: String,
+    // asking for a portal from the attach screen (ask.rs), and the channel it attached to when the answer came
+    asker: crate::ask::Asker,
+    asked_attached: Arc<Mutex<Option<String>>>,
+    /// the chat turned away for good (a client too old for the relay), for the status line while off air too
+    desk_stopped: Option<String>,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -395,6 +400,7 @@ impl App {
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
+            asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -436,12 +442,14 @@ impl App {
             match m {
                 In::Up(name) => {
                     self.up = true;
+                    self.desk_stopped = None;
                     self.history_until = Instant::now() + Duration::from_millis(800); // (the chat so far: not over the game again)
                     self.note(format!("connected · your lines go out as {}", name));
                 }
                 In::Down => { self.up = false; self.live = false; self.open = false; }
                 In::Note(n) => self.note(n),
                 In::Msg(v) => self.message(v),
+                In::Stopped(why) => self.desk_stopped = Some(why),
             }
         }
         while let Ok(e) = self.tray_rx.try_recv() {
@@ -546,7 +554,7 @@ impl App {
     fn status_line(&self) -> (String, Color32) {
         let s = self.settings.get();
         let tx = self.tx.status.lock().unwrap().clone();
-        if let Some(why) = &tx.stopped {
+        if let Some(why) = tx.stopped.as_ref().or(self.desk_stopped.as_ref()) {
             return (format!("stopped: {}", why), PINK());
         }
         if !self.up {
@@ -821,6 +829,41 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(wrapped("anyone with the token can hand out and take back every channel: it stays on this PC (Documents\\ghillie portal\\admin.json), never in a repository", 14.0, QUIET(), ui.available_width()));
     }
     ui.add_space(10.0);
+    // those asking for a portal (a friend's client, from its attach screen; ask.rs)
+    let asks = app.keeper.asks.lock().unwrap().clone();
+    if let Some(Ok(asks)) = asks {
+        if !asks.is_empty() {
+            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+            ui.label(rich(&format!("asking ({})", asks.len()), 16.0, PINK()));
+            for r in asks {
+                ui.horizontal(|ui| {
+                    ui.label(rich(&format!("{} · {} ago", r.player, ago(Duration::from_millis(now_ms.saturating_sub(r.at_ms)))), 14.0, TEXT()));
+                    if r.given { ui.label(rich("has a portal already", 14.0, PINK())); }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if button(ui, "turn down", true, None).clicked() { app.keeper.confirm_ask = Some((false, r.channel.clone())); }
+                        if button(ui, "hand out", true, None).clicked() {
+                            if r.given { app.keeper.confirm_ask = Some((true, r.channel.clone())); }
+                            else { app.keeper.answer(r.channel.clone(), true, wake.clone()); }
+                        }
+                    });
+                });
+                if !r.note.is_empty() { ui.label(wrapped(&format!("“{}”", r.note), 14.0, GREY(), ui.available_width())); }
+            }
+            if let Some((yes, ch)) = app.keeper.confirm_ask.clone() {
+                let words = if yes { format!("{} has a portal already: handing it out makes a new key, and whoever has the old code is cut off. is this request theirs?", ch) }
+                            else { format!("turn down the request for {}? their portal says so (they can ask again)", ch) };
+                ui.label(wrapped(&words, 14.0, PINK(), ui.available_width()));
+                ui.horizontal(|ui| {
+                    if button(ui, if yes { "hand it out" } else { "turn it down" }, true, None).clicked() {
+                        app.keeper.confirm_ask = None;
+                        app.keeper.answer(ch.clone(), yes, wake.clone());
+                    }
+                    if button(ui, "never mind", true, None).clicked() { app.keeper.confirm_ask = None; }
+                });
+            }
+            ui.add_space(10.0);
+        }
+    }
     // hand one out
     ui.label(rich("hand one out", 16.0, LIME()));
     ui.horizontal(|ui| {
@@ -885,6 +928,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
                     let words = if r.live { format!("{} · live · {} watching", r.channel, r.viewers) } else { format!("{} · off air", r.channel) };
                     ui.label(rich(&words, 14.0, if r.live { PINK() } else { TEXT() }));
                     if !r.title.is_empty() { ui.label(rich(&r.title, 14.0, GREY())); }
+                    if !r.client.is_empty() { ui.label(rich(&format!("v{}", r.client), 13.0, QUIET())); }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "take back", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
                         if button(ui, "new code", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
@@ -1665,6 +1709,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     }
+    ask_section(app, ui);
     ui.add_space(14.0);
     egui::CollapsingHeader::new(rich("is it safe for my account?", 16.0, LIME())).id_salt("safe").show(ui, |ui| {
         for line in SAFE {
@@ -1688,6 +1733,58 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// "no code yet? ask for one": the player's name and a note for the keeper, sent to the keeper's relay (ask.rs); then,
+/// while it waits, how long it's waited and "never mind". The answer is collected by itself (App::logic).
+fn ask_section(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let wake = move || ctx.request_repaint();
+    let w = ui.available_width();
+    ui.add_space(12.0);
+    if let Some(a) = app.settings.get().asked.clone() {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(a.at);
+        ui.label(wrapped(&format!("asked for {}'s portal {} ago · waiting for the keeper's answer", a.player,
+                                  ago(Duration::from_secs(now.saturating_sub(a.at)))), 16.0, TEXT(), w));
+        ui.label(wrapped("this screen attaches by itself when the answer comes: it looks every 20 s while the portal is open", 14.0, QUIET(), w));
+        if button(ui, "never mind (take the request back)", true, None).clicked() { app.asker.cancel(&app.settings); }
+    } else {
+        let open = app.asker.open;
+        if button(ui, if open { "no code yet? ask for one ▾" } else { "no code yet? ask for one ▸" }, true, Some(open)).clicked() {
+            app.asker.open = !open;
+        }
+        if app.asker.open {
+            if crate::ask::HOME_RELAY.is_empty() {
+                ui.label(wrapped("asking opens with the first release, once the keeper's relay is up. until then, ask the keeper for an attach code.", 14.0, GREY(), w));
+            } else {
+                egui::Grid::new("ask").num_columns(2).show(ui, |ui| {
+                    ui.label(rich("your player's name", 16.0, GREY()));
+                    field(ui, &mut app.asker.player, 160.0, "as in the game", false);
+                    ui.end_row();
+                    ui.label(rich("a note for the keeper", 16.0, GREY()));
+                    field(ui, &mut app.asker.note, 300.0, "how they know you: a clan, a friend, your discord", false);
+                    ui.end_row();
+                });
+                let channel = crate::ask::channel_of(&app.asker.player);
+                match &channel {
+                    Ok(ch) => { ui.label(rich(&format!("your portal would open at ghillie.wiki/outside?player={}", ch), 14.0, QUIET())); }
+                    Err(e) if !app.asker.player.trim().is_empty() => { ui.label(rich(e, 14.0, PINK())); }
+                    Err(_) => {}
+                }
+                let ready = channel.is_ok() && !app.asker.busy();
+                ui.horizontal(|ui| {
+                    if ui.add_enabled_ui(ready, |ui| button(ui, if app.asker.busy() { "asking…" } else { "ask" }, false, None)).inner.clicked() {
+                        app.asker.ask(app.settings.clone(), wake.clone());
+                    }
+                });
+                ui.label(wrapped("what's sent: the name, the note, and a random code this PC keeps to collect the answer. nothing else.", 14.0, QUIET(), w));
+            }
+        }
+    }
+    let said = app.asker.said.lock().unwrap().clone();
+    if let Some((words, bad)) = said {
+        ui.label(wrapped(&words, 14.0, if bad { PINK() } else { TEAL() }, w));
+    }
+}
+
 // ---- the window ----
 
 impl eframe::App for App {
@@ -1698,6 +1795,13 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.settings.refresh();
         self.drain(ctx);
+        // a request for a portal, looked at again while it waits; answered yes, it attaches by itself
+        let c = ctx.clone();
+        self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
+        let came = self.asked_attached.lock().unwrap().take();
+        if let Some(ch) = came {
+            self.note(format!("the keeper said yes: attached to {} · your portal opens at ghillie.wiki/outside?player={}", ch, ch));
+        }
         self.sync_tray(ctx);
         #[allow(unused_mut)]
         let mut into_tray = false;

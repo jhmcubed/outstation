@@ -49,6 +49,20 @@ fn d_upload() -> f64 { 40.0 }
 fn d_dink_port() -> u16 { 8796 }
 fn d_one() -> u32 { 1 }
 
+/// A request for a portal, waiting for the keeper's answer (ask.rs): kept so it outlives closing the portal.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Asked {
+    /// the keeper's relay, as http(s)
+    pub relay: String,
+    pub channel: String,
+    /// the name as it was typed
+    pub player: String,
+    /// the secret that collects the answer (the relay keeps only its SHA-256)
+    pub pickup: String,
+    /// when it was asked (seconds since 1970)
+    pub at: u64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Dink {
     /// the local port Dink posts to (http://127.0.0.1:<port>/dink)
@@ -208,6 +222,9 @@ pub struct Settings {
     /// forward.py's rules: {"discord": [webhook…], "forward": {"LEVEL": true, "LOOT": {…}, …}}
     #[serde(default)]
     pub forward: Value,
+    /// a request for a portal waiting for the keeper (the attach screen's "ask for one"; ask.rs)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<Asked>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

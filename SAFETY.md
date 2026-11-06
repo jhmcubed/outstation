@@ -14,6 +14,7 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 | show something you'd rather keep to yourself? | **Only what you allow.** Draw your own masks over any part of the game (the chat, the map, the world number): those parts are blacked out on your PC, before a frame is made, so they never leave it. The mask key turns them off and on. |
 | show your mouse pointer? | **Only if you switch it on.** "my cursor in the picture" (off to begin with) has Windows Graphics Capture draw the pointer into the frames where it's over RuneLite. Windows draws it: the portal never reads where the pointer is. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. |
+| need anything else installed? | **No.** Everything it needs comes with Windows 10 and 11: the safety check below fails a release that would need anything more. |
 | let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. The ring, the ✼ and the chat over the game are drawn in see-through windows of the portal's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off, and "viewers may ping" switches pings off altogether. |
 
 **What it reads:**
@@ -26,6 +27,7 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 - **Your picture, sound and chat:** only to the relay in your attach code.
 - **Dink's posts:** only to the portal on your own PC (`127.0.0.1`, which nothing outside your PC can reach). They go on to your Discord webhook if you set one.
 - **GitHub:** once on opening, to see whether there's a newer version. "more ▸" in the settings turns that off.
+- **Asking for a portal** (the first screen's "no code yet? ask for one"): only when you press **ask**, to the keeper's relay: your player's name, your note for the keeper, and a random code your PC keeps to collect the answer. While the request waits, the portal asks the same relay every 20 seconds whether the keeper has answered.
 
 Clips (the replay buffer) are written on your own PC, into Videos\outside-portal, by Windows' own video encoder. Nothing about them is sent anywhere. The live view in the window watches your own portal through the relay, as any viewer would.
 
@@ -50,7 +52,7 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
    gh attestation verify outside-portal.exe --repo jhmcubed/outside-portal
    ```
 
-3. **The safety check runs on every release's own program.** Any Windows program lists, inside itself, every Windows function it can call, the libraries' included. `tests/safety_check.py` reads that list out of the file and fails the release if anything that could reach into another program, play for you or watch the keyboard is in it. It then checks the client's own code the same way, and checks that the only addresses written into it are the ones above. Run it on your own copy (Python, nothing to install):
+3. **The safety check runs on every release's own program.** Any Windows program lists, inside itself, every Windows function it can call, the libraries' included. `tests/safety_check.py` reads that list out of the file and fails the release if anything that could reach into another program, play for you or watch the keyboard is in it. It also lists every library the program loads, and fails if any of them doesn't come with Windows. It then checks the client's own code the same way, and checks that the only addresses written into it are the ones above. Run it on your own copy (Python, nothing to install):
 
    ```bash
    py tests/safety_check.py outside-portal.exe

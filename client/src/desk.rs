@@ -12,6 +12,8 @@ pub enum In {
     Down,
     Note(String),
     Msg(Value),
+    /// turned away for good (this client too old for the relay): the words for the status line, until it's up again
+    Stopped(String),
 }
 
 pub struct Desk {
@@ -67,9 +69,9 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         };
         ws.timeout(Duration::from_millis(30));
         while out.try_recv().is_ok() {} // (what was typed while it was down stays unsent)
-        up.store(true, Ordering::Relaxed);
-        let _ = inbox.send(In::Up(name.clone()));
-        wake();
+        // "connected" waits for the relay's first line (or a moment), so a socket it turns away at once (a wrong key,
+        // a client too old for it) never reads as connected first
+        let (opened, mut said_up) = (Instant::now(), false);
         let mut cap = s.max_viewers;
         let _ = ws.text(&format!("{{\"cap\": {}}}", cap));
         let (mut pings, mut guess_min, mut chat_on) = (s.pings_allowed, s.guess_min_value, s.chat_allowed);
@@ -81,7 +83,14 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         let _ = ws.text(&format!("{{\"guess_min_value\": {}}}", guess_min));
         let mut checked = Instant::now();
         let ended = loop {
-            match ws.recv() {
+            let got = ws.recv();
+            if !said_up && (matches!(got, Ok(Got::Text(_))) || (opened.elapsed() > Duration::from_millis(1500) && !matches!(got, Ok(Got::Closed(..)) | Err(_)))) {
+                said_up = true;
+                up.store(true, Ordering::Relaxed);
+                let _ = inbox.send(In::Up(name.clone()));
+                wake();
+            }
+            match got {
                 Ok(Got::Text(t)) => {
                     if let Ok(v) = serde_json::from_str::<Value>(&t) {
                         let _ = inbox.send(In::Msg(v));
@@ -131,6 +140,7 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
             if *code == 4026 {
                 // older than the relay allows: the chat waits for new settings (a newer client is the real fix)
                 let _ = inbox.send(In::Note(crate::settings::too_old_note(why)));
+                let _ = inbox.send(In::Stopped(crate::settings::too_old_note(why)));
                 wake();
                 loop {
                     std::thread::sleep(Duration::from_millis(500));

@@ -30,11 +30,11 @@ base64 = "0.22"
 png = "0.18"
 jpeg-decoder = { version = "0.3", default-features = false }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
-# the keeper's build only (--features station): friends' portals' admin tokens
-ring = { version = "0.17", optional = true }
+# random bytes: a request's pickup (ask.rs), and in the keeper's build the admin token (already in the build for TLS)
+ring = "0.17"
 
 [features]
 # The field station (11/06/2026): the portal with the keeper's tray beside it (what ghillie's launcher.json starts,
 # modes, links) and friends' portals handed out (station.rs, keeper.rs). Built only on the keeper's PC
 # (ghillie's tools/launcher/build_station.py); a release is always built without it.
-station = ["dep:ring"]
+station = []

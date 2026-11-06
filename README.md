@@ -10,7 +10,7 @@ A live portal from your RuneLite to your Outside page on [ghillie.wiki](https://
 
 - **The client** runs on your PC beside RuneLite. It reads RuneLite's window the way streaming software does, and sends it to the relay. It never touches the game: nothing a viewer does becomes input to it.
 - **The relay** passes your stream on to everyone watching, so your home connection sends one copy however many watch. It runs on Cloudflare.
-- **Your channel** is named after your player. Its key is yours alone. Jace hands out channels as attach codes: paste yours into the client, and that's the set-up.
+- **Your channel** is named after your player. Its key is yours alone. Jace hands out channels as attach codes: paste yours into the client, and that's the set-up. No code yet? The client's first screen asks for one ("no code yet? ask for one": your player's name and a note so Jace knows you), and attaches by itself once he says yes.
 - **What goes out:** RuneLite's game area, and nothing else on your screen. It stops while you're paused (the Pause key) or minimised, and the half second before either is taken back. If you use Dink, your level-ups, drops and the like go out too, but nothing that names another player.
 
 ## The parts

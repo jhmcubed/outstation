@@ -35,22 +35,8 @@ fn field(m: &Map<String, Value>, k: &str) -> String {
     m.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
 }
 
-/// A player's name as its channel (the page's own rule: lower case, no spaces, - or _), or why not.
-pub fn channel_of(player: &str) -> Result<String, String> {
-    let raw = player.split_whitespace().collect::<Vec<_>>().join(" ");
-    let ok = !raw.is_empty() && raw.chars().count() <= 12
-        && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '_' || c == '-');
-    if !ok { return Err("a name is 1 to 12 letters, numbers, spaces, hyphens or underscores".into()); }
-    Ok(raw.to_lowercase().chars().filter(|c| !matches!(c, ' ' | '_' | '-')).collect())
-}
-
-pub fn http_base(relay: &str) -> String {
-    let r = relay.trim().trim_end_matches('/');
-    if let Some(x) = r.strip_prefix("wss://") { format!("https://{}", x) }
-    else if let Some(x) = r.strip_prefix("ws://") { format!("http://{}", x) }
-    else if r.is_empty() || r.contains("://") { r.to_string() }
-    else { format!("https://{}", r) }  // (a bare address: Cloudflare's, over https)
-}
+// (a player's name as its channel, and a relay's address as http(s): the same as a friend's client asking)
+pub use crate::ask::{channel_of, http_base};
 
 /// A new admin token: 32 random bytes, base64url (as friends.py's secrets.token_urlsafe(32)).
 pub fn new_token() -> Result<String, String> {
@@ -98,7 +84,11 @@ fn call(method: &str, route: &str, auth: bool) -> Result<Value, String> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Row { pub channel: String, pub live: bool, pub viewers: u64, pub title: String }
+pub struct Row { pub channel: String, pub live: bool, pub viewers: u64, pub title: String, pub client: String }
+
+/// Someone asking for a portal (a friend's client, from its attach screen): the keeper's to hand out or turn down.
+#[derive(Clone, Debug)]
+pub struct AskRow { pub channel: String, pub player: String, pub note: String, pub at_ms: u64, pub given: bool }
 
 /// Every channel handed out, live ones first, with whether each is live (the open portals' list: a channel with a
 /// watch code isn't on it, so it reads as off air).
@@ -110,6 +100,8 @@ pub fn listing() -> Result<Vec<Row>, String> {
         let ch = c.get("channel")?.as_str()?.to_string();
         let p = find(&ch);
         Some(Row {
+            // (the version the last transmitter said: the admin list's own, from relays since 11/06/2026)
+            client: c.get("client").and_then(|x| x.as_str()).unwrap_or("").to_string(),
             live: p.as_ref().and_then(|p| p.get("live")).and_then(|x| x.as_bool()).unwrap_or(false),
             viewers: p.as_ref().and_then(|p| p.get("viewers")).and_then(|x| x.as_u64()).unwrap_or(0),
             title: p.as_ref().and_then(|p| p.get("title")).and_then(|x| x.as_str()).unwrap_or("").to_string(),
@@ -118,6 +110,28 @@ pub fn listing() -> Result<Vec<Row>, String> {
     }).collect();
     rows.sort_by(|a, b| b.live.cmp(&a.live).then(a.channel.cmp(&b.channel)));
     Ok(rows)
+}
+
+/// Those asking for a portal, oldest first.
+pub fn asking() -> Result<Vec<AskRow>, String> {
+    let v = call("GET", "/admin/requests", true)?;
+    Ok(v.as_array().cloned().unwrap_or_default().iter().filter_map(|r| {
+        let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        Some(AskRow { channel: r.get("channel")?.as_str()?.to_string(), player: s("player"), note: s("note"),
+                      at_ms: r.get("at").and_then(|x| x.as_u64()).unwrap_or(0),
+                      given: r.get("given").and_then(|x| x.as_bool()).unwrap_or(false) })
+    }).collect())
+}
+
+/// Answer one: handed out (the code waits on the relay for their client, which attaches itself) or turned down.
+pub fn answer(channel: &str, yes: bool) -> Result<String, String> {
+    if yes {
+        call("POST", &format!("/admin/requests/{}", channel), true)?;
+        Ok(format!("{}: handed out · their portal attaches itself within a minute, at {}{}", channel, SITE.trim_start_matches("https://"), channel))
+    } else {
+        call("DELETE", &format!("/admin/requests/{}", channel), true)?;
+        Ok(format!("{}: turned down · their portal says so", channel))
+    }
 }
 
 /// A channel handed out (or a new key for one already out): (channel, attach code).
@@ -143,6 +157,10 @@ pub fn message(channel: &str, code: &str) -> String {
 /// The drawer's state: the list (read again every 10 s while it's open), what's being asked, and the last answer.
 pub struct Keeper {
     pub rows: Arc<Mutex<Option<Result<Vec<Row>, String>>>>,
+    /// those asking for a portal (read with the list)
+    pub asks: Arc<Mutex<Option<Result<Vec<AskRow>, String>>>>,
+    /// (asked first) answering a request: (hand it out?, the channel)
+    pub confirm_ask: Option<(bool, String)>,
     read_at: Option<Instant>,
     busy: Arc<Mutex<bool>>,
     pub answer: Arc<Mutex<Option<Result<(String, String), String>>>>,
@@ -157,7 +175,8 @@ pub struct Keeper {
 impl Keeper {
     pub fn new() -> Keeper {
         let m = load();
-        Keeper { rows: Arc::new(Mutex::new(None)), read_at: None, busy: Arc::new(Mutex::new(false)),
+        Keeper { rows: Arc::new(Mutex::new(None)), asks: Arc::new(Mutex::new(None)), confirm_ask: None,
+                 read_at: None, busy: Arc::new(Mutex::new(false)),
                  answer: Arc::new(Mutex::new(None)), note: Arc::new(Mutex::new(String::new())), name: String::new(),
                  relay: field(&m, "relay"), setup_open: field(&m, "relay").is_empty(), confirm: None }
     }
@@ -167,11 +186,12 @@ impl Keeper {
         if *self.busy.lock().unwrap() { return; }
         if !now && self.read_at.is_some_and(|t| t.elapsed() < Duration::from_secs(10)) { return; }
         self.read_at = Some(Instant::now());
-        let (rows, busy) = (self.rows.clone(), self.busy.clone());
+        let (rows, asks, busy) = (self.rows.clone(), self.asks.clone(), self.busy.clone());
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
             let got = listing();
             *rows.lock().unwrap() = Some(got);
+            *asks.lock().unwrap() = Some(asking());
             *busy.lock().unwrap() = false;
             wake();
         });
@@ -202,6 +222,17 @@ impl Keeper {
                 Err(e) => e,
             };
             if let Ok(l) = listing() { *rows.lock().unwrap() = Some(Ok(l)); }
+            wake();
+        });
+    }
+
+    /// answer a request, off the window's thread; the list and the requests read again after
+    pub fn answer(&mut self, channel: String, yes: bool, wake: impl Fn() + Send + 'static) {
+        let (note, rows, asks) = (self.note.clone(), self.rows.clone(), self.asks.clone());
+        std::thread::spawn(move || {
+            *note.lock().unwrap() = match answer(&channel, yes) { Ok(s) => s, Err(e) => e };
+            if let Ok(l) = listing() { *rows.lock().unwrap() = Some(Ok(l)); }
+            *asks.lock().unwrap() = Some(asking());
             wake();
         });
     }
