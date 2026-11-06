@@ -9,16 +9,20 @@
 //   GET    /clips/<channel>/<id>.mp4          the clip (ranges too, as a video wants)   } straight from R2: their
 //   GET    /clips/<channel>/<id>.jpg          its flipbook                              } addresses can't be guessed
 //   DELETE /clips/<channel>/<id>?key=<key>    its own portal takes one down
+//   POST   /clips/<channel>/<id>?key=<key>&keep=1|0   kept for good (at most KEPT_MOST, 3) or let go again
 //   GET    /admin/clips/<channel>, DELETE /admin/clips/<channel>/<id>                       the keeper's
 //
 // The files are in the CLIPS bucket under clips/<channel>/<id>; the list is in the channel's own storage. At most
-// CLIPS_MOST (20) a channel and CLIPS_DAYS (30) days each, the oldest going first; each upload at most MAX_CLIP.
+// CLIPS_MOST (20) a channel and CLIPS_DAYS (30) days each, the oldest going first; each upload at most MAX_CLIP. Up to
+// KEPT_MOST (3) a channel are kept for good (11/06/2026, Jace: "allow people to keep a maximum of 3 permanent clips on
+// their page in case they don't want something to be overwritten"): never counted in the 20, never too old.
 
 export const MAX_CLIP = 8 * 1024 * 1024;
 export const MAX_STRIP = 256 * 1024;
 export const MAX_STILL = 16 * 1024; // (base64, in the list)
 export const MAX_DUR = 20;
 export const ID = /^[A-Za-z0-9_-]{16,32}$/;
+export const KEPT_MOST = 3;
 
 export interface Clip {
   id: string;
@@ -32,6 +36,7 @@ export interface Clip {
   frames: number; // the flipbook's frames (one under another in its JPEG, each the still's size)
   fps: number; // and how fast they go
   size: number; // the clip's bytes
+  kept?: boolean; // kept for good
 }
 
 export function fileKey(channel: string, id: string, ext: "mp4" | "jpg"): string {
@@ -108,12 +113,15 @@ export async function readUpload(request: Request): Promise<{ meta: Omit<Clip, "
   return { meta, clip, strip };
 }
 
-// The list without what's too old or past the most, and what was dropped (whose files go too).
+// The list without what's too old or past the most, and what was dropped (whose files go too); the ones kept for good
+// first, then the rest newest first.
 export function trim(list: Clip[], most: number, days: number, now = Date.now()): { kept: Clip[]; gone: Clip[] } {
   const sorted = [...list].sort((a, b) => b.at - a.at);
-  const kept: Clip[] = [], gone: Clip[] = [];
+  const kept: Clip[] = sorted.filter((c) => c.kept), gone: Clip[] = [];
+  let n = 0;
   for (const c of sorted) {
-    if (kept.length < most && now / 1000 - c.at <= days * 86400) kept.push(c);
+    if (c.kept) continue;
+    if (n < most && now / 1000 - c.at <= days * 86400) { kept.push(c); n++; }
     else gone.push(c);
   }
   return { kept, gone };

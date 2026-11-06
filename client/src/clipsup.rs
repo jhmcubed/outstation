@@ -53,7 +53,10 @@ pub fn multipart(meta: &str, strip: &[u8], mp4: &[u8]) -> (Vec<u8>, String) {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Row { pub id: String, pub what: String, pub at: u64, pub dur: f64, pub size: u64 }
+pub struct Row { pub id: String, pub what: String, pub at: u64, pub dur: f64, pub size: u64, pub kept: bool }
+
+/// how many a channel may keep for good (the relay's KEPT_MOST)
+pub const KEPT_MOST: usize = 3;
 
 /// The window's list of what's on the page (read when the drawer asks, off its thread), and taking one down.
 pub struct PageClips {
@@ -83,9 +86,35 @@ impl PageClips {
                     at: c.get("at").and_then(|x| x.as_u64()).unwrap_or(0),
                     dur: c.get("dur").and_then(|x| x.as_f64()).unwrap_or(0.0),
                     size: c.get("size").and_then(|x| x.as_u64()).unwrap_or(0),
+                    kept: c.get("kept").and_then(|x| x.as_bool()).unwrap_or(false),
                 }).filter(|r| !r.id.is_empty()).collect())
             })();
             *rows.lock().unwrap() = Some(got);
+            *busy.lock().unwrap() = false;
+            wake();
+        });
+    }
+
+    /// Keep one for good (never in the 20, never too old), or let it go again.
+    pub fn keep(&mut self, s: &Settings, id: &str, keep: bool, wake: impl Fn() + Send + 'static) {
+        let url = format!("{}/clips/{}/{}?key={}&keep={}", s.http_base(), enc(&s.channel), enc(id), enc(&s.key), if keep { 1 } else { 0 });
+        let (rows, busy, id) = (self.rows.clone(), self.busy.clone(), id.to_string());
+        *busy.lock().unwrap() = true;
+        std::thread::spawn(move || {
+            let r = ureq::post(&url).header("User-Agent", "outside-portal").config().http_status_as_error(false).build().send(&[] as &[u8]);
+            match r {
+                Ok(mut r) if r.status().as_u16() == 200 => {
+                    if let Some(Ok(list)) = &mut *rows.lock().unwrap() {
+                        for x in list.iter_mut() { if x.id == id { x.kept = keep; } }
+                    }
+                }
+                Ok(mut r) => {
+                    let t = r.body_mut().read_to_string().unwrap_or_default();
+                    let why = serde_json::from_str::<Value>(&t).ok().and_then(|v| v.get("error").and_then(|x| x.as_str()).map(|x| x.to_string()));
+                    crate::clip::say(format!("couldn't keep the clip: {}", why.unwrap_or_else(|| format!("the relay answered {}", r.status().as_u16()))));
+                }
+                Err(e) => crate::clip::say(format!("couldn't keep the clip ({})", e)),
+            }
             *busy.lock().unwrap() = false;
             wake();
         });

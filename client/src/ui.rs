@@ -252,6 +252,8 @@ pub struct App {
     peek_tex: Option<(egui::TextureHandle, String, Instant)>,
     /// the clips on the player's Outside page, as the dink drawer last read them (clipsup.rs)
     page_clips: crate::clipsup::PageClips,
+    /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
+    dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -413,7 +415,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(),
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1799,10 +1801,59 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(10.0);
     ui.label(rich("on to your Discord too", 16.0, LIME()));
+    dink_setup_ui(app, ui, &mut s, st.listening.clone());
     forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
     if serde_json::to_string(&s).unwrap_or_default() != before {
         let _ = app.settings.update(|x| *x = s);
     }
+}
+
+/// Dink and Discord set up as the listening post has them, from Dink's own export (dinksetup.rs).
+fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
+    let w = ui.available_width();
+    ui.label(wrapped("the easy way: the portal hears everything Dink can tell it, and your Discord keeps getting just what it gets now, passed on by the portal (so only while the portal's open).", 14.0, GREY(), w));
+    ui.label(wrapped("1. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)   2. press this:", 14.0, TEXT(), w));
+    let Some(portal) = listening else {
+        ui.label(rich("(the portal isn't listening for Dink yet: its port, above)", 14.0, PINK()));
+        return;
+    };
+    ui.horizontal(|ui| {
+        if button(ui, "read my Dink settings", true, None)
+            .on_hover_text(tip("reads Dink's export from the clipboard, makes the Discord rules below from it, keeps the export (to undo with), and puts an import for Dink on the clipboard")).clicked() {
+            app.dink_setup = Some(match win::paste_text() {
+                None => Err("the clipboard is empty: type ::dinkexport all in RuneLite's chat first".into()),
+                Some(text) => crate::dinksetup::plan(&text, &portal, s.dink.loot_min).and_then(|p| {
+                    let backup = app.settings.path.with_file_name("dink-before.json");
+                    std::fs::write(&backup, text.trim()).map_err(|e| format!("couldn't keep the export to undo with ({})", e))?;
+                    if !win::copy_text(&p.import) { return Err("couldn't put the import on the clipboard".into()); }
+                    s.forward = p.rules;
+                    crate::transmit::log(&format!("dink set-up: rules from the export, {} Discord address(es)", p.discord.len()));
+                    Ok((p.discord.iter().map(|(u, at)| format!("{} (in {})", crate::dinksetup::short(u), at.join(", "))).collect(), p.notes))
+                }),
+            });
+        }
+        let backup = app.settings.path.with_file_name("dink-before.json");
+        if backup.exists() && button(ui, "undo", true, None)
+            .on_hover_text(tip("puts the Dink settings you had before on the clipboard: ::dinkimport brings them back (your Discord line too; then delete the portal's line if you like)")).clicked() {
+            let ok = std::fs::read_to_string(&backup).ok().is_some_and(|t| win::copy_text(&t));
+            app.dink_setup = Some(if ok { Ok((Vec::new(), vec!["your old Dink settings are on the clipboard: type ::dinkimport in RuneLite's chat".into()])) }
+                                  else { Err("couldn't read the settings kept from before".into()) });
+        }
+    });
+    match &app.dink_setup {
+        Some(Ok((lines, notes))) if !lines.is_empty() => {
+            ui.label(wrapped("done: the Discord rules below are what your Discord got. The import is on the clipboard.", 14.0, TEAL(), w));
+            ui.label(wrapped("3. in RuneLite's chat, type ::dinkimport", 14.0, TEXT(), w));
+            ui.label(wrapped("4. in Dink's settings, delete your Discord address from these (the portal sends to it now; Dink's import can only add):", 14.0, TEXT(), w));
+            for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
+            for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
+        }
+        Some(Ok((_, notes))) => { for n in notes { ui.label(wrapped(n, 14.0, TEAL(), w)); } }
+        Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
+        None => {}
+    }
+    ui.add_space(6.0);
+    ui.label(rich("or by hand:", 14.0, GREY()));
 }
 
 /// What's on the player's Outside page now: each clip, how old, and "take it down".
@@ -1814,16 +1865,26 @@ fn page_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings
     }
     let rows = app.page_clips.rows.lock().unwrap().clone();
     let mut down: Option<String> = None;
+    let mut keep: Option<(String, bool)> = None;
     match rows {
         None => { ui.label(rich("reading what's on your page…", 14.0, QUIET())); }
         Some(Err(e)) => { ui.label(rich(&e, 14.0, PINK())); }
         Some(Ok(list)) if list.is_empty() => { ui.label(rich("nothing on your page yet: the next big moment goes there", 14.0, QUIET())); }
         Some(Ok(list)) => {
-            ui.label(rich(&format!("on your page ({} of 20):", list.len()), 14.0, GREY()));
+            let kept = list.iter().filter(|r| r.kept).count();
+            let max = crate::clipsup::KEPT_MOST;
+            ui.label(rich(&format!("on your page ({} of 20, and {} of {} kept for good):", list.len() - kept, kept, max), 14.0, GREY()))
+                .on_hover_text(tip("the newest 20 stay 30 days, the oldest making room as new ones come. Up to 3 can be kept for good: never pushed out, never too old."));
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             for r in &list {
                 ui.horizontal(|ui| {
-                    ui.label(rich(&format!("{} · {:.0} s · {} ago", r.what, r.dur, ago(Duration::from_secs(now.saturating_sub(r.at)))), 14.0, TEXT()));
+                    let mark = if r.kept { "kept · " } else { "" };
+                    ui.label(rich(&format!("{}{} · {:.0} s · {} ago", mark, r.what, r.dur, ago(Duration::from_secs(now.saturating_sub(r.at)))), 14.0, if r.kept { LIME() } else { TEXT() }));
+                    if r.kept {
+                        if button(ui, "let it go", true, None).on_hover_text(tip("back with the rest: it goes when it's the oldest of the 20, or after 30 days")).clicked() { keep = Some((r.id.clone(), false)); }
+                    } else if kept < max {
+                        if button(ui, "keep", true, None).on_hover_text(tip("kept for good on your page: never pushed out, never too old (3 at most)")).clicked() { keep = Some((r.id.clone(), true)); }
+                    }
                     if button(ui, "take it down", true, None).clicked() { down = Some(r.id.clone()); }
                 });
             }
@@ -1832,6 +1893,10 @@ fn page_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings
     if let Some(id) = down {
         let c = ctx.clone();
         app.page_clips.delete(s, &id, move || c.request_repaint());
+    }
+    if let Some((id, k)) = keep {
+        let c = ctx.clone();
+        app.page_clips.keep(s, &id, k, move || c.request_repaint());
     }
 }
 

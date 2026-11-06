@@ -89,9 +89,7 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     let kind = payload.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let mut went = Vec::new();
     if forward_wants(&s.forward, &payload) {
-        let urls: Vec<String> = s.forward.get("discord").and_then(|x| x.as_array()).map(|a| {
-            a.iter().filter_map(|u| u.as_str()).filter(|u| u.starts_with("https://") || u.starts_with("http://")).map(|u| u.to_string()).collect()
-        }).unwrap_or_default();
+        let urls = forward_urls(&s.forward, &kind);
         if !urls.is_empty() {
             went.push("Discord");
             let (body, ct) = (body.clone(), content_type.clone());
@@ -249,6 +247,15 @@ pub fn portal_wants(s: &Settings, p: &Value) -> bool {
         }
         _ => true,
     }
+}
+
+/// Where a kind goes on to: its own webhooks if its rule names some (a notifier with its own webhook in Dink:
+/// dinksetup.rs), else the rules' Discord list.
+pub fn forward_urls(rules: &Value, kind: &str) -> Vec<String> {
+    let own = rules.get("forward").and_then(|f| f.get(kind)).and_then(|r| r.get("webhooks")).and_then(|x| x.as_array());
+    own.or_else(|| rules.get("discord").and_then(|x| x.as_array())).map(|a| {
+        a.iter().filter_map(|u| u.as_str()).filter(|u| u.starts_with("https://") || u.starts_with("http://")).map(|u| u.to_string()).collect()
+    }).unwrap_or_default()
 }
 
 /// Would Discord have got this post under the rules? (forward.py's Forward.wants)

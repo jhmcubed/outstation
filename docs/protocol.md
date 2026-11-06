@@ -145,14 +145,17 @@ relay-py in a folder (`--clips`, ~/Documents/ghillie portal/clips; "" takes none
     GET    /clips/<channel>/<id>.mp4            the clip: whole, or the Range asked for (206), cached for a year
     GET    /clips/<channel>/<id>.jpg            its flipbook
     DELETE /clips/<channel>/<id>?key=<key>      taken down (204)
+    POST   /clips/<channel>/<id>?key=<key>&keep=1|0   kept for good, or let go again (200; 409 past 3 kept)
     GET    /admin/clips/<channel>               (the Worker, the keeper's token) the list, whatever the channel's code
     DELETE /admin/clips/<channel>/<id>          taken down
 
 meta: `{"what": "pet vorki", "kind": "PET", "at": <unix s, the moment>, "dur": <s, at most 20>, "w", "h", "frames": <the
 flipbook's frames>, "fps": <their rate>, "still": <a small JPEG, base64>}`. A Clip is the same with its `id` and `size`.
 A clip's files have unguessable addresses (16 random bytes), so the Worker serves them straight from the bucket
-without waking the channel. At most 20 a channel and 30 days each, the oldest going first. Viewers, desks and lookers
-are told `{"clip": Clip}` as one comes and `{"clip_gone": "<id>"}` as one goes. The page's copy (client/src/clip.rs,
+without waking the channel. At most 20 a channel and 30 days each, the oldest going first; up to 3 more kept for good
+(`kept: true`: never counted in the 20, never too old; listed first). Viewers, desks and lookers are told
+`{"clip": Clip}` as one comes, `{"clip_gone": "<id>"}` as one goes and `{"clip_kept": {"id", "kept"}}` as one's kept
+or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
 

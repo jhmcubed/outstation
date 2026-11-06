@@ -287,7 +287,7 @@ pub fn paste_text() -> Option<String> {
             let p = GlobalLock(g) as *const u16;
             if p.is_null() { return None; }
             let mut n = 0;
-            while *p.add(n) != 0 && n < 65536 { n += 1; }
+            while *p.add(n) != 0 && n < 1 << 20 { n += 1; }  // (Dink's whole export, a few tens of KB)
             let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
             let _ = GlobalUnlock(g);
             Some(s)

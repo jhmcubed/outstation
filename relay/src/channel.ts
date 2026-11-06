@@ -9,7 +9,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { dinkReport, oneLine, pyjson } from "./text";
-import { type Clip, fileKey, json, newId, readUpload, trim, ID } from "./clips";
+import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
@@ -1103,6 +1103,21 @@ export class Channel extends DurableObject<Env> {
       return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
     }
     if (request.method !== "POST" || admin) return new Response(null, { status: 405 });
+    if (id) {
+      // kept for good, or let go again
+      if (!ID.test(id)) return json({ error: "which clip?" }, 400);
+      const c = await this.ctx.storage.get<Clip>("clip:" + id);
+      if (!c) return json({ error: "no such clip" }, 404);
+      const keep = q.get("keep") === "1";
+      if (keep && !c.kept && (await this.clipList()).filter((x) => x.kept).length >= KEPT_MOST) {
+        return json({ error: `${KEPT_MOST} kept at most: let one go first` }, 409);
+      }
+      if (keep) c.kept = true; else delete c.kept;
+      await this.ctx.storage.put("clip:" + id, c);
+      this.tellClip({ clip_kept: { id, kept: keep } });
+      await this.clipList(); // (let go, the oldest past the most go now)
+      return json({ id, kept: keep });
+    }
     if (!this.env.CLIPS) return json({ error: "this relay doesn't keep clips" }, 503);
     const now = Date.now(), most = parseInt(this.env.CLIPS_AN_HOUR || "") || 30;
     this.clipsUploads = this.clipsUploads.filter((t) => now - t < 3_600_000);

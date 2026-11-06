@@ -100,6 +100,7 @@ MAX_POST = 16 * 1024 * 1024       # a Dink post with a screenshot attached
 # clips on a player's Outside page (11/06/2026; the Worker's clips.ts, docs/protocol.md "Clips"): in clips_dir/<channel>
 MAX_CLIP, MAX_STRIP, MAX_STILL, MAX_DUR = 8 * 1024 * 1024, 256 * 1024, 16 * 1024, 20
 CLIPS_MOST, CLIPS_DAYS, CLIPS_AN_HOUR = 20, 30, 30
+KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
 VIEWER_TEXT = 2048                # anything longer from a viewer is thrown away unread
@@ -1098,7 +1099,8 @@ class Relay:
             return []
         clips.sort(key=lambda c: -c.get("at", 0))
         now = time.time()
-        kept = [c for c in clips if now - c.get("at", 0) <= CLIPS_DAYS * 86400][:CLIPS_MOST]
+        kept = [c for c in clips if c.get("kept")] + \
+            [c for c in clips if not c.get("kept") and now - c.get("at", 0) <= CLIPS_DAYS * 86400][:CLIPS_MOST]
         gone = [c for c in clips if c not in kept]
         if gone:
             self.drop_clips(name, gone, kept)
@@ -1151,6 +1153,25 @@ class Relay:
             if method in ("GET", "HEAD") and m:
                 return await self.clip_file(writer, os.path.join(folder, path[2]), "video/mp4" if m.group(2) == "mp4" else "image/jpeg",
                                             headers.get("range", ""), method == "HEAD")
+            if method == "POST" and CLIP_ID.match(path[2]):
+                # kept for good, or let go again
+                if ch is None or ch.key is None or q.get("key", "") != ch.key:
+                    return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+                clips = self.clip_list(name)
+                c = next((c for c in clips if c["id"] == path[2]), None)
+                if c is None:
+                    return await answer("404 Not Found", {"error": "no such clip"})
+                keep = q.get("keep") == "1"
+                if keep and not c.get("kept") and sum(1 for x in clips if x.get("kept")) >= KEPT_MOST:
+                    return await answer("409 Conflict", {"error": "%d kept at most: let one go first" % KEPT_MOST})
+                if keep:
+                    c["kept"] = True
+                else:
+                    c.pop("kept", None)
+                self.save_list(name, clips)
+                ch.tell_clip({"clip_kept": {"id": c["id"], "kept": keep}})
+                self.clip_list(name)
+                return await answer("200 OK", {"id": c["id"], "kept": keep})
             if method == "DELETE" and CLIP_ID.match(path[2]):
                 if ch is None or ch.key is None or q.get("key", "") != ch.key:
                     return await answer("403 Forbidden", {"error": "wrong key for this channel"})

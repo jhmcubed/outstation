@@ -46,7 +46,7 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 
 Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps.
 
-**Your clips on your Outside page,** only if you switched it on: each one's copy, its still and its few small frames, and what it was ("pet vorki"), when, and how long. At most 20, the oldest going first, and each for 30 days. Your portal lists them (dink ▸) and takes any down; Jace can take any down too.
+**Your clips on your Outside page,** only if you switched it on: each one's copy, its still and its few small frames, and what it was ("pet vorki"), when, and how long. At most 20, the oldest going first, and each for 30 days. Your portal lists them (dink ▸), keeps up to 3 for good (never pushed out by newer ones, never too old) and takes any down; Jace can take any down too.
 
 **For viewers:**
 - the name they type for the chat, and their lines in it (the chat's last 50, everyone's together)
@@ -120,7 +120,7 @@ Everything it touches in Windows, by file:
 - `win.rs`:
   - finding RuneLite's window and its process (window titles, the process list)
   - your network's byte counter (`GetIfTable2`)
-  - the clipboard (for the attach code and Dink's address)
+  - the clipboard (for the attach code and Dink's address; and Dink's own export, read only when you press "read my Dink settings", with an import for Dink put back in its place)
 - `hotkeys.rs`: `RegisterHotKey` for its four keys.
 - `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder; and, for your Outside page, the copy of its own (through a file in your temporary folder, deleted once read).
 - `clipsup.rs`: with "put them on my Outside page" on, that copy sent to your relay, and the list of what's there.

@@ -1157,6 +1157,34 @@ class Clips(Base):
         status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
         self.assertEqual(len(got["clips"]), 19)
 
+    async def test_three_kept_for_good_outlast_the_twenty_and_a_fourth_is_refused(self):
+        await self.tx()
+        now = int(time.time())
+        ids = []
+        for i in range(4):
+            self.assertEqual(await self.up(meta=self.meta("pet %d" % i, at=now - 900 + i)), 201)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        ids = [c["id"] for c in got["clips"]]                   # (newest first: pet 3, 2, 1, 0)
+        v = await self.watch()
+        await self.pause()
+        keep = lambda i, k="1", key=None: asyncio.to_thread(fetch, "POST", "/clips/%s/%s?key=%s&keep=%s" % (self.ch, i, key or self.key, k))
+        self.assertEqual((await keep(ids[3], key="wrong-key-123456"))[0], 403)
+        for i in ids[1:]:
+            self.assertEqual((await keep(i))[0], 200)
+        self.assertEqual(await next_of(v, "clip_kept"), {"id": ids[1], "kept": True})
+        self.assertEqual((await keep(ids[0]))[0], 409)          # (a fourth)
+        for i in range(21):
+            self.assertEqual(await self.up(meta=self.meta("drop %d" % i, at=now - 600 + i * 10)), 201)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        whats = [c["what"] for c in got["clips"]]
+        self.assertEqual(len(whats), 23)                         # (the three kept, and the newest 20)
+        self.assertEqual(sorted(w for w, c in zip(whats, got["clips"]) if c.get("kept")), ["pet 0", "pet 1", "pet 2"])
+        self.assertNotIn("pet 3", whats)
+        self.assertEqual((await keep(ids[1], "0"))[0], 200)      # (let go: now the oldest of the rest, so it goes)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(len(got["clips"]), 22)
+        self.assertNotIn(ids[1], [c["id"] for c in got["clips"]])
+
     @unittest.skipUnless(WORKER, "the keeper's routes are the Worker's")
     async def test_the_keeper_sees_and_takes_down_any_channels_clips(self):
         await self.tx(code="moss")

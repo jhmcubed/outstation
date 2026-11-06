@@ -26,6 +26,7 @@ mod crash;
 mod cursor;
 mod desk;
 mod dink;
+mod dinksetup;
 mod feed;
 mod friendlist;
 mod hotkeys;

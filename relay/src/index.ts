@@ -280,7 +280,7 @@ export default {
       if (parts.length === 3) {
         const m = /^([A-Za-z0-9_-]{16,32})\.(mp4|jpg)$/.exec(parts[2]);
         if ((request.method === "GET" || request.method === "HEAD") && m) return serveFile(env.CLIPS, fileKey(parts[1], m[1], m[2] as "mp4" | "jpg"), request);
-        if (request.method === "DELETE" && ID.test(parts[2])) {
+        if ((request.method === "DELETE" || request.method === "POST") && ID.test(parts[2])) {
           url.searchParams.set("id", parts[2]);
           return channelStub(env, parts[1]).fetch(toChannel(new Request(url.toString(), request), parts[1], "/_clips"));
         }
