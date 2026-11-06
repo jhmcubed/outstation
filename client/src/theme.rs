@@ -224,7 +224,11 @@ pub fn apply_visuals(ctx: &egui::Context) {
     v.window_shadow = v.popup_shadow;
     // (the click-anywhere cursor: every clickable thing asks for the hand, which cursor.rs draws as the lime star)
     v.interact_cursor = Some(egui::CursorIcon::PointingHand);
-    ctx.set_visuals(v);
+    // (the portal is always its own dark look, whatever Windows' light or dark mode says: egui keeps a style for each,
+    // and following a PC in light mode left the boxes you type in white, with the light words in them nearly unreadable)
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.set_visuals_of(egui::Theme::Dark, v.clone());
+    ctx.set_visuals_of(egui::Theme::Light, v);
 }
 
 /// A plate (jute's): a panel with a little depth under it, a lit top edge and a shaded bottom one, and small
