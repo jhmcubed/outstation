@@ -92,7 +92,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 
 ## What start.py and the field station did
 
-35. ✓ **No first-run keys made on the PC:** a channel comes from an attach code, or by hand, or from ghillie's own settings ("take them"). Dink's address is in the dink drawer, with a copy button.
+35. ✓ **No first-run keys made on the PC:** a channel comes from an attach code, or by hand (ghillie's own settings, "take them", until 11/06/2026: only the keeper had them). Dink's address is in the dink drawer, with a copy button.
 36. ✓ **The cap** goes to the relay as the desk's `{"cap"}` on connecting and whenever it changes. `client_live.py` saw `max: 5`.
 37. ◐ **The tray:** open, go live / end stream, the sound's modes, quit. Closing while live asks: end the stream, keep it going in the tray, or never mind. Not yet clicked.
 38. ✓ **By hand ▸:** a relay-py of your own (and so Tailscale Funnel, as now). `client_live.py` ran the client against relay-py.

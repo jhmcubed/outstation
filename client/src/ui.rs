@@ -189,6 +189,8 @@ struct SettingsPanel {
     taking: Arc<Mutex<Option<Result<Image, String>>>>,
     shown: Option<(egui::TextureHandle, (u32, u32), f64, (u32, u32, u8))>,
     status: (String, Color32),
+    /// scroll to the replay buffer as it's next drawn (the Dink drawer's "the replay buffer ▸")
+    find_replay: bool,
     listening: Option<usize>,
 }
 
@@ -279,6 +281,8 @@ pub struct App {
     page_clips: crate::clipsup::PageClips,
     /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
+    /// the Dink drawer's "the replay buffer ▸": the settings drawer opened at it
+    go_replay: bool,
     /// step 1's ways open again once it's set up ("change"), and its by-hand rules open
     discord_change: bool,
     discord_hand: bool,
@@ -444,7 +448,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, go_replay: false, discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1320,7 +1324,7 @@ impl SettingsPanel {
         let saved = (s.fps.clamp(1, 60), s.width.clamp(192, 1536), s.quality.clamp(10, 95), s.max_viewers.clamp(1, 20));
         let mut p = SettingsPanel { fps: saved.0, width: saved.1, quality: saved.2, viewers: saved.3, saved,
                                     sample: None, sample_note: String::new(), taking: Arc::new(Mutex::new(None)),
-                                    shown: None, status: (String::new(), QUIET()), listening: None };
+                                    shown: None, status: (String::new(), QUIET()), listening: None, find_replay: false };
         p.take_sample(s);
         p
     }
@@ -1385,8 +1389,8 @@ impl SettingsPanel {
                 let mbit = kb * self.fps as f64 * 8.0 / 1024.0;
                 weight = if settings.get().relay.starts_with("wss://") {
                     // (on Cloudflare the relay sends each viewer their copy: this PC sends one, however many watch)
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many watch: the relay on Cloudflare sends each of the {} at most their own copy",
-                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, self.viewers)
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many watch: the relay server sends each of your viewers their own copy",
+                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit)
                 } else {
                     format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each viewer: this portal is on a relay of its own ({}), which sends every copy from this PC's upload\n{} watching at most: about {:.1} Mbit/s up in all (on Cloudflare's relay it would be {:.1}, once)",
                             w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, settings.get().relay, self.viewers, mbit * self.viewers as f64, mbit)
@@ -1427,7 +1431,15 @@ impl SettingsPanel {
     fn round_two(&mut self, ui: &mut egui::Ui, settings: &Shared) {
         let s = settings.get();
         let mut replay = s.replay_seconds.min(30);
-        if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the portal sent, kept in memory only, so the clip key can save them. 0 keeps nothing.") {
+        let top = ui.cursor().top();
+        let changed = bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the portal sent, kept in memory only, so the clip key can save them. 0 keeps nothing.");
+        if self.find_replay {
+            self.find_replay = false;
+            let r = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
+            ui.scroll_to_rect(r, Some(egui::Align::Center));
+            self.status = ("the replay buffer: some seconds here, and clips can save themselves".into(), LIME());
+        }
+        if changed {
             let _ = settings.update(|x| x.replay_seconds = replay);
             self.status = (if replay == 0 { "the replay buffer: off".into() } else { format!("the replay buffer: the last {} s (the clip key, or \"clip\", saves them)", replay) }, LIME());
         }
@@ -1880,7 +1892,15 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(wrapped("⚠ delete any Discord address from that list: the portal passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
     }
     ui.add_space(12.0);
-    ui.label(rich("3. what shows on your portal", 16.0, LIME()));
+    ui.horizontal(|ui| {
+        ui.label(rich("3. what shows on your portal", 16.0, LIME()));
+        let plain = s.dink.kinds.values().all(|v| v.as_bool() != Some(false)) && s.dink.loot_min == 0 && s.dink.kc_every == 1;
+        if button(ui, "default", true, Some(plain)).on_hover_text(tip("everything ticked, every drop (0 gp) and every kill count")).clicked() {
+            s.dink.kinds.clear();
+            s.dink.loot_min = 0;
+            s.dink.kc_every = 1;
+        }
+    });
     egui::Grid::new("kinds").num_columns(2).spacing(Vec2::new(18.0, 2.0)).show(ui, |ui| {
         for (i, k) in REPORTS.iter().enumerate() {
             let mut on = s.dink.kind_on(k);
@@ -1911,7 +1931,12 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(rich("or more", 16.0, GREY()));
     });
     if s.dink.auto_clip && s.replay_seconds == 0 {
-        ui.label(rich("(the replay buffer is off, so there's nothing to clip: give it some seconds in the settings)", 14.0, PINK()));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich("(the replay buffer is off, so there's nothing to clip: give it some seconds in the settings)", 14.0, PINK()));
+            if button(ui, "the replay buffer ▸", true, None).on_hover_text(tip("opens the settings at the replay buffer")).clicked() {
+                app.go_replay = true;
+            }
+        });
     } else if s.dink.clip_gp == 0 {
         ui.label(rich("(0 gp: drops never clip themselves; pets, new log slots and 99s still do)", 14.0, QUIET()));
     }
@@ -2268,20 +2293,6 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     start_menu_offer(app, ui);
-    if let Some(p) = settings::ghillie_path() {
-        ui.add_space(14.0);
-        ui.label(rich("ghillie's own portal settings are on this PC:", 16.0, GREY()));
-        if button(ui, "take them (its relay, channel, key and Discord rules)", true, None).clicked() {
-            match settings::from_ghillie(&p) {
-                Some(g) => {
-                    let keep_port = app.settings.get().dink.port;
-                    let _ = app.settings.update(|s| { *s = g; s.dink.port = keep_port; });
-                    app.note("took ghillie portal's settings: the relay on this PC (start.py's), its channel and key");
-                }
-                None => app.attach_note = "those settings have no key yet: start the portal once".into(),
-            }
-        }
-    }
 }
 
 /// The Start menu, offered once (shortcut.rs): yes makes the shortcut, either answer puts the question away.
@@ -2541,6 +2552,11 @@ impl eframe::App for App {
                 }).response.rect;
                 ui.painter().set(at, theme::plate(r));
             });
+        }
+        if self.go_replay {
+            self.go_replay = false;
+            self.open_drawer(&ctx, Drawer::Settings);
+            if let Some(p) = &mut self.panel { p.find_replay = true; }
         }
         egui::Panel::top("top").show_separator_line(false)
             // (its top 2 in, the answer row's bottom 10 in: the drawer's plate keeps the same lines, 11/05/2026)
@@ -2898,6 +2914,8 @@ impl App {
             }
             if button(ui, "hide", true, None).on_hover_text(tip("puts the ready check away (settings ▸ more brings it back)")).clicked() {
                 let _ = self.settings.update(|x| x.ready_check = false);
+                // (said where it went: 11/06/2026, Jace couldn't find his way back to it)
+                self.note("the ready check is put away: settings ▸ more ▸ \"the ready check above the title\" brings it back");
             }
         });
         ui.add_space(2.0);

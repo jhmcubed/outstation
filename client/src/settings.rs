@@ -320,12 +320,6 @@ pub fn default_path() -> PathBuf {
     base.join("outside-portal").join("settings.json")
 }
 
-/// ghillie's own portal settings (start.py's), which the attach screen can take over
-pub fn ghillie_path() -> Option<PathBuf> {
-    let home = std::env::var_os("USERPROFILE")?;
-    let p = PathBuf::from(home).join("Documents").join("ghillie portal").join("settings.json");
-    p.exists().then_some(p)
-}
 
 /// The settings shared by every part: kept in memory, saved on each change, read again when the file changes.
 #[derive(Clone)]
@@ -395,63 +389,6 @@ pub fn parse_attach(code: &str) -> Result<(String, String, String), String> {
     }
 }
 
-/// ghillie's start.py settings, as this client's: the relay on this PC, its channel, key, code and the rest.
-pub fn from_ghillie(p: &Path) -> Option<Settings> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()?;
-    let mut s = Settings::default();
-    let port = v.get("port").and_then(|x| x.as_u64()).unwrap_or(8786);
-    s.relay = format!("ws://127.0.0.1:{}", port);
-    let st = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string());
-    s.channel = st("channel").unwrap_or_else(|| "sburb".into());
-    s.key = st("key")?;
-    s.code = st("code").unwrap_or_default();
-    s.chat_name = st("chat_name").unwrap_or_default();
-    if let Some(m) = st("sound") { s.sound = m; }
-    if let Some(m) = st("sound_key") { s.sound_key = m; }
-    if let Some(n) = v.get("fps").and_then(|x| x.as_u64()) { s.fps = n as u32; }
-    if let Some(n) = v.get("max_viewers").and_then(|x| x.as_u64()) { s.max_viewers = n as u32; }
-    if let Some(n) = v.get("sound_kbps").and_then(|x| x.as_u64()) { s.sound_kbps = n as u32; }
-    if let Some(n) = v.get("upload_mbit").and_then(|x| x.as_f64()) { s.upload_mbit = n; }
-    if let Some(b) = v.get("on_air").and_then(|x| x.as_bool()) { s.on_air = b; }
-    // the capture's own options, from its "capture" list
-    let cap: Vec<String> = v.get("capture").and_then(|x| x.as_array()).map(|a| {
-        a.iter().map(|x| x.as_str().map(|s| s.to_string()).unwrap_or_else(|| x.to_string())).collect()
-    }).unwrap_or_default();
-    let arg = |flag: &str| cap.iter().position(|x| x == flag).and_then(|i| cap.get(i + 1)).cloned();
-    if let Some(w) = arg("--width").and_then(|x| x.parse().ok()) { s.width = w; }
-    if let Some(q) = arg("--quality").and_then(|x| x.parse().ok()) { s.quality = q; }
-    if let Some(x) = arg("--view") { s.view = x; }
-    if let Some(x) = arg("--mask") { s.mask = x; }
-    if let Some(x) = arg("--method") { s.method = x; }
-    if let Some(x) = arg("--title") { s.title = x; }
-    if let Some(x) = arg("--pause-key") { s.static_key = x; }
-    // round two's (11/05/2026): the hotkeys, the replay buffer, the chat over the game, the guesses
-    let key = |k: &str| match v.get(k) {
-        Some(Value::String(x)) if !x.is_empty() => Some(x.clone()),
-        Some(Value::Number(n)) => n.as_u64().map(|n| format!("0x{:x}", n)),
-        _ => None,
-    };
-    if let Some(x) = key("static_key") { s.static_key = x; }
-    if let Some(x) = key("sound_key") { s.sound_key = x; }
-    if let Some(x) = key("clip_key") { s.clip_key = x; }
-    if let Some(n) = v.get("replay_seconds").and_then(|x| x.as_u64()) { s.replay_seconds = n.min(30) as u32; }
-    if let Some(x) = st("clip_folder") { s.clip_folder = x; }
-    if let Some(b) = v.get("game_chat").and_then(|x| x.as_bool()) { s.game_chat = b; }
-    if let Some(a) = v.get("game_chat_at").and_then(|x| x.as_array()) {
-        if let (Some(x), Some(y)) = (a.first().and_then(|x| x.as_f64()), a.get(1).and_then(|x| x.as_f64())) {
-            s.game_chat_at = Some([x, y]);
-        }
-    }
-    if let Some(n) = v.get("guess_min_value").and_then(|x| x.as_u64()) { s.guess_min_value = n; }
-    if cap.iter().any(|x| x == "--only-logged-in") { s.only_logged_in = true; }
-    // and his Discord forwarding rules (forward.json beside it)
-    if let Some(f) = p.parent().map(|d| d.join("forward.json")) {
-        if let Some(rules) = std::fs::read_to_string(f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
-            s.forward = rules;
-        }
-    }
-    Some(s)
-}
 
 #[cfg(test)]
 mod tests {
