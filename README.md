@@ -39,9 +39,9 @@ The first screen, ready to go live, and live with two viewers chatting. (Picture
 - **Masks:** **edit masks** lets you black out any part of the game (the chat, the world number) on your own PC, before a frame leaves it.
 - **The sound:** off, the game, or game + desktop. Never a microphone.
 - **The chat:** right-click a line to take it back, or to block or ban whoever wrote it. "viewers may chat" switches the chat off.
-- **Clips:** the clip key (Insert) saves the last seconds as a video in `Videos\outside-portal`.
+- **Clips:** the clip key (Insert) saves the last seconds as a video in `Videos\outside-portal` (give the replay buffer some seconds in the settings first). With Dink, a pet, a new collection log slot or a drop worth a million or more saves one by itself, named for it (**dink ▸**, "clips by themselves").
 - **Going live by itself:** settings ▸ more ▸ **go live when RuneLite opens**, and with it **end the stream when RuneLite closes** (after 30 s, so an update's restart doesn't end it). "end stream" is never undone: the next time waits for RuneLite to open again.
-- **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their portal is live (lime), off air (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete. The chat says "Moss Fern has gone live." when one does.
+- **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their portal is live (lime), off air (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete. Hover over a live one for a small live view of their portal. The chat says "Moss Fern has gone live." when one does, and so does a Windows notification if the portal's in your Start menu.
 
 ## If something goes wrong
 

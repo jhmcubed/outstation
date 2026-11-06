@@ -37,6 +37,14 @@ fn relay_base(s: &Settings) -> String {
     if !s.relay.trim().is_empty() { crate::ask::http_base(&s.relay) } else { crate::ask::http_base(crate::ask::HOME_RELAY) }
 }
 
+/// The same relay as a socket's address, for a peek at a friend's portal (feed.rs, Peek).
+pub fn relay_ws(s: &Settings) -> String {
+    let b = relay_base(s);
+    if let Some(x) = b.strip_prefix("https://") { format!("wss://{}", x) }
+    else if let Some(x) = b.strip_prefix("http://") { format!("ws://{}", x) }
+    else { b }
+}
+
 fn read(base: &str) -> Result<HashMap<String, Seen>, String> {
     if base.is_empty() { return Err("not attached yet: the list reads the relay your portal's attached to".into()); }
     let mut r = ureq::get(&format!("{}/channels", base)).header("User-Agent", "outside-portal").call()
@@ -104,8 +112,8 @@ impl FriendList {
         match &*self.seen.lock().unwrap() { Some(Err(e)) => Some(e.clone()), _ => None }
     }
 
-    /// The lines for the chat since the last read: "<name> has gone live." and "<name> has gone off air."
-    pub fn changes(&mut self, s: &Settings) -> Vec<String> {
+    /// Who went live (true) or off air (false) since the last read, as their names are kept.
+    pub fn changes(&mut self, s: &Settings) -> Vec<(String, bool)> {
         let live: HashSet<String> = match &*self.seen.lock().unwrap() {
             Some(Ok(m)) => s.friends.iter().filter(|n| crate::ask::channel_of(n).ok().and_then(|c| m.get(&c)).is_some_and(|x| x.live)).cloned().collect(),
             _ => return Vec::new(),
@@ -113,8 +121,8 @@ impl FriendList {
         let mut out = Vec::new();
         if let Some(was) = &self.was_live {
             for n in &s.friends {
-                if live.contains(n) && !was.contains(n) { out.push(format!("{} has gone live.", n)); }
-                if !live.contains(n) && was.contains(n) { out.push(format!("{} has gone off air.", n)); }
+                if live.contains(n) && !was.contains(n) { out.push((n.clone(), true)); }
+                if !live.contains(n) && was.contains(n) { out.push((n.clone(), false)); }
             }
         }
         self.was_live = Some(live);
@@ -124,6 +132,11 @@ impl FriendList {
     pub fn live_count(&self, s: &Settings) -> usize {
         s.friends.iter().filter(|n| matches!(self.state(n), State::Live(_))).count()
     }
+}
+
+/// A change as the chat says it, as the game says "has logged in.": "<name> has gone live." or "<name> has gone off air."
+pub fn line(c: &(String, bool)) -> String {
+    format!("{} has gone {}.", c.0, if c.1 { "live" } else { "off air" })
 }
 
 /// Why a name can't be added (the game's own words, near enough), or the name as it's kept.
@@ -170,7 +183,9 @@ mod tests {
         *f.seen.lock().unwrap() = Some(Ok(HashMap::from([("mossfern".to_string(), seen(true))])));
         assert!(f.changes(&s).is_empty()); // (the first read tells nothing)
         *f.seen.lock().unwrap() = Some(Ok(HashMap::from([("mossfern".to_string(), seen(false)), ("birchbark".to_string(), seen(true))])));
-        assert_eq!(f.changes(&s), vec!["Moss Fern has gone off air.".to_string(), "Birch Bark has gone live.".to_string()]);
+        assert_eq!(f.changes(&s), vec![("Moss Fern".to_string(), false), ("Birch Bark".to_string(), true)]);
+        assert_eq!(line(&("Birch Bark".to_string(), true)), "Birch Bark has gone live.");
+        assert_eq!(line(&("Moss Fern".to_string(), false)), "Moss Fern has gone off air.");
         assert_eq!(f.state("Birch Bark"), State::Live(seen(true)));
         assert_eq!(f.state("Moss Fern"), State::OffAir);
         assert_eq!(f.state("Nobody Here"), State::NoPortal);

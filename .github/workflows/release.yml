@@ -36,7 +36,7 @@ jobs:
       - name: unit tests
         run: cargo test --release --locked
       - name: the safety check, on the exe being published
-        run: python tests/safety_check.py --list target/release/outside-portal.exe
+        run: python tests/safety_check.py --list --needs-icon target/release/outside-portal.exe
       - name: the files
         shell: bash
         run: |

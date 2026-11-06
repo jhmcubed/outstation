@@ -116,7 +116,44 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
             }
         });
     }
+    // something big (11/06/2026, Jace: "an auto clip when something big drops"): the replay buffer saved a few seconds
+    // on, so the clip holds the moment and a little after it
+    if s.dink.auto_clip && s.on_air && s.replay_seconds > 0 {
+        if let Some(what) = big_moment(&payload, s.dink.clip_gp) {
+            went.push("a clip");
+            let (folder, wait) = (s.clip_folder.clone(), Duration::from_secs((s.replay_seconds / 4).clamp(1, 4) as u64));
+            std::thread::spawn(move || {
+                std::thread::sleep(wait);
+                crate::clip::save_as(&folder, Some(what));
+            });
+        }
+    }
     st.lock().unwrap().last = Some((kind, Instant::now(), if went.is_empty() { "nowhere".into() } else { went.join(" and ") }));
+}
+
+/// Is this post something big enough to clip by itself: a pet, a new collection log slot, or a drop worth `gp` or more
+/// (the whole drop, every stack in it)? What it was, in a few words, for the clip's name.
+pub fn big_moment(p: &Value, gp: u64) -> Option<String> {
+    let e = extra(p);
+    let text = |k: &str| e.get(k).and_then(|x| x.as_str()).map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty());
+    match p.get("type").and_then(|x| x.as_str()).unwrap_or("") {
+        "PET" => Some(format!("pet {}", text("petName").unwrap_or_else(|| "a pet".into()))),
+        "COLLECTION" => Some(format!("log {}", text("itemName").unwrap_or_else(|| "a new slot".into()))),
+        "LOOT" => {
+            let all = stacks(p);
+            let worth: i64 = all.iter().map(|(_, v)| *v).sum();
+            if gp == 0 || worth < gp as i64 { return None; }
+            let best = all.iter().max_by_key(|(_, v)| *v).map(|(n, _)| n.clone()).unwrap_or_default();
+            Some(format!("drop {} {}", gp_words(worth), best).trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+/// 4200000 as "4.2m" (the page's own way: gpWords in outside-portal.js)
+pub fn gp_words(n: i64) -> String {
+    let f = n as f64;
+    if f >= 1e9 { format!("{:.2}b", f / 1e9) } else if f >= 1e6 { format!("{:.1}m", f / 1e6) } else if f >= 1e3 { format!("{}k", (f / 1e3).round()) } else { n.to_string() }
 }
 
 /// Dink's JSON: the payload_json part of a multipart post, or a plain JSON body.
@@ -282,6 +319,19 @@ mod tests {
     fn kc(count: i64, pb: bool, laps: bool) -> Value {
         json!({"type": "KILL_COUNT", "content": if laps { format!("has completed {} laps at X", count) } else { "kc".into() },
                "extra": {"boss": "X", "count": count, "isPersonalBest": pb}})
+    }
+
+    #[test]
+    fn big_moments_clip_themselves() {
+        assert_eq!(big_moment(&json!({"type": "PET", "extra": {"petName": "Vorki"}}), 1_000_000).as_deref(), Some("pet vorki"));
+        assert_eq!(big_moment(&json!({"type": "COLLECTION", "extra": {"itemName": "Skeletal visage"}}), 1_000_000).as_deref(), Some("log skeletal visage"));
+        assert_eq!(big_moment(&loot(&[("Dragon bones", 2, 3000)]), 1_000_000), None);
+        assert_eq!(big_moment(&loot(&[("Dragon bones", 2, 3000), ("Skeletal visage", 1, 4_200_000)]), 1_000_000).as_deref(),
+                   Some("drop 4.2m skeletal visage"));
+        assert_eq!(big_moment(&loot(&[("Coins", 600_000, 1), ("Rune bolts", 400, 1000)]), 1_000_000).as_deref(), Some("drop 1.0m coins"));
+        assert_eq!(big_moment(&loot(&[("Skeletal visage", 1, 4_200_000)]), 0), None); // (0: drops never)
+        assert_eq!(big_moment(&kc(412, true, false), 1), None);
+        assert_eq!(crate::clip::file_safe("drop 4.2m abyssal whip <a/b>?"), "drop 4.2m abyssal whip a b");
     }
 
     // (relay-py/test_relay.py's Rules, the same cases)

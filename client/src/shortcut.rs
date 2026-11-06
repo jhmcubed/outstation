@@ -2,7 +2,8 @@
 //! (%APPDATA%\Microsoft\Windows\Start Menu\Programs), with the ✼ for its icon (portal.ico beside the settings, made
 //! from the window's own icon). Nothing else: it still doesn't start with Windows, and nothing needs admin. Once you've
 //! said yes, each start points it at wherever this copy is (a newer version saved somewhere else takes its place);
-//! "take it out of the Start menu" (settings ▸ more) removes it.
+//! "take it out of the Start menu" (settings ▸ more) removes it. It carries the program's id (notify.rs, AUMID): Windows
+//! shows a desktop program's notifications only when its Start menu shortcut does (11/06/2026).
 
 use std::path::PathBuf;
 
@@ -66,6 +67,22 @@ pub fn make(settings_path: &std::path::Path) -> Result<(), String> {
                 sl.SetWorkingDirectory(PCWSTR(dir.as_ptr()))?;
                 sl.SetDescription(PCWSTR(about.as_ptr()))?;
                 sl.SetIconLocation(PCWSTR(icon.as_ptr()), 0)?;
+                // the program's id, for its notifications (a string PROPVARIANT pointing at our own buffer, which
+                // outlives the call; never cleared, so Windows never frees what it didn't allocate)
+                {
+                    use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+                    use windows::Win32::System::Com::StructuredStorage::{PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0};
+                    use windows::Win32::System::Variant::VT_LPWSTR;
+                    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+                    let mut id = wide(crate::notify::AUMID);
+                    let pv = std::mem::ManuallyDrop::new(PROPVARIANT { Anonymous: PROPVARIANT_0 { Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                        vt: VT_LPWSTR, wReserved1: 0, wReserved2: 0, wReserved3: 0,
+                        Anonymous: PROPVARIANT_0_0_0 { pwszVal: windows::core::PWSTR(id.as_mut_ptr()) },
+                    }) } });
+                    let store: IPropertyStore = sl.cast()?;
+                    store.SetValue(&PKEY_AppUserModel_ID, &*pv)?;
+                    store.Commit()?;
+                }
                 let file: IPersistFile = sl.cast()?;
                 let at = wide(&link.to_string_lossy());
                 file.Save(PCWSTR(at.as_ptr()), true)

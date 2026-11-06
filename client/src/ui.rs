@@ -247,6 +247,9 @@ pub struct App {
     ready_seen: (Instant, Option<String>),
     /// the friends list's view of the relay's open portals (friendlist.rs)
     friendlist: crate::friendlist::FriendList,
+    /// a peek at a friend's portal under the hand (feed.rs, Peek), and its picture as it last came: (it, whose, when)
+    peek: crate::feed::Peek,
+    peek_tex: Option<(egui::TextureHandle, String, Instant)>,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -315,6 +318,8 @@ impl App {
         let desk = Desk::start(settings.clone(), move || wake.request_repaint());
         let wake2 = ctx.clone();
         let feed = crate::feed::start(settings.clone(), move || wake2.request_repaint());
+        let wake3 = ctx.clone();
+        let peek = crate::feed::Peek::start(move || wake3.request_repaint());
         // this PC's whole upload, a second at a time
         let pc_bps = Arc::new(Mutex::new(None));
         {
@@ -406,7 +411,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(),
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1595,6 +1600,19 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(wrapped("no friends yet. add friend puts a player here, and whether their portal is live.", 14.0, GREY(), ui.available_width()));
     }
     let mut delete: Option<String> = None;
+    // the peek's newest picture, if one's come (only the friend it's of shows it)
+    {
+        let got = app.peek.feed.lock().unwrap().frame.take();
+        let of = app.peek.of.lock().unwrap().clone();
+        if let Some((rgb, w, h, at)) = got {
+            let img = egui::ColorImage::from_rgb([w as usize, h as usize], &rgb);
+            match &mut app.peek_tex {
+                Some((t, who, when)) => { t.set(img, egui::TextureOptions::NEAREST); *who = of; *when = at; }
+                None => app.peek_tex = Some((ui.ctx().load_texture("peek", img, egui::TextureOptions::NEAREST), of, at)),
+            }
+        }
+    }
+    let relay_ws = crate::friendlist::relay_ws(&s);
     for name in &s.friends {
         let ch = crate::ask::channel_of(name).unwrap_or_default();
         let st = app.friendlist.state(name);
@@ -1610,7 +1628,25 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
         };
         let url = crate::friendlist::page(&ch);
         ui.horizontal(|ui| {
-            let r = ui.add(egui::Label::new(rich(name, 16.0, TEXT())).sense(Sense::click())).on_hover_text(tip(&format!("{}\n{}", about, url.trim_start_matches("https://"))));
+            let r = ui.add(egui::Label::new(rich(name, 16.0, TEXT())).sense(Sense::click()));
+            // live: a peek at their portal under the hand, the words under it (11/06/2026)
+            let live = matches!(st, State::Live(_));
+            if live && r.hovered() { app.peek.ask(&relay_ws, &ch); }
+            let pic = app.peek_tex.as_ref().filter(|(_, who, at)| live && *who == ch && at.elapsed() < Duration::from_secs(4))
+                .map(|(t, _, _)| (t.id(), t.size_vec2()));
+            let hover = format!("{}\n{}", about, url.trim_start_matches("https://"));
+            let r = r.on_hover_ui(|ui| {
+                if let Some((id, size)) = pic {
+                    let w = 240.0f32.min(size.x.max(1.0) * 2.0);
+                    let h = size.y * w / size.x.max(1.0);
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+                    ui.painter().image(id, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, DIM()), egui::StrokeKind::Outside);
+                } else if live {
+                    ui.label(rich("opening their portal…", 14.0, GREY()));
+                }
+                ui.label(tip(&hover));
+            });
             if r.clicked() && !win::open_page(&url) { app.note(format!("couldn't open {}", url)); }
             r.context_menu(|ui| {
                 if ui.button("their Outside page").clicked() { win::open_page(&url); ui.close(); }
@@ -1670,6 +1706,15 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     if ui.checkbox(&mut tell, rich("say in the chat when a friend goes live or off air", 14.0, GREY())).changed() {
         let _ = app.settings.update(|x| x.friends_tell = tell);
     }
+    let mut toast = s.friends_toast;
+    let can = crate::shortcut::exists();
+    if ui.checkbox(&mut toast, rich("and a Windows notification when one goes live", 14.0, GREY()))
+        .on_hover_text(tip("Windows' own, in the corner and then the notification centre; a click on it opens their portal")).changed() {
+        let _ = app.settings.update(|x| x.friends_toast = toast);
+    }
+    if toast && !can {
+        ui.label(wrapped("(Windows shows a program's notifications only when it's in the Start menu: settings, then more, then \"put it in the Start menu\")", 13.0, QUIET(), ui.available_width()));
+    }
     let all = ui.add(egui::Label::new(rich("every open portal ↗", 14.0, TEAL())).sense(Sense::click()))
         .on_hover_text(tip("ghillie.wiki/portals: everyone's open portals, live ones first"));
     if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
@@ -1728,6 +1773,20 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(rich("(and always the first, and personal bests)", 16.0, GREY()));
     });
     ui.label(rich("never, whatever's ticked: anything naming another player (trades, chat, player kills, a PvP killer), and screenshots", 14.0, QUIET()));
+    ui.add_space(10.0);
+    ui.label(rich("clips by themselves", 16.0, LIME()));
+    ui.horizontal_wrapped(|ui| {
+        let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
+        ui.checkbox(&mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, or a drop worth", 16.0, colour))
+            .on_hover_text(tip("Dink's post comes, and a few seconds later the replay buffer is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while live: the buffer holds what the portal sent."));
+        ui.add(egui::DragValue::new(&mut s.dink.clip_gp).range(0..=2_147_483_647u64).speed(10000.0).suffix(" gp"));
+        ui.label(rich("or more", 16.0, GREY()));
+    });
+    if s.dink.auto_clip && s.replay_seconds == 0 {
+        ui.label(rich("(the replay buffer is off, so there's nothing to clip: give it some seconds in the settings)", 14.0, PINK()));
+    } else if s.dink.clip_gp == 0 {
+        ui.label(rich("(0 gp: drops never clip themselves; pets and new log slots still do)", 14.0, QUIET()));
+    }
     ui.add_space(10.0);
     ui.label(rich("on to your Discord too", 16.0, LIME()));
     forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
@@ -2011,8 +2070,15 @@ impl eframe::App for App {
             let s = self.settings.get();
             let c = ctx.clone();
             self.friendlist.tend(&s, self.drawer == Drawer::FriendList, false, move || c.request_repaint());
-            for line in self.friendlist.changes(&s) {
-                if s.friends_tell { self.note(line); }
+            for c in self.friendlist.changes(&s) {
+                if s.friends_tell { self.note(crate::friendlist::line(&c)); }
+                // (and Windows' own notification, for one gone live: a click opens their portal)
+                if c.1 && s.friends_toast {
+                    let ch = crate::ask::channel_of(&c.0).unwrap_or_default();
+                    let title = match self.friendlist.state(&c.0) { crate::friendlist::State::Live(x) => x.title, _ => String::new() };
+                    let body = if title.is_empty() { "click: their portal".to_string() } else { format!("“{}” · click: their portal", title) };
+                    crate::notify::show(&crate::friendlist::line(&c), &body, Some(crate::friendlist::page(&ch)));
+                }
             }
         }
         let came = self.asked_attached.lock().unwrap().take();

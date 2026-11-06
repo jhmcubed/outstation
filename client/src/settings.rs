@@ -48,6 +48,7 @@ fn d_viewers() -> u32 { 10 }
 fn d_upload() -> f64 { 40.0 }
 fn d_dink_port() -> u16 { 8796 }
 fn d_one() -> u32 { 1 }
+fn d_clip_gp() -> u64 { 1_000_000 }
 
 /// A request for a portal, waiting for the keeper's answer (ask.rs): kept so it outlives closing the portal.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -77,13 +78,19 @@ pub struct Dink {
     /// kill counts on the portal: every Nth (1: each), and always the first and personal bests
     #[serde(default = "d_one")]
     pub kc_every: u32,
+    /// a clip saved by itself when Dink tells of something big (a pet, a new collection log slot, a drop worth
+    /// clip_gp or more), while live and with the replay buffer on (dink.rs, big_moment)
+    #[serde(default = "d_true")]
+    pub auto_clip: bool,
+    #[serde(default = "d_clip_gp")]
+    pub clip_gp: u64,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl Default for Dink {
     fn default() -> Self {
-        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, extra: Map::new() }
+        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), extra: Map::new() }
     }
 }
 
@@ -197,6 +204,9 @@ pub struct Settings {
     /// a line in the chat when a friend goes live or off air
     #[serde(default = "d_true")]
     pub friends_tell: bool,
+    /// and Windows' own notification when one goes live (notify.rs; it needs the Start menu's shortcut)
+    #[serde(default = "d_true")]
+    pub friends_toast: bool,
     /// the Start menu's shortcut (shortcut.rs): not asked yet, yes (kept pointing at this copy), or no
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_menu: Option<bool>,

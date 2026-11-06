@@ -69,6 +69,11 @@ pub fn default_folder() -> std::path::PathBuf {
 
 /// The clip key or "clip": the buffer saved as a clip, on a thread of its own.
 pub fn save(folder: &str) {
+    save_as(folder, None)
+}
+
+/// The buffer saved as a clip, named for what it caught (an auto clip: "clip <when> pet vorki.mp4"); None: "clip <when>.mp4".
+pub fn save_as(folder: &str, what: Option<String>) {
     let b = buffer();
     if b.seconds.load(Ordering::Relaxed) == 0 {
         return say("no clip: the replay buffer is off (its seconds in the settings)".into());
@@ -79,15 +84,23 @@ pub fn save(folder: &str) {
     let items: Vec<(Instant, Vec<u8>)> = b.items.lock().unwrap().iter().cloned().collect();
     let folder = if folder.trim().is_empty() { default_folder() } else { folder.into() };
     let span = match (items.first(), items.last()) { (Some(a), Some(z)) => z.0.duration_since(a.0).as_secs_f64(), _ => 0.0 };
-    say(format!("writing a clip of the last {:.1} s…", span));
+    say(format!("writing a clip of the last {:.1} s{}…", span, what.as_ref().map(|w| format!(" ({})", w)).unwrap_or_default()));
+    let name = what.map(|w| format!("clip {} {}.mp4", stamp_now(), file_safe(&w)));
     std::thread::spawn(move || {
-        let r = write(&items, &folder, None);
+        let r = write(&items, &folder, name.as_deref());
         buffer().writing.store(false, Ordering::SeqCst);
         match r {
             Ok(p) => say(format!("clip saved: {}", p.display())),
             Err(e) => say(format!("no clip: {}", e)),
         }
     });
+}
+
+/// what a clip caught, as part of a file's name: letters, numbers, spaces and a few marks, at most 40
+pub fn file_safe(s: &str) -> String {
+    let t: String = s.chars().map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '\'' | '(' | ')') { c } else { ' ' }).collect();
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    t.trim_matches('.').chars().take(40).collect::<String>().trim().to_string()
 }
 
 /// a stamp in ms from base, on the 32-bit wrapping clock both the frames and the sound use

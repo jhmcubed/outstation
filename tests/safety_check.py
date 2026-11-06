@@ -115,6 +115,40 @@ def rva_to_offset(sections, rva):
     raise ValueError("an address outside every section")
 
 
+def pe_parts(data):
+    """(the data directories' offset, the sections) of a PE file."""
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe:pe + 4] != b"PE\0\0":
+        raise ValueError("not a Windows program")
+    nsec = struct.unpack_from("<H", data, pe + 6)[0]
+    opt = pe + 24
+    dd = opt + (112 if struct.unpack_from("<H", data, opt)[0] == 0x20B else 96)
+    sec = opt + struct.unpack_from("<H", data, pe + 20)[0]
+    sections = []
+    for i in range(nsec):
+        size, va, rawsize, raw = struct.unpack_from("<IIII", data, sec + 40 * i + 8)
+        sections.append((va, size, raw, rawsize))
+    return dd, sections
+
+
+def resource_kinds(path):
+    """The kinds of resource the exe carries, by their numbers (3 an icon, 14 an icon's group, 16 the version block):
+    the resource directory's first level (11/06/2026: the exe's own icon, build.rs)."""
+    data = open(path, "rb").read()
+    dd, sections = pe_parts(data)
+    rva = struct.unpack_from("<I", data, dd + 2 * 8)[0]
+    if not rva:
+        return set()
+    off = rva_to_offset(sections, rva)
+    named, ids = struct.unpack_from("<HH", data, off + 12)
+    kinds = set()
+    for i in range(named + ids):
+        name = struct.unpack_from("<I", data, off + 16 + 8 * i)[0]
+        if not name & 0x80000000:
+            kinds.add(name)
+    return kinds
+
+
 def imports(path):
     """{dll: [function names]} from a PE file's import table (and its delay-load table)."""
     data = open(path, "rb").read()
@@ -222,6 +256,7 @@ def check_network():
 
 def main(argv):
     listing = "--list" in argv
+    needs_icon = "--needs-icon" in argv    # (a release, built with MSVC, carries build.rs's icon and version block)
     paths = [a for a in argv if not a.startswith("--")] or [os.path.join(ROOT, "target", "release", "outside-portal.exe")]
     failed = False
     for p in paths:
@@ -240,6 +275,11 @@ def main(argv):
         print("  stands alone: %s" % ("; ".join("%s (%s)" % e for e in extra) if extra
                                        else "yes, every library it loads comes with Windows"))
         failed |= bool(extra)
+        kinds = resource_kinds(p)
+        has = {3, 14, 16} <= kinds
+        print("  its icon and name in Windows: %s" % ("yes (the ✼, and outside-portal in its details)" if has else
+                                                       "no (build.rs adds them in an MSVC build only)"))
+        failed |= needs_icon and not has
     src = check_source()
     print("the client's source: %s" % ("; ".join(src) if src else "none of them, and nothing loaded by hand"))
     failed |= bool(src)
