@@ -1930,7 +1930,10 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
 /// Dink and Discord set up as the listening post has them, from Dink's own export (dinksetup.rs).
 fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
     let w = ui.available_width();
-    ui.label(wrapped("a. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)   b. press this:", 14.0, TEXT(), w));
+    // (all four steps from the start, the last two dimmed till the button's done its part: 11/06/2026, Jace)
+    let read = matches!(&app.dink_setup, Some(Ok((lines, _))) if !lines.is_empty());
+    ui.label(wrapped("a. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)", 14.0, TEXT(), w));
+    ui.label(wrapped("b. press this:", 14.0, TEXT(), w));
     let Some(portal) = listening else {
         ui.label(rich("(the portal isn't listening for Dink yet: its port, above)", 14.0, PINK()));
         return;
@@ -1959,16 +1962,26 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
         }
     });
     match &app.dink_setup {
-        Some(Ok((lines, notes))) if !lines.is_empty() => {
-            ui.label(wrapped("done: the Discord rules below are what your Discord got. The import is on the clipboard.", 14.0, TEAL(), w));
-            ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport", 14.0, TEXT(), w));
-            ui.label(wrapped("d. in Dink's settings, delete your Discord address from these (the portal sends to it now; Dink's import can only add):", 14.0, TEXT(), w));
-            for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
-            for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
+        Some(Ok((lines, _))) if !lines.is_empty() => {
+            ui.label(wrapped("done: the Discord rules are what your Discord got, and the import is on the clipboard.", 14.0, TEAL(), w));
         }
         Some(Ok((_, notes))) => { for n in notes { ui.label(wrapped(n, 14.0, TEAL(), w)); } }
         Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
         None => {}
+    }
+    // c and d: there from the start, dimmed (and said why) till b has worked
+    let (c, d) = if read { (TEXT(), TEXT()) } else { (QUIET(), QUIET()) };
+    ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport (it adds the portal to Dink)", 14.0, c, w));
+    ui.label(wrapped("d. in Dink's settings, delete your Discord address from its webhook lists (the portal sends to it now; Dink's import can only add, never take away)", 14.0, d, w));
+    if let Some(Ok((lines, notes))) = &app.dink_setup {
+        if read {
+            ui.label(rich("   your Discord address is in:", 14.0, GREY()));
+            for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
+            for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
+        }
+    }
+    if !read {
+        ui.label(wrapped("(c and d once b has read your settings)", 13.0, QUIET(), w));
     }
 }
 
