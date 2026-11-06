@@ -220,6 +220,8 @@ pub struct App {
     history_until: Instant,
     moving_chat: bool,
     zoom: f32,
+    /// how tall the controls above the chat were, the frame before (their scroll area's height: top())
+    top_h: f32,
     feed: Arc<Mutex<crate::feed::Feed>>,
     feed_tex: Option<(egui::TextureHandle, Instant)>,
     acked: Option<u64>,
@@ -317,6 +319,7 @@ impl App {
     pub fn new(cc: &eframe::CreationContext, settings: Shared, tx: Transmit, sound: Arc<Mutex<sound::Status>>,
                dink: Arc<Mutex<dink::Status>>) -> App {
         let ctx = cc.egui_ctx.clone();
+        ctx.add_plugin(WindowsClipboard);
         fonts(&ctx);
         style(&ctx, &settings.get());
         let wake = ctx.clone();
@@ -409,7 +412,7 @@ impl App {
             pings: Vec::new(), ping_n: 0, asking_close: false, quitting: false, hidden: false,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0,
+            over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -1170,7 +1173,10 @@ fn bar(ui: &mut egui::Ui, label: &str, unit: &str, lo: u32, hi: u32, step: u32, 
 }
 
 fn field(ui: &mut egui::Ui, text: &mut String, width: f32, hint: &str, secret: bool) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(rich(&hint, 16.0, WHEN()))
+    // (an empty hint as a space: laid out empty it made the box shorter than a typed row, and the caret was cut off
+    // until a letter came: 11/06/2026, Jace)
+    let hint = if hint.is_empty() { " " } else { hint };
+    ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(rich(hint, 16.0, WHEN()))
         .password(secret).font(body(16.0)).text_color(Color32::from_rgb(0xee, 0xee, 0xee)))
 }
 
@@ -1286,15 +1292,15 @@ impl SettingsPanel {
                 let mbit = kb * self.fps as f64 * 8.0 / 1024.0;
                 weight = if settings.get().relay.starts_with("wss://") {
                     // (on Cloudflare the relay sends each viewer their copy: this PC sends one, however many watch)
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, however many watch\n(the relay sends each of the {} at most their own copy)",
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many watch: the relay on Cloudflare sends each of the {} at most their own copy",
                             w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, self.viewers)
                 } else {
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each viewer\n{} watching at most: about {:.1} Mbit/s up in all",
-                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, self.viewers, mbit * self.viewers as f64)
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each viewer: this portal is on a relay of its own ({}), which sends every copy from this PC's upload\n{} watching at most: about {:.1} Mbit/s up in all (on Cloudflare's relay it would be {:.1}, once)",
+                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, settings.get().relay, self.viewers, mbit * self.viewers as f64, mbit)
                 };
             }
         }
-        ui.label(rich(&weight, 16.0, LIME()));
+        ui.add(egui::Label::new(rich(&weight, 16.0, LIME())).wrap());
         ui.add_space(4.0);
         ui.add(egui::Label::new(rich(&self.status.0.clone(), 16.0, self.status.1)).wrap());
         ui.add_space(6.0);
@@ -2065,7 +2071,16 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         for line in SAFE {
             ui.add(egui::Label::new(rich(line, 14.0, GREY())).wrap());
         }
-        ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md", 14.0, TEAL())).wrap());
+        let r = ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md ↗", 14.0, TEAL()))
+            .wrap().sense(Sense::click()))
+            .on_hover_text(tip("opens SAFETY.md on GitHub in your browser (right-click: copy its address)"));
+        if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+        if r.clicked() && !win::open_page(crate::settings::SAFETY_PAGE) {
+            app.attach_note = format!("couldn't open {}", crate::settings::SAFETY_PAGE);
+        }
+        r.context_menu(|ui| {
+            if ui.button("copy its address").clicked() { win::copy_text(crate::settings::SAFETY_PAGE); ui.close(); }
+        });
     });
     start_menu_offer(app, ui);
     if let Some(p) = settings::ghillie_path() {
@@ -2154,6 +2169,45 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
 }
 
 // ---- the window ----
+
+/// Copying and pasting with Windows' own clipboard (11/06/2026, Jace: "allow copying of all program text to clipboard"):
+/// any words in the window can be selected with the mouse and copied with Ctrl+C (or cut from a box with Ctrl+X), and
+/// Ctrl+V pastes what Windows has. eframe is built without its clipboard (it would bring an image library along), so
+/// its shortcuts are off (main.rs) and this takes them: the keys made into egui's copy, cut and paste, and what egui
+/// copies sent on to Windows (win.rs, copy_text and paste_text).
+pub struct WindowsClipboard;
+
+impl egui::Plugin for WindowsClipboard {
+    fn debug_name(&self) -> &'static str { "windows clipboard" }
+
+    fn input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        let events = std::mem::take(&mut input.events);
+        for e in events {
+            match &e {
+                egui::Event::Key { key, pressed: true, modifiers, .. } if modifiers.command && !modifiers.alt => match key {
+                    egui::Key::C => input.events.push(egui::Event::Copy),
+                    egui::Key::X => input.events.push(egui::Event::Cut),
+                    egui::Key::V => {
+                        if let Some(t) = win::paste_text() {
+                            let t = t.replace("\r\n", "\n");
+                            if !t.is_empty() { input.events.push(egui::Event::Paste(t)); }
+                        }
+                    }
+                    _ => input.events.push(e),
+                },
+                _ => input.events.push(e),
+            }
+        }
+    }
+
+    fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
+        for c in &output.platform_output.commands {
+            if let egui::OutputCommand::CopyText(t) = c {
+                if !t.is_empty() { win::copy_text(t); }
+            }
+        }
+    }
+}
 
 impl eframe::App for App {
     fn clear_color(&self, _v: &egui::Visuals) -> [f32; 4] {
@@ -2269,7 +2323,9 @@ impl eframe::App for App {
         egui::Panel::top("titlebar").frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 4, top: 2, bottom: 0 }))
             .show_separator_line(false).show(ui, |ui| self.title_bar(ui));
         if !self.settings.get().attached() {
-            egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| attach_screen(self, ui));
+            egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("attach_scroll").auto_shrink([false, false]).show(ui, |ui| attach_screen(self, ui));
+            });
             self.pings_ui(&ctx);
             self.frame_done(&ctx);
             return;
@@ -2389,7 +2445,9 @@ impl App {
         let key = (self.drawer, (self.zoom * 100.0).round() as u32);
         if self.min_sent == Some(key) { return; }
         self.min_sent = Some(key);
-        let min = if self.drawer == Drawer::None { Vec2::new(MIN_W, 460.0) } else { Vec2::new(MIN_W + DRAWER_W, 640.0) };
+        // (in Windows' own points, before the zoom: so the zoom's share is multiplied in, or a zoomed window could be
+        // made narrower than what's in it and its rows ran off its left edge: 11/06/2026, Jace)
+        let min = if self.drawer == Drawer::None { Vec2::new(MIN_W, 460.0) } else { Vec2::new(MIN_W + DRAWER_W, 640.0) } * self.zoom;
         ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min));
         // (and if it's smaller now, it grows to fit)
         if let Some(r) = ctx.input(|i| i.viewport().inner_rect) {
@@ -2426,48 +2484,91 @@ impl App {
     /// wraps together (a switch and its button).
     fn top(&mut self, ui: &mut egui::Ui) {
         let at = ui.painter().add(egui::Shape::Noop);
+        // (zoomed in, or in a short window, the controls can be taller than there's room for: they scroll, and the
+        // chat keeps its share: 11/06/2026, Jace: "you cannot scroll, required to unzoom")
+        let most = (ui.ctx().content_rect().height() * 0.58).max(160.0);
         let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            self.top_inner(ui);
+            // (asked for at the height its words took last time, up to `most`: a panel goes by what was in it the
+            // frame before, and a scroll area left to itself starts small, so it had stayed a sliver)
+            let want = self.top_h.min(most).max(40.0);
+            egui::ScrollArea::vertical().id_salt("top_scroll").min_scrolled_height(want).max_height(most).auto_shrink([false, true]).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let top = ui.min_rect().top();
+                self.top_inner(ui);
+                let h = ui.min_rect().bottom() - top;
+                if (h - self.top_h).abs() > 0.5 { self.top_h = h; ui.ctx().request_repaint(); }
+            });
         }).response.rect;
         ui.painter().set(at, theme::plate(r));
     }
 
     fn top_inner(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        ui.horizontal(|ui| {
-            let open = self.show_viewers;
-            let words = format!("watching: {} {}", self.viewers, if open { "▾" } else { "▸" });
-            if button(ui, &words, true, Some(open)).on_hover_text(tip("who's watching now, and who's in line for a spot (names as they gave them in the chat)")).clicked() {
-                self.show_viewers = !open;
+        // (the drawers' buttons right-aligned beside "watching" when they fit; when they don't (a narrow or zoomed
+        // window), on a row of their own under it, wrapping, so none runs off the edge)
+        let open = self.show_viewers;
+        let watching = format!("watching: {} {}", self.viewers, if open { "▾" } else { "▸" });
+        let live = self.friendlist.live_count(&self.settings.get());
+        let friends_words = match (live, self.drawer == Drawer::FriendList) { (0, true) => "friends ◂".to_string(), (0, false) => "friends ▸".to_string(),
+                                                                                (n, true) => format!("friends · {} live ◂", n), (n, false) => format!("friends · {} live ▸", n) };
+        let gap = ui.spacing().item_spacing.x;
+        let mut need = button_w(ui, &watching) + button_w(ui, "settings ▸") + button_w(ui, "dink ▸") + button_w(ui, &friends_words) + gap * 5.0;
+        if cfg!(feature = "station") { need += button_w(ui, "portals ▸") + gap; }
+        if self.signals > 0 { need += text_w(ui, &format!("✼ {}", self.signals), 14.0) + gap; }
+        let fits = need <= ui.available_width();
+        let row = |ui: &mut egui::Ui, this: &mut App| {
+            let open = this.show_viewers;
+            if button(ui, &watching, true, Some(open)).on_hover_text(tip("who's watching now, and who's in line for a spot (names as they gave them in the chat)")).clicked() {
+                this.show_viewers = !open;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let s_open = self.drawer == Drawer::Settings;
-                let signals = self.signals;
-                if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
-                let d_open = self.drawer == Drawer::Dink;
-                if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
-                let l_open = self.drawer == Drawer::FriendList;
-                let live = self.friendlist.live_count(&self.settings.get());
-                let words = match (live, l_open) { (0, true) => "friends ◂".to_string(), (0, false) => "friends ▸".to_string(),
-                                                   (n, true) => format!("friends · {} live ◂", n), (n, false) => format!("friends · {} live ▸", n) };
-                if button(ui, &words, true, None)
-                    .on_hover_text(tip("your friends list: who's live, and a click on a name opens their Outside page")).clicked() {
-                    self.open_drawer(&ctx, Drawer::FriendList);
-                }
-                #[cfg(feature = "station")]
-                {
-                    let f_open = self.drawer == Drawer::Friends;
-                    if button(ui, if f_open { "portals ◂" } else { "portals ▸" }, true, None)
-                        .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), answer those asking, a notice to every portal, or take one back")).clicked() {
-                        self.open_drawer(&ctx, Drawer::Friends);
+        };
+        if !fits {
+            ui.horizontal(|ui| row(ui, self));
+        }
+        // (the buttons in the order they're read, left to right: laid right to left beside "watching", they're added
+        // the other way round)
+        let drawers = |ui: &mut egui::Ui, this: &mut App, right_to_left: bool| {
+            let mut order: Vec<u8> = Vec::new();
+            if this.signals > 0 { order.push(0); }
+            if cfg!(feature = "station") { order.push(1); }
+            order.extend([2, 3, 4]);
+            if right_to_left { order.reverse(); }
+            for which in order {
+                match which {
+                    0 => { ui.label(rich(&format!("✼ {}", this.signals), 14.0, PINK())).on_hover_text(tip("viewers' signals since this opened")); }
+                    1 => {
+                        let f_open = this.drawer == Drawer::Friends;
+                        if button(ui, if f_open { "portals ◂" } else { "portals ▸" }, true, None)
+                            .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), answer those asking, a notice to every portal, or take one back")).clicked() {
+                            this.open_drawer(&ctx, Drawer::Friends);
+                        }
+                    }
+                    2 => {
+                        if button(ui, &friends_words, true, None)
+                            .on_hover_text(tip("your friends list: who's live, and a click on a name opens their Outside page")).clicked() {
+                            this.open_drawer(&ctx, Drawer::FriendList);
+                        }
+                    }
+                    3 => {
+                        let d_open = this.drawer == Drawer::Dink;
+                        if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { this.open_drawer(&ctx, Drawer::Dink); }
+                    }
+                    _ => {
+                        let s_open = this.drawer == Drawer::Settings;
+                        if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { this.open_drawer(&ctx, Drawer::Settings); }
                     }
                 }
-                if signals > 0 {
-                    ui.label(rich(&format!("✼ {}", signals), 14.0, PINK())).on_hover_text(tip("viewers' signals since this opened"));
-                }
+            }
+        };
+        if fits {
+            ui.horizontal(|ui| {
+                row(ui, self);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| drawers(ui, self, true));
             });
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| drawers(ui, self, false));
+        }
         ui.add_space(6.0);
         // the live light, what's happening (beside it, wrapping), and going live
         ui.horizontal(|ui| {
@@ -2496,7 +2597,10 @@ impl App {
                 ui.set_width(w);
                 ui.add(egui::Label::new(rich(&text, 14.0, colour)).wrap());
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // (in a box the row's own height: in the controls' scroll area, laid out as it was it centred itself in
+            // more height than the row has, and sat under it)
+            let h = ui.min_rect().height().max(24.0);
+            ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), h), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if pink_button(ui, go, !ending).clicked() { self.go_live(); }
             });
         });

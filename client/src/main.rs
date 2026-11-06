@@ -122,6 +122,9 @@ fn main() {
             .with_min_inner_size([380.0, 440.0])
             .with_visible(!tray_only)
             .with_icon(eframe::egui::IconData { rgba, width: w, height: h }),
+        // (Ctrl+C, X and V come to the window as keys, for ui.rs's WindowsClipboard to take to Windows' own clipboard:
+        // built without eframe's clipboard, they'd only reached a clipboard of its own)
+        clipboard_shortcuts: false,
         ..Default::default()
     };
     let _ = eframe::run_native(ui::TITLE, opts, Box::new(move |cc| Ok(Box::new(ui::App::new(cc, shared, tx, snd, dk)))));

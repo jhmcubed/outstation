@@ -295,6 +295,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// where the releases are, for "a newer one is out" and "too old for the relay" (shown, never opened or fetched)
 pub const RELEASES: &str = "github.com/jhmcubed/outside-portal/releases";
+/// what the portal does and doesn't, line by line, and how to check it (the attach screen's link)
+pub const SAFETY_PAGE: &str = "https://github.com/jhmcubed/outside-portal/blob/main/SAFETY.md";
 
 /// The words for a relay's 4026 (this client too old for it), from the relay's own reason.
 pub fn too_old_note(reason: &str) -> String {

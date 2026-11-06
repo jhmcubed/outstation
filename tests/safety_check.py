@@ -231,6 +231,8 @@ ADDRESSES = {
                                          "friends list's open portals before you're attached",
     "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; and the Outside pages the "
                             "friends list opens in your browser when you click a name (win.rs open_page: ghillie.wiki's only)",
+    "https://github.com/jhmcubed/outside-portal/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
+                                                                     "screen's link (win.rs open_page)",
     "http://127.0.0.1": "Dink's address on this PC, shown to you",
     "ws://127.0.0.1": "a relay of your own on this PC (relay-py), only when you choose one by hand",
     "https://discord.com/api/webhooks/": "the webhook box's hint, an example only",
@@ -285,8 +287,8 @@ def main(argv):
     failed |= bool(src)
     net = check_network()
     print("its addresses: %s" % ("; ".join(net) if net else "only the relay you attach to, your Discord webhook if you set one, "
-                                                              "GitHub's releases, and ghillie.wiki's pages (opened in your "
-                                                              "browser from the friends list); it listens on 127.0.0.1 only"))
+                                                              "GitHub's releases, and the pages it opens in your browser (ghillie.wiki's, "
+                                                              "and its own SAFETY.md); it listens on 127.0.0.1 only"))
     failed |= bool(net)
     print("FAILED" if failed else "passed")
     return 1 if failed else 0

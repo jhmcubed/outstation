@@ -75,10 +75,15 @@ impl PageClips {
         self.read_at = Some(Instant::now());
         let (rows, busy) = (self.rows.clone(), self.busy.clone());
         let url = format!("{}/clips/{}?code={}", s.http_base(), enc(&s.channel), enc(&s.code));
+        let base = s.http_base();
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
             let got = (|| -> Result<Vec<Row>, String> {
-                let mut r = ureq::get(&url).header("User-Agent", "outside-portal").call().map_err(|e| format!("couldn't read them ({})", e))?;
+                let mut r = ureq::get(&url).header("User-Agent", "outside-portal").call().map_err(|e| match e {
+                    ureq::Error::StatusCode(404) => "this relay doesn't keep clips".to_string(),
+                    ureq::Error::StatusCode(c) => format!("couldn't read what's on your page: the relay answered {}", c),
+                    _ => format!("couldn't read what's on your page: the relay ({}) isn't answering", base),
+                })?;
                 let v: Value = serde_json::from_str(&r.body_mut().read_to_string().unwrap_or_default()).unwrap_or(Value::Null);
                 Ok(v.get("clips").and_then(|x| x.as_array()).cloned().unwrap_or_default().iter().map(|c| Row {
                     id: c.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),

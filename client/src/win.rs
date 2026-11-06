@@ -242,12 +242,13 @@ pub fn bytes_sent() -> Option<u64> {
 
 // ---- the clipboard ----
 
-/// Open one of ghillie.wiki's pages in the browser (the friends list's names): Windows opens it with whatever opens
-/// web pages. Nothing but ghillie.wiki's own pages is opened this way.
+/// Open one of ghillie.wiki's pages in the browser (the friends list's names), or the portal's own SAFETY.md on GitHub
+/// (the attach screen's link): Windows opens it with whatever opens web pages. Nothing else is opened this way.
 pub fn open_page(url: &str) -> bool {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    if !url.starts_with("https://ghillie.wiki/") || url.chars().any(|c| c.is_whitespace() || c == '"') { return false; }
+    let ours = url.starts_with("https://ghillie.wiki/") || url == crate::settings::SAFETY_PAGE;
+    if !ours || url.chars().any(|c| c.is_whitespace() || c == '"') { return false; }
     let (verb, what) = (wide("open"), wide(url));
     let r = unsafe { ShellExecuteW(None, windows::core::PCWSTR(verb.as_ptr()), windows::core::PCWSTR(what.as_ptr()), None, None, SW_SHOWNORMAL) };
     r.0 as usize > 32
