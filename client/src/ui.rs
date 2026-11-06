@@ -1621,7 +1621,7 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
         ui.checkbox(&mut s.auto_live, rich("go live by itself whenever RuneLite opens", 16.0, GREY()))
-            .on_hover_text(tip("when RuneLite's window appears (or is already open as the portal starts), the portal goes live by itself, and ticked with RuneLite open, within a second. \"end stream\" is never undone: the next time waits for RuneLite to open again."));
+            .on_hover_text(tip("when RuneLite opens (or is already open as the portal starts), the portal goes live by itself; ticked with RuneLite open, within a second. If you press end stream while RuneLite's open, the portal stays off air: it only goes live again the next time RuneLite opens."));
         ui.add_enabled_ui(s.auto_live, |ui| {
             ui.checkbox(&mut s.auto_end, rich("…and end the stream when RuneLite closes", 16.0, GREY()))
                 .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) ends the stream, so a forgotten portal doesn't stay on air"));
@@ -2035,7 +2035,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             ui.label(rich("done", 18.0, LIME()));
             // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
             ui.checkbox(&mut s.auto_live, rich("go live by itself whenever RuneLite opens", 16.0, GREY()))
-                .on_hover_text(tip("from now on, RuneLite's window appearing starts your stream; \"end stream\" is never undone (the next time waits for RuneLite to open again)"));
+                .on_hover_text(tip("from now on, opening RuneLite starts your stream. If you press end stream while RuneLite's open, the portal stays off air: it only goes live again the next time RuneLite opens."));
             if s.auto_live {
                 ui.label(wrapped("RuneLite open now? Then finishing the setup goes live straight away.", 14.0, PINK(), w));
             }
