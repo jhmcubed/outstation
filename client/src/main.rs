@@ -16,6 +16,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ask;
+mod autolive;
 mod capture;
 mod clip;
 mod clock;
@@ -24,6 +25,7 @@ mod cursor;
 mod desk;
 mod dink;
 mod feed;
+mod friendlist;
 mod hotkeys;
 #[cfg(feature = "station")]
 mod keeper;
@@ -98,6 +100,7 @@ fn main() {
     hotkeys::start(shared.clone(), tx.paused.clone());
     let snd = sound::start(shared.clone());
     let dk = dink::start(shared.clone());
+    autolive::start(shared.clone());
     let (rgba, w, h) = ui::icon_rgba();
     let opts = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

@@ -40,6 +40,8 @@ The first screen, ready to go live, and live with two viewers chatting. (Picture
 - **The sound:** off, the game, or game + desktop. Never a microphone.
 - **The chat:** right-click a line to take it back, or to block or ban whoever wrote it. "viewers may chat" switches the chat off.
 - **Clips:** the clip key (Insert) saves the last seconds as a video in `Videos\outside-portal`.
+- **Going live by itself:** settings ▸ more ▸ **go live when RuneLite opens**, and with it **end the stream when RuneLite closes** (after 30 s, so an update's restart doesn't end it). "end stream" is never undone: the next time waits for RuneLite to open again.
+- **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their portal is live (lime), off air (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete. The chat says "Moss Fern has gone live." when one does.
 
 ## If something goes wrong
 

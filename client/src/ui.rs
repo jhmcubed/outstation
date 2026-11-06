@@ -133,7 +133,7 @@ fn tip(text: &str) -> egui::WidgetText {
 
 #[derive(PartialEq, Clone, Copy)]
 #[cfg_attr(not(feature = "station"), allow(dead_code))]
-enum Drawer { None, Settings, Dink, Friends }
+enum Drawer { None, Settings, Dink, Friends, FriendList }
 
 struct Line {
     id: Option<i64>,
@@ -245,6 +245,8 @@ pub struct App {
     desk_stopped: Option<String>,
     /// the ready check's look at RuneLite's window (its title), taken once a second
     ready_seen: (Instant, Option<String>),
+    /// the friends list's view of the relay's open portals (friendlist.rs)
+    friendlist: crate::friendlist::FriendList,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -404,6 +406,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
+            friendlist: crate::friendlist::FriendList::new(),
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1496,6 +1499,12 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
+        ui.checkbox(&mut s.auto_live, rich("go live when RuneLite opens", 16.0, GREY()))
+            .on_hover_text(tip("when RuneLite's window appears (or is already open as the portal starts), the portal goes live by itself. \"end stream\" is never undone: the next time waits for RuneLite to open again."));
+        ui.add_enabled_ui(s.auto_live, |ui| {
+            ui.checkbox(&mut s.auto_end, rich("…and end the stream when RuneLite closes", 16.0, GREY()))
+                .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) ends the stream, so a forgotten portal doesn't stay on air"));
+        });
         ui.checkbox(&mut s.ready_check, rich("the ready check above the title, while off air", 16.0, GREY()))
             .on_hover_text(tip("RuneLite open, logged in, the relay answering, Dink heard and the sound's mode, each ticked or not"));
         ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY()))
@@ -1563,6 +1572,108 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             let _ = settings.update(|x| *x = s2);
         }
     });
+}
+
+// ---- the friends list ----
+
+/// The friends list, as the game's own (friendlist.rs): each friend's name on the left in the order added, their
+/// portal's state on the right, a click on the name for their Outside page, "add friend" and "del friend" below with
+/// the game's prompts, and the chat told when one goes live or off air.
+fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
+    use crate::friendlist::{State, MOST};
+    let ctx = ui.ctx().clone();
+    let wake = move || ctx.request_repaint();
+    let s = app.settings.get();
+    ui.horizontal(|ui| {
+        ui.label(rich("friends list", 16.0, LIME()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(rich(&format!("{} / {}", s.friends.len(), MOST), 14.0, GREY()));
+        });
+    });
+    ui.add_space(6.0);
+    if s.friends.is_empty() {
+        ui.label(wrapped("no friends yet. add friend puts a player here, and whether their portal is live.", 14.0, GREY(), ui.available_width()));
+    }
+    let mut delete: Option<String> = None;
+    for name in &s.friends {
+        let ch = crate::ask::channel_of(name).unwrap_or_default();
+        let st = app.friendlist.state(name);
+        let (words, colour, about) = match &st {
+            State::Live(x) => {
+                let w = if x.static_on { "Live · static".to_string() } else if !x.open { "Live · paused".to_string() } else { format!("Live · {}", x.viewers) };
+                let t = if x.title.is_empty() { String::new() } else { format!("“{}”\n", x.title) };
+                (w, LIME(), format!("{}{} watching · click: their portal on their Outside page", t, x.viewers))
+            }
+            State::OffAir => ("Off air".to_string(), PINK(), "their portal is off air · click: their Outside page".to_string()),
+            State::NoPortal => ("No portal".to_string(), GREY(), "no open portal: they haven't one yet, or theirs is friends-only (a watch code) · click: their Outside page".to_string()),
+            State::Unknown => ("…".to_string(), GREY(), "reading the relay…".to_string()),
+        };
+        let url = crate::friendlist::page(&ch);
+        ui.horizontal(|ui| {
+            let r = ui.add(egui::Label::new(rich(name, 16.0, TEXT())).sense(Sense::click())).on_hover_text(tip(&format!("{}\n{}", about, url.trim_start_matches("https://"))));
+            if r.clicked() && !win::open_page(&url) { app.note(format!("couldn't open {}", url)); }
+            r.context_menu(|ui| {
+                if ui.button("their Outside page").clicked() { win::open_page(&url); ui.close(); }
+                if ui.button(format!("delete {}", name)).clicked() { delete = Some(name.clone()); ui.close(); }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(rich(&words, 14.0, colour));
+            });
+        });
+    }
+    if let Some(n) = delete {
+        let _ = app.settings.update(|x| x.friends.retain(|f| f != &n));
+    }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if button(ui, "add friend", true, Some(app.friendlist.prompt == Some(true))).clicked() {
+            app.friendlist.prompt = if app.friendlist.prompt == Some(true) { None } else { Some(true) };
+            app.friendlist.typed.clear();
+        }
+        if button(ui, "del friend", true, Some(app.friendlist.prompt == Some(false))).clicked() {
+            app.friendlist.prompt = if app.friendlist.prompt == Some(false) { None } else { Some(false) };
+            app.friendlist.typed.clear();
+        }
+    });
+    if let Some(adding) = app.friendlist.prompt {
+        ui.label(rich(if adding { "enter name of friend to add to list:" } else { "enter name of friend to delete from list:" }, 14.0, GREY()));
+        let r = field(ui, &mut app.friendlist.typed, 200.0, "", false);
+        if !r.has_focus() && !r.lost_focus() && app.friendlist.typed.is_empty() { r.request_focus(); }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { app.friendlist.prompt = None; }
+        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            let typed = app.friendlist.typed.trim().to_string();
+            app.friendlist.prompt = None;
+            if !typed.is_empty() {
+                let s = app.settings.get();
+                if adding {
+                    match crate::friendlist::check_add(&s, &typed) {
+                        Ok(name) => {
+                            let _ = app.settings.update(|x| x.friends.push(name));
+                            app.friendlist.tend(&app.settings.get(), true, true, wake.clone());
+                        }
+                        Err(e) => app.note(e),
+                    }
+                } else {
+                    match crate::friendlist::find(&s, &typed) {
+                        Some(n) => { let _ = app.settings.update(|x| x.friends.retain(|f| f != &n)); }
+                        None => app.note(format!("{} isn't on your friends list.", typed)),
+                    }
+                }
+            }
+        }
+    }
+    if let Some(e) = app.friendlist.trouble() {
+        ui.label(wrapped(&e, 14.0, PINK(), ui.available_width()));
+    }
+    ui.add_space(10.0);
+    let mut tell = s.friends_tell;
+    if ui.checkbox(&mut tell, rich("say in the chat when a friend goes live or off air", 14.0, GREY())).changed() {
+        let _ = app.settings.update(|x| x.friends_tell = tell);
+    }
+    let all = ui.add(egui::Label::new(rich("every open portal ↗", 14.0, TEAL())).sense(Sense::click()))
+        .on_hover_text(tip("ghillie.wiki/portals: everyone's open portals, live ones first"));
+    if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
+    ui.label(wrapped("a name's state comes from the relay's open portals, read every 20 s while this is open and every minute otherwise. right-click a name to delete it.", 13.0, QUIET(), ui.available_width()));
 }
 
 // ---- the dink drawer ----
@@ -1890,6 +2001,20 @@ impl eframe::App for App {
         // a request for a portal, looked at again while it waits; answered yes, it attaches by itself
         let c = ctx.clone();
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
+        for n in crate::autolive::take_notes() { self.note(n); }
+        if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            #[cfg(feature = "station")]
+            self.station_relay();
+            self.started = Instant::now();
+        }
+        {
+            let s = self.settings.get();
+            let c = ctx.clone();
+            self.friendlist.tend(&s, self.drawer == Drawer::FriendList, false, move || c.request_repaint());
+            for line in self.friendlist.changes(&s) {
+                if s.friends_tell { self.note(line); }
+            }
+        }
         let came = self.asked_attached.lock().unwrap().take();
         if let Some(ch) = came {
             self.note(format!("the listening post said yes: attached to {} · your portal opens at ghillie.wiki/outside?player={}", ch, ch));
@@ -1960,7 +2085,7 @@ impl eframe::App for App {
         }
         let listening = self.panel.as_ref().is_some_and(|p| p.listening.is_some());
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.poll_form.is_none() && self.guess_form.is_none()
-            && !self.asking_close && !listening && !self.moving_chat && !self.editing_masks {
+            && !self.asking_close && !listening && !self.moving_chat && !self.editing_masks && self.friendlist.prompt.is_none() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         let frame = egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(12, 10));
@@ -1994,6 +2119,8 @@ impl eframe::App for App {
                         } else if self.drawer == Drawer::Friends {
                             #[cfg(feature = "station")]
                             friends_drawer(self, ui);
+                        } else if self.drawer == Drawer::FriendList {
+                            friendlist_drawer(self, ui);
                         } else {
                             dink_drawer(self, ui);
                         }
@@ -2148,11 +2275,19 @@ impl App {
                 if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
                 let d_open = self.drawer == Drawer::Dink;
                 if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
+                let l_open = self.drawer == Drawer::FriendList;
+                let live = self.friendlist.live_count(&self.settings.get());
+                let words = match (live, l_open) { (0, true) => "friends ◂".to_string(), (0, false) => "friends ▸".to_string(),
+                                                   (n, true) => format!("friends · {} live ◂", n), (n, false) => format!("friends · {} live ▸", n) };
+                if button(ui, &words, true, None)
+                    .on_hover_text(tip("your friends list: who's live, and a click on a name opens their Outside page")).clicked() {
+                    self.open_drawer(&ctx, Drawer::FriendList);
+                }
                 #[cfg(feature = "station")]
                 {
                     let f_open = self.drawer == Drawer::Friends;
-                    if button(ui, if f_open { "friends ◂" } else { "friends ▸" }, true, None)
-                        .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), or take one back")).clicked() {
+                    if button(ui, if f_open { "portals ◂" } else { "portals ▸" }, true, None)
+                        .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), answer those asking, a notice to every portal, or take one back")).clicked() {
                         self.open_drawer(&ctx, Drawer::Friends);
                     }
                 }

@@ -186,6 +186,17 @@ pub struct Settings {
     /// the keeper's last notice shown (its "at"), so a reconnect or a restart doesn't show it again
     #[serde(default)]
     pub notice_seen: u64,
+    /// go live when RuneLite opens (autolive.rs), and with it end the stream when RuneLite closes
+    #[serde(default)]
+    pub auto_live: bool,
+    #[serde(default = "d_true")]
+    pub auto_end: bool,
+    /// the friends list (friendlist.rs): players' names as typed, in the order added
+    #[serde(default)]
+    pub friends: Vec<String>,
+    /// a line in the chat when a friend goes live or off air
+    #[serde(default = "d_true")]
+    pub friends_tell: bool,
     /// the Start menu's shortcut (shortcut.rs): not asked yet, yes (kept pointing at this copy), or no
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_menu: Option<bool>,
