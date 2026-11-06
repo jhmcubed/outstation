@@ -11,6 +11,7 @@ Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Pytho
 | sound | `/sound/<channel>?key=<key>` | the sound |
 | desk | `/desk/<channel>?key=<key>&name=<your name in the chat>` | the chat window (several may be open) |
 | watch | `/watch/<channel>?code=<watch code>` | a viewer (Outside) |
+| look | `/watch/<channel>?look=1&code=<watch code>` | a looker: the listening post's receiver, the portals page's tiles, the client's live view and a friend's peek (below, "Lookers") |
 
 `ws://` on this PC, `wss://` on Cloudflare. A channel is 1 to 64 characters: letters, digits and `_ . ~ -`.
 
@@ -37,8 +38,8 @@ The client says its version (`client/Cargo.toml`'s, which a release's tag must m
 - **Binary:** a frame, a 4-byte big-endian number (the moment it was taken, in ms, wrapping), then a JPEG.
 - **A small frame:** the same 4 bytes, then `TH`, then a small JPEG (192 px wide), about twice a second. Lookers only: never sent to a viewer, never kept as the last frame. While small frames are coming (one in the last 3 s), lookers get them instead of the full ones.
 - **Text:** the game data, passed to viewers untouched. The last line is kept for whoever joins next.
-  - `{"state": "open" | "shut"}`: the picture's gate. Sound passes only while it's open.
-  - `{"report": {"type", "text", "at"}}`: a field report (from Dink). The last 8 are kept for late joiners.
+  - `{"state": "open" | "static" | "shut"}`: the picture's gate. `static` is the static key: viewers see static, and the sound still passes. Sound passes only while it's `open` or `static`.
+  - `{"report": {"type", "text", "at"}}`: a field report (from Dink), as ghillie's Python portal sends them. The outside-portal client posts to the Dink route instead (below, "Dink"). The last 8 are kept for late joiners.
 - **It hears:** the status line (below).
 
 The first transmitter sets the channel's watch code. Viewers whose code no longer matches are let go.
@@ -46,11 +47,16 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Viewers
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "set", "title"}}`. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
-- frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the chat so far, the poll and the sound's line.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title"}}`. `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the chat so far, the poll, the drop guess and the sound's line.
+- `{"report": {"type", "text", "at", "data"}}`: a field report (from Dink; below, "Dink").
+- `{"summary": {...} | null}`: this stream's summary (below, "The stream's summary").
 - `{"chat": {"id", "name", "text", "host", "who", "queued", "at"}}`, `{"unsay": id}`
 - `{"poll": {"id", "question", "options", "counts", "open", "left"}}`, `{"poll_gone": id}`
+- `{"guess": {"id", "boss", "what", "open", "kc", "count", "result": {"kc", "item", "winners", "off"} | null}}`, `{"guess_gone": id}`: a drop guess (below, "Drop guesses").
 - `{"ping": {"x", "y", "name", "who", "at"}}`
+- `{"signal": {"name", "who"}}`: someone pressed the ✼.
+- `{"clip": Clip}`, `{"clip_gone": id}`, `{"clip_kept": {"id", "kept"}}` (below, "Clips").
 - `{"sound": {"mode", "buses"}}`, and the sound's binary messages (below)
 
 **They may send** (anything else is thrown away; nothing over 2 KB is read):
@@ -58,22 +64,51 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 - `{"say": text}`: at most 20 lines in 10 s, 300 characters each.
 - `{"vote": {"poll": id, "pick": i}}`: one vote a device, which they can change while the poll is open.
 - `{"ping": {"x", "y"}}`: a spot on the frame, 0–1 each. One every half second, and only with a seat.
+- `{"signal": true}`: the ✼ button, as often as a hand can press (one every 80 ms at most).
+- `{"guess": {"id", "kc"}}`: a kill count still to come, for the drop guess going on, while it's open. One a device, which they can change.
 - `{"got": bytes}` (Cloudflare): every binary byte received so far, about once a second. Past 4 MB sent and not yet acknowledged, a viewer gets no more frames or sound until it catches up. A viewer that never says it gets the first 4 MB and then text only. The Python relay ignores it: it reads its own send buffer.
 
 **The waiting line:** past the cap, a viewer waits in line, with status lines and the chat but no frames. The first in line takes the first seat that frees.
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, pings, who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers"}}` each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other portals (below, "Messages between portals"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers"}}` each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
 - `{"hide": id}`: takes a line back off everyone's page, late joiners included.
 - `{"block": who}` / `{"unblock": who}`: that viewer's number and device. Their lines and pings stop going anywhere.
+- `{"ban": who}` / `{"unban": who}`: blocked, and every line of theirs taken back off everyone's page; the desk's list of bans (`{"banned"}`) says who.
 - `{"poll": {"question", "options": [2–6], "seconds": 10–900}}` and `{"poll_close": true}`. A closed poll's result stays 90 s, then `{"poll_gone"}`.
 - `{"chat_on": bool}`: off, viewers' lines go nowhere (the host's still go out); the status line's `chat` says so.
+- `{"pings": bool}`: off, viewers' pings go nowhere; the status line's `pings` says so.
+- `{"guess_open": {"boss", "what"}}`, `{"guess_close": true}`, `{"guess_drop": true, "item"}`, `{"guess_off": true}`, `{"guess_min_value": gp}`: a drop guess (below, "Drop guesses").
+- `{"dm": {"to", "text"}}`: a message to another portal (below, "Messages between portals").
 - `{"title": text}`: the broadcast's title, in every status line from then on (and in `GET /channels`): one line, at most 100 characters, `""` for none. The client sends it on connecting and whenever it changes; the Worker keeps it through a sleep.
 - `{"cap": n}`: the channel's own cap on viewers (0 means none). On the Python relay it takes the place of `--max-viewers` for that channel. On Cloudflare the Worker's `MAX_VIEWERS` is a ceiling over it.
+
+## Lookers
+
+A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the portals page's tiles, the client's live view and a friend's peek in its friends list. It needs the watch code, as a viewer does.
+- It hears the status lines, the summary and the clips' lines.
+- It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
+- Anything else it sends is thrown away.
+
+## The open portals
+
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. The portals page on ghillie.wiki and the client's friends list read it.
+
+## The stream's summary
+
+The relay folds each field report into one summary a stream, so every viewer's readings are the same and the page can show a recap off air. `{"summary": {"since", "ended", "boss", "kc": {boss: {"name", "first", "last", "pb"}}, "loot", "best": {"name", "value", "id"}, "levels": {skill: level}, "total", "log": {"item", "id", "done", "total"}, "pets": [...]}}`, each part there only once something's told of it; `pets` is the last 5. Going live starts a new one, unless the last stream ended less than 15 minutes ago (then it carries on). It's kept with the channel, so it outlives a sleep.
+
+## Drop guesses
+
+The desk opens a round on a boss (`guess_open`); viewers guess the kill count the drop will come at; the relay decides it from Dink's reports.
+- The relay keeps each boss's last kill count from Dink's `KILL_COUNT` reports. A guess must be a count still to come (above the boss's count now).
+- `guess_close` stops new guesses; the round still waits for the drop.
+- A `LOOT` report from that boss worth `guess_min_value` or more (1,000,000 to begin with) decides it, at the boss's count then. `guess_drop` decides it by hand, with the item's name.
+- Decided, the result says who guessed closest and how far off, and the relay says so in the chat as `✼`. It stays two minutes. `guess_off` calls a round off.
 
 ## The sound
 
@@ -96,7 +131,9 @@ The relay holds sound half a second (as the capture holds frames back). It lets 
 - A death in PvP loses its text.
 - Nothing that names another player gets through: trades, chat, player kills.
 
-The client normally takes Dink's posts on its own PC and sends the reports over its transmit socket. This route is the fallback.
+Each report reaches viewers as `{"report": {"type", "text", "at", "data"}}`: `text` its line (at most 200 characters, Discord's markdown taken out), `data` the numbers the page's readings use (`relay/src/text.ts`'s `reportData`, relay-py's `report_data`: the boss and its count, the levels, the loot's items and value, the collection log's count).
+
+The outside-portal client takes Dink's posts on its own PC (`127.0.0.1`) and posts only what the relay keeps of each to this route (`client/src/dink.rs`, `for_relay`): its `type`, the line as `content`, and the `extra` fields `reportData` reads. The rest of Dink's post never leaves the PC. ghillie's Python portal sent reports over its transmit socket instead.
 
 ## Handing out channels (Cloudflare)
 

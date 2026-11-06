@@ -62,7 +62,7 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                         } else {
                             TAKEN[i].store(true, Ordering::Relaxed);
                             if taken_told[i] != Some(vk) {
-                                note(format!("the {} key ({}) is held by another program, so it does nothing here: settings ▸ more ▸ hotkeys, pick another", NAMES[i], crate::win::key_name(&format!("0x{:x}", vk))));
+                                note(format!("the {} key ({}) is held by another program, so it does nothing here: settings ▸ hotkeys, pick another", NAMES[i], crate::win::key_name(&format!("0x{:x}", vk))));
                                 taken_told[i] = Some(vk);
                             }
                         }

@@ -87,7 +87,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 
 ## Dink and forwarding
 
-33. ✓ **Only Dink's own kinds,** nothing naming another player, no screenshot. The client filters by your switches, then posts to the relay's Dink route, which filters again as relay.py always has. `client_live.py`: a level-up reached a viewer as "x has levelled Cooking to 70".
+33. ✓ **Only Dink's own kinds,** nothing naming another player, no screenshot. The client filters by your switches, then posts to the relay's Dink route only what the relay uses of each post (11/06/2026, `dink.rs`, `for_relay`: its kind, its line and the readings' and drop guesses' fields; never the screenshot, Dink's account details, a party's names or a PvP killer), and the relay filters again as relay.py always has. `client_live.py`: a level-up reached a viewer as "x has levelled Cooking to 70". Checked 11/06/2026: 22 sample posts give both relays the same report trimmed as whole; under Wine, a post into the client reached a relay-py viewer as its report and the summary, and a stand-in relay received only the trimmed fields.
 34. ✓ **Forwarding to Discord** with `forward.py`'s rules: `cargo test` runs relay-py's own `Rules` cases. ◐ Not yet sent to a real webhook.
 
 ## What start.py and the field station did

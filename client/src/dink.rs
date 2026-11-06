@@ -106,7 +106,11 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     if s.attached() && portal_wants(&s, &payload) {
         went.push("the portal");
         let url = format!("{}/dink/{}?key={}", s.http_base(), enc(&s.channel), enc(&s.key));
-        let json = payload.to_string();
+        // (only what the relay uses leaves this PC: for_relay; and when it came, so two drops alike in a few seconds
+        // stay two at the relay, whose own check for a post sent twice would take them for one)
+        let mut trimmed = for_relay(&payload);
+        trimmed["at"] = serde_json::json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
+        let json = trimmed.to_string();
         std::thread::spawn(move || {
             let r = ureq::post(&url).header("Content-Type", "application/json").send(json.as_bytes());
             if let Err(e) = r {
@@ -228,6 +232,65 @@ fn stacks(p: &Value) -> Vec<(String, i64)> {
              int(i.get("quantity")).saturating_mul(int(i.get("priceEach"))))
         }).collect()
     }).unwrap_or_default()
+}
+
+/// What of Dink's post goes to the relay (11/06/2026): only what the relay uses of it, so nothing else leaves this PC.
+/// That's its kind, the line it shows (the embed's description, else its title, else the post's content: as the relay
+/// picks it), and the few numbers the readings and the drop guesses need for that kind (relay/src/text.ts's
+/// reportData and channel.ts's dinkCounts, relay-py's report_data and dink_counts: the same fields, every loot stack
+/// and the loot's kill count included). Everything else in Dink's post stays here: your player's name and account type as
+/// Dink sends them, Dink's account hash, your Discord user if Dink adds it, the world and the region, the screenshot,
+/// a raid party's names, a PvP killer's name, the player a PvP drop came from. A PvP drop or death keeps no line (the
+/// relay would drop it: it names the other player), and a death says only that it was PvP, never who.
+pub fn for_relay(p: &Value) -> Value {
+    let kind = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    let e = extra(p);
+    let keep: &[&str] = match kind {
+        "KILL_COUNT" => &["boss", "count", "isPersonalBest"],
+        "LEVEL" => &["levelledSkills", "allSkills", "combatLevel"],
+        "LOOT" => &["category", "source", "killCount"],
+        "COLLECTION" => &["itemName", "itemId", "completedEntries", "totalEntries"],
+        "PET" => &["petName", "duplicate", "milestone"],
+        "QUEST" => &["questName", "completedQuests", "totalQuests"],
+        "CLUE" => &["clueType", "numberCompleted"],
+        "SLAYER" => &["slayerTask", "slayerCompleted", "slayerPoints"],
+        "COMBAT_ACHIEVEMENT" => &["tier", "task"],
+        "ACHIEVEMENT_DIARY" => &["area", "difficulty"],
+        _ => &[],
+    };
+    let mut out = serde_json::Map::new();
+    for k in keep {
+        if let Some(v) = e.get(*k) { out.insert(k.to_string(), v.clone()); }
+    }
+    let truthy = |v: Option<&Value>| match v {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Number(n)) => n.as_f64() != Some(0.0),
+        _ => true,
+    };
+    let from_player = kind == "LOOT" && e.get("category").and_then(|x| x.as_str()).is_some_and(|c| c.eq_ignore_ascii_case("PLAYER"));
+    let pvp_death = kind == "DEATH" && (truthy(e.get("isPvp")) || truthy(e.get("pvp")) || truthy(e.get("killerName")));
+    if kind == "LOOT" {
+        // (each stack's name, how many, their price and the item's id: the readings keep the first 12, a drop guess
+        // looks at every one)
+        let items: Vec<Value> = e.get("items").and_then(|x| x.as_array()).map(|a| a.iter().filter(|i| i.is_object()).map(|i| {
+            let mut it = serde_json::Map::new();
+            for k in ["name", "quantity", "priceEach", "id"] {
+                if let Some(v) = i.get(k) { it.insert(k.to_string(), v.clone()); }
+            }
+            Value::Object(it)
+        }).collect()).unwrap_or_default();
+        out.insert("items".into(), Value::Array(items));
+        if from_player { out.remove("source"); }
+    }
+    if pvp_death { out.insert("isPvp".into(), Value::Bool(true)); }
+    let said = |v: Option<&Value>| v.and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
+    let first = p.get("embeds").and_then(|x| x.as_array()).and_then(|a| a.first());
+    let text = if from_player || pvp_death { String::new() } else {
+        said(first.and_then(|f| f.get("description"))).or_else(|| said(first.and_then(|f| f.get("title"))))
+            .or_else(|| said(p.get("content"))).unwrap_or_default()
+    };
+    serde_json::json!({ "type": kind, "content": text, "extra": Value::Object(out) })
 }
 
 /// Your switches for the broadcast.
@@ -417,6 +480,43 @@ mod tests {
         s.dink.kc_every = 10;
         assert!(!portal_wants(&s, &kc(7, false, false)));
         assert!(portal_wants(&s, &kc(20, false, false)) && portal_wants(&s, &kc(1, false, false)) && portal_wants(&s, &kc(7, true, false)));
+    }
+
+    #[test]
+    fn only_what_the_relay_keeps_leaves_this_pc() {
+        let kc = serde_json::json!({
+            "type": "KILL_COUNT", "playerName": "Lichen Ring", "accountType": "IRONMAN", "dinkAccountHash": "abc123",
+            "discordUser": {"id": "1234", "name": "someone"}, "world": 330, "regionId": 12345, "clanName": "moss",
+            "content": "", "embeds": [{"title": "kill count", "description": "**Lichen Ring** has defeated Vorkath with a completion count of 50",
+                                       "author": {"name": "Lichen Ring"}, "fields": [{"name": "x", "value": "y"}]}],
+            "extra": {"boss": "Vorkath", "count": 50, "isPersonalBest": false, "gameMessage": "...", "party": ["Moss Fern", "Bog"]}});
+        let t = for_relay(&kc);
+        assert_eq!(t, serde_json::json!({"type": "KILL_COUNT", "content": "**Lichen Ring** has defeated Vorkath with a completion count of 50",
+                                         "extra": {"boss": "Vorkath", "count": 50, "isPersonalBest": false}}));
+        let s = t.to_string();
+        for gone in ["abc123", "1234", "330", "12345", "Moss Fern", "IRONMAN", "moss\""] { assert!(!s.contains(gone), "{} went", gone); }
+        // a drop from another player: its stacks, never who it came from, and no line (it names them)
+        let pk = serde_json::json!({"type": "LOOT", "embeds": [{"description": "Lichen Ring has looted 1m from Moss Fern"}],
+            "extra": {"category": "PLAYER", "source": "Moss Fern", "items": [{"name": "Coins", "quantity": 1000000, "priceEach": 1, "id": 995, "rarity": null, "criteria": ["VALUE"]}, 7]}});
+        assert_eq!(for_relay(&pk), serde_json::json!({"type": "LOOT", "content": "",
+            "extra": {"category": "PLAYER", "items": [{"name": "Coins", "quantity": 1000000, "priceEach": 1, "id": 995}]}}));
+        // a death in PvP: that it was, never who
+        let d = serde_json::json!({"type": "DEATH", "content": "Lichen Ring was killed by Moss Fern", "extra": {"isPvp": true, "killerName": "Moss Fern", "valueLost": 9}});
+        assert_eq!(for_relay(&d), serde_json::json!({"type": "DEATH", "content": "", "extra": {"isPvp": true}}));
+        // a plain JSON post's own words, when there's no embed
+        // a boss's drop: every stack, and the kill count it came at (a drop guess decides on it)
+        let many: Vec<Value> = (0..15).map(|n| serde_json::json!({"name": format!("item {}", n), "quantity": 1, "priceEach": n, "id": n, "rarity": 0.1})).collect();
+        let boss = serde_json::json!({"type": "LOOT", "content": "drop", "extra": {"category": "NPC", "source": "Vorkath", "killCount": 51, "npcId": 8061, "party": ["Bog"], "items": many}});
+        let tb = for_relay(&boss);
+        assert_eq!(tb["extra"]["killCount"], 51);
+        assert_eq!(tb["extra"]["source"], "Vorkath");
+        assert_eq!(tb["extra"]["items"].as_array().unwrap().len(), 15);
+        assert_eq!(tb["extra"]["items"][14], serde_json::json!({"name": "item 14", "quantity": 1, "priceEach": 14, "id": 14}));
+        assert!(tb["extra"].get("party").is_none() && tb["extra"].get("npcId").is_none());
+        let lv = serde_json::json!({"type": "LEVEL", "content": "Lichen Ring has levelled Attack to 99",
+            "extra": {"levelledSkills": {"Attack": 99}, "allSkills": {"Attack": 99}, "combatLevel": {"value": 100, "increased": true}}});
+        assert_eq!(for_relay(&lv)["content"], "Lichen Ring has levelled Attack to 99");
+        assert_eq!(for_relay(&lv)["extra"]["combatLevel"]["value"], 100);
     }
 
     #[test]

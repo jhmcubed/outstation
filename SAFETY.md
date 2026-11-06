@@ -2,37 +2,174 @@
 
 The short answer: the portal does what streaming software does (OBS, Discord's screen share) and nothing more. It never touches RuneLite or the game, and it can't press a key or click for you. Everything below can be checked: the code is all here, and every release is built by GitHub from it, not on anyone's computer.
 
+On this page:
+- [In plain words](#in-plain-words): the questions people ask first.
+- [What's in the picture](#whats-in-the-picture): what viewers can see, your login screen included.
+- [What leaves your PC](#what-leaves-your-pc): everything the portal sends, where to, when, and who sees it.
+- [What comes in, and what it can do](#what-comes-in-and-what-it-can-do): everything it hears back, and what none of it can do.
+- [What it does on your PC](#what-it-does-on-your-pc): what it reads and writes, its keys, and how it affects RuneLite.
+- [What the relay keeps](#what-the-relay-keeps), and for how long.
+- [Jagex's rules](#jagexs-rules), [checking it yourself](#checking-it-yourself) and [the technical detail](#the-technical-detail).
+
 ## In plain words
 
 | Does it… | |
 |---|---|
-| touch RuneLite or the game (read or change its memory, add to it, plug into it)? | **No.** It isn't a RuneLite plugin, and it never opens RuneLite's process. |
+| touch RuneLite or the game (read or change its memory, add to it, plug into it)? | **No.** It isn't a RuneLite plugin, and it never opens RuneLite's process. RuneLite runs exactly as it would without it. |
 | play for you: press keys, click, move the mouse? | **No.** It has no way to send a key or a click. |
-| see your password, bank PIN or account? | **No.** It never asks for your Jagex login. It sees only what's drawn in RuneLite's window, as a stream does, so press **Pause** before typing a bank PIN: nothing goes out while paused, and the half second before the press is taken back. |
+| see your password, bank PIN or account? | **No.** It never asks for your Jagex login, and it can't read what you type into RuneLite. It sees only what's drawn in RuneLite's window, as a stream does, so whatever's on the screen is in the picture. Press **Pause** before typing a bank PIN: no picture goes out while paused, and the half second before the press is taken back. Your login screen needs a moment's care: see [What's in the picture](#whats-in-the-picture). |
 | read what RuneLite and Jagex say to each other? | **No.** |
-| watch your keyboard? | **No.** Windows tells it only when one of its own four keys is pressed: the static key (Pause), the sound key (Scroll Lock), the clip key (Insert) and the mask key (End). You can change each. |
+| watch your keyboard? | **No.** Windows tells it only when one of its own four keys is pressed: the static key (Pause), the sound key (Scroll Lock), the clip key (Insert) and the mask key (End). Like any program, it gets what you type into its own window, and nothing typed anywhere else. You can change each key. |
 | show something you'd rather keep to yourself? | **Only what you allow.** Draw your own masks over any part of the game (the chat, the map, the world number): those parts are blacked out on your PC, before a frame is made, so they never leave it. The mask key turns them off and on. |
 | show your mouse pointer? | **Only if you switch it on.** "my cursor in the picture" (off to begin with) has Windows Graphics Capture draw the pointer into the frames where it's over RuneLite. Windows draws it: the portal never reads where the pointer is. |
+| let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. Nothing they send can press a key, click, open a page, change a setting or reach RuneLite. The ring, the ✼ and the chat over the game are drawn in see-through windows of the portal's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off ("pings: the site" keeps the ring off your screen, "✼ on my screen" and "chat over the game" the others), and "pings: off" and "viewers may chat" switch pings and the chat off altogether. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. If you say yes on its first screen, it puts one shortcut in your own Start menu (settings ▸ more takes it out). |
 | need anything else installed? | **No.** Everything it needs comes with Windows 10 and 11: the safety check below fails a release that would need anything more. |
-| let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. The ring, the ✼ and the chat over the game are drawn in see-through windows of the portal's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off, and "viewers may ping" switches pings off altogether. |
+| update itself, or download anything? | **No.** Once on opening it asks GitHub whether there's a newer version, and says so if there is. Getting it is up to you. "more ▸" in the settings turns the asking off. |
 
-**What it reads:**
-- **RuneLite's window, as pictures.** It uses Windows Graphics Capture, the way OBS's Window Capture and Discord's screen share do.
-- **Its sound, if you turn the sound on.** It uses Windows' app audio capture, the way OBS's Application Audio Capture does.
-- **Window titles and the list of running programs,** to find RuneLite.
+## What's in the picture
+
+Everything drawn in RuneLite's game area goes out while you're live. The portal can't tell a secret from a boss fight, so these are yours to mind:
+- **Your login screen.** Logging in through the Jagex Launcher (a Jagex account), nothing's typed on it. An older account types its username there, often an email address, in plain sight (the password shows as stars). Go live after you've logged in, or press Pause while you log in, or switch on **nothing while logged out** (settings ▸ more; it needs RuneLite's "username in title", so the portal can tell). "go live by itself whenever RuneLite opens" goes live at the login screen, so pair it with "nothing while logged out" if you log in there.
+- **The game's chat:** other players' names, private messages, your clan's chat. Mask the chat box (**edit masks**) if you'd rather not show it.
+- **RuneLite's overlays** on the game area (a plugin's boxes, timers, names over players) are part of the picture. RuneLite's side panel and title bar aren't.
+- **Your bank PIN:** press Pause first.
+
+**Windows over RuneLite** (a browser, Discord, the portal's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The live view in the portal's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more. And if the portal can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
+
+## What leaves your PC
+
+This is everything the portal sends. Before it's attached to a channel (an attach code from Jace, or asking for one), it sends only the version check, a request for a portal when you press **ask**, and your friends list's look at the open portals.
+
+**To the relay in your attach code, while you're live** (Jace's, on Cloudflare, unless your code names another), and from there to whoever opens your Outside page (anyone with the link, or only those with your watch code if you set one):
+- **The picture:** RuneLite's game area, shrunk (to begin with 384 px wide and 8 frames a second, which measured about half a megabit a second), as JPEG pictures, with your masks already blacked out. Twice a second, a smaller copy too (192 px wide), for the little live pictures: the portals page, a friend's peek, your own live view.
+  - No picture goes out while you're paused, minimised, or logged out with "nothing while logged out" on.
+  - Each frame waits half a second before it goes, and is dropped if you pause meanwhile, so the moment before a press of Pause never goes out.
+- **Whether the picture's live, on static (Pause) or stopped,** so viewers' pages can say so.
+- **The sound,** only if you turn it on (it's off to begin with):
+  - "the game" is RuneLite's own sound.
+  - "game + desktop" adds everything else your PC plays: music, videos, a Discord call's voices, Windows' own sounds. It goes as a second track, which viewers can turn down.
+  - Never a microphone: the portal only hears what your PC plays.
+  - The sound carries on through static (Pause). It stops when the picture stops for anything else.
+
+**To the relay, whenever the portal's open and attached,** live or not:
+- **The chat window's side:**
+  - the lines you write, under your chat name, and the lines you take back
+  - who you block or ban
+  - your polls and drop guesses
+  - your broadcast's title and your cap on viewers
+  - whether viewers may chat and ping
+- **Your drops and level-ups,** only if you point Dink at the portal, and only the kinds your switches let through (dink ▸, "what shows on your portal"):
+  - each one's kind and its line ("Lichen Ring has defeated Vorkath with a completion count of 50")
+  - a few numbers for your page's readings: the boss and its count, the levels, the loot's items and their value, the collection log's count
+  - Nothing else in Dink's post leaves your PC: not the screenshot, not the details Dink adds about your account or your Discord, not a raid party's names, a PvP killer's name or the player a PvP drop came from. The relay checks again as each arrives.
+- **Messages to a friend's portal** (friends ▸, right-click a name, "message"): your words, with your chat name and channel. They go to their portal's window only, never on either stream.
+- **Your portal's version,** on every connection, so a relay can turn away one too old for it.
+
+**Clips, to the relay and onto your Outside page,** only with "and put them on my Outside page" on (dink ▸, off to begin with):
+- Only the clips that saved themselves, from what Dink told of: a pet, a new collection log slot, a 99, a drop worth a million or more.
+- Each one is the 17 seconds round the moment, at most 768 px wide, with its sound, a still, and a dozen small frames for the hover.
+- A clip is made from what had already gone out: the same frames, masks and all, and the same sound. It shows nothing your viewers didn't.
+- Never the clips you save with the clip key: those stay on your PC. So do all clips while the switch is off.
+
+**To Jace's relay, when you ask for a portal** (the first screen's "no code yet? ask for one"), only when you press **ask**:
+- your player's name as you typed it, and your note for him
+- a random code your PC keeps, to collect the answer
+- While the request waits, the portal asks the same relay every 20 seconds whether he's answered.
+
+**For your friends list** (friends ▸), while anyone's on it, to your relay (Jace's, before you're attached):
+- a request for the relay's list of open portals, every minute (every 20 seconds while the list is open). Nothing about you or your list goes with it: the names are matched on your PC.
+- With the hand over a live friend's name, it watches their portal through the relay for a small picture of it, the way the portals page does: not counted as watching, and stopped when the hand moves away.
+
+**To your Discord,** only if you set the portal to pass Dink's posts on (dink ▸, "do you use Dink with Discord too?"):
+- each post just as Dink made it, its embed and screenshot included
+- to your own webhook addresses, by the rules taken from your Dink settings, so your Discord gets what it got before
+- Nowhere else ever gets a screenshot.
+
+**To GitHub,** once on opening (settings ▸ more turns it off): "is there a newer version?". Nothing about you goes with it.
+
+**Your internet address.** Every connection shows your internet address (IP) to the server it reaches, as any connection on the internet does: Cloudflare (the relay), GitHub, Discord. The relay doesn't write it down (see [What the relay keeps](#what-the-relay-keeps)).
+
+Nothing else leaves your PC. Your settings, your log, your clips folder and your Dink settings stay where they are, unless you copy them somewhere yourself. Your webhook addresses go only to Discord itself. The safety check (below) proves the program has no other address in it.
+
+## What comes in, and what it can do
+
+Here's everything the portal hears back, and what it does with each. All of it is words and numbers the portal shows, or pictures it draws in its own windows. None of it is run, opened, or passed to RuneLite.
+
+**From your viewers,** through the relay, which limits each line: one line at most 300 characters, its control characters taken out, 20 lines in 10 seconds:
+- **Chat lines:** shown in the chat as text, and over the game if "chat over the game" is on. A web address in a line is only text: the portal never opens it. The portal's taskbar button blinks when a viewer writes while it's behind other windows.
+- **Pings** (a viewer pointing at a spot, one every half second at most): a line in the chat, and, with "pings: the site + my screen", a ring over RuneLite in the portal's own see-through window.
+- **✼ signals:** counted, and a ✼ floats over the game, with "✼ on my screen" on.
+- **Votes and drop guesses:** the counts.
+- **Who's watching:** the names they typed for the chat. The portal is never told anything else about them: no address, no account.
+
+**From the relay:**
+- whether you're live, how many watch, the upload it's sending them, and the chat so far as the portal opens
+- whether this version is too old for it: the portal then stops and says where to get a newer one
+- an attach code, once Jace answers your request for a portal: the portal attaches itself with it, as if you'd pasted it
+
+**From friends' portals:** their messages, in a chat tab of their own.
+
+**From Jace, the relay's keeper:** a notice, one line in the chat, shown once. Apart from the answer to your own request, it's the only thing from outside that changes anything in your settings: it writes which notice was shown last, so it isn't shown again.
+
+**From GitHub:** the newest version's number. If it's newer, a line in the window says so.
+
+**From Dink, on your own PC:** its posts, at `127.0.0.1`, an address nothing beyond your PC can reach.
+
+**None of it can:**
+- press a key or click
+- reach into RuneLite or the game
+- change what the portal captures or sends
+- open a web page: the portal opens only ghillie.wiki's pages and this one, and only when you click
+- start a program, or read your files
+
+**What Jace can and can't do,** as the relay's keeper:
+- He can:
+  - give your channel a new key, or take it back (your portal stops and says why)
+  - send every portal a notice
+  - take a clip off your page
+  - see the relay's list of channels: each one's version, time on air this month, title, and whether it's live and how many watch
+  - read everything the relay keeps, below, since it's in his Cloudflare account
+- He can't reach your PC, see your settings, your webhook addresses or your Dink settings, change anything in your portal, or see anything it doesn't send.
+
+## What it does on your PC
+
+**It reads:**
+- **RuneLite's window, as pictures,** with Windows Graphics Capture, the way OBS's Window Capture and Discord's screen share do. On a PC without it, or where it fails: PrintWindow (Windows asks RuneLite's window to draw itself into a picture). If that comes back black: that part of the screen.
+- **Its sound,** if you turn the sound on, with Windows' app audio capture, the way OBS's Application Audio Capture does.
+- **Window titles and the list of running programs,** once a second, to find RuneLite (and, for "nothing while logged out", whether its title names who's logged in).
 - **Your PC's upload counter,** for the upload line.
+- **The clipboard,** only:
+  - when you paste (Ctrl+V, or a paste button)
+  - once on opening, while it isn't attached yet, to see whether an attach code is waiting there (anything else on the clipboard is left alone)
+  - when you press "read my Dink settings" (Dink's own export)
+- **What you type into its own window,** as any program does. While you're changing one of its keys in the settings, it reads the next key pressed in its window.
 
-**Where things go:**
-- **Your picture, sound and chat:** only to the relay in your attach code.
-- **Dink's posts:** only to the portal on your own PC (`127.0.0.1`, which nothing outside your PC can reach). They go on to your Discord webhook if you set one.
-- **GitHub:** once on opening, to see whether there's a newer version. "more ▸" in the settings turns that off.
-- **The friends list** (friends ▸): while anyone's on it, the relay's list of open portals, read every minute (every 20 seconds while the list is open), to show who's live. Nothing about you goes with it. Clicking a name asks Windows to open that player's Outside page on ghillie.wiki in your browser. Those pages, and this one (the attach screen's link to SAFETY.md on GitHub), are the only pages the portal ever opens, and opening them is the only thing it ever asks Windows to start. With the hand over a live friend's name, it watches their portal through the same relay, as their page would, for a small picture of it; the hand gone, it stops. When a friend goes live, Windows shows its own notification (only if the portal's in your Start menu: Windows shows a program's notifications only then); nothing about it is sent anywhere.
-- **Asking for a portal** (the first screen's "no code yet? ask for one"): only when you press **ask**, to the portal's relay (Jace's, on Cloudflare: `relay.ghillie.workers.dev`): your player's name, your note for him, and a random code your PC keeps to collect the answer. While the request waits, the portal asks the same relay every 20 seconds whether he has answered.
+**It writes, and nowhere else:**
+- `%APPDATA%\outside-portal`:
+  - `settings.json`, its settings. **This file holds your channel's key and your Discord webhook addresses:** anyone with it could stream on your channel or post to your Discord, so keep it to yourself.
+  - `portal.log`, what it did (started again past 2 MB). "copy my log" (settings ▸ more) copies its last lines with the key, codes and webhook addresses taken out.
+  - `crash.txt` after a crash, and `portal.ico`, its icon.
+- `Videos\outside-portal` (or the folder you pick): your clips. A clip's copy for your Outside page passes through a file in your temporary folder, deleted once read.
+- The Start menu: one shortcut, only if you say yes.
+- The clipboard: only when you copy (Ctrl+C, or a copy button), and Dink's import when you press "read my Dink settings" ("undo" puts your old Dink settings back on it).
 
-Clips (the replay buffer) are written on your own PC, into Videos\outside-portal, by Windows' own video encoder, when you press the clip key or, if you leave "clips by themselves" on, when Dink tells of a pet, a new collection log slot, a 99 or a big drop. They stay on your PC, unless you switch on **"and put them on my Outside page"** (dink ▸, off to begin with): then each clip that saved itself also goes to your relay as a copy of its own (the 17 seconds round the moment, at most 768 px wide, with a still and a few small frames for the hover), and anyone who opens your Outside page can watch it. Only those clips, never the ones from the clip key. The live view in the window watches your own portal through the relay, as any viewer would.
+**It listens** only on `127.0.0.1` (port 8796 to begin with), for Dink. Nothing beyond your PC can reach it.
 
-Nothing else. The safety check below proves the program has no other address in it.
+**It shows:**
+- its own window
+- its see-through windows over RuneLite: the pings, the ✼ and the chat over the game. Clicks pass through them.
+- the ✼ by the clock (the tray). Minimising the window puts it there, and the stream goes on.
+- Windows' own notification when a friend goes live, only with the Start menu shortcut
+
+**It starts nothing** but your browser, on a ghillie.wiki page or this one, when you click a link. It doesn't start with Windows, installs nothing, needs no admin, and closing it ends it.
+
+**Its four keys are its own while it's open.** Windows hands Pause, Scroll Lock, Insert and End (or the keys you pick) to the portal wherever you press them, so RuneLite doesn't get them while the portal's open. If RuneLite or one of its plugins uses one of them, give the portal another (settings ▸ hotkeys). A key another program already holds says so there.
+
+**How it affects RuneLite:**
+- Nothing inside RuneLite changes: its files, settings, memory and plugins are untouched. It runs the same with the portal open or closed.
+- Like streaming software, the portal shares your PC: some CPU and GPU to copy and shrink each frame (more for more frames a second and wider pictures), and some of your upload (the window's upload line shows it). `outside-portal.exe --bench 30` times each step on your PC. If RuneLite slows down, lower the portal's frames a second or its width.
+- On Cloudflare, more viewers don't cost you more upload: the relay sends each of them their own copy. A relay you run on your own PC (`relay-py`) sends every copy from your PC.
 
 ## What the relay keeps
 
@@ -41,14 +178,24 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 **For you, streaming:**
 - your channel's name, and the SHA-256 of its key (never the key itself)
 - your watch code, if you set one, and your broadcast's title
+- your cap on viewers, whether viewers may chat and ping, and the chat names your portal has used (so no viewer can take one)
 - the version of the portal you run, and your time on air by month (the last four months, so Jace can see what the relay costs)
-- the chat so far (its last 50 lines), the poll and the drop guess going on, who you've banned, and the last 8 field reports from Dink
+- the chat so far (its last 50 lines), the poll and the drop guess going on, and who you've banned
+- the last 8 reports from Dink (each one's kind, its line and its numbers), and each boss's last kill count, for drop guesses
+- this stream's summary, for your page's readings and the recap after it: the bosses and their kill counts, the loot's total and best drop, the levels reached, your collection log's count and the last 5 pets. It's replaced when you next go live, unless that's within 15 minutes of the stream ending (then it carries on).
 
 Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps.
 
-**Messages between portals** (your friends list's "message"): a message waiting for a portal that's closed, until it next opens: who it's from, their words and when. At most 20, each for a week. One delivered isn't written down anywhere; your portal keeps a conversation only while it's open.
+**What's public:** while your channel has no watch code, the relay's list of open portals (on the portals page) shows that it's there, whether it's live, how many watch, its title, and the boss and kill count it's on while it's live. A watch code takes it off the list.
 
-**Your clips on your Outside page,** only if you switched it on: each one's copy, its still and its few small frames, and what it was ("pet vorki"), when, and how long. At most 20, the oldest going first, and each for 30 days. Your portal lists them (dink ▸), keeps up to 3 for good (never pushed out by newer ones, never too old) and takes any down; Jace can take any down too.
+**Messages between portals** (your friends list's "message"):
+- A message waiting for a portal that's closed is kept until that portal next opens: who it's from (their channel and chat name), their words and when. At most 20, each for a week.
+- One delivered isn't written down anywhere. Your portal keeps a conversation only while it's open.
+
+**Your clips on your Outside page,** only if you switched it on:
+- each one's copy, its still and its few small frames, and what it was ("pet vorki"), when, and how long
+- At most 20, the oldest going first, and each for 30 days.
+- Your portal lists them (dink ▸), keeps up to 3 for good (never pushed out by newer ones, never too old) and takes any down. Jace can take any down too.
 
 **For viewers:**
 - the name they type for the chat, and their lines in it (the chat's last 50, everyone's together)
@@ -62,7 +209,7 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 
 A request nobody answers goes after 14 days, and an answer nobody collects goes after 7. The address a request came from is held in memory for an hour (3 requests an hour from one place). An address that sends wrong keys is held in memory for a minute.
 
-All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops.
+All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops, except clips, which it keeps in a folder.
 
 ## Jagex's rules
 
@@ -70,20 +217,20 @@ The [Rules of RuneScape](https://legal.jagex.com/docs/rules/rules-of-runescape) 
 
 Two things to know, said plainly:
 - **The chat.** The same rules list software that "has its own chat feature separate from our game chat that does not follow our rules". The portal's chat is outside the game, as a stream's chat is, and it's yours to keep within Jagex's rules: right-click a line to take it off everyone's page, or to block a viewer.
-- **Pings over the game.** Jagex's [client guidelines](https://oldschool.runescape.wiki/w/Update:Third_Party_Client_Guidelines) don't allow extra indicators for boss mechanics, "except in cases where this is a manually triggered external helper". A ping is a person pointing, in a window that isn't RuneLite's. If you'd rather not have even that during bossing, untick "pings on my screen": viewers' pings then show only in the chat and on their own pages.
+- **Pings over the game.** Jagex's [client guidelines](https://oldschool.runescape.wiki/w/Update:Third_Party_Client_Guidelines) don't allow extra indicators for boss mechanics, "except in cases where this is a manually triggered external helper". A ping is a person pointing, in a window that isn't RuneLite's. If you'd rather not have even that during bossing, choose "pings: the site": viewers' pings then show only in the chat and on their own pages.
 
 Nobody but Jagex can promise what Jagex will decide; their rules say they "may choose to mute or ban an account for any reason". What the portal can do is stay well inside what streaming software does, and let you check that it does.
 
 ## Checking it yourself
 
-1. **The code is all here**, under the MIT licence. The client is `client/src`, about a dozen files.
+1. **The code is all here**, under the MIT licence. The client is `client/src`, 26 files. Each one says at its top what it does.
 2. **Releases are built by GitHub, from this code.** Each release lists the commit it was built from and the program's SHA-256. Once the repository is public, each also carries GitHub's build attestation: [GitHub CLI](https://cli.github.com) can confirm the file came from this repository's own build, unchanged:
 
    ```bash
    gh attestation verify outside-portal.exe --repo jhmcubed/outside-portal
    ```
 
-3. **The safety check runs on every release's own program.** Any Windows program lists, inside itself, every Windows function it can call, the libraries' included. `tests/safety_check.py` reads that list out of the file and fails the release if anything that could reach into another program, play for you or watch the keyboard is in it. It also lists every library the program loads, and fails if any of them doesn't come with Windows. It then checks the client's own code the same way, and checks that the only addresses written into it are the ones above. Run it on your own copy (Python, nothing to install):
+3. **The safety check runs on every release's own program.** Any Windows program lists, inside itself, every Windows function it can call, the libraries' included. `tests/safety_check.py` reads that list out of the file and fails the release if anything that could reach into another program, play for you or watch the keyboard is in it. It also lists every library the program loads, and fails if any of them doesn't come with Windows. It then checks the client's own code the same way, and checks that the only addresses written into it are the ones on this page. Run it on your own copy (Python, nothing to install):
 
    ```bash
    py tests/safety_check.py outside-portal.exe
@@ -113,20 +260,33 @@ Three of them are in the program's list all the same, brought by the libraries i
 
 The check fails on any function from the list that isn't one of these, so a new one can't slip in unseen.
 
-Everything it touches in Windows, by file:
+Everything it touches in Windows and on the network, by file:
 - `capture.rs`:
   - RuneLite's window as pictures: Windows Graphics Capture, or PrintWindow, or the screen if those come back black
-  - the window's size and place
-  - whether it's minimised
-- `sound.rs`: process loopback (`ActivateAudioInterfaceAsync`): one program's sound, or everything but it.
+  - the window's size and place, and whether it's minimised
+- `transmit.rs`: the frames to the relay's transmit socket (each held half a second first), and the log.
+- `sound.rs`: process loopback (`ActivateAudioInterfaceAsync`): one program's sound, or everything but it, cut into Opus packets.
 - `win.rs`:
   - finding RuneLite's window and its process (window titles, the process list)
   - your network's byte counter (`GetIfTable2`)
-  - the clipboard (when you copy or paste with Ctrl+C, X and V or the copy buttons; for the attach code and Dink's address; and Dink's own export, read only when you press "read my Dink settings", with an import for Dink put back in its place)
-- `hotkeys.rs`: `RegisterHotKey` for its four keys.
+  - the clipboard (when you copy or paste with Ctrl+C, X and V or the copy buttons; for the attach code, and once on opening while not attached; and Dink's own export, read only when you press "read my Dink settings", with an import for Dink put back in its place)
+  - opening a page in your browser (`ShellExecuteW`), refused for anything but ghillie.wiki's pages and this one
+  - blinking the portal's own taskbar button (`FlashWindowEx`)
+- `hotkeys.rs`: `RegisterHotKey` for its four keys (and, while you're changing one in the settings, a press of one of them handed to the window instead of acting).
+- `autolive.rs`: going live by itself when RuneLite's window appears, and ending the stream 30 s after it's gone (both only if you switch them on).
+- `desk.rs`, `net.rs`: the chat window's socket to the relay, and the sockets themselves (TLS from rustls).
+- `dink.rs`: a web server on `127.0.0.1` only; what of each post goes to the relay (`for_relay`), and each post on to your Discord under your rules.
+- `dinksetup.rs`: reading Dink's export and writing its import (the clipboard, only when you press the button).
 - `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder; and, for your Outside page, the copy of its own (through a file in your temporary folder, deleted once read).
 - `clipsup.rs`: with "put them on my Outside page" on, that copy sent to your relay, and the list of what's there.
-- `feed.rs`: the live view: your own channel watched through the relay.
-- `dink.rs`: a web server on `127.0.0.1` only.
-- `ui.rs`: its own windows (the see-through ones over RuneLite included), the tray icon, and Windows' symbol font. It acts only on windows of its own program, never on another that happens to share a title.
-- `cursor.rs`: the portal's own cursor (ghillie.wiki's ✼), made from its pixels with `CreateIconIndirect` and shown with `SetCursor` (at the window's edges, Windows' own resize arrows, `LoadCursorW`). To show it, each window of the portal's own program is wrapped with comctl32's `SetWindowSubclass` (found with `EnumWindows`, kept to windows whose process is the portal's). No other program's window is ever wrapped, RuneLite's least of all, and no hook is set: past the portal's windows the cursor is Windows' own.
+- `feed.rs`: the live view, and a friend's peek: a channel watched through the relay as a looker (not counted as watching).
+- `friendlist.rs`: the relay's list of open portals, read while your list has anyone on it.
+- `ask.rs`: asking for a portal, and looking for the answer.
+- `notify.rs`: Windows' own notification when a friend goes live (`ToastNotificationManager`).
+- `shortcut.rs`: the Start menu's shortcut (Windows' shell link, with the program's id for its notifications).
+- `crash.rs`: a crash written into the log and `crash.txt`, and Windows' message box saying so.
+- `settings.rs`: the settings file.
+- `ui.rs`: its own windows (the see-through ones over RuneLite included), the tray icon, the check for a newer version on GitHub, and Windows' symbol font. It acts only on windows of its own program, never on another that happens to share a title.
+- `cursor.rs`: the portal's own cursor (ghillie.wiki's ✼), made from its pixels with `CreateIconIndirect` and shown with `SetCursor` (at the window's edges, Windows' own resize arrows, `LoadCursorW`). To show it, each window of the portal's own program is wrapped with comctl32's `SetWindowSubclass` (found with `EnumWindows`, kept to windows whose process is the portal's). The same wrapping reads the key pressed in the portal's window while one of its keys is being changed. No other program's window is ever wrapped, RuneLite's least of all, and no hook is set: past the portal's windows the cursor is Windows' own.
+- `main.rs`, `theme.rs`, `clock.rs`: starting up, the look, and the frames' clock. Nothing of Windows beyond the rest.
+- `station.rs`, `keeper.rs`: the keeper's build only (above).

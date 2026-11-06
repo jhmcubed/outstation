@@ -4,7 +4,7 @@ A live portal from your RuneLite to your Outside page on [ghillie.wiki](https://
 
 **Being built.** The relay and the portal both work, tested on one PC. Nothing is released yet.
 
-**Is it safe for my account?** It does what streaming software does and nothing more: it never touches RuneLite or the game, and it can't press a key or click for you. `SAFETY.md` says it in plain words, and says how to check every line yourself.
+**Is it safe for my account?** It does what streaming software does and nothing more: it never touches RuneLite or the game, and it can't press a key or click for you. [SAFETY.md](SAFETY.md) says it in plain words: what's in the picture, everything that leaves your PC and where it goes, everything that comes back and what none of it can do, what the relay keeps, and how to check every line yourself.
 
 <p>
   <img src="docs/pictures/first.png" width="32%" alt="the first screen: paste an attach code, or ask for one with your player's name and a note">
@@ -19,7 +19,9 @@ The first screen, ready to go live, and live with two viewers chatting. (Picture
 - **The portal** runs on your PC beside RuneLite. It reads RuneLite's window the way streaming software does, and sends it to the relay. It never touches the game: nothing a viewer does becomes input to it.
 - **The relay** passes your stream on to everyone watching, so your home connection sends one copy however many watch. It runs on Cloudflare.
 - **Your channel** is named after your player. Its key is yours alone.
-- **What goes out:** RuneLite's game area, and nothing else on your screen. It stops while you're paused (the Pause key) or minimised, and the half second before either is taken back. If you use Dink, your level-ups, drops and the like go out too, but nothing that names another player.
+- **What goes out:** RuneLite's game area (not its side panel, and, but for one rare fallback, not the windows over it), your sound only if you turn it on, and the chat. No picture goes out while you're paused (the Pause key) or minimised, and the half second before either is taken back. If you use Dink, your level-ups, drops and the like go out too: only each one's line and a few numbers, never the screenshot, and nothing that names another player.
+- **What comes back:** viewers' chat lines, pings, ✼ and votes, shown as text and drawn in the portal's own windows. Nothing a viewer sends can press a key, click, open a page or reach RuneLite.
+- **Whatever's drawn in the game area is in the picture:** your login screen (an older account's username is typed there in plain sight), the game's chat with other players' names, RuneLite's overlays. Log in before going live, and mask what you'd rather not show (SAFETY.md, "What's in the picture").
 
 ## Setting it up
 
@@ -35,14 +37,15 @@ The first screen, ready to go live, and live with two viewers chatting. (Picture
 
 ## While you stream
 
-- **Press Pause before typing a bank PIN.** Viewers see static, and the half second before the press is taken back. Every key can be changed in the settings.
+- **Press Pause before typing a bank PIN.** Viewers see static, and the half second before the press is taken back. The sound, if it's on, and the chat carry on. Every key can be changed in the settings.
+- **Log in before going live,** or switch on "nothing while logged out" (settings ▸ more; it needs RuneLite's "username in title"). An older account types its username on RuneLite's login screen, where viewers would see it.
 - **Minimised, nothing goes out.**
 - **Masks:** **edit masks** lets you black out any part of the game (the chat, the world number) on your own PC, before a frame leaves it.
-- **The sound:** off, the game, or game + desktop. Never a microphone.
+- **The sound:** off (to begin with), the game, or game + desktop. "game + desktop" is everything your PC plays, a Discord call's voices included. Never a microphone.
 - **The chat:** right-click a line to take it back, or to block or ban whoever wrote it. "viewers may chat" switches the chat off.
 - **Clips:** the clip key (Insert) saves the last seconds as a video in `Videos\outside-portal` (give the replay buffer some seconds in the settings first). With Dink, a pet, a new collection log slot, a 99 or a drop worth a million or more saves one by itself, named for it (**dink ▸**, "clips by themselves"). Switch on "and put them on my Outside page" there, and those go under "recovered footage" on your page too: a still each, moving under the hand, playing when pressed. The newest 20 stay for 30 days; **keep** holds up to 3 for good, and the same drawer takes any down.
 - **Going live by itself:** settings ▸ more ▸ **go live by itself whenever RuneLite opens**, and with it **end the stream when RuneLite closes** (after 30 s, so an update's restart doesn't end it). If you press end stream while RuneLite's open, the portal stays off air until RuneLite next opens.
-- **Dink and your Discord, as Jace has them:** dink ▸ ▸ "on to your Discord too". Type `::dinkexport all` in RuneLite's chat, press **read my Dink settings**, type `::dinkimport`, then delete your Discord address from Dink's webhook list (the portal names the boxes). The portal then hears everything Dink can tell it, and your Discord keeps getting just what it got before, passed on by the portal while it's open. **undo** puts your old Dink settings back on the clipboard.
+- **Dink and your Discord, as Jace has them:** dink ▸, "do you use Dink with Discord too?", yes. Type `::dinkexport all` in RuneLite's chat, press **read my Dink settings**, type `::dinkimport`, then delete your Discord address from Dink's webhook list (the portal names the boxes). The portal then hears everything Dink can tell it, and your Discord keeps getting just what it got before, passed on by the portal while it's open. **undo** puts your old Dink settings back on the clipboard.
 - **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their portal is live (lime), off air (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete. Hover over a live one for a small live view of their portal. The chat says "Moss Fern has gone live." when one does, and so does a Windows notification if the portal's in your Start menu.
 
 ## If something goes wrong
@@ -50,6 +53,8 @@ The first screen, ready to go live, and live with two viewers chatting. (Picture
 - **"RuneLite" isn't ticked:** RuneLite has to be open and not minimised, and its window's title has to start with "RuneLite" (settings ▸ more).
 - **"logged in" isn't ticked:** log in, or turn on RuneLite's "username in title". It's only needed for "nothing while logged out" (settings ▸ more).
 - **The picture is black:** in settings ▸ more, try another "taken by".
+- **Something over RuneLite shows in the live view:** the portal fell back to taking that part of the screen. Try another "taken by" in settings ▸ more.
+- **A key does nothing in RuneLite:** the portal holds its four keys (Pause, Scroll Lock, Insert, End) while it's open. Give it others in the settings' hotkeys.
 - **Dink isn't heard:** the address from **dink ▸** has to be on a line of its own in Dink's Primary Webhook URLs, in the RuneLite profile you're playing on.
 - **"too old for the relay":** download the newest release and open that one.
 - **It crashed:** it says so, and says so again the next time it opens. In the settings, under **more**, press **copy my log**, then paste it into a new issue here ("Something went wrong") or send it to Jace. Your key, codes and webhook addresses are taken out first.
@@ -62,7 +67,7 @@ Windows 10 or 11, 64-bit. It uses Windows Graphics Capture, as OBS does, and fal
 
 Close it (from the ✼ by the clock, if it's in the tray), then delete:
 - `outside-portal.exe`, wherever you put it
-- `%APPDATA%\outside-portal`: its settings, its log and its icon
+- `%APPDATA%\outside-portal`: its settings, its log and its icon (the settings hold your channel's key and your Discord webhook addresses: don't send that folder to anyone)
 - `Videos\outside-portal`, if you saved clips
 - the Start menu's shortcut, if you added one (settings ▸ more takes it out)
 

@@ -3,14 +3,14 @@
 A Worker (`src/index.ts`) routes each socket to its channel's Durable Object (`src/channel.ts`). The protocol is `../docs/protocol.md`, and it's the same as `../relay-py/relay.py`'s.
 
 It uses WebSocket Hibernation. A channel that's off air, with only viewers and the chat waiting, sleeps between messages. What has to survive a sleep is kept in the object's own storage:
-- the key's hash
-- the watch code
-- the chat so far
-- the poll
-- the blocks
-- the reports
+- the key's hash and the watch code
+- the title, the cap on viewers, whether viewers may chat and ping, the desk's chat names
+- the chat so far, the poll and the drop guess, the blocks and bans
+- the reports, the stream's summary and each boss's last kill count
+- the version that last transmitted, and the time on air by month
+- messages held for the portal, and the list of its clips (the clips' files are in R2)
 
-While live, the frames keep the object awake. The last frame lives in memory only.
+While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
 
 ## On this PC
 
