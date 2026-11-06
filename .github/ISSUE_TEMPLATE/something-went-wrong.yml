@@ -1,0 +1,30 @@
+name: Something went wrong
+description: The portal crashed, wouldn't go live, or did something odd.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for saying. In the portal, open the settings, then **more**, and press **copy my log**: it puts the portal's log on the clipboard with your key, codes and webhook addresses taken out. Paste it in the last box.
+  - type: input
+    id: version
+    attributes:
+      label: The portal's version
+      description: The log's first line says it (for example, outside-portal 0.1.0).
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      placeholder: Windows 11
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what it did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Its log
+      description: "copy my log", pasted here.
+      render: text

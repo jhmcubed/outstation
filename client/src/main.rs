@@ -19,6 +19,7 @@ mod ask;
 mod capture;
 mod clip;
 mod clock;
+mod crash;
 mod cursor;
 mod desk;
 mod dink;
@@ -48,6 +49,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = arg_after(&args, "--settings").map(PathBuf::from).unwrap_or_else(settings::default_path);
     transmit::set_log(path.with_file_name("portal.log"));
+    crash::install(path.with_file_name("portal.log"));
     let shared = settings::Shared::open(path.clone());
 
     if let Some(file) = arg_after(&args, "--once") {

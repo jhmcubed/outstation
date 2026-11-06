@@ -416,6 +416,9 @@ impl App {
             }
             if std::env::args().any(|a| a == "--tray") { app.hidden = true; }
         }
+        if let Some(what) = crate::crash::last_time() {
+            app.note(format!("the portal stopped unexpectedly last time ({}). settings ▸ more ▸ \"copy my log\" puts what happened on the clipboard, to send to the listening post", what));
+        }
         if !s.attached() {
             if let Some(code) = win::paste_text().filter(|c| c.trim().starts_with("portal1:")) {
                 app.attach_code = code.trim().to_string();
@@ -1234,11 +1237,14 @@ impl SettingsPanel {
                 ui.painter().image(tex.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
                 let capped = if self.width > img.w { format!("  (the game is only {} px wide)", img.w) } else { String::new() };
                 let mbit = kb * self.fps as f64 * 8.0 / 1024.0;
-                weight = format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each viewer\n{} watching at most: about {:.1} Mbit/s up in all",
-                                 w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, self.viewers, mbit * self.viewers as f64);
-                if settings.get().relay.starts_with("wss://") {
-                    weight += "\n(on Cloudflare your upload sends one copy, however many watch)";
-                }
+                weight = if settings.get().relay.starts_with("wss://") {
+                    // (on Cloudflare the relay sends each viewer their copy: this PC sends one, however many watch)
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, however many watch\n(the relay sends each of the {} at most their own copy)",
+                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, self.viewers)
+                } else {
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each viewer\n{} watching at most: about {:.1} Mbit/s up in all",
+                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, self.viewers, mbit * self.viewers as f64)
+                };
             }
         }
         ui.label(rich(&weight, 16.0, LIME()));
@@ -1432,6 +1438,9 @@ fn decode(jpg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 /// The rest of the capture's and the channel's settings (what settings.json held by hand).
+/// when "copy my log" was last pressed (the drawer says so for a moment)
+static LOG_COPIED: Mutex<Option<Instant>> = Mutex::new(None);
+
 fn more(ui: &mut egui::Ui, settings: &Shared) {
     egui::CollapsingHeader::new(rich("more", 16.0, LIME())).id_salt("more").show(ui, |ui| {
         let mut s = settings.get();
@@ -1491,6 +1500,18 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         if detach {
             s.key.clear();
         }
+        ui.add_space(8.0);
+        ui.label(rich("if something goes wrong", 16.0, LIME()));
+        ui.horizontal_wrapped(|ui| {
+            if button(ui, "copy my log", true, None)
+                .on_hover_text(tip("the log's last 400 lines and this version, on the clipboard, to paste to the listening post. Keys, watch codes, attach codes and Discord webhook addresses are taken out first.")).clicked() {
+                win::copy_text(&crate::crash::log_for_sending());
+                *LOG_COPIED.lock().unwrap() = Some(Instant::now());
+            }
+            let copied = LOG_COPIED.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(5));
+            ui.label(rich(if copied { "on the clipboard (keys and codes taken out)" } else { "what the portal did, for a bug report" }, 14.0, if copied { TEAL() } else { QUIET() }));
+        });
+        ui.label(wrapped(&format!("its log: {}", settings.path.with_file_name("portal.log").display()), 13.0, QUIET(), ui.available_width()));
         if serde_json::to_string(&s).unwrap_or_default() != before {
             let s2 = s.clone();
             let _ = settings.update(|x| *x = s2);
