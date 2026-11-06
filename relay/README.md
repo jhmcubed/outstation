@@ -49,7 +49,7 @@ npx wrangler secret put ADMIN_TOKEN
 npm run deploy
 ```
 
-It goes up as `https://outside-portal.<subdomain>.workers.dev`, and the sockets are `wss://` at the same address.
+It goes up as `https://relay.<subdomain>.workers.dev` (Jace's: `https://relay.ghillie.workers.dev`), and the sockets are `wss://` at the same address.
 
 ## Settings
 

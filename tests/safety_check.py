@@ -193,6 +193,8 @@ def check_source():
 # attach code, your Discord webhook if you set one).
 ADDRESSES = {
     "https://api.github.com/repos/jhmcubed/outside-portal/releases/latest": "is there a newer version? (check_updates)",
+    "https://relay.ghillie.workers.dev": "the listening post's relay: where asking for a portal goes (ask.rs HOME_RELAY), and the "
+                                         "friends list's open portals before you're attached",
     "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; and the Outside pages the "
                             "friends list opens in your browser when you click a name (win.rs open_page: ghillie.wiki's only)",
     "http://127.0.0.1": "Dink's address on this PC, shown to you",

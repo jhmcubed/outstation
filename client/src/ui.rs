@@ -829,7 +829,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     if app.keeper.setup_open {
         ui.horizontal(|ui| {
             ui.label(rich("the relay's address:", 14.0, GREY()));
-            field(ui, &mut app.keeper.relay, 300.0, "outside-portal.<you>.workers.dev", false);
+            field(ui, &mut app.keeper.relay, 300.0, "relay.ghillie.workers.dev", false);
         });
         ui.horizontal(|ui| {
             if button(ui, "save", true, None).clicked() {

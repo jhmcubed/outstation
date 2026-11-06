@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// The keeper's relay on Cloudflare, where asking goes (its workers.dev address). Set at the deploy; while it's empty,
 /// asking isn't open yet and the attach screen says so. (A new address here goes into tests/safety_check.py's
 /// ADDRESSES and SAFETY.md too.)
-pub const HOME_RELAY: &str = "";
+pub const HOME_RELAY: &str = "https://relay.ghillie.workers.dev";
 
 /// how often a request is looked at again while it waits
 const EVERY: Duration = Duration::from_secs(20);
