@@ -33,6 +33,32 @@ Clips (the replay buffer) are written on your own PC, into Videos\outside-portal
 
 Nothing else. The safety check below proves the program has no other address in it.
 
+## What the relay keeps
+
+The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. Here is everything it writes down, and for how long.
+
+**For you, streaming:**
+- your channel's name, and the SHA-256 of its key (never the key itself)
+- your watch code, if you set one, and your broadcast's title
+- the version of the portal you run, and your time on air by month (the last four months, so Jace can see what the relay costs)
+- the chat so far (its last 50 lines), the poll and the drop guess going on, who you've banned, and the last 8 field reports from Dink
+
+Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps. Clips are made on your own PC only.
+
+**For viewers:**
+- the name they type for the chat, and their lines in it (the chat's last 50, everyone's together)
+- a random number their own browser made, which isn't tied to them: it counts one vote per device in polls and drop guesses, and it's what a block or a ban holds on to
+
+A viewer's address (IP) isn't written down, and the relay never learns their name in the game or anything about their account.
+
+**Asking for a portal:**
+- the name and note you typed, and the SHA-256 of your portal's pickup code
+- once Jace says yes, the attach code, until your portal collects it
+
+A request nobody answers goes after 14 days, and an answer nobody collects goes after 7. The address a request came from is held in memory for an hour (3 requests an hour from one place). An address that sends wrong keys is held in memory for a minute.
+
+All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops.
+
 ## Jagex's rules
 
 The [Rules of RuneScape](https://legal.jagex.com/docs/rules/rules-of-runescape) forbid software that plays for you, changes the game, or "tries to look at or change the communications" between your device and the game worlds. The portal does none of those. Jagex's [Fan Content Policy](https://legal.jagex.com/docs/policies/fan-content-policy) allows streaming your gameplay (it names YouTube and Twitch).

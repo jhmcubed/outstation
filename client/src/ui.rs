@@ -1717,6 +1717,7 @@ const SAFE: &[&str] = &[
     "it doesn't watch your keyboard: Windows tells it only when one of its own four keys is pressed (Pause, Scroll Lock, Insert and End, to begin with)",
     "it sends only to the relay in your attach code, your Discord webhook if you set one, and GitHub to look for updates",
     "it needs no admin, installs nothing, and doesn't start with Windows",
+    "the relay keeps your channel's name, a hash of its key, your title and the chat's last lines: your picture and sound pass through and are never written down",
 ];
 
 fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
