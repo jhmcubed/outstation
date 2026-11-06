@@ -277,6 +277,29 @@ class Fanout(Base):
         v = await self.watch()
         self.assertTrue((await next_of(v, "relay"))["set"])
 
+    async def test_the_desks_title_reaches_every_viewer_and_newcomers(self):
+        # the broadcast's title (11/06/2026): one line, at most 100 characters, in every status line
+        await self.tx()
+        desk = await self.desk()
+        v = await self.watch()
+        self.assertEqual((await next_of(v, "relay"))["title"], "")
+        await desk.send(json.dumps({"title": "  zulrah\nuntil the pet  "}))
+        st = await next_of(v, "relay")
+        while st["title"] == "":
+            st = await next_of(v, "relay")
+        self.assertEqual(st["title"], "zulrah until the pet")
+        late = await self.watch()
+        self.assertEqual((await next_of(late, "relay"))["title"], "zulrah until the pet")
+        await desk.send(json.dumps({"title": "x" * 300}))
+        while len(st["title"]) < 100:
+            st = await next_of(v, "relay")
+        self.assertEqual(st["title"], "x" * 100)
+        await desk.send(json.dumps({"title": 5}))      # (not words: thrown away)
+        await desk.send(json.dumps({"title": ""}))
+        while st["title"]:
+            st = await next_of(v, "relay")
+        self.assertEqual(st["title"], "")
+
     async def test_the_transmitter_hears_how_many_watch(self):
         tx = await self.tx()
         self.assertEqual((await next_of(tx, "relay"))["viewers"], 0)
@@ -296,6 +319,11 @@ class Listed(Base):
         got = await asyncio.to_thread(listed)
         self.assertIn(self.ch, got)
         self.assertTrue(got[self.ch]["live"])
+        self.assertEqual(got[self.ch]["title"], "")
+        desk = await self.desk()
+        await desk.send(json.dumps({"title": "barrows"}))
+        await self.pause(2)
+        self.assertEqual((await asyncio.to_thread(listed))[self.ch]["title"], "barrows")
         tx.close()
         await self.tx("a-code")
         await self.pause(2)

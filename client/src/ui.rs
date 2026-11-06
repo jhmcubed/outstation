@@ -44,6 +44,7 @@ const PINGS: [(u8, &str, &str); 3] = [
     (2, "the site + my screen", "on viewers' pages, and a ring over your RuneLite too: only on this PC, never in the stream"),
 ];
 const EDGE: f32 = 6.0;
+const CURSOR_SWITCH: &str = "my cursor in the picture";
 
 fn body(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Proportional) }
 fn title_font(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Name("title".into())) }
@@ -131,7 +132,8 @@ fn tip(text: &str) -> egui::WidgetText {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-enum Drawer { None, Settings, Dink }
+#[cfg_attr(not(feature = "station"), allow(dead_code))]
+enum Drawer { None, Settings, Dink, Friends }
 
 struct Line {
     id: Option<i64>,
@@ -234,6 +236,17 @@ pub struct App {
     show_viewers: bool,
     // the look as last applied (the tint, anyone's own colours)
     look: (Option<f32>, std::collections::BTreeMap<String, String>),
+    // the broadcast's title as it's being typed (it goes out on Enter, or when the box is left)
+    title_edit: String,
+    // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
+    #[cfg(feature = "station")]
+    station: Option<crate::station::Station>,
+    #[cfg(feature = "station")]
+    station_tray: Option<crate::station::Tray>,
+    #[cfg(feature = "station")]
+    keeper: crate::keeper::Keeper,
+    #[cfg(feature = "station")]
+    told_tray: bool,
 }
 
 /// a mask being drawn (from where the hand went down) or moved (which one, and where it was held)
@@ -337,6 +350,17 @@ impl App {
                 }
             }));
         }
+        #[cfg(feature = "station")]
+        let (station, station_note) = match crate::station::Station::find_file() {
+            Some(f) => match crate::station::Station::open(&f) {
+                Ok(mut st) => { st.refresh(true); (Some(st), None) }
+                Err(e) => (None, Some(format!("the field station's file wouldn't read: {}", e))),
+            },
+            None => (None, Some("no launcher.json found up from here (--station <file>): the portal alone".to_string())),
+        };
+        #[cfg(feature = "station")]
+        let (tray, tray_items, station_tray) = make_tray(&settings.get(), station.as_ref());
+        #[cfg(not(feature = "station"))]
         let (tray, tray_items) = make_tray(&settings.get());
         // a newer version, if the repository has one (it never updates itself)
         let newer = Arc::new(Mutex::new(None));
@@ -370,7 +394,22 @@ impl App {
             feed, feed_tex: None, acked: None, tray_live: None, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
+            title_edit: s.stream_title.clone(),
+            #[cfg(feature = "station")]
+            station, #[cfg(feature = "station")] station_tray,
+            #[cfg(feature = "station")]
+            keeper: crate::keeper::Keeper::new(),
+            #[cfg(feature = "station")]
+            told_tray: false,
         };
+        #[cfg(feature = "station")]
+        {
+            if let Some(n) = station_note { app.note(n); }
+            if app.station.as_ref().is_some_and(|s| s.python_too) {
+                app.note("the Python field station is running too: close it from its tray (close the station)");
+            }
+            if std::env::args().any(|a| a == "--tray") { app.hidden = true; }
+        }
         if !s.attached() {
             if let Some(code) = win::paste_text().filter(|c| c.trim().starts_with("portal1:")) {
                 app.attach_code = code.trim().to_string();
@@ -495,6 +534,8 @@ impl App {
             let _ = self.settings.update(|s| s.on_air = false);
             self.note("the stream's ended: Outside shows the portal off air");
         } else {
+            #[cfg(feature = "station")]
+            self.station_relay();
             if let Err(e) = self.settings.update(|s| s.on_air = true) {
                 self.note(format!("couldn't go live: {}", e));
             }
@@ -555,11 +596,20 @@ impl App {
         } else if e.id == *items.live.id() {
             self.go_live();
         } else if e.id == *items.quit.id() {
+            #[cfg(feature = "station")]
+            if let Some(st) = &mut self.station {
+                // close the station: everything it started stopped, and the portal off air
+                st.stop_all();
+                let _ = self.settings.update(|s| s.on_air = false);
+            }
             self.quitting = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         } else if let Some((m, _)) = items.modes.iter().find(|(_, i)| e.id == *i.id()) {
             let m = m.clone();
             let _ = self.settings.update(|s| s.sound = m);
+        } else {
+            #[cfg(feature = "station")]
+            self.station_ask(ctx, &e.id);
         }
     }
 
@@ -587,6 +637,14 @@ impl App {
                 }
             }
         }
+        #[cfg(feature = "station")]
+        if let Some(st) = &mut self.station {
+            for n in st.refresh(false) {
+                self.lines.push(Line { id: None, who: 0, host: false, name: String::new(), queued: false, text: n,
+                                       when: String::new(), hidden: false, note: true, ping: false });
+            }
+            if let Some(t) = &self.station_tray { t.sync(st); }
+        }
         let Some(items) = &self.tray_items else { return };
         let s = self.settings.get();
         items.live.set_text(if s.on_air && self.up && self.live { "end stream" } else { "go live" });
@@ -594,24 +652,62 @@ impl App {
             i.set_checked(*m == sound::mode_of(&s.sound));
         }
         if let Some(t) = &self.tray {
+            #[cfg(feature = "station")]
+            let _ = t.set_tooltip(Some(match &self.station {
+                Some(st) => format!("⊂λ,ｍ⊙ field station\nthe portal · {}\n{}", self.status_line().0, st.tooltip()),
+                None => format!("the portal · {}", self.status_line().0),
+            }));
+            #[cfg(not(feature = "station"))]
             let _ = t.set_tooltip(Some(format!("the portal · {}", self.status_line().0)));
         }
     }
 }
 
-fn make_tray(_s: &Settings) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) {
-    use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(feature = "station")]
+fn make_tray(s: &Settings, station: Option<&crate::station::Station>)
+             -> (Option<tray_icon::TrayIcon>, Option<TrayItems>, Option<crate::station::Tray>) {
+    use tray_icon::menu::PredefinedMenuItem;
+    let (menu, open, live, modes, quit_at) = tray_menu(s);
+    let mut st_tray = None;
+    if let Some(st) = station {
+        let _ = menu.append(&PredefinedMenuItem::separator());
+        st_tray = Some(crate::station::Tray::build(st, &menu));
+    }
+    let quit = tray_icon::menu::MenuItem::new(if station.is_some() { "close the station" } else { quit_at }, true, None);
+    let _ = menu.append_items(&[&PredefinedMenuItem::separator(), &quit]);
+    let (t, items) = tray_finish(menu, open, live, modes, quit);
+    (t, items, st_tray)
+}
+
+#[cfg(not(feature = "station"))]
+fn make_tray(s: &Settings) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) {
+    use tray_icon::menu::{MenuItem, PredefinedMenuItem};
+    let (menu, open, live, modes, quit_at) = tray_menu(s);
+    let quit = MenuItem::new(quit_at, true, None);
+    let _ = menu.append_items(&[&PredefinedMenuItem::separator(), &quit]);
+    tray_finish(menu, open, live, modes, quit)
+}
+
+type SoundItems = Vec<(String, tray_icon::menu::CheckMenuItem)>;
+
+/// the portal's own part of the tray's menu: open it, go live, the sound
+fn tray_menu(_s: &Settings) -> (tray_icon::menu::Menu, tray_icon::menu::MenuItem, tray_icon::menu::MenuItem, SoundItems, &'static str) {
+    use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
     let open = MenuItem::new("open the portal", true, None);
     let live = MenuItem::new("go live", true, None);
     let modes: Vec<(String, CheckMenuItem)> =
         LABELS.iter().map(|(m, l)| (m.to_string(), CheckMenuItem::new(*l, true, false, None))).collect();
-    let quit = MenuItem::new("quit", true, None);
     let snd = Submenu::new("sound", true);
     for (_, i) in &modes {
         let _ = snd.append(i);
     }
     let menu = Menu::new();
-    let _ = menu.append_items(&[&open, &live, &snd, &PredefinedMenuItem::separator(), &quit]);
+    let _ = menu.append_items(&[&open, &live, &snd]);
+    (menu, open, live, modes, "quit")
+}
+
+fn tray_finish(menu: tray_icon::menu::Menu, open: tray_icon::menu::MenuItem, live: tray_icon::menu::MenuItem, modes: SoundItems,
+               quit: tray_icon::menu::MenuItem) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) {
     let (rgba, w, h) = tray_frame(None);
     let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok();
     let mut b = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("the portal");
@@ -621,6 +717,181 @@ fn make_tray(_s: &Settings) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) 
     match b.build() {
         Ok(t) => (Some(t), Some(TrayItems { open, live, modes, quit })),
         Err(_) => (None, None),
+    }
+}
+
+// ---- the field station (the keeper's build) ----
+
+#[cfg(feature = "station")]
+impl App {
+    /// a click in the station's part of the tray's menu
+    fn station_ask(&mut self, ctx: &egui::Context, id: &tray_icon::menu::MenuId) {
+        use crate::station::{open_target, Ask};
+        let Some(ask) = self.station_tray.as_ref().and_then(|t| t.ask(id)) else { return };
+        let Some(st) = &mut self.station else { return };
+        let mut said = None;
+        match ask {
+            Ask::Start(i) => if let Err(e) = st.start(i) { said = Some(e) },
+            Ask::Stop(i) => st.stop(i),
+            Ask::Page(i) => if let Some(p) = st.services[i].page() { open_target(&p) },
+            Ask::Log(i) => open_target(&st.services[i].log.display().to_string()),
+            Ask::Link(i) => open_target(&st.links[i].target.clone()),
+            Ask::StopAll => st.stop_all(),
+            Ask::Friends => {
+                self.show(ctx);
+                if self.drawer != Drawer::Friends { self.open_drawer(ctx, Drawer::Friends); }
+            }
+            Ask::Mode(i) => {
+                let ids = st.modes[i].start.clone();
+                for id in ids {
+                    if id == "portal" {
+                        // the portal itself: its relay (while it's this PC's), the window, and live
+                        self.show(ctx);
+                        if !(self.settings.get().on_air && self.up && self.live) { self.go_live(); }
+                    } else if let Some(st) = &mut self.station {
+                        if let Some(k) = st.index(&id) {
+                            if let Err(e) = st.start(k) { said = Some(e); }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(e) = said { self.note(e); }
+        if let Some(st) = &mut self.station {
+            st.refresh(true);
+            if let Some(t) = &self.station_tray { t.sync(st); }
+        }
+    }
+
+    /// Going live: while the portal's relay is this PC's (ws://127.0.0.1, ghillie's relay.py until his channel moves to
+    /// Cloudflare), the station's "relay" starts it first if it isn't running.
+    fn station_relay(&mut self) {
+        let r = self.settings.get().relay;
+        let local = r.starts_with("ws://127.0.0.1");
+        let Some(st) = &mut self.station else { return };
+        if !local { return; }
+        if let Some(k) = st.index("relay") {
+            st.refresh(true);
+            if st.states[k] == crate::station::State::Off {
+                match st.start(k) {
+                    Ok(()) => self.note("the relay on this PC is starting"),
+                    Err(e) => self.note(e),
+                }
+            }
+        }
+    }
+}
+
+/// The friends' portals drawer: hand one out (its attach code, to send them), every channel handed out (live ones lit,
+/// read again every 10 s), a new code or taking one back (each asked about first), and setting up the relay and token.
+#[cfg(feature = "station")]
+fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let wake = move || ctx.request_repaint();
+    app.keeper.read(false, wake.clone());
+    ui.label(rich("friends' portals", 16.0, LIME()));
+    let relay = crate::keeper::load().get("relay").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    ui.label(rich(&if relay.is_empty() { "no relay set yet".to_string() } else { format!("on {}", crate::keeper::http_base(&relay)) }, 14.0, QUIET()));
+    ui.add_space(4.0);
+    // set up: the relay and the token
+    let open = app.keeper.setup_open;
+    if button(ui, if open { "set up ▾" } else { "set up ▸" }, true, Some(open)).clicked() { app.keeper.setup_open = !open; }
+    if app.keeper.setup_open {
+        ui.horizontal(|ui| {
+            ui.label(rich("the relay's address:", 14.0, GREY()));
+            field(ui, &mut app.keeper.relay, 300.0, "outside-portal.<you>.workers.dev", false);
+        });
+        ui.horizontal(|ui| {
+            if button(ui, "save", true, None).clicked() {
+                match app.keeper.save_relay() {
+                    Ok(()) => { app.note("friends' portals: the relay's address saved"); app.keeper.read(true, wake.clone()); }
+                    Err(e) => app.note(format!("couldn't save it: {}", e)),
+                }
+            }
+            let has = app.keeper.has_token();
+            if button(ui, if has { "a new token" } else { "make a token" }, true, None)
+                .on_hover_text(tip("a new admin token, kept in Documents\\ghillie portal\\admin.json and copied: Cloudflare needs the same one (in outside-portal\\relay: npx wrangler secret put ADMIN_TOKEN, and paste it). A new one stops the old one working once Cloudflare has it.")).clicked() {
+                match app.keeper.make_token() {
+                    Ok(t) => { win::copy_text(&t); app.note("a new admin token is on the clipboard: give Cloudflare the same one (npx wrangler secret put ADMIN_TOKEN)"); }
+                    Err(e) => app.note(e),
+                }
+            }
+            ui.label(rich(if has { "a token is kept on this PC" } else { "no token yet" }, 14.0, GREY()));
+        });
+        ui.label(wrapped("anyone with the token can hand out and take back every channel: it stays on this PC (Documents\\ghillie portal\\admin.json), never in a repository", 14.0, QUIET(), ui.available_width()));
+    }
+    ui.add_space(10.0);
+    // hand one out
+    ui.label(rich("hand one out", 16.0, LIME()));
+    ui.horizontal(|ui| {
+        ui.label(rich("their player's name:", 14.0, GREY()));
+        let r = field(ui, &mut app.keeper.name, 160.0, "", false);
+        let go = button(ui, "hand out", true, None).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+        if go {
+            match crate::keeper::channel_of(&app.keeper.name) {
+                Err(e) => app.note(e),
+                Ok(ch) if app.keeper.has(&ch) => app.keeper.confirm = Some((false, ch)),
+                Ok(_) => { let n = app.keeper.name.clone(); app.keeper.give(n, wake.clone()); }
+            }
+        }
+    });
+    let answer = app.keeper.answer.lock().unwrap().clone();
+    match answer {
+        Some(Ok((ch, code))) => {
+            ui.label(rich(&format!("{}'s attach code:", ch), 14.0, GREY()));
+            ui.label(wrapped(&code, 13.0, TEAL(), ui.available_width()));
+            ui.horizontal(|ui| {
+                if button(ui, "copy the code", true, None).clicked() { win::copy_text(&code); app.note("the attach code is on the clipboard"); }
+                if button(ui, "copy a message for them", true, None).clicked() {
+                    win::copy_text(&crate::keeper::message(&ch, &code));
+                    app.note("a message with the code is on the clipboard");
+                }
+            });
+            ui.label(rich(&format!("their portal: {}{}", crate::keeper::SITE.trim_start_matches("https://"), ch), 14.0, QUIET()));
+        }
+        Some(Err(e)) => { ui.label(rich(&e, 14.0, PINK())); }
+        None => {}
+    }
+    // asked first
+    if let Some((taking, ch)) = app.keeper.confirm.clone() {
+        ui.add_space(6.0);
+        let words = if taking { format!("take {} back? its key is refused and its stream cut off (viewers stay, off air)", ch) }
+                    else { format!("{} has one already: a new code makes a new key, and their old code stops working", ch) };
+        ui.label(wrapped(&words, 14.0, PINK(), ui.available_width()));
+        ui.horizontal(|ui| {
+            if button(ui, if taking { "take it back" } else { "a new code" }, true, None).clicked() {
+                app.keeper.confirm = None;
+                if taking { app.keeper.take(ch.clone(), wake.clone()); } else { app.keeper.give(ch.clone(), wake.clone()); }
+            }
+            if button(ui, "never mind", true, None).clicked() { app.keeper.confirm = None; }
+        });
+    }
+    let note = app.keeper.note.lock().unwrap().clone();
+    if !note.is_empty() { ui.label(wrapped(&note, 14.0, TEAL(), ui.available_width())); }
+    ui.add_space(10.0);
+    // every channel handed out
+    ui.horizontal(|ui| {
+        ui.label(rich("handed out", 16.0, LIME()));
+        if button(ui, "read again", true, None).clicked() { app.keeper.read(true, wake.clone()); }
+    });
+    let rows = app.keeper.rows.lock().unwrap().clone();
+    match rows {
+        None => { ui.label(rich("reading…", 14.0, GREY())); }
+        Some(Err(e)) => { ui.label(wrapped(&e, 14.0, PINK(), ui.available_width())); }
+        Some(Ok(rows)) if rows.is_empty() => { ui.label(rich("none yet", 14.0, GREY())); }
+        Some(Ok(rows)) => {
+            for r in rows {
+                ui.horizontal(|ui| {
+                    let words = if r.live { format!("{} · live · {} watching", r.channel, r.viewers) } else { format!("{} · off air", r.channel) };
+                    ui.label(rich(&words, 14.0, if r.live { PINK() } else { TEXT() }));
+                    if !r.title.is_empty() { ui.label(rich(&r.title, 14.0, GREY())); }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if button(ui, "take back", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
+                        if button(ui, "new code", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
+                    });
+                });
+            }
+        }
     }
 }
 
@@ -1428,7 +1699,22 @@ impl eframe::App for App {
         self.settings.refresh();
         self.drain(ctx);
         self.sync_tray(ctx);
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
+        #[allow(unused_mut)]
+        let mut into_tray = false;
+        #[cfg(feature = "station")]
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting && self.station.is_some() && self.tray.is_some() {
+            into_tray = true;
+            // (the field station lives in the tray: its window closes into it, the stream and the services going on;
+            // the tray's "close the station" ends it all)
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hidden = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            if !self.told_tray {
+                self.told_tray = true;
+                self.note("the window went into the tray: the field station keeps running there (its menu ▸ close the station ends it)");
+            }
+        }
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting && !into_tray {
             let s = self.settings.get();
             if s.on_air && self.live {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1509,6 +1795,9 @@ impl eframe::App for App {
                     egui::ScrollArea::vertical().id_salt("drawer_scroll").auto_shrink([false, false]).show(ui, |ui| {
                         if self.drawer == Drawer::Settings {
                             if let Some(p) = &mut self.panel { p.ui(ui, &self.settings); }
+                        } else if self.drawer == Drawer::Friends {
+                            #[cfg(feature = "station")]
+                            friends_drawer(self, ui);
                         } else {
                             dink_drawer(self, ui);
                         }
@@ -1663,6 +1952,14 @@ impl App {
                 if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
                 let d_open = self.drawer == Drawer::Dink;
                 if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
+                #[cfg(feature = "station")]
+                {
+                    let f_open = self.drawer == Drawer::Friends;
+                    if button(ui, if f_open { "friends ◂" } else { "friends ▸" }, true, None)
+                        .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), or take one back")).clicked() {
+                        self.open_drawer(&ctx, Drawer::Friends);
+                    }
+                }
                 if signals > 0 {
                     ui.label(rich(&format!("✼ {}", signals), 14.0, PINK())).on_hover_text(tip("viewers' signals since this opened"));
                 }
@@ -1700,6 +1997,8 @@ impl App {
                 if pink_button(ui, go, !ending).clicked() { self.go_live(); }
             });
         });
+        ui.add_space(4.0);
+        self.title_row(ui);
         ui.add_space(4.0);
         // the upload: the portal's share (the relay's count) and this PC's in all (Windows' own count)
         ui.horizontal_wrapped(|ui| {
@@ -1753,6 +2052,7 @@ impl App {
             check_w(ui, "✼ on my screen"),
             check_w(ui, "chat over the game") + gap + button_w(ui, if self.moving_chat { "done" } else { "move it" }),
             check_w(ui, &masks) + gap + button_w(ui, if self.editing_masks { "done" } else { "edit masks" }),
+            check_w(ui, CURSOR_SWITCH),
         ];
         let _ = small;
         let pieces: Vec<usize> = (0..widths.len()).filter(|i| *i != 2).collect();
@@ -1764,6 +2064,34 @@ impl App {
                 for i in row { self.switch(ui, i, &s, &masks); }
             });
         }
+    }
+
+    /// The broadcast's title (11/06/2026, Jace: "the option to title broadcast - make it run along next to the
+    /// "portal" text on the tab"): on Outside it sits beside "✼ portal" in the portal's bar, scrolling slowly when it
+    /// doesn't fit. It goes out on Enter or when the box is left, not letter by letter.
+    fn title_row(&mut self, ui: &mut egui::Ui) {
+        let saved = self.settings.get().stream_title;
+        ui.horizontal(|ui| {
+            ui.label(rich("title:", 14.0, GREY()))
+                .on_hover_text(tip("the broadcast's title, beside ✼ portal on your Outside page (and on the open portals): it scrolls slowly when it's too long to fit. Enter sends it; empty: none."));
+            let w = ui.available_width();
+            let r = ui.add(egui::TextEdit::singleline(&mut self.title_edit).desired_width(w).char_limit(100)
+                .hint_text(rich("untitled · a title for this broadcast (Enter sends it)", 14.0, WHEN()))
+                .font(body(14.0)).text_color(Color32::from_rgb(0xee, 0xee, 0xee)));
+            let typed = self.title_edit.trim().to_string();
+            if r.lost_focus() || (r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                if typed != saved.trim() {
+                    match self.settings.update(|s| s.stream_title = typed.clone()) {
+                        Ok(()) => self.note(if typed.is_empty() { "the broadcast's title taken down".to_string() }
+                                            else { format!("the broadcast's title: {}", typed) }),
+                        Err(e) => self.note(format!("couldn't save the title: {}", e)),
+                    }
+                }
+                self.title_edit = typed;
+            } else if !r.has_focus() && self.title_edit != saved {
+                self.title_edit = saved; // (changed elsewhere: the settings file, another window)
+            }
+        });
     }
 
     /// One of the switches (in `top_inner`'s order): what viewers may do, what shows over RuneLite (see-through
@@ -1793,6 +2121,15 @@ impl App {
                 ui.spacing_mut().item_spacing.x = gap + 4.0;
             }
             2 => {}
+            6 => {
+                // the mouse pointer in the picture (11/06/2026, Jace: "a toggle to show or hide cursor"): Windows draws it
+                // into the frames itself, so the portal never reads where it is
+                let mut on = s.show_cursor;
+                if ui.checkbox(&mut on, rich(CURSOR_SWITCH, 14.0, GREY()))
+                    .on_hover_text(tip("your mouse pointer in the picture viewers see, where it's over RuneLite. Off: it never shows. Windows draws it into each frame (Windows Graphics Capture, the usual way); PrintWindow, the fallback, can't, so there it stays hidden.")).changed() {
+                    let _ = self.settings.update(|s| s.show_cursor = on);
+                }
+            }
             3 => {
                 let mut st = s.signals;
                 if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY()))

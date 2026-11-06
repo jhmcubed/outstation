@@ -44,6 +44,8 @@ my own chat box on my computer that i can respond back in"):
     {"block": who} / {"unblock": who}     a viewer's lines and pings stop going anywhere
     {"poll": {"question", "options": [2-6], "seconds"}}   / {"poll_close": true}
     {"chat_on": bool}                     off: viewers' lines go nowhere (his still go out; the status line's "chat")
+    {"title": text}                       the broadcast's title (TITLE_MAX long, "" for none): the status line's
+                                          "title", beside "✼ portal" on Outside
   and gets {"viewers": [{"who", "name", "waiting"}]} whenever who's watching changes (a name as given, never
   a device).
   Viewers may send (anything else they send is still thrown away):
@@ -94,6 +96,7 @@ VIEWER_TEXT = 2048                # anything longer from a viewer is thrown away
 CHAT_KEPT = 50                    # lines a late viewer (or a newly opened desk) gets at once
 SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: room to spam a little for fun (Jace, 11/05)
 NAME_MAX = 20
+TITLE_MAX = 100                   # the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
 PING_EVERY = 0.5                  # a ping a viewer every half second (1.5 until Jace asked for more, 11/05)
 POLL_OPTIONS, POLL_SECONDS = (2, 6), (10, 900)
 THUMB_FRESH = 3.0                 # a small frame this recent, and lookers get those instead of the full ones
@@ -245,6 +248,7 @@ class Channel:
         self.bans = {}               # who -> {"who", "name", "tags"}: banned from the desk (blocked, their lines taken back)
         self.pings_on = True         # the desk's {"pings": false}: viewers' pings go nowhere
         self.chat_on = True          # the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
+        self.title = ""              # the desk's {"title"}: the broadcast's title, in every status line
         self.host_names = {name.lower()}
         self.sounder = None
         self.sound_info = None
@@ -267,7 +271,8 @@ class Channel:
               "max": self.cap, "waiting": len(self.waiting),
               "open": self.sender is not None and self.state == "open",
               "static": self.sender is not None and self.state == "static",
-              "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on}     # (set: someone has claimed it; Outside says "no portal here yet" when not)
+              "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on,     # (set: someone has claimed it; Outside says "no portal here yet" when not)
+              "title": self.title}
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -854,6 +859,13 @@ class Relay:
             if m["chat_on"] != ch.chat_on:
                 ch.chat_on = m["chat_on"]
                 ch.tell_viewers()
+        elif isinstance(m.get("title"), str):
+            # the broadcast's title (11/06/2026): one line, TITLE_MAX long; every status line carries it
+            title = one_line(m["title"], TITLE_MAX)
+            if title != ch.title:
+                ch.title = title
+                self.log("title     %s  %s" % (ch.name, title or "(none)"))
+                ch.tell_viewers()
         elif isinstance(m.get("cap"), int) and not isinstance(m["cap"], bool) and 0 <= m["cap"] <= 10000:
             # (outside-portal's addition: the channel's own cap on viewers, from the client's settings)
             ch.own_cap = m["cap"]
@@ -913,7 +925,7 @@ class Relay:
         that's set up and has no watch code, live ones first, with whether each is live. Anyone may read it (the
         public side too); a channel with a watch code is never listed."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
-                 "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers)}
+                 "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title}
                 for ch in self.channels.values() if ch.key is not None and not ch.code]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         body = json.dumps({"channels": rows}).encode()

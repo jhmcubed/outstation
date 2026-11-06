@@ -131,9 +131,12 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 - ✓ **jute's look** (`theme.rs`): the browns, plates and tint strip, and anyone's own colours.
 - ✓ **"blacked out" retired:** the fixed-size chat and side boxes, in favour of your own masks (an old setting is ignored).
 - ✓ **Dink posted twice** (an address listed twice in Dink): the same post within 10 s is one event, in the client and every relay.
+- ◐ **The broadcast's title** (11/06/2026): "title:" on the stream's plate, sent on Enter (the desk's `{"title"}`, in every relay's status line and `/channels`). On Outside it sits beside "✼ portal" in the portal's bar, running slowly past when it's too long; on the open portals, under the name. The relays: the shared suite (58, both). Not yet seen in the real window.
+- ◐ **"my cursor in the picture"** (11/06/2026): Windows Graphics Capture's own cursor drawn into the frames (the capture starts again when it's switched). PrintWindow, the fallback, can't draw it. Not yet seen on a real stream.
+- ◐ **The field station** (11/06/2026, the keeper's build: `--features station`): the services in ghillie's `launcher.json` in the tray (lights, start, stop, page, log, started elsewhere), modes, links, stop all, close the station; the relay on this PC started on going live while the portal's relay is this PC's; friends' portals in a drawer (hand out, new code, take back, the list, set up). Built here with `cargo check` for Windows; not yet run on Jace's PC.
 
 ## Still to do before the Python is retired
 
 - Everything marked ◐, by hand on Jace's PC with his real RuneLite and real viewers. Including: pressing each hotkey, the chat over the game moved, a mask drawn, a clip of a real stream, the tray minimise and the pink ✼.
 - The client on a Windows account without Python or Rust.
-- The field station starting the client in place of `start.py`. (ghillie's `tools/launcher`.)
+- The field station starting the client in place of `start.py`: built (the station feature, ghillie's `tools/launcher/build_station.py`); to try on Jace's PC.

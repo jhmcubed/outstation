@@ -94,6 +94,10 @@ pub struct Settings {
     /// the name your lines go out under in the chat (the channel's when empty)
     #[serde(default)]
     pub chat_name: String,
+    /// the broadcast's title (11/06/2026): beside "✼ portal" on Outside, scrolling slowly when it's too long to fit;
+    /// empty: none. It goes out through the desk ({"title"}), at most 100 characters.
+    #[serde(default)]
+    pub stream_title: String,
     #[serde(default = "d_fps")]
     pub fps: u32,
     #[serde(default = "d_width")]
@@ -136,6 +140,10 @@ pub struct Settings {
     pub clip_folder: String,
     #[serde(default)]
     pub only_logged_in: bool,
+    /// the mouse pointer in the picture, where it's over RuneLite (11/06/2026; off: the picture never has it).
+    /// Windows Graphics Capture draws it; PrintWindow, the fallback, can't.
+    #[serde(default)]
+    pub show_cursor: bool,
     /// go live / end stream
     #[serde(default = "d_true")]
     pub on_air: bool,

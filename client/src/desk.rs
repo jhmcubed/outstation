@@ -1,5 +1,5 @@
 //! The chat window's line to the relay, the desk (portal_chat.py's Line): the chat, polls, pings and status lines in;
-//! your lines, polls, hides, blocks and the cap on viewers out.
+//! your lines, polls, hides, blocks, the cap on viewers and the broadcast's title out.
 
 use crate::net::{Got, Socket};
 use crate::settings::{enc, Shared};
@@ -73,6 +73,9 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         let mut cap = s.max_viewers;
         let _ = ws.text(&format!("{{\"cap\": {}}}", cap));
         let (mut pings, mut guess_min, mut chat_on) = (s.pings_allowed, s.guess_min_value, s.chat_allowed);
+        // the broadcast's title: on connecting (a relay that slept or restarted has it again), and whenever it changes
+        let mut title = s.stream_title.trim().to_string();
+        let _ = ws.text(&serde_json::json!({ "title": title }).to_string());
         let _ = ws.text(&format!("{{\"pings\": {}}}", pings));
         let _ = ws.text(&format!("{{\"chat_on\": {}}}", chat_on));
         let _ = ws.text(&format!("{{\"guess_min_value\": {}}}", guess_min));
@@ -111,6 +114,10 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
                 if s.chat_allowed != chat_on {
                     chat_on = s.chat_allowed;
                     let _ = ws.text(&format!("{{\"chat_on\": {}}}", chat_on));
+                }
+                if s.stream_title.trim() != title {
+                    title = s.stream_title.trim().to_string();
+                    let _ = ws.text(&serde_json::json!({ "title": title }).to_string());
                 }
                 if s.guess_min_value != guess_min {
                     guess_min = s.guess_min_value;

@@ -34,7 +34,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Viewers
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "set"}}`. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "set", "title"}}`. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
 - frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the chat so far, the poll and the sound's line.
 - `{"chat": {"id", "name", "text", "host", "who", "queued", "at"}}`, `{"unsay": id}`
 - `{"poll": {"id", "question", "options", "counts", "open", "left"}}`, `{"poll_gone": id}`
@@ -60,6 +60,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 - `{"block": who}` / `{"unblock": who}`: that viewer's number and device. Their lines and pings stop going anywhere.
 - `{"poll": {"question", "options": [2–6], "seconds": 10–900}}` and `{"poll_close": true}`. A closed poll's result stays 90 s, then `{"poll_gone"}`.
 - `{"chat_on": bool}`: off, viewers' lines go nowhere (the host's still go out); the status line's `chat` says so.
+- `{"title": text}`: the broadcast's title, in every status line from then on (and in `GET /channels`): one line, at most 100 characters, `""` for none. The client sends it on connecting and whenever it changes; the Worker keeps it through a sleep.
 - `{"cap": n}`: the channel's own cap on viewers (0 means none). On the Python relay it takes the place of `--max-viewers` for that channel. On Cloudflare the Worker's `MAX_VIEWERS` is a ceiling over it.
 
 ## The sound

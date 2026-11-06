@@ -18,6 +18,7 @@ A live portal from your RuneLite to your Outside page on [ghillie.wiki](https://
 - `client/`: the broadcaster, `outside-portal.exe` (Rust): the capture, the sound, the chat window with its drawers, Dink, the tray. `client/PARITY.md` lists everything ghillie's Python portal did and what the client does for each.
   - Building it on Windows: Rust, with cmake and ninja on the PATH for libopus. GitHub's machines build the releases with MSVC; Jace's PC uses the gnullvm toolchain (`rust-toolchain.toml`). Then `cargo build --release`.
   - `outside-portal.exe --once frame.png` writes one frame; `--bench 30` times a frame stage by stage.
+  - The keeper's own build, the field station: `cargo build --release --features station` (ghillie's `tools/launcher/build_station.py`). The same portal, with the keeper's tools in its tray (what ghillie's `launcher.json` starts, modes, links) and friends' portals handed out from a drawer (`client/src/station.rs`, `keeper.rs`). A release is never built with it.
 
 - `relay/`: the relay on Cloudflare: a Worker, with a Durable Object for each channel (TypeScript). Its README says how to run it and deploy it.
 - `relay-py/`: the same relay in Python, standard library only, for running on your own PC (`py relay-py/relay.py`). It's also the reference.

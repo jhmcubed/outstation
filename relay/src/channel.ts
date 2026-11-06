@@ -25,6 +25,7 @@ const VIEWER_TEXT = 2048; // anything longer from a viewer is thrown away unread
 const CHAT_KEPT = 50;
 const SAY_MAX = 300, SAY_BURST = 20, SAY_WINDOW = 10_000;
 const NAME_MAX = 20;
+const TITLE_MAX = 100; // the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
 const PING_EVERY = 500;
 const POLL_OPTIONS = [2, 6], POLL_SECONDS = [10, 900];
 const POLL_KEPT = 90_000;
@@ -94,6 +95,7 @@ interface Meta {
   bans?: { who: number; name: string; tags: string[] }[]; // banned from the desk: blocked, their lines taken back
   pingsOff?: boolean; // the desk's {"pings": false}: viewers' pings go nowhere
   chatOff?: boolean; // the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
+  title?: string; // the desk's {"title"}: the broadcast's title, in every status line
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
@@ -191,6 +193,7 @@ export class Channel extends DurableObject<Env> {
       set: this.meta.keyHash !== null, // (the channel was handed out: Outside says "no portal here yet" when it wasn't)
       pings: !this.meta.pingsOff,
       chat: !this.meta.chatOff,
+      title: this.meta.title || "",
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
@@ -310,7 +313,7 @@ export class Channel extends DurableObject<Env> {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
-                             viewers: this.seated().length });
+                             viewers: this.seated().length, title: this.meta.title || "" });
     }
     if (role === "_revoke") return this.revoke();
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
@@ -773,6 +776,14 @@ export class Channel extends DurableObject<Env> {
       // (11/05/2026, Jace: "add ability to toggle chat off")
       if (!m.chat_on !== !!this.meta.chatOff) {
         this.meta.chatOff = !m.chat_on;
+        this.saveMeta();
+        this.tellViewers();
+      }
+    } else if (typeof m.title === "string") {
+      // the broadcast's title (11/06/2026): one line, TITLE_MAX long; every status line carries it
+      const title = oneLine(m.title, TITLE_MAX);
+      if (title !== (this.meta.title || "")) {
+        this.meta.title = title;
         this.saveMeta();
         this.tellViewers();
       }

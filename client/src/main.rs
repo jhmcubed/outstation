@@ -9,6 +9,9 @@
 //!     outside-portal.exe --show-settings      open with the settings drawer out
 //!
 //! The settings are %APPDATA%\outside-portal\settings.json, and the log is portal.log beside it.
+//!
+//! Built with `--features station` it's the field station too (station.rs): `--station <launcher.json>`, and `--tray`
+//! to open in the tray. It opens off air: going live is asked for (go live, or a mode with the portal in it).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -20,9 +23,13 @@ mod desk;
 mod dink;
 mod feed;
 mod hotkeys;
+#[cfg(feature = "station")]
+mod keeper;
 mod net;
 mod settings;
 mod sound;
+#[cfg(feature = "station")]
+mod station;
 mod theme;
 mod transmit;
 mod ui;
@@ -78,6 +85,11 @@ fn main() {
         return;
     }
 
+    // the field station opens off air, whatever the portal was left as: it's started to make music as often as to play
+    #[cfg(feature = "station")]
+    let _ = shared.update(|s| s.on_air = false);
+    let tray_only = cfg!(feature = "station") && args.iter().any(|a| a == "--tray");
+
     let tx = transmit::Transmit::start(shared.clone());
     hotkeys::start(shared.clone(), tx.paused.clone());
     let snd = sound::start(shared.clone());
@@ -89,6 +101,7 @@ fn main() {
             .with_decorations(false) // (its own title bar, edges and cursor: ui.rs, cursor.rs)
             .with_inner_size([480.0, 640.0])
             .with_min_inner_size([380.0, 440.0])
+            .with_visible(!tray_only)
             .with_icon(eframe::egui::IconData { rgba, width: w, height: h }),
         ..Default::default()
     };

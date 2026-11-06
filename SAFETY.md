@@ -12,6 +12,7 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 | read what RuneLite and Jagex say to each other? | **No.** |
 | watch your keyboard? | **No.** Windows tells it only when one of its own four keys is pressed: the static key (Pause), the sound key (Scroll Lock), the clip key (Insert) and the mask key (End). You can change each. |
 | show something you'd rather keep to yourself? | **Only what you allow.** Draw your own masks over any part of the game (the chat, the map, the world number): those parts are blacked out on your PC, before a frame is made, so they never leave it. The mask key turns them off and on. |
+| show your mouse pointer? | **Only if you switch it on.** "my cursor in the picture" (off to begin with) has Windows Graphics Capture draw the pointer into the frames where it's over RuneLite. Windows draws it: the portal never reads where the pointer is. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. |
 | let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. The ring, the ✼ and the chat over the game are drawn in see-through windows of the portal's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off, and "viewers may ping" switches pings off altogether. |
 
@@ -68,7 +69,7 @@ The check's list of functions no program here may use, and why each:
 | `SendInput`, `keybd_event`, `mouse_event`, `BlockInput`, `AttachThreadInput` | pretend keys and clicks, or joining another program's input |
 | `SetWindowsHookEx`, `GetAsyncKeyState`, `GetKeyboardState` | watching the keyboard or mouse everywhere |
 
-The client's own code uses none of them. It also never loads a function by hand (`GetProcAddress`, `LoadLibrary`), never opens another process (`OpenProcess`), and never posts or sends a message to another program's window.
+The client's own code uses none of them. (That includes `station.rs` and `keeper.rs`, the field station: built only into the keeper's own copy, with `--features station`, never into a release. They start the keeper's own tools as child programs and stop them with Windows' `taskkill`; the check reads them as it reads the rest.) It also never loads a function by hand (`GetProcAddress`, `LoadLibrary`), never opens another process (`OpenProcess`), and never posts or sends a message to another program's window.
 
 Three of them are in the program's list all the same, brought by the libraries its window is built on. Each serves the portal's own window only:
 - `SendInput`:
