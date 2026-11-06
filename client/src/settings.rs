@@ -180,6 +180,9 @@ pub struct Settings {
     /// minimising the window sends it to the tray (the stream goes on)
     #[serde(default = "d_true")]
     pub minimize_to_tray: bool,
+    /// the ready check above the title while off air (RuneLite, logged in, the relay, Dink, the sound)
+    #[serde(default = "d_true")]
+    pub ready_check: bool,
     /// the live view: the portal as the site gets it, small, in the window (off: not connected at all)
     #[serde(default = "d_true")]
     pub live_view: bool,

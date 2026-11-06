@@ -243,6 +243,8 @@ pub struct App {
     asked_attached: Arc<Mutex<Option<String>>>,
     /// the chat turned away for good (a client too old for the relay), for the status line while off air too
     desk_stopped: Option<String>,
+    /// the ready check's look at RuneLite's window (its title), taken once a second
+    ready_seen: (Instant, Option<String>),
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -401,6 +403,7 @@ impl App {
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
+            ready_seen: (Instant::now() - Duration::from_secs(5), None),
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1462,6 +1465,8 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
+        ui.checkbox(&mut s.ready_check, rich("the ready check above the title, while off air", 16.0, GREY()))
+            .on_hover_text(tip("RuneLite open, logged in, the relay answering, Dink heard and the sound's mode, each ticked or not"));
         ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY()))
             .on_hover_text(tip("the window goes to the ✼ by the clock; a click on it brings the window back"));
         ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
@@ -2123,6 +2128,7 @@ impl App {
             });
         });
         ui.add_space(4.0);
+        self.ready_row(ui);
         self.title_row(ui);
         ui.add_space(4.0);
         // the upload: the portal's share (the relay's count) and this PC's in all (Windows' own count)
@@ -2189,6 +2195,50 @@ impl App {
                 for i in row { self.switch(ui, i, &s, &masks); }
             });
         }
+    }
+
+    /// The ready check (11/06/2026), while off air: is RuneLite open, is its title saying who's logged in (when the
+    /// picture should stop at the login screen), is the relay answering, has Dink been heard, and the sound's mode.
+    /// Each ticked or not, with how to fix it under the hand; "hide" puts it away (settings ▸ more brings it back).
+    fn ready_row(&mut self, ui: &mut egui::Ui) {
+        let s = self.settings.get();
+        if !s.ready_check || (s.on_air && self.up && self.live) { return; }
+        if self.ready_seen.0.elapsed() > Duration::from_secs(1) {
+            self.ready_seen = (Instant::now(), win::find_window(&s.title).map(|(_, t)| t));
+        }
+        let title = self.ready_seen.1.clone();
+        let dink = self.dink.lock().unwrap().clone();
+        // (words, ok: Some(true) ticked, Some(false) not, None neither (optional), what's under the hand)
+        let mut items: Vec<(String, Option<bool>, String)> = Vec::new();
+        items.push(match &title {
+            Some(t) => ("RuneLite".into(), Some(true), format!("found: {}", t)),
+            None => ("RuneLite".into(), Some(false), format!("no RuneLite window: open RuneLite (the portal looks for a window whose title starts \"{}\": settings ▸ more)", s.title)),
+        });
+        if s.only_logged_in {
+            let ok = title.as_deref().is_some_and(|t| win::logged_in(t, &s.title));
+            items.push(("logged in".into(), Some(ok), if ok { "RuneLite's title has your name, so the picture stops at the login screen".into() }
+                        else { "RuneLite's title doesn't say who's logged in: log in, or turn on RuneLite's \"username in title\" (settings ▸ more: \"nothing while logged out\" needs it)".into() }));
+        }
+        items.push(if self.up { ("the relay".into(), Some(true), format!("answering: {}", s.relay)) }
+                   else { ("the relay".into(), Some(false), "the relay isn't answering: check the internet here, or the attach code".into()) });
+        items.push(match (&dink.last, &dink.listening, &dink.error) {
+            (Some((kind, at, _)), _, _) => ("Dink".into(), Some(true), format!("heard from Dink {} ago ({})", ago(at.elapsed()), kind)),
+            (None, _, Some(e)) => ("Dink".into(), Some(false), format!("Dink can't reach the portal: {}", e)),
+            _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (only for drops and level-ups under your portal)".into()),
+        });
+        let sound = match s.sound.as_str() { "game" => "the game", "all" => "game + desktop", _ => "off" };
+        items.push((format!("sound: {}", sound), None, "the sound row below: off, the game, or game + desktop (never a microphone)".into()));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich("ready?", 14.0, GREY()));
+            for (words, ok, why) in &items {
+                let (mark, colour) = match ok { Some(true) => ("✓", LIME()), Some(false) => ("✗", PINK()), None => ("·", GREY()) };
+                ui.label(rich(&format!("{} {}", mark, words), 14.0, colour)).on_hover_text(tip(why));
+            }
+            if button(ui, "hide", true, None).on_hover_text(tip("puts the ready check away (settings ▸ more brings it back)")).clicked() {
+                let _ = self.settings.update(|x| x.ready_check = false);
+            }
+        });
+        ui.add_space(2.0);
     }
 
     /// The broadcast's title (11/06/2026, Jace: "the option to title broadcast - make it run along next to the
