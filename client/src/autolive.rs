@@ -37,7 +37,8 @@ pub fn start(settings: Shared) {
             std::thread::sleep(Duration::from_secs(1));
             settings.refresh();
             let s = settings.get();
-            if !s.auto_live || !s.attached() {
+            // (and not while the first-time setup's going: ticked there with RuneLite open, it goes live as it's finished)
+            if !s.auto_live || !s.attached() || s.setup_step.is_some() {
                 was_open = false;
                 gone_since = None;
                 continue;
@@ -46,7 +47,7 @@ pub fn start(settings: Shared) {
             if open && !was_open && !s.on_air {
                 if settings.update(|x| x.on_air = true).is_ok() {
                     WENT_LIVE.store(true, Ordering::SeqCst);
-                    note("RuneLite opened: going live (settings ▸ more: go live when RuneLite opens)");
+                    note("RuneLite opened: going live (settings ▸ more: go live by itself whenever RuneLite opens)");
                 }
             }
             if open {

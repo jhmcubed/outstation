@@ -1620,8 +1620,8 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
-        ui.checkbox(&mut s.auto_live, rich("go live when RuneLite opens", 16.0, GREY()))
-            .on_hover_text(tip("when RuneLite's window appears (or is already open as the portal starts), the portal goes live by itself. \"end stream\" is never undone: the next time waits for RuneLite to open again."));
+        ui.checkbox(&mut s.auto_live, rich("go live by itself whenever RuneLite opens", 16.0, GREY()))
+            .on_hover_text(tip("when RuneLite's window appears (or is already open as the portal starts), the portal goes live by itself, and ticked with RuneLite open, within a second. \"end stream\" is never undone: the next time waits for RuneLite to open again."));
         ui.add_enabled_ui(s.auto_live, |ui| {
             ui.checkbox(&mut s.auto_end, rich("…and end the stream when RuneLite closes", 16.0, GREY()))
                 .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) ends the stream, so a forgotten portal doesn't stay on air"));
@@ -2009,9 +2009,9 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
         }
         3 => {
             ui.label(rich("clips", 18.0, LIME()));
-            ui.label(wrapped("the portal can keep the last seconds of your stream, for the clip key (Insert) to save as a video, and to save one by itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
+            ui.label(wrapped("while you're live, the portal can hold on to the last few seconds of what it's sent, always rolling, like a replay. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
             let mut replay = s.replay_seconds.min(30);
-            if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the portal sent, kept in memory only. 0 keeps nothing.") {
+            if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "how many of the last seconds are held, always rolling, for a clip of what just happened (in memory only). 0 holds nothing.") {
                 s.replay_seconds = replay;
             }
             if s.replay_seconds > 0 {
@@ -2024,8 +2024,12 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
         }
         _ => {
             ui.label(rich("done", 18.0, LIME()));
-            ui.checkbox(&mut s.auto_live, rich("go live when RuneLite opens", 16.0, GREY()))
-                .on_hover_text(tip("when RuneLite's window appears, the portal goes live by itself; \"end stream\" is never undone"));
+            // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
+            ui.checkbox(&mut s.auto_live, rich("go live by itself whenever RuneLite opens", 16.0, GREY()))
+                .on_hover_text(tip("from now on, RuneLite's window appearing starts your stream; \"end stream\" is never undone (the next time waits for RuneLite to open again)"));
+            if s.auto_live {
+                ui.label(wrapped("RuneLite open now? Then finishing the setup goes live straight away.", 14.0, PINK(), w));
+            }
             if s.start_menu.is_none() {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(rich("put the portal in your Start menu?", 16.0, GREY()));
@@ -2040,8 +2044,9 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             } else if s.start_menu == Some(true) {
                 ui.label(rich("in the Start menu", 14.0, QUIET()));
             }
-            ui.add_space(6.0);
-            ui.label(wrapped("press go live when you're ready. Pause hides the picture (before a bank PIN), and the settings have the rest.", 14.0, GREY(), w));
+            ui.add_space(14.0);
+            ui.label(rich("then", 16.0, LIME()));
+            ui.label(wrapped("in the main window, go live starts your stream and end stream stops it. Pause hides the picture (before a bank PIN). The settings have the rest.", 14.0, GREY(), w));
         }
     }
     ui.add_space(14.0);
@@ -2139,7 +2144,7 @@ fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Setti
     } else if s.dink.discord.is_none() {
         ui.label(wrapped("if Dink posts to a Discord server of yours now, the portal can keep that going just as it is, and still show more under your portal than Discord gets.", 14.0, GREY(), w));
         ui.horizontal(|ui| {
-            if button(ui, "yes, it does", true, None).clicked() { s.dink.discord = Some(true); }
+            if button(ui, "yes, i do", true, None).clicked() { s.dink.discord = Some(true); }
             if button(ui, "no, only the portal", true, None).clicked() { s.dink.discord = Some(false); }
         });
         return;
