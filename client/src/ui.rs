@@ -282,8 +282,6 @@ pub struct App {
     /// step 1's ways open again once it's set up ("change"), and its by-hand rules open
     discord_change: bool,
     discord_hand: bool,
-    /// what "use its Discord rules" (the old portal's forward.json) last said, under its own button
-    old_rules: Option<Result<String, String>>,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -446,7 +444,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, discord_change: false, discord_hand: false, old_rules: None,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1996,8 +1994,9 @@ fn forward_summary(rules: &Value) -> String {
     format!("{} · to {}", parts.join(" · "), if hooks.is_empty() { "each kind's own webhook".to_string() } else { hooks.join(", ") })
 }
 
-/// Step 1: Dink with Discord too? Answered no, it's put away; yes, the ways to set it up (the old portal's rules,
-/// from Dink's own settings, or by hand), and once set up, what Discord gets in a line.
+/// Step 1: Dink with Discord too? Answered no, it's put away; yes, the ways to set it up (from Dink's own settings,
+/// or by hand), and once set up, what Discord gets in a line. (The old Python portal's forward.json had a button too
+/// till 11/06/2026: only the keeper ever had one, and his is taken.)
 fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
     let w = ui.available_width();
     let set_up = forward_has_hook(&s.forward);
@@ -2033,38 +2032,11 @@ fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Setti
     }
     if !open { return; }
     ui.add_space(4.0);
-    // a: the old portal's rules (ghillie's own, on the keeper's PC)
-    if let Some(p) = settings::ghillie_path() {
-        let f = p.with_file_name("forward.json");
-        ui.label(rich("from the old portal on this PC:", 14.0, TEXT()));
-        ui.horizontal_wrapped(|ui| {
-            if button(ui, "use its Discord rules", true, None)
-                .on_hover_text(tip(&format!("reads {} again, the rules the old portal passed Discord its posts by", f.display()))).clicked() {
-                app.old_rules = Some(match std::fs::read_to_string(&f) {
-                    Err(_) => Err(format!("there's no {} here", f.display())),
-                    Ok(t) => match serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')) {
-                        Err(e) => Err(format!("{} isn't readable JSON ({})", f.display(), e)),
-                        Ok(rules) if !forward_has_hook(&rules) => Err(format!("{} has no Discord webhook address in it (its \"discord\" list is empty): put it in by hand below", f.display())),
-                        Ok(rules) => {
-                            s.forward = rules;
-                            Ok(format!("took {}: {}", f.display(), forward_summary(&s.forward)))
-                        }
-                    },
-                });
-            }
-        });
-        match &app.old_rules {
-            Some(Ok(t)) => { ui.label(wrapped(t, 14.0, TEAL(), w)); }
-            Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
-            None => {}
-        }
-        ui.add_space(4.0);
-    }
-    // b: from Dink's own settings
+    // from Dink's own settings
     ui.label(rich("from your Dink settings (the easy way):", 14.0, TEXT()));
     dink_setup_ui(app, ui, s, listening);
     ui.add_space(4.0);
-    // c: by hand
+    // or by hand
     ui.horizontal(|ui| {
         ui.label(rich("or by hand:", 14.0, TEXT()));
         if button(ui, if app.discord_hand { "◂" } else { "▸" }, true, None).clicked() { app.discord_hand = !app.discord_hand; }
