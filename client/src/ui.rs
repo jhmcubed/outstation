@@ -952,12 +952,16 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
         Some(Err(e)) => { ui.label(wrapped(&e, 14.0, PINK(), ui.available_width())); }
         Some(Ok(rows)) if rows.is_empty() => { ui.label(rich("none yet", 14.0, GREY())); }
         Some(Ok(rows)) => {
+            let total: u64 = rows.iter().map(|r| r.live_s).sum();
+            ui.label(rich(&format!("this month: {} on air in all", hours(total)), 14.0, GREY()))
+                .on_hover_text(tip("every channel's time live since the 1st (UTC), as the relay counts it: Cloudflare's bill follows it (claude/the-portal.md, \"Hosting, checked again\")"));
             for r in rows {
                 ui.horizontal(|ui| {
                     let words = if r.live { format!("{} · live · {} watching", r.channel, r.viewers) } else { format!("{} · off air", r.channel) };
                     ui.label(rich(&words, 14.0, if r.live { PINK() } else { TEXT() }));
                     if !r.title.is_empty() { ui.label(rich(&r.title, 14.0, GREY())); }
                     if !r.client.is_empty() { ui.label(rich(&format!("v{}", r.client), 13.0, QUIET())); }
+                    if r.live_s > 0 { ui.label(rich(&format!("{} this month", hours(r.live_s)), 13.0, QUIET())); }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "take back", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
                         if button(ui, "new code", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
@@ -1689,6 +1693,12 @@ fn kind_label(k: &str) -> &'static str {
         "LEAGUES_AREA" => "Leagues areas", "LEAGUES_RELIC" => "Leagues relics", "LEAGUES_TASK" => "Leagues tasks",
         "GRAND_EXCHANGE" => "the GE", "PLAYER_KILL" => "player kills", _ => "other",
     }
+}
+
+/// Time on air as the keeper's list says it: minutes under an hour, else hours to a tenth.
+#[cfg(feature = "station")]
+fn hours(s: u64) -> String {
+    if s < 3600 { format!("{} min", s / 60) } else { format!("{:.1} h", s as f64 / 3600.0) }
 }
 
 fn ago(d: Duration) -> String {

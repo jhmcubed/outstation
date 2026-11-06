@@ -103,7 +103,7 @@ The client normally takes Dink's posts on its own PC and sends the reports over 
 `Authorization: Bearer <ADMIN_TOKEN>`:
 - `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off.
 - `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound and desks are cut off. Viewers stay, off air.
-- `GET /admin/channels`: the list, each with `channel`, `since`, `live`, `viewers`, `title` and `client` (the version the last transmitter said, `""` for none).
+- `GET /admin/channels`: the list, each with `channel`, `since`, `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
 
 The attach code is `portal1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up.
 

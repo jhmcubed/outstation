@@ -227,15 +227,16 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     return new Response(null, { status: 405 });
   }
   if (parts.length === 2 && request.method === "GET") {
-    // the channels handed out, each with what its channel says now: live, its title, and the version of the client
-    // that last transmitted on it (so the keeper can see who'd be turned away by a higher MIN_CLIENT)
+    // the channels handed out, each with what its channel says now: live, its title, the version of the client
+    // that last transmitted on it (so the keeper can see who'd be turned away by a higher MIN_CLIENT), and its seconds
+    // on air this month, UTC (the keeper's bill)
     const given = (await (await dir.fetch("https://dir/")).json()) as { channel: string; since?: number }[];
     const rows = await Promise.all(given.map(async (c) => {
       try {
         const r = await channelStub(env, c.channel).fetch(toChannel(new Request(request.url), c.channel, "/_status"));
-        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string };
-        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "" };
-      } catch { return { ...c, live: false, viewers: 0, title: "", client: "" }; }
+        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number };
+        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0 };
+      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0 }; }
     }));
     return Response.json(rows);
   }

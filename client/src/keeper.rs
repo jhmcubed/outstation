@@ -84,7 +84,7 @@ fn call(method: &str, route: &str, auth: bool) -> Result<Value, String> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Row { pub channel: String, pub live: bool, pub viewers: u64, pub title: String, pub client: String }
+pub struct Row { pub channel: String, pub live: bool, pub viewers: u64, pub title: String, pub client: String, pub live_s: u64 }
 
 /// Someone asking for a portal (a friend's client, from its attach screen): the keeper's to hand out or turn down.
 #[derive(Clone, Debug)]
@@ -102,6 +102,8 @@ pub fn listing() -> Result<Vec<Row>, String> {
         Some(Row {
             // (the version the last transmitter said: the admin list's own, from relays since 11/06/2026)
             client: c.get("client").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            // (seconds on air this month, UTC: the keeper's bill)
+            live_s: c.get("live_s").and_then(|x| x.as_u64()).unwrap_or(0),
             live: p.as_ref().and_then(|p| p.get("live")).and_then(|x| x.as_bool()).unwrap_or(false),
             viewers: p.as_ref().and_then(|p| p.get("viewers")).and_then(|x| x.as_u64()).unwrap_or(0),
             title: p.as_ref().and_then(|p| p.get("title")).and_then(|x| x.as_str()).unwrap_or("").to_string(),

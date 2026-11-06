@@ -451,6 +451,25 @@ class Versions(Base):
         self.assertTrue((await next_of(tx, "relay"))["live"])
 
     @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
+    async def test_the_keepers_list_counts_hours_on_air_this_month(self):
+        def seconds():
+            return {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]["live_s"]
+        self.assertEqual(seconds(), 0)
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        await asyncio.sleep(1.6)
+        tx.close()
+        await asyncio.sleep(0.6)
+        after_one = seconds()
+        self.assertGreaterEqual(after_one, 1)
+        await asyncio.sleep(1.2)
+        self.assertEqual(seconds(), after_one)                    # off air: nothing more
+        again = await self.tx()                                   # a second stretch adds to the first, while it goes on
+        await next_of(again, "relay")
+        await asyncio.sleep(1.6)
+        self.assertGreaterEqual(seconds(), after_one + 1)
+
+    @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
     async def test_the_keepers_list_says_which_version_last_transmitted(self):
         tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
         await next_of(tx, "relay")

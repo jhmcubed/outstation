@@ -99,6 +99,9 @@ interface Meta {
   chatOff?: boolean; // the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
   title?: string; // the desk's {"title"}: the broadcast's title, in every status line
   client?: string; // the version the last transmitter said (v=), for the keeper's list ("" none said)
+  liveSince?: number; // when this stretch on air began (ms), while it lasts
+  liveSeen?: number; // the last moment it was seen on air (saved about once a minute), for a stretch that ended unseen
+  liveMs?: Record<string, number>; // time on air by month ("2026-11"), the last few months, for the keeper's bill
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
@@ -316,7 +319,8 @@ export class Channel extends DurableObject<Env> {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
-                             viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "" });
+                             viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "",
+                             live_s: this.secondsThisMonth() });
     }
     if (role === "_revoke") return this.revoke();
     if (role === "_notice") {
@@ -364,6 +368,13 @@ export class Channel extends DurableObject<Env> {
     }
     this.meta.code = code;
     this.meta.client = oneLine(version || "", 32);
+    // time on air: a stretch left open by an object that went before its transmitter said goodbye ends where it
+    // was last seen; then a new stretch begins (unless another transmitter is already on)
+    if (this.meta.liveSince && !this.sockets("transmit").some((t) => t !== ws)) {
+      this.addLive(this.meta.liveSince, this.meta.liveSeen || this.meta.liveSince);
+      this.meta.liveSince = undefined;
+    }
+    if (!this.meta.liveSince) { this.meta.liveSince = Date.now(); this.meta.liveSeen = Date.now(); }
     this.meta.state = "open";
     this.saveMeta();
     // viewers whose code no longer matches go
@@ -462,8 +473,12 @@ export class Channel extends DurableObject<Env> {
     const size = typeof msg === "string" ? msg.length : msg.byteLength;
     if (size > MAX_MESSAGE) return;
     const a = this.att(ws);
-    if (a.role === "transmit") this.deliver(msg);
-    else if (a.role === "watch") {
+    if (a.role === "transmit") {
+      this.deliver(msg);
+      // (seen on air: saved about once a minute, so a stretch that ends unseen still counts up to here)
+      const now = Date.now();
+      if (this.meta.liveSince && now - (this.meta.liveSeen || 0) > 60_000) { this.meta.liveSeen = now; this.saveMeta(); }
+    } else if (a.role === "watch") {
       if (typeof msg === "string" && msg.length <= VIEWER_TEXT) this.fromViewer(ws, a, msg);
     } else if (a.role === "desk") {
       if (typeof msg === "string") this.fromDesk(a.host || this.name, msg);
@@ -509,9 +524,33 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
+  /** Time on air from `from` to `to` (ms) into its month's count, keeping the last four months. */
+  addLive(from: number, to: number) {
+    if (to <= from) return;
+    const month = new Date(to).toISOString().slice(0, 7);
+    const all = this.meta.liveMs || {};
+    all[month] = (all[month] || 0) + (to - from);
+    for (const m of Object.keys(all).sort().slice(0, -4)) delete all[m];
+    this.meta.liveMs = all;
+  }
+
+  /** Seconds on air this month (UTC), the stretch going on now included. */
+  secondsThisMonth(): number {
+    const now = Date.now(), month = new Date(now).toISOString().slice(0, 7);
+    const ms = (this.meta.liveMs || {})[month] || 0;
+    const ongoing = this.meta.liveSince && this.live() ? now - Math.max(this.meta.liveSince, Date.parse(month + "-01T00:00:00Z")) : 0;
+    return Math.floor((ms + ongoing) / 1000);
+  }
+
   // the transmitter gone (or cut off): viewers hear it, and the upload line stops
   offAir() {
     if (this.live()) return;
+    if (this.meta.liveSince) {
+      this.addLive(this.meta.liveSince, Date.now());
+      this.meta.liveSince = undefined;
+      this.meta.liveSeen = undefined;
+      this.saveMeta();
+    }
     if (this.uploadTimer) clearInterval(this.uploadTimer);
     this.uploadTimer = null;
     this.soundHeld = [];
