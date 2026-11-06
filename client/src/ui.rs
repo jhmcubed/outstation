@@ -1457,12 +1457,26 @@ impl SettingsPanel {
                 if button(ui, if self.listening == Some(i) { "never mind" } else { "change" }, true, None).clicked() {
                     self.listening = if self.listening == Some(i) { None } else { Some(i) };
                 }
-                ui.label(rich(what, 14.0, QUIET()));
+                if crate::hotkeys::taken(i) && self.listening != Some(i) {
+                    ui.label(rich("held by another program, so it does nothing: change it", 14.0, PINK()));
+                } else {
+                    ui.label(rich(what, 14.0, QUIET()));
+                }
             });
         }
+        // (while it waits, the window hears the next key itself, Pause and Scroll Lock too, and a key that's one of the
+        // portal's hotkeys comes from hotkeys.rs instead of doing what it does)
+        crate::cursor::LISTEN_KEYS.store(self.listening.is_some(), std::sync::atomic::Ordering::Relaxed);
         if let Some(i) = self.listening {
-            // the next key pressed (egui hears most; Pause and Scroll Lock are here as buttons, as egui can't hear them)
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
             let mut got: Option<String> = None;
+            if let Some(vk) = crate::cursor::take_key() {
+                let vk = vk as i32;
+                if vk == 0x1B { self.listening = None; }
+                else if let Some(k) = win::KEYS.iter().find(|k| k.1 == vk) { got = Some(k.0.to_string()); }
+                else if (0x70..=0x87).contains(&vk) { got = Some(format!("f{}", vk - 0x6F)); }
+                else { self.status = ("that key can't be a hotkey here: Pause, Scroll Lock, Insert, Home, End, Page Up or Down, Delete, Caps or Num Lock, or F1 to F24".into(), PINK()); }
+            }
             ui.horizontal(|ui| {
                 ui.label(rich("or:", 14.0, GREY()));
                 for (name, label) in [("pause", "Pause"), ("scrolllock", "Scroll Lock"), ("numlock", "Num Lock"), ("capslock", "Caps Lock")] {
@@ -2530,6 +2544,7 @@ impl eframe::App for App {
         let c = ctx.clone();
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
         for n in crate::autolive::take_notes() { self.note(n); }
+        for n in crate::hotkeys::take_notes() { self.note(n); }
         if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
             #[cfg(feature = "station")]
             self.station_relay();
@@ -2629,6 +2644,10 @@ impl eframe::App for App {
         ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.content_rect(), 0.0, ABYSS());
         self.edge = self.edge_at(&ctx);
         self.min_size(&ctx);
+        // (the settings closed while a hotkey's being changed: the keys taken back at once)
+        if self.drawer != Drawer::Settings || self.panel.as_ref().is_none_or(|p| p.listening.is_none()) {
+            crate::cursor::LISTEN_KEYS.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
         egui::Panel::top("titlebar").frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 4, top: 2, bottom: 0 }))
             .show_separator_line(false).show(ui, |ui| self.title_bar(ui));
         if !self.settings.get().attached() {

@@ -24,6 +24,21 @@ const CLIP: i32 = 3;
 const MASK: i32 = 4;
 const NAMES: [&str; 4] = ["static", "sound", "clip", "mask"];
 
+/// Which keys another program holds (Windows refused them): the settings say so beside each.
+static TAKEN: [AtomicBool; 4] = [AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false)];
+static NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn taken(i: usize) -> bool { TAKEN.get(i).is_some_and(|t| t.load(Ordering::Relaxed)) }
+
+/// What the keys did, for the chat (taken once): a press used to be said only in the log, so off air one looked
+/// as if it hadn't been heard.
+pub fn take_notes() -> Vec<String> { std::mem::take(&mut *NOTES.lock().unwrap()) }
+
+fn note(s: String) {
+    crate::transmit::log(&s);
+    NOTES.lock().unwrap().push(s);
+}
+
 pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut held: [Option<u32>; 4] = [None; 4];
@@ -43,10 +58,16 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                         if unsafe { RegisterHotKey(None, i as i32 + 1, HOT_KEY_MODIFIERS(MOD_NOREPEAT.0), vk) }.is_ok() {
                             held[i] = Some(vk);
                             taken_told[i] = None;
-                        } else if taken_told[i] != Some(vk) {
-                            crate::transmit::log(&format!("the {} key is taken by another program", NAMES[i]));
-                            taken_told[i] = Some(vk);
+                            TAKEN[i].store(false, Ordering::Relaxed);
+                        } else {
+                            TAKEN[i].store(true, Ordering::Relaxed);
+                            if taken_told[i] != Some(vk) {
+                                note(format!("the {} key ({}) is held by another program, so it does nothing here: settings ▸ more ▸ hotkeys, pick another", NAMES[i], crate::win::key_name(&format!("0x{:x}", vk))));
+                                taken_told[i] = Some(vk);
+                            }
                         }
+                    } else {
+                        TAKEN[i].store(false, Ordering::Relaxed);
                     }
                 }
             }
@@ -57,22 +78,28 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                     if msg.message != WM_HOTKEY {
                         continue;
                     }
+                    // (the settings waiting for a new hotkey: one of these pressed is the answer, not a press: Windows
+                    // never hands it to the window as a key)
+                    if crate::cursor::LISTEN_KEYS.load(Ordering::Relaxed) {
+                        crate::cursor::put_key(((msg.lParam.0 >> 16) & 0xffff) as u32);
+                        continue;
+                    }
                     match msg.wParam.0 as i32 {
                         STATIC => {
                             let now = !obscured.load(Ordering::Relaxed);
                             obscured.store(now, Ordering::Relaxed);
-                            crate::transmit::log(if now { "static: the picture obscured (sound and chat go on)" } else { "the picture back" });
+                            note(if now { "static key: viewers see static, the sound and the chat going on (press it again for the picture)".into() } else { "static key: the picture's back".into() });
                         }
                         SOUND => {
                             let m = crate::sound::next_mode(&settings.get().sound);
                             let _ = settings.update(|s| s.sound = m.into());
-                            crate::transmit::log(&format!("sound: {}", crate::sound::label(m)));
+                            note(format!("sound key: {}", crate::sound::label(m)));
                         }
                         CLIP => crate::clip::save(&settings.get().clip_folder),
                         MASK => {
                             let on = !settings.get().masks_on;
                             let _ = settings.update(|s| s.masks_on = on);
-                            crate::transmit::log(if on { "masks: on" } else { "masks: off (everything goes out)" });
+                            note(if on { "mask key: masks on".into() } else { "mask key: masks off (everything goes out)".into() });
                         }
                         _ => {}
                     }

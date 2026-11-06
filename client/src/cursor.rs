@@ -28,6 +28,22 @@ const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
 const SUBCLASS_ID: usize = 0x6768_696c; // ("ghil")
 
 static WANT: AtomicU8 = AtomicU8::new(0);
+/// While the settings wait for a new hotkey (11/06/2026: egui can't hear Pause or Scroll Lock): the next key pressed
+/// in the portal's own windows, from their own key messages (never a hook, never another program's).
+pub static LISTEN_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LAST_VK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// One of the portal's own hotkeys pressed while LISTEN_KEYS is set (hotkeys.rs hands it here instead of acting on it:
+/// Windows gives such a key to the hotkey, never to the window).
+pub fn put_key(vk: u32) {
+    LAST_VK.store(vk, Ordering::Relaxed);
+}
+
+/// The key pressed in the portal's windows since this was last asked, while LISTEN_KEYS is set.
+pub fn take_key() -> Option<u32> {
+    let vk = LAST_VK.swap(0, Ordering::Relaxed);
+    (vk != 0).then_some(vk)
+}
 static FRAME: AtomicU8 = AtomicU8::new(0);
 // the cursors, made once: the star, the four frames of the hot star, the I-beam, the four double arrows
 static MADE: OnceLock<Vec<isize>> = OnceLock::new();
@@ -128,6 +144,10 @@ fn current() -> Option<HCURSOR> {
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
     // (the hand over the window's own area: the portal's windows have no other, being drawn whole by the portal)
+    use windows::Win32::UI::WindowsAndMessaging::{WM_KEYDOWN, WM_SYSKEYDOWN};
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && LISTEN_KEYS.load(Ordering::Relaxed) {
+        LAST_VK.store(wp.0 as u32, Ordering::Relaxed);
+    }
     if msg == WM_SETCURSOR && (lp.0 & 0xffff) as u32 == 1 {
         if let Some(c) = current() {
             unsafe { SetCursor(Some(c)); }
