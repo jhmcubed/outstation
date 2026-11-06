@@ -487,14 +487,14 @@ class Dink(Base):
                               "embeds": [{"description": "**x** has levelled **Attack** to **70** [wiki](https://x)"}]},
                              screenshot=b"\x89PNG fake")
         self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct), 204)
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual((r["type"], r["text"]), ("LEVEL", "x has levelled Attack to 70 wiki"))
         for i in range(2):
             await post("/dink/%s?key=%s" % (self.ch, self.key),
                        json.dumps({"type": "LOOT", "content": "loot %d" % i}).encode(), "application/json")
         await self.pause()
         late = await self.watch()
-        got = [json.loads((await late.recv_data())[1])["report"]["text"] for _ in range(3)]
+        got = [(await next_of(late, "report"))["text"] for _ in range(3)]
         self.assertEqual(got, ["x has levelled Attack to 70 wiki", "loot 0", "loot 1"])
 
     async def test_the_wrong_key_is_refused_and_other_players_never_pass(self):
@@ -508,7 +508,7 @@ class Dink(Base):
             self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct), 204)
         body, ct = multipart({"type": "DEATH", "content": "killed by someone", "extra": {"isPvp": True}})
         await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct)
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual((r["type"], r["text"]), ("DEATH", ""))
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.4)
@@ -521,7 +521,7 @@ class Dink(Base):
         body = json.dumps({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Cooking": 71}}}).encode()
         for _ in range(2):
             self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, "application/json"), 204)
-        self.assertEqual(json.loads((await v.recv_data())[1])["report"]["type"], "LEVEL")
+        self.assertEqual((await next_of(v, "report"))["type"], "LEVEL")
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.5)
 
@@ -984,7 +984,7 @@ class ReportData(Base):
         await self.pause()
         await self.dink({"type": "KILL_COUNT", "content": "kc", "extra": {"boss": "Vorkath", "count": 1240,
                          "isPersonalBest": False, "party": ["someone else"]}})
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual(r["data"], {"boss": "Vorkath", "count": 1240, "pb": False})
 
     async def test_levels_the_log_and_loot(self):
@@ -997,7 +997,7 @@ class ReportData(Base):
                          "completedEntries": 812, "totalEntries": 1568, "dropperName": "someone"}})
         await self.dink({"type": "LOOT", "content": "loot", "extra": {"source": "Vorkath", "category": "NPC",
                          "items": [{"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000}]}})
-        got = [json.loads((await v.recv_data())[1])["report"]["data"] for _ in range(3)]
+        got = [(await next_of(v, "report"))["data"] for _ in range(3)]
         self.assertEqual(got[0], {"skills": {"Cooking": 70}, "total": 169, "combat": 90})
         self.assertEqual(got[1], {"item": "Draconic visage", "id": 11286, "done": 812, "total": 1568})
         self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000, "id": 536}], "value": 6000,
@@ -1009,10 +1009,64 @@ class ReportData(Base):
         await self.pause()
         await self.dink({"type": "LOOT", "content": "x has looted from SomePlayer", "extra": {"source": "SomePlayer",
                          "category": "PLAYER", "items": [{"name": "Coins", "quantity": 5000, "priceEach": 1}]}})
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual(r["text"], "")
         self.assertNotIn("source", r["data"])
         self.assertEqual(r["data"]["value"], 5000)
+
+
+class Summary(ReportData):
+    """One summary per stream (11/06/2026): what the stream's done, from Dink's numbers, the same for every viewer
+    and late joiner; kept off air as the recap (ended), carried on by a quick return; the open portals say what
+    each live one is at (doing)."""
+
+    async def last_summary(self, v, wait=1.5):
+        got, end = None, time.monotonic() + wait
+        while time.monotonic() < end:
+            try:
+                k, line = await v.recv(timeout=max(0.05, end - time.monotonic()))
+            except asyncio.TimeoutError:
+                break
+            if k == "text" and line.startswith('{"summary"'):
+                got = json.loads(line)["summary"]
+        return got
+
+    async def test_a_stream_sums_up_its_kills_loot_levels_and_log_for_everyone(self):
+        tx = await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412}})
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 414}})
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC",
+                         "items": [{"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000},
+                                   {"id": 21907, "name": "Vorkath's head", "quantity": 1, "priceEach": 90000}]}})
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Ranged": 92}}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        sm = await self.last_summary(v)
+        self.assertEqual(sm["kc"]["vorkath"], {"name": "Vorkath", "first": 411, "last": 414})
+        self.assertEqual((sm["boss"], sm["loot"], sm["levels"], sm["pets"]), ("Vorkath", 96000, {"Ranged": 92}, ["Vorki"]))
+        self.assertEqual(sm["best"], {"name": "Vorkath's head", "value": 90000, "id": 21907})
+        self.assertNotIn("ended", sm)
+        late = await self.watch()
+        self.assertEqual((await self.last_summary(late))["loot"], 96000)     # (a late joiner: the same numbers)
+        rows = {c["channel"]: c for c in json.loads(urllib.request.urlopen(http_url() + "/channels", timeout=10).read())["channels"]}
+        if self.ch in rows:
+            self.assertEqual(rows[self.ch]["doing"], {"boss": "Vorkath", "kc": 414})
+
+    async def test_off_air_it_stays_as_the_recap_and_a_quick_return_carries_on(self):
+        tx = await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Zulrah", "count": 90}})
+        since = (await self.last_summary(v))["since"]
+        tx.close()
+        ended = await self.last_summary(v)
+        self.assertEqual((ended["since"], ended["kc"]["zulrah"]["last"]), (since, 90))
+        self.assertIn("ended", ended)
+        again = await self.tx()
+        back = await self.last_summary(v)
+        self.assertEqual(back["since"], since)                              # (back within 15 minutes: the same stream)
+        self.assertNotIn("ended", back)
 
 
 class Sound(Base):

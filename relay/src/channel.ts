@@ -102,9 +102,50 @@ interface Meta {
   liveSince?: number; // when this stretch on air began (ms), while it lasts
   liveSeen?: number; // the last moment it was seen on air (saved about once a minute), for a stretch that ended unseen
   liveMs?: Record<string, number>; // time on air by month ("2026-11"), the last few months, for the keeper's bill
+  summary?: Summary | null; // this stream's summary (fold): the readings the same for everyone, and the recap off air
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
+}
+
+// One field report into a stream's summary (relay-py's fold, the same): what the stream's done so far, from Dink's numbers.
+const SUMMARY_GAP = 15 * 60_000, SUMMARY_PETS = 5;
+interface Summary {
+  since: number; ended?: number; boss?: string;
+  kc?: Record<string, { name: string; first: number; last: number; pb?: boolean }>;
+  loot?: number; best?: { name: string; value: number; id?: number };
+  levels?: Record<string, number>; total?: number;
+  log?: { item?: string; id?: number; done?: number; total?: number };
+  pets?: string[];
+}
+export function fold(sm: Summary, report: any): boolean {
+  const d = report && report.data;
+  if (!d || typeof d !== "object") return false;
+  const kind = report.type;
+  if (kind === "KILL_COUNT" && d.boss && Number.isInteger(d.count)) {
+    const k = (sm.kc = sm.kc || {});
+    const key = String(d.boss).toLowerCase();
+    const b = (k[key] = k[key] || { name: d.boss, first: d.count - 1, last: d.count });
+    b.last = Math.max(b.last, d.count);
+    if (d.pb) b.pb = true;
+    sm.boss = d.boss;
+  } else if (kind === "LOOT" && Number.isInteger(d.value) && d.value > 0) {
+    sm.loot = (sm.loot || 0) + d.value;
+    for (const i of d.items || []) {
+      const v = (i.quantity || 0) * (i.price || 0);
+      if (v > (sm.best ? sm.best.value : 0)) sm.best = i.id ? { name: i.name, value: v, id: i.id } : { name: i.name, value: v };
+    }
+  } else if (kind === "LEVEL" && d.skills && typeof d.skills === "object") {
+    sm.levels = Object.assign(sm.levels || {}, d.skills);
+    if (d.total) sm.total = d.total;
+  } else if (kind === "COLLECTION" && d.total) {
+    const log: any = {};
+    for (const k of ["item", "id", "done", "total"]) if (d[k] !== undefined && d[k] !== null) log[k] = d[k];
+    sm.log = log;
+  } else if (kind === "PET" && d.pet) {
+    sm.pets = (sm.pets || []).slice(-(SUMMARY_PETS - 1)).concat([d.pet]);
+  } else return false;
+  return true;
 }
 
 export class Channel extends DurableObject<Env> {
@@ -243,6 +284,7 @@ export class Channel extends DurableObject<Env> {
     if (this.lastData) this.send(ws, this.lastData);
     if (this.lastFrame && this.live()) this.sendBinary(ws, this.lastFrame); // (off air, no old frame)
     for (const r of this.reports) this.send(ws, r);
+    if (this.meta.summary) this.send(ws, this.summaryLine());
     this.lateJoiner(ws, "watch");
   }
 
@@ -320,7 +362,7 @@ export class Channel extends DurableObject<Env> {
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
                              viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "",
-                             live_s: this.secondsThisMonth() });
+                             live_s: this.secondsThisMonth(), doing: this.doing() });
     }
     if (role === "_revoke") return this.revoke();
     if (role === "_notice") {
@@ -375,6 +417,11 @@ export class Channel extends DurableObject<Env> {
       this.meta.liveSince = undefined;
     }
     if (!this.meta.liveSince) { this.meta.liveSince = Date.now(); this.meta.liveSeen = Date.now(); }
+    // this stream's summary: a new one, unless it went off air only a little while ago
+    const sm = this.meta.summary;
+    if (!sm || (sm.ended && Date.now() - sm.ended > SUMMARY_GAP)) this.meta.summary = { since: Date.now() };
+    else delete sm.ended;
+    this.tellSummary();
     this.meta.state = "open";
     this.saveMeta();
     // viewers whose code no longer matches go
@@ -545,6 +592,7 @@ export class Channel extends DurableObject<Env> {
   // the transmitter gone (or cut off): viewers hear it, and the upload line stops
   offAir() {
     if (this.live()) return;
+    if (this.meta.summary) { this.meta.summary.ended = Date.now(); this.tellSummary(); }
     if (this.meta.liveSince) {
       this.addLive(this.meta.liveSince, Date.now());
       this.meta.liveSince = undefined;
@@ -568,10 +616,15 @@ export class Channel extends DurableObject<Env> {
         return;
       }
     }
+    let summed = false;
     if (typeof msg === "string" && msg.startsWith('{"report"')) {
       this.reports.push(msg);
       this.reports = this.reports.slice(-REPORTS_KEPT);
       this.ctx.storage.put("reports", this.reports);
+      if (this.meta.summary) {
+        try { summed = fold(this.meta.summary, JSON.parse(msg).report); } catch { /* not a report after all */ }
+        if (summed) this.saveMeta();
+      }
     } else if (typeof msg === "string") {
       this.lastData = msg;
       if (msg.startsWith('{"state"')) {
@@ -588,11 +641,27 @@ export class Channel extends DurableObject<Env> {
     }
     if (typeof msg === "string") {
       for (const v of this.seated()) if (this.send(v, msg)) this.out += msg.length;
+      if (summed) this.tellSummary(); // (after the report itself)
     } else {
       for (const v of this.seated()) if (this.sendBinary(v, msg)) this.out += msg.byteLength;
       // (lookers get full frames only from a transmitter that sends no small ones)
       if (Date.now() - this.thumbAt > THUMB_FRESH) this.toLookers(msg);
     }
+  }
+
+  summaryLine(): string { return pyjson({ summary: this.meta.summary || null }); }
+
+  tellSummary() {
+    if (!this.meta.summary) return;
+    const line = this.summaryLine();
+    for (const v of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look")]) this.send(v, line);
+  }
+
+  /** What the stream's at now, for the open portals: the boss of the last kill count and its count (live only). */
+  doing(): { boss: string; kc: number } | null {
+    const sm = this.meta.summary;
+    const b = sm && sm.kc && sm.boss ? sm.kc[sm.boss.toLowerCase()] : undefined;
+    return b && this.live() ? { boss: b.name, kc: b.last } : null;
   }
 
   toLookers(msg: ArrayBuffer) {

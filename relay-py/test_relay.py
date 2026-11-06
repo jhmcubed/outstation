@@ -112,13 +112,15 @@ class Fanout(RelayTest):
         lines = []
         while True:
             kind, line = await v.recv()
+            if line.startswith('{"summary"'):
+                continue            # (the stream's summary, 11/06/2026: not a status line)
             lines.append(json.loads(line)["relay"])
             if lines[-1]["live"]:
                 break
         tx.close()
         while True:
             kind, line = await v.recv()
-            if not json.loads(line)["relay"]["live"]:
+            if line.startswith('{"relay"') and not json.loads(line)["relay"]["live"]:
                 break
 
 

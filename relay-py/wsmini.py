@@ -97,10 +97,10 @@ class Client:
         return ("text", data.decode()) if op == 1 else ("binary", data)
 
     async def recv_data(self, timeout=2.0):
-        """The next message that isn't the relay's own status line."""
+        """The next message that isn't the relay's own status line (or its stream summary)."""
         while True:
             kind, payload = await self.recv(timeout)
-            if kind == "text" and payload.startswith('{"relay"'):
+            if kind == "text" and (payload.startswith('{"relay"') or payload.startswith('{"summary"')):
                 continue
             return kind, payload
 

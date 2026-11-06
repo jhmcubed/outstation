@@ -227,6 +227,43 @@ class Socket:
             pass
 
 
+SUMMARY_GAP = 15 * 60             # off air longer than this, and the next go-live begins a new stream's summary
+SUMMARY_PETS = 5
+
+
+def fold(summary, report):
+    """One field report into a stream's summary (11/06/2026, Jace: the readings the same for everyone, and a recap
+    off air): what the stream's done so far, from Dink's numbers. Returns whether it changed."""
+    d = report.get("data") if isinstance(report, dict) else None
+    if not isinstance(d, dict):
+        return False
+    kind = report.get("type")
+    if kind == "KILL_COUNT" and d.get("boss") and isinstance(d.get("count"), int):
+        k = summary.setdefault("kc", {})
+        b = k.setdefault(d["boss"].lower(), {"name": d["boss"], "first": d["count"] - 1, "last": d["count"]})
+        b["last"] = max(b["last"], d["count"])
+        if d.get("pb"):
+            b["pb"] = True
+        summary["boss"] = d["boss"]
+    elif kind == "LOOT" and isinstance(d.get("value"), int) and d["value"] > 0:
+        summary["loot"] = summary.get("loot", 0) + d["value"]
+        for i in d.get("items") or []:
+            v = (i.get("quantity") or 0) * (i.get("price") or 0)
+            if v > (summary.get("best") or {}).get("value", 0):
+                summary["best"] = dict({"name": i.get("name"), "value": v}, **({"id": i["id"]} if i.get("id") else {}))
+    elif kind == "LEVEL" and isinstance(d.get("skills"), dict):
+        summary.setdefault("levels", {}).update(d["skills"])
+        if d.get("total"):
+            summary["total"] = d["total"]
+    elif kind == "COLLECTION" and d.get("total"):
+        summary["log"] = {k: d[k] for k in ("item", "id", "done", "total") if d.get(k) is not None}
+    elif kind == "PET" and d.get("pet"):
+        summary["pets"] = (summary.get("pets") or [])[-(SUMMARY_PETS - 1):] + [d["pet"]]
+    else:
+        return False
+    return True
+
+
 class Channel:
     def __init__(self, name, key):
         self.name, self.key = name, key
@@ -267,6 +304,37 @@ class Channel:
         self.guess = None            # the drop guess round (11/05/2026): see from_desk's guess_open
         self.guess_id = 0
         self.out_seen = (0, time.monotonic())
+        self.summary = None          # this stream's summary (fold): {"since", "ended", "boss", "kc", "loot", ...}
+
+    def summary_line(self):
+        return json.dumps({"summary": self.summary})
+
+    def on_air(self):
+        """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
+        now = int(time.time() * 1000)
+        if self.summary is None or (self.summary.get("ended") and now - self.summary["ended"] > SUMMARY_GAP * 1000):
+            self.summary = {"since": now}
+        else:
+            self.summary.pop("ended", None)
+        self.tell_summary()
+
+    def off_air(self):
+        if self.summary is not None:
+            self.summary["ended"] = int(time.time() * 1000)
+            self.tell_summary()
+
+    def tell_summary(self):
+        if self.summary is None:
+            return
+        line = self.summary_line()
+        for v in list(self.viewers) + list(self.desks) + list(self.lookers):
+            v.send_nowait(line)
+
+    def doing(self):
+        """What the stream's at now, for the open portals: the boss of the last kill count and its count."""
+        s = self.summary or {}
+        b = (s.get("kc") or {}).get((s.get("boss") or "").lower())
+        return {"boss": b["name"], "kc": b["last"]} if b and self.sender is not None else None
 
     def status(self, place=0, you=None):
         """place: 0 a seat (or the transmitter); 1 and on, where a viewer stands in line for one
@@ -328,6 +396,8 @@ class Channel:
             sock.send_nowait(self.last_frame)    # (off air, no old frame for someone just come)
         for r in self.reports:
             sock.send_nowait(r)
+        if self.summary is not None:
+            sock.send_nowait(self.summary_line())
         self.late_joiner(sock)
 
     def seat_waiting(self, cap):
@@ -352,6 +422,14 @@ class Channel:
             return
         if isinstance(msg, str) and msg.startswith('{"report"'):
             self.reports.append(msg)
+            if self.summary is not None:
+                try:
+                    changed = fold(self.summary, json.loads(msg).get("report"))
+                except ValueError:
+                    changed = False
+                if changed:
+                    # (after the report itself has gone to viewers, below)
+                    asyncio.get_event_loop().call_soon(self.tell_summary)
         elif isinstance(msg, str):
             self.last_data = msg
             if msg.startswith('{"state"'):
@@ -616,6 +694,7 @@ class Relay:
         if ch.sender is not None:
             await ch.sender.close(4000, "replaced by a newer transmitter")
         ch.sender, ch.code, ch.state = sock, code, "open"
+        ch.on_air()
         self.log("transmit  %s  (code %s)" % (name, "set" if code else "none"))
         # viewers whose code no longer matches go
         for v in list(ch.viewers) + list(ch.waiting):
@@ -640,6 +719,7 @@ class Relay:
         finally:
             if ch.sender is sock:
                 ch.sender = None
+                ch.off_air()
                 self.log("off air   %s" % name)
                 ch.tell_viewers()
 
@@ -954,7 +1034,8 @@ class Relay:
         that's set up and has no watch code, live ones first, with whether each is live. Anyone may read it (the
         public side too); a channel with a watch code is never listed."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
-                 "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title}
+                 "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
+                 "doing": ch.doing()}
                 for ch in self.channels.values() if ch.key is not None and not ch.code]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         body = json.dumps({"channels": rows}).encode()

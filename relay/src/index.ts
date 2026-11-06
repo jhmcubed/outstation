@@ -283,10 +283,10 @@ export default {
       const rows = await Promise.all(names.map(async (n) => {
         try {
           const r = await channelStub(env, n).fetch(toChannel(new Request(url.toString()), n, "/_status"));
-          return (await r.json()) as { channel: string; set: boolean; code: boolean; live: boolean; open: boolean; static: boolean; viewers: number; title?: string };
+          return (await r.json()) as { channel: string; set: boolean; code: boolean; live: boolean; open: boolean; static: boolean; viewers: number; title?: string; doing?: unknown };
         } catch { return null; }
       }));
-      const open = rows.filter((r) => r && r.set && !r.code).map((r) => ({ channel: r!.channel, live: r!.live, open: r!.open, static: r!.static, viewers: r!.viewers, title: r!.title || "" }));
+      const open = rows.filter((r) => r && r.set && !r.code).map((r) => ({ channel: r!.channel, live: r!.live, open: r!.open, static: r!.static, viewers: r!.viewers, title: r!.title || "", doing: r!.doing || null }));
       open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
       return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
     }
