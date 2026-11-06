@@ -372,7 +372,7 @@ impl App {
                 if let Ok(mut r) = r {
                     if let Ok(v) = r.body_mut().read_to_string().map(|t| serde_json::from_str::<Value>(&t).unwrap_or(Value::Null)) {
                         if let Some(tag) = v.get("tag_name").and_then(|x| x.as_str()) {
-                            if newer_than(tag.trim_start_matches('v'), env!("CARGO_PKG_VERSION")) {
+                            if newer_than(tag.trim_start_matches('v'), crate::settings::VERSION) {
                                 *n.lock().unwrap() = Some(tag.to_string());
                             }
                         }
@@ -1611,7 +1611,7 @@ const SAFE: &[&str] = &[
     "it can't press a key or click for you",
     "it sees only what RuneLite's window draws, as OBS or Discord's screen share would (press Pause before a bank PIN)",
     "it never asks for your login, and never reads what RuneLite and Jagex say to each other",
-    "Windows tells it only when its own two keys are pressed: Pause and Scroll Lock",
+    "it doesn't watch your keyboard: Windows tells it only when one of its own four keys is pressed (Pause, Scroll Lock, Insert and End, to begin with)",
     "it sends only to the relay in your attach code, your Discord webhook if you set one, and GitHub to look for updates",
     "it needs no admin, installs nothing, and doesn't start with Windows",
 ];
@@ -1759,7 +1759,7 @@ impl eframe::App for App {
         if let Some(tag) = newer {
             if !self.told_newer {
                 self.told_newer = true;
-                self.note(format!("a newer version is out ({}): github.com/jhmcubed/outside-portal/releases", tag));
+                self.note(format!("a newer version is out ({}): {}", tag, crate::settings::RELEASES));
             }
         }
         let listening = self.panel.as_ref().is_some_and(|p| p.listening.is_some());

@@ -16,6 +16,8 @@ export interface Env {
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
+  MIN_CLIENT?: string; // the oldest outside-portal client let in (its v=); older ones are told to update (4026)
+  ASKS_AN_HOUR?: string; // (tests) requests for a portal from one address in an hour (index.ts's ASKS_AN_HOUR)
   POLL_MIN_SECONDS?: string; // (tests: a poll that ends quickly)
   POLL_KEPT_SECONDS?: string;
 }
@@ -96,6 +98,7 @@ interface Meta {
   pingsOff?: boolean; // the desk's {"pings": false}: viewers' pings go nowhere
   chatOff?: boolean; // the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
   title?: string; // the desk's {"title"}: the broadcast's title, in every status line
+  client?: string; // the version the last transmitter said (v=), for the keeper's list ("" none said)
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
@@ -313,13 +316,17 @@ export class Channel extends DurableObject<Env> {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
-                             viewers: this.seated().length, title: this.meta.title || "" });
+                             viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "" });
     }
     if (role === "_revoke") return this.revoke();
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
 
-    // the key first, so a refused socket never counts as the channel's, even for a moment
-    const no = role === "watch" || role === "look" ? null : await this.checkKey(q.get("key") || "", ip);
+    // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
+    // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit)
+    const min = this.env.MIN_CLIENT || "";
+    const no: [number, string] | null = role === "watch" || role === "look" ? null
+      : tooOld(q.get("v"), min) ? [4026, `this portal is too old for the relay: ${min} or newer is needed`]
+      : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
@@ -334,7 +341,7 @@ export class Channel extends DurableObject<Env> {
       this.openLook(ws, a, q.get("code") || "");
     } else {
       if (role === "transmit") {
-        this.openTransmit(ws, q.get("code") || "");
+        this.openTransmit(ws, q.get("code") || "", q.get("v"));
       } else if (role === "desk") {
         this.openDesk(ws, a, q.get("name") || "");
       } else {
@@ -344,11 +351,12 @@ export class Channel extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  openTransmit(ws: WebSocket, code: string) {
+  openTransmit(ws: WebSocket, code: string, version: string | null) {
     for (const old of this.sockets("transmit")) {
       if (old !== ws) this.close(old, 4000, "replaced by a newer transmitter");
     }
     this.meta.code = code;
+    this.meta.client = oneLine(version || "", 32);
     this.meta.state = "open";
     this.saveMeta();
     // viewers whose code no longer matches go
@@ -948,6 +956,22 @@ export class Channel extends DurableObject<Env> {
 }
 
 // Dink's JSON: the payload_json part of a multipart post, or a plain JSON body
+/** "0.10.2" as [0, 10, 2]; anything after a "-" or "+" (a pre-release) is left out, a part that isn't a number is 0. */
+export function versionNumbers(v: string): number[] {
+  const core = v.trim().replace(/^[vV]/, "").split(/[-+]/, 1)[0];
+  const parts = core.split(".").slice(0, 3).map((p) => (/^\d+$/.test(p) ? parseInt(p, 10) : 0));
+  while (parts.length < 3) parts.push(0);
+  return parts;
+}
+
+/** Whether a client saying version v is older than min (no min, or no version said: never). */
+export function tooOld(v: string | null, min: string): boolean {
+  if (!min || v === null) return false;
+  const a = versionNumbers(v), b = versionNumbers(min);
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+}
+
 async function dinkPayload(request: Request): Promise<unknown> {
   try {
     const type = (request.headers.get("content-type") || "").toLowerCase();

@@ -14,11 +14,23 @@ Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Pytho
 
 `ws://` on this PC, `wss://` on Cloudflare. A channel is 1 to 64 characters: letters, digits and `_ . ~ -`.
 
+The client adds `&v=<its version>` to every address it opens (below, "The client's version").
+
 Closing codes:
 - 4000: replaced by a newer transmitter or sound.
 - 4001: a key under 8 characters.
 - 4003: the wrong key, the wrong watch code, the watch code changed, a channel nobody handed out (Cloudflare), or the channel given a new key or taken back.
+- 4026: this client is older than the relay allows; the reason says which version is needed ("… 0.2.0 or newer is needed"). Trying again won't help: the client stops and says where to get a newer one.
 - 4029: too many wrong keys from one address in a minute (Cloudflare).
+
+## The client's version
+
+The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, and on its live view's watch socket.
+- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
+- Versions are compared by number (`0.10.0` is newer than `0.9.0`), and a pre-release's suffix is left out (`0.5.0-rc.1` counts as `0.5.0`).
+- A socket that says no version is let in: ghillie's Python portal predates it.
+- Viewers never need one.
+- No minimum (the default) lets every version in. Raise it only when the protocol changes in a way older clients can't follow, and after the keeper's list (`GET /admin/channels`, `client`) shows who'd be turned away.
 
 ## The transmitter
 
@@ -91,8 +103,30 @@ The client normally takes Dink's posts on its own PC and sends the reports over 
 `Authorization: Bearer <ADMIN_TOKEN>`:
 - `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off.
 - `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound and desks are cut off. Viewers stay, off air.
-- `GET /admin/channels`: the list.
+- `GET /admin/channels`: the list, each with `channel`, `since`, `live`, `viewers`, `title` and `client` (the version the last transmitter said, `""` for none).
 
 The attach code is `portal1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up.
 
 Only the key's SHA-256 is kept.
+
+## Asking for a portal (Cloudflare)
+
+So a friend needn't email the keeper for a code: their client asks, the keeper answers from his list, and the client collects the answer itself.
+
+A friend's client:
+- `POST /requests/<channel>` with `{"player", "note", "pickup"}` asks for a channel.
+  - `channel` is the player's name as the page has it: 1 to 12 letters or numbers, lower case, no spaces.
+  - `player` is the name as they typed it, and `note` how the keeper knows them (one line, 200 characters at most).
+  - `pickup` is a secret of the client's own, 32 to 128 characters. Only its SHA-256 is kept.
+  - Answers: 201 `{"state": "waiting", "given"}`, where `given` says the channel is already handed out (a new code would cut off whoever has it).
+  - Refused: 409 when someone else is already waiting for that name, 429 past 3 requests an hour from one address, 503 past 50 waiting in all.
+  - Asking again with the same pickup only changes the note.
+- `GET /requests/<channel>?pickup=<secret>` answers `{"state": "waiting"}`, `{"state": "given", "code"}` or `{"state": "turned down"}`, or 404 `{"state": "none"}` (no request, or the wrong pickup). An answer is given once: collected, the request is gone, and the attach code with it.
+- `DELETE /requests/<channel>?pickup=<secret>`: the asker takes it back.
+
+The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
+- `GET /admin/requests`: those waiting, oldest first, each `{"channel", "player", "note", "at", "given"}`.
+- `POST /admin/requests/<channel>`: handed out, as `POST /admin/channels/<channel>` (the same answer); the code then waits for the asker's client. 404 if nobody is waiting for it.
+- `DELETE /admin/requests/<channel>`: turned down.
+
+A request nobody answers goes after 14 days, and an answer nobody collects after 7.

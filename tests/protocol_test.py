@@ -33,6 +33,9 @@ from wsmini import Client  # noqa: E402
 MODE = os.environ.get("PORTAL_RELAY", "python")
 WORKER = MODE == "worker" or (MODE.startswith("ws") and bool(os.environ.get("ADMIN_TOKEN")))
 ADMIN = os.environ.get("ADMIN_TOKEN") or "test-admin-" + secrets.token_hex(12)
+# the oldest client the relays under test let in (a relay already running: whatever it was started with, given here)
+ASKS_AN_HOUR = 12    # (the Worker's own is 3: the tests all ask from one address)
+MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.0")
 SAY_BURST = 20
 SOUND_HOLD = 0.5
 RELAY = None          # ws://127.0.0.1:port
@@ -78,13 +81,14 @@ def setUpModule():
         PROC = subprocess.Popen(
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
-             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1"],
+             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR)],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32")
         up = wait_up(90)
     else:
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                 "--no-forward", "--min-client", MIN_CLIENT],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         up = wait_up(15)
     if not up:
         tearDownModule()
@@ -111,6 +115,23 @@ def admin(method, path):
             return r.status, json.loads(body) if body else None
     except urllib.error.HTTPError as e:
         return e.code, None
+
+
+def http(method, path, body=None):
+    """(status, JSON or None) from a public route, as a friend's client calls it."""
+    data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    req = urllib.request.Request(http_url() + path, method=method, data=data,
+                                 headers={"Content-Type": "application/json"} if body is not None else {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            return r.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw) if raw else None
+        except ValueError:
+            return e.code, None
 
 
 CRLF = "\r\n"
@@ -374,6 +395,56 @@ class Keys(Base):
         await self.pause()
         for v in (await self.watch("8XKJX173"), await self.watch()):
             self.assertTrue((await next_of(v, "relay"))["live"])
+
+
+@unittest.skipUnless(MIN_CLIENT, "the relay under test lets every version in (MIN_CLIENT not given)")
+class Versions(Base):
+    """The client says its version (v=) on its transmit, desk and sound sockets; one older than the relay's
+    MIN_CLIENT is turned away with 4026 and the version needed, so it can say where to get a newer one."""
+
+    def older(self):
+        major, minor, patch = (int(x) for x in MIN_CLIENT.split("."))
+        return "%d.%d.%d" % ((major, minor - 1, 9) if minor else (major - 1, 99, 0)) if (major or minor) else "0.0.0"
+
+    async def test_an_older_client_is_turned_away_on_every_socket_it_opens(self):
+        for role, query in (("transmit", "key=%s&code=" % self.key), ("desk", "key=%s&name=x" % self.key),
+                            ("sound", "key=%s" % self.key)):
+            c = await self.connect(role, query + "&v=" + self.older())
+            self.assertEqual(await c.recv_close(), ("close", 4026), role)
+            self.assertIn(MIN_CLIENT, c.reason)
+
+    async def test_the_oldest_allowed_and_newer_ones_are_let_in_by_number_not_by_letter(self):
+        major, minor, _ = (int(x) for x in MIN_CLIENT.split("."))
+        for v in (MIN_CLIENT, "%d.%d.10" % (major, minor), "%d.%d.0" % (major, minor + 10), MIN_CLIENT + "-rc.1"):
+            tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, v))
+            self.assertTrue((await next_of(tx, "relay"))["live"], v)
+            tx.close()
+            await self.pause(2)
+
+    async def test_a_client_that_says_no_version_is_let_in(self):
+        tx = await self.tx()          # (ghillie's Python portal says none)
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+
+    async def test_viewers_need_no_version(self):
+        await self.tx()
+        v = await self.connect("watch", "code=&v=" + self.older())
+        self.assertIn("live", await next_of(v, "relay"))
+
+    @unittest.skipUnless(WORKER, "the wrong-key limit: the Worker only")
+    async def test_turned_away_for_its_version_isnt_a_wrong_key(self):
+        for _ in range(12):
+            c = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, self.older()))
+            self.assertEqual(await c.recv_close(), ("close", 4026))
+        tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+
+    @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
+    async def test_the_keepers_list_says_which_version_last_transmitted(self):
+        tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
+        await next_of(tx, "relay")
+        rows = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}
+        self.assertEqual(rows[self.ch]["client"], MIN_CLIENT)
+        self.assertTrue(rows[self.ch]["live"])
 
 
 class Dink(Base):
@@ -1032,6 +1103,93 @@ class Channels(Base):
             codes.append((await c.recv_close())[1])
         self.assertEqual(codes[:10], [4003] * 10)
         self.assertEqual(codes[10], 4029)
+
+
+
+@unittest.skipUnless(WORKER, "asking for a portal: the Worker only (the keeper's relay)")
+class Requests(unittest.IsolatedAsyncioTestCase):
+    """A friend's client asks for its player's channel with a secret of its own (the pickup); the keeper hands it
+    out or turns it down from his list; the client collects the answer once."""
+
+    def setUp(self):
+        self.name = "p" + secrets.token_hex(4)                   # (a player's name: 1-12 letters or numbers)
+        self.pickup = secrets.token_urlsafe(32)
+
+    def ask(self, name=None, pickup=None, note="moss from the clan"):
+        return http("POST", "/requests/" + (name or self.name),
+                    {"player": (name or self.name).title(), "note": note, "pickup": pickup or self.pickup})
+
+    def check(self, pickup=None):
+        return http("GET", "/requests/%s?pickup=%s" % (self.name, pickup or self.pickup))
+
+    def waiting(self):
+        return {r["channel"]: r for r in admin("GET", "/admin/requests")[1]}
+
+    async def test_asked_handed_out_and_collected_once_and_the_code_transmits(self):
+        status, got = self.ask()
+        self.assertEqual((status, got["state"], got["given"]), (201, "waiting", False))
+        row = self.waiting()[self.name]
+        self.assertEqual((row["player"], row["note"], row["given"]), (self.name.title(), "moss from the clan", False))
+        self.assertEqual(self.check(), (200, {"state": "waiting"}))
+        status, minted = admin("POST", "/admin/requests/" + self.name)
+        self.assertEqual(status, 200)
+        self.assertNotIn(self.name, self.waiting())
+        status, got = self.check()
+        self.assertEqual((status, got["state"], got["code"]), (200, "given", minted["code"]))
+        self.assertEqual(self.check()[0], 404)                                   # collected: gone
+        raw = got["code"][len("portal1:"):]
+        info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        tx = await Client().open("%s/transmit/%s?key=%s" % (RELAY, self.name, info["key"]))
+        try:
+            self.assertTrue((await next_of(tx, "relay"))["live"])
+        finally:
+            tx.close()
+        self.assertIn(self.name, [c["channel"] for c in admin("GET", "/admin/channels")[1]])
+
+    async def test_turned_down_is_said_once(self):
+        self.ask()
+        self.assertEqual(admin("DELETE", "/admin/requests/" + self.name)[0], 204)
+        self.assertEqual(self.check(), (200, {"state": "turned down"}))
+        self.assertEqual(self.check()[0], 404)
+        self.assertNotIn(self.name, [c["channel"] for c in admin("GET", "/admin/channels")[1]])
+
+    async def test_only_the_asker_can_see_or_take_back_the_answer(self):
+        self.ask()
+        self.assertEqual(self.check(pickup=secrets.token_urlsafe(32)), (404, {"state": "none"}))
+        self.assertEqual(http("DELETE", "/requests/%s?pickup=%s" % (self.name, secrets.token_urlsafe(32)))[0], 404)
+        self.assertEqual(http("DELETE", "/requests/%s?pickup=%s" % (self.name, self.pickup))[0], 204)
+        self.assertNotIn(self.name, self.waiting())
+
+    async def test_a_name_already_asked_for_isnt_taken_over_and_asking_again_changes_nothing_else(self):
+        self.ask()
+        status, got = self.ask(pickup=secrets.token_urlsafe(32))
+        self.assertEqual(status, 409)
+        self.assertIn("already asked", got["error"])
+        self.assertEqual(self.ask(note="a new note")[0], 201)                    # the asker again: the note only
+        self.assertEqual(self.waiting()[self.name]["note"], "a new note")
+
+    async def test_the_keeper_sees_a_name_already_handed_out(self):
+        admin("POST", "/admin/channels/" + self.name)
+        status, got = self.ask()
+        self.assertTrue(got["given"])
+        self.assertTrue(self.waiting()[self.name]["given"])
+
+    async def test_bad_names_short_pickups_and_nobody_waiting_are_refused(self):
+        self.assertEqual(self.ask(name="Not%20A%20Channel")[0], 400)
+        self.assertEqual(self.ask(name="thirteenchars")[0], 400)
+        self.assertEqual(self.ask(pickup="short")[0], 400)
+        self.assertEqual(admin("POST", "/admin/requests/" + self.name)[0], 404)
+        self.assertEqual(admin("GET", "/admin/requests")[0], 200)
+        req = urllib.request.Request(http_url() + "/admin/requests", headers={"Authorization": "Bearer nope-nope-nope-nope"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
+
+    async def test_yet_more_asks_from_one_place_wait_an_hour(self):
+        # (last of these, by name: after it this address can't ask for an hour)
+        codes = [self.ask(name="q%s" % secrets.token_hex(3), pickup=secrets.token_urlsafe(32))[0] for _ in range(ASKS_AN_HOUR + 1)]
+        self.assertIn(429, codes)
+        self.assertEqual(codes[codes.index(429):], [429] * (len(codes) - codes.index(429)))
 
 
 if __name__ == "__main__":

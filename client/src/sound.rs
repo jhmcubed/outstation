@@ -155,12 +155,22 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
             }
             if let Some(e) = failed { break e; }
             match ws.recv() {
+                Ok(Got::Closed(4026, why)) => break format!("too old: {}", why),
                 Ok(Got::Closed(code, _)) => break format!("the relay closed it ({})", code),
                 Err(e) => break e,
                 _ => {}
             }
         };
         ws.close();
+        if let Some(reason) = why.strip_prefix("too old: ") {
+            // older than the relay allows: no sound until the settings change (the picture says why)
+            crate::transmit::log(&format!("sound: {}", crate::settings::too_old_note(reason)));
+            for (_, b) in std::mem::take(&mut buses) { b.stop(); }
+            while { let s = settings.get(); (s.relay.clone(), s.channel.clone(), s.key.clone()) == who } {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            continue;
+        }
         crate::transmit::log(&format!("sound: the relay went ({}); again in 2 s", why));
         while rx.try_recv().is_ok() {}
         std::thread::sleep(Duration::from_secs(if why == "the stream ended" { 0 } else { 2 }));

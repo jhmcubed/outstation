@@ -2,7 +2,7 @@
 
     c = await Client().open("ws://127.0.0.1:8786/transmit/sburb?key=...")
     await c.send(b"...") / await c.send("text")
-    kind, payload = await c.recv()      # 'text', 'binary' or 'close' (payload = the close code)
+    kind, payload = await c.recv()      # 'text', 'binary' or 'close' (payload = the close code; c.reason its words)
 
 wss:// works too (the real relay on Cloudflare).
 """
@@ -19,6 +19,7 @@ class Client:
     """Masks what it sends, as a browser or OkHttp does."""
 
     status = None
+    reason = ""     # the words the other end closed with
 
     async def open(self, url_or_port, path=None):
         """open("ws://host:port/path") or, for the tests, open(port, "/path") on 127.0.0.1."""
@@ -64,6 +65,7 @@ class Client:
             n = struct.unpack(">Q", await self.r.readexactly(8))[0]
         data = await self.r.readexactly(n)
         if op == 8:
+            self.reason = data[2:].decode("utf-8", "replace")
             return "close", struct.unpack(">H", data[:2])[0] if len(data) >= 2 else None
         if op == 9:
             self.w.write(struct.pack(">BB", 0x8A, 0x80) + os.urandom(4))

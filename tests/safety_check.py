@@ -9,6 +9,9 @@ library's. This reads that table straight out of the file (no tools needed) and 
 NEVER list is there. Then it reads the client's own source for the same names, for anything loaded by hand
 (GetProcAddress) and for ways of sending input or messages to another program's window. The release workflow runs
 it on the very exe it publishes.
+
+It also checks the program stands alone: every library it loads is part of Windows itself, so it runs on a PC with
+nothing installed beside it (no Visual C++ runtime, no MinGW's, no codec). .cargo/config.toml builds the C runtime in.
 """
 
 import os
@@ -61,6 +64,48 @@ SOURCE_NEVER = sorted(NEVER) + ["GetProcAddress", "LoadLibrary", "OpenProcess", 
 SOURCE_ALLOWED = {
     "SetForegroundWindow": "brings this program's own window to the front when it's opened twice (win.rs show_window)",
 }
+
+
+# Libraries that come with Windows 10 and 11 (in System32 on every PC). Anything else the exe needs would have to be
+# installed beside it, so it fails the check (add a library here only with where Windows ships it).
+WINDOWS_DLLS = {
+    "kernel32.dll", "kernelbase.dll", "ntdll.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "shell32.dll",
+    "shlwapi.dll", "ole32.dll", "oleaut32.dll", "combase.dll", "comctl32.dll", "comdlg32.dll", "uxtheme.dll",
+    "dwmapi.dll", "imm32.dll", "winmm.dll", "version.dll", "userenv.dll", "ws2_32.dll", "iphlpapi.dll",
+    "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dll", "secur32.dll", "ncrypt.dll", "d3d11.dll", "dxgi.dll",
+    "d3dcompiler_47.dll", "opengl32.dll", "mfplat.dll", "mfreadwrite.dll", "mf.dll", "propsys.dll", "avrt.dll",
+    "mmdevapi.dll", "ksuser.dll", "psapi.dll", "dbghelp.dll", "setupapi.dll", "cfgmgr32.dll", "hid.dll",
+    "powrprof.dll", "winhttp.dll", "wtsapi32.dll", "msvcrt.dll", "ucrtbase.dll", "synchronization.dll",
+    "dwrite.dll", "d2d1.dll", "windowscodecs.dll", "oleacc.dll", "uiautomationcore.dll", "msimg32.dll",
+    "winspool.drv", "netapi32.dll", "rpcrt4.dll", "sechost.dll", "shcore.dll", "dcomp.dll",
+    "coremessaging.dll",  # (Windows Graphics Capture's dispatcher queue, in System32 since Windows 10)
+}
+# Windows' own API sets (api-ms-win-crt-*, the Universal C Runtime among them, is part of Windows 10 and 11)
+WINDOWS_PREFIXES = ("api-ms-win-", "ext-ms-win-")
+# The usual ones that aren't: each would need installing (named, so the failure says what it is)
+NOT_WINDOWS = {
+    "vcruntime": "Microsoft's Visual C++ runtime (a Redistributable): .cargo/config.toml's crt-static builds it in",
+    "msvcp": "Microsoft's Visual C++ library (a Redistributable): crt-static, as above",
+    "concrt": "Microsoft's Visual C++ runtime, as above",
+    "vccorlib": "Microsoft's Visual C++ runtime, as above",
+    "libgcc": "MinGW's runtime: link it statically",
+    "libstdc++": "MinGW's C++ library: link it statically",
+    "libwinpthread": "MinGW's threads: link it statically",
+    "libunwind": "llvm-mingw's runtime: link it statically",
+    "libc++": "llvm-mingw's C++ library: link it statically",
+    "opus": "libopus as a DLL: it should be built in (the opus crate does)",
+}
+
+
+def outside_windows(dlls):
+    """[(dll, why)] for every library the exe loads that doesn't come with Windows."""
+    out = []
+    for dll in sorted(dlls):
+        if dll in WINDOWS_DLLS or dll.startswith(WINDOWS_PREFIXES):
+            continue
+        why = next((w for k, w in NOT_WINDOWS.items() if dll.startswith(k)), "not known to come with Windows")
+        out.append((dll, why))
+    return out
 
 
 def rva_to_offset(sections, rva):
@@ -187,6 +232,11 @@ def main(argv):
         for dll, f in known:
             print("  (%s!%s: the libraries' own, for this program alone: %s)" % (dll, f, LIBRARIES[f]))
         failed |= bool(bad)
+        extra = outside_windows(got)
+        print("  it loads: %s" % ", ".join(sorted(got)))
+        print("  stands alone: %s" % ("; ".join("%s (%s)" % e for e in extra) if extra
+                                       else "yes, every library it loads comes with Windows"))
+        failed |= bool(extra)
     src = check_source()
     print("the client's source: %s" % ("; ".join(src) if src else "none of them, and nothing loaded by hand"))
     failed |= bool(src)

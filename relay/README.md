@@ -55,5 +55,6 @@ It goes up as `https://outside-portal.<subdomain>.workers.dev`, and the sockets 
 
 The `vars` in `wrangler.jsonc`:
 - `MAX_VIEWERS`: a ceiling on any channel's viewers ("0": none beyond each channel's own cap).
+- `MIN_CLIENT`: the oldest client let in (e.g. "0.2.0"; "" lets every version in). Older clients are turned away with 4026 and told to get a newer one (`../docs/protocol.md`, "The client's version"). Look at `GET /admin/channels` first: each channel's `client` is the version that last transmitted on it.
 - `OPEN_CLAIM`: "1" lets the first transmitter claim a channel, as `relay.py` does. For local tests only; never on Cloudflare.
 - `POLL_MIN_SECONDS`, `POLL_KEPT_SECONDS`: shorter polls, for the tests.

@@ -225,9 +225,11 @@ impl Settings {
     pub fn host_name(&self) -> String {
         if self.chat_name.trim().is_empty() { self.channel.clone() } else { self.chat_name.trim().to_string() }
     }
-    /// the relay's address for one of its sockets
+    /// the relay's address for one of its sockets, with this client's version (v=): a relay that needs a newer
+    /// client turns it away with 4026 and says which (docs/protocol.md, "The client's version")
     pub fn socket_url(&self, role: &str, query: &str) -> String {
-        format!("{}/{}/{}?{}", self.relay.trim_end_matches('/'), role, enc(&self.channel), query)
+        let sep = if query.is_empty() { "" } else { "&" };
+        format!("{}/{}/{}?{}{}v={}", self.relay.trim_end_matches('/'), role, enc(&self.channel), query, sep, enc(VERSION))
     }
     /// its http(s) address (for Dink's posts)
     pub fn http_base(&self) -> String {
@@ -236,6 +238,18 @@ impl Settings {
         else if let Some(rest) = r.strip_prefix("ws://") { format!("http://{}", rest) }
         else { r.to_string() }
     }
+}
+
+/// this client's version (client/Cargo.toml's, which each release's tag must match)
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// where the releases are, for "a newer one is out" and "too old for the relay" (shown, never opened or fetched)
+pub const RELEASES: &str = "github.com/jhmcubed/outside-portal/releases";
+
+/// The words for a relay's 4026 (this client too old for it), from the relay's own reason.
+pub fn too_old_note(reason: &str) -> String {
+    let why = if reason.trim().is_empty() { "this portal is too old for the relay" } else { reason.trim() };
+    format!("{} (this is {}): get the newest at {}", why, VERSION, RELEASES)
 }
 
 pub fn enc(s: &str) -> String {
@@ -412,7 +426,8 @@ mod tests {
         let mut s = Settings::default();
         s.relay = "wss://r.example/".into();
         s.channel = "a b".into();
-        assert_eq!(s.socket_url("watch", "code="), "wss://r.example/watch/a%20b?code=");
+        assert_eq!(s.socket_url("watch", "code="), format!("wss://r.example/watch/a%20b?code=&v={}", VERSION));
+        assert_eq!(s.socket_url("sound", ""), format!("wss://r.example/sound/a%20b?v={}", VERSION));
         assert_eq!(s.http_base(), "https://r.example");
     }
 }

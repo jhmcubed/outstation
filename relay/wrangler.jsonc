@@ -16,7 +16,10 @@
     { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] }
   ],
   "vars": {
-    "MAX_VIEWERS": "0"
+    "MAX_VIEWERS": "0",
+    // the oldest client let in ("" lets every version in): raise it when the protocol changes in a way older
+    // clients can't follow; they're told to get a newer one (4026) instead of trying again
+    "MIN_CLIENT": ""
   },
   "observability": { "enabled": true }
 }

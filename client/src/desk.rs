@@ -128,6 +128,17 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         up.store(false, Ordering::Relaxed);
         ws.close();
         if let Some((code, why)) = &ended {
+            if *code == 4026 {
+                // older than the relay allows: the chat waits for new settings (a newer client is the real fix)
+                let _ = inbox.send(In::Note(crate::settings::too_old_note(why)));
+                wake();
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let s = settings.get();
+                    if (s.relay.clone(), s.channel.clone(), s.key.clone(), s.host_name()) != who { break; }
+                }
+                continue;
+            }
             if *code == 4003 || *code == 4001 || *code == 4029 {
                 let _ = inbox.send(In::Note(format!("the relay turned the chat away ({}: {})", code, why)));
                 wake();

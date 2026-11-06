@@ -68,6 +68,11 @@ my own chat box on my computer that i can respond back in"):
   picture is live and open: paused or minimised, nothing is heard either.
   The transmit, desk and sound roles need the key, and the public side
   (the Funnel's port) refuses all three.
+
+The client's version (11/06/2026): outside-portal's client adds v=<its version> to the transmit, desk and
+sound addresses. With --min-client set, a client that says an older version is turned away with 4026 and
+the oldest version allowed in the reason, so it can say where to get a newer one instead of trying again.
+A connection that says no version (ghillie's Python portal, which predates it) is let in as before.
 """
 
 import argparse
@@ -107,6 +112,7 @@ GUESS_MIN_VALUE = 1_000_000       # a drop from the guessed boss this big ends a
 GUESS_KEPT = 120.0                # a decided round's result stays this long
 POLL_KEPT = 90.0                  # a closed poll's result stays this long, then {"poll_gone"} (Jace, 11/05)
 DINK_SAME = 10.0                  # the same Dink post again within this long is dropped (a webhook listed twice in Dink)
+CLIENT_ROLES = ("transmit", "desk", "sound")   # the roles that say the client's version (v=)
 SOUND_HOLD = 0.5                  # the capture's HOLD_BACK: a pause takes the last moment's sound back too
 CONTROL = re.compile(r"[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]")
 # Dink's notification kinds that pass to viewers (none of them name another player,
@@ -484,9 +490,29 @@ class Channel:
             self.say("✼", "%s at kill %s: %s guessed closest (%s off)" % (item or "the drop", kc, ", ".join(winners), best), host=True)
 
 
+def version_numbers(v):
+    """"0.10.2" as (0, 10, 2) for comparing; anything after a "-" or "+" (a pre-release) is left out, and a part
+    that isn't a number counts as 0."""
+    core = re.split(r"[-+]", (v or "").strip().lstrip("vV"), maxsplit=1)[0]
+    nums = []
+    for part in core.split(".")[:3]:
+        nums.append(int(part) if part.isdigit() else 0)
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def too_old(v, min_client):
+    """Whether a client saying version v is older than min_client (neither set: never)."""
+    if not min_client or v is None:
+        return False
+    return version_numbers(v) < version_numbers(min_client)
+
+
 class Relay:
-    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0):
+    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client=""):
         self.delay = delay
+        self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
         # how many may watch a channel at once (0: no limit). Each viewer gets their own copy
         # from the transmitter's home upload, so it's that upload that sets the number
         self.max_viewers = max_viewers
@@ -556,6 +582,9 @@ class Relay:
         sock = Socket(reader, writer)
         role, name = path
         try:
+            if role in CLIENT_ROLES and too_old(q.get("v"), self.min_client):
+                await sock.close(4026, "this portal is too old for the relay: %s or newer is needed" % self.min_client)
+                return
             if role == "transmit":
                 await self.transmit(sock, name, q.get("key", ""), q.get("code", ""))
             elif role == "desk":
@@ -1267,10 +1296,10 @@ def dink_report(p):
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
-                settings=None):
+                settings=None, min_client=""):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet."""
-    relay = Relay(delay, log, forward, max_viewers)
+    relay = Relay(delay, log, forward, max_viewers, min_client)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -1311,6 +1340,8 @@ def main(argv=None):
     ap.add_argument("--forward", default=DEFAULT_FORWARD,
                     help="Dink-to-Discord rules (forward.py); used when the file exists")
     ap.add_argument("--no-forward", action="store_true", help="forward nothing to Discord")
+    ap.add_argument("--min-client", default="",
+                    help="the oldest outside-portal client let in (e.g. 0.2.0); older ones are told to update")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -1320,7 +1351,7 @@ def main(argv=None):
             forward = None
     try:
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
-                          max_viewers=a.max_viewers, settings=a.settings))
+                          max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client))
     except KeyboardInterrupt:
         pass
 
