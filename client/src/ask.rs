@@ -180,7 +180,7 @@ impl Asker {
                 Ok(Answer::Waiting) => {}
                 Ok(Answer::Given(code)) => match crate::settings::parse_attach(&code) {
                     Ok((relay, channel, key)) => {
-                        let _ = settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.asked = None; });
+                        let _ = settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.asked = None; s.setup_step = Some(0); });
                         *attached.lock().unwrap() = Some(channel);
                     }
                     Err(e) => *said.lock().unwrap() = Some((e, true)),

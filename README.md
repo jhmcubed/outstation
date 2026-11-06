@@ -28,9 +28,10 @@ The first screen, ready to go live, and live with two viewers chatting. (Picture
 3. **Attach it to your channel.**
    - Got an attach code from Jace (it starts `portal1:`)? Paste it and press **attach**. If it's on your clipboard when the portal opens, it's pasted for you.
    - No code yet? Press **no code yet? ask for one**, type your player's name and a note so Jace knows who you are, and press **ask**. Leave the portal open (or open it again later): when he says yes, it attaches by itself.
+   - Once it's attached, the **first-time setup** walks you through the rest a step at a time: Dink and Discord, pointing Dink at the portal, clips, the Start menu. Each step can be skipped, and settings ▸ more runs it again.
 4. **Check it's ready.** Above the title, the ready check ticks what the portal needs: RuneLite open, logged in, the relay answering, and Dink heard (only if you use Dink). Hover over any of them to see how to fix it.
 5. **Go live.** Your portal is at `ghillie.wiki/outside?player=<your name>`. **end stream** stops it.
-6. **Your drops and level-ups under it** (if you use [Dink](https://github.com/pajlads/DinkPlugin)): open **dink ▸**, copy the address there, and in RuneLite add it on its own line to Dink's Primary Webhook URLs, beside any Discord webhook you already have. The switches in **dink ▸** choose what goes under your portal.
+6. **Your drops and level-ups under it** (if you use [Dink](https://github.com/pajlads/DinkPlugin)): **dink ▸** goes in three steps (the first-time setup does the same). 1: does Dink post to a Discord of yours? If so, the portal keeps that going as it is (`::dinkexport all` in RuneLite's chat, **read my Dink settings**, `::dinkimport`). 2: the portal's address goes in Dink's Primary Webhook URLs, and **no Discord address left there**, or Discord gets every post twice. 3: what shows under your portal (**default** is everything).
 
 ## While you stream
 

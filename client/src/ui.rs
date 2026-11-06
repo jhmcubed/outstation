@@ -1626,6 +1626,9 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ui.checkbox(&mut s.auto_end, rich("…and end the stream when RuneLite closes", 16.0, GREY()))
                 .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) ends the stream, so a forgotten portal doesn't stay on air"));
         });
+        if button(ui, "the first-time setup again", true, None).on_hover_text(tip("Dink and Discord, clips, the Start menu: the steps a new portal goes through, again")).clicked() {
+            s.setup_step = Some(0);
+        }
         ui.checkbox(&mut s.ready_check, rich("the ready check above the title, while off air", 16.0, GREY()))
             .on_hover_text(tip("RuneLite open, logged in, the relay answering, Dink heard and the sound's mode, each ticked or not"));
         ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY()))
@@ -1861,36 +1864,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     discord_step(app, ui, &mut s, st.listening.clone());
     ui.add_space(12.0);
     ui.label(rich("2. point Dink at the portal", 16.0, LIME()));
-    match (&st.listening, &st.error) {
-        (Some(url), _) => {
-            let w = ui.available_width();
-            let done_by_import = matches!(&app.dink_setup, Some(Ok((lines, _))) if !lines.is_empty());
-            ui.label(wrapped(if done_by_import { "the import in step 1 adds this address to Dink for you; for the record, it's:" }
-                             else { "in RuneLite: Dink's settings ▸ Primary Webhook URLs, this address on a line of its own:" }, 14.0, GREY(), w));
-            ui.horizontal(|ui| {
-                ui.label(rich(&url, 16.0, LIME()));
-                if button(ui, "copy", true, None).clicked() {
-                    win::copy_text(url);
-                    app.note("Dink's address is on the clipboard");
-                }
-            });
-        }
-        (None, Some(e)) => { ui.label(rich(&format!("not listening: {}", e), 16.0, PINK())); }
-        _ => { ui.label(rich("starting…", 16.0, GREY())); }
-    }
-    ui.horizontal(|ui| {
-        ui.label(rich("its port:", 16.0, GREY()));
-        ui.add(egui::DragValue::new(&mut s.dink.port).range(1024..=65535));
-    });
-    match &st.last {
-        Some((kind, at, went)) => ui.label(rich(&format!("heard from Dink {} ago: {} (to {})", ago(at.elapsed()), kind, went), 16.0, TEAL())),
-        None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY())),
-    };
-    if s.dink.discord == Some(true) && forward_has_hook(&s.forward) {
-        // (11/06/2026, Jace: "make this line more obvious ... its important if someone doesnt want duplicates")
-        ui.add_space(2.0);
-        ui.label(wrapped("⚠ delete any Discord address from that list: the portal passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
-    }
+    dink_address_ui(app, ui, &mut s, &st);
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.label(rich("3. what shows on your portal", 16.0, LIME()));
@@ -1995,6 +1969,131 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
         Some(Ok((_, notes))) => { for n in notes { ui.label(wrapped(n, 14.0, TEAL(), w)); } }
         Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
         None => {}
+    }
+}
+
+/// The first-time setup (11/06/2026, Jace: "could make setting up dink/discord a part of the setup process once
+/// someone enters their code? we should have a first time portal setup process"): after attaching, before the main
+/// window, a step at a time, each one skippable and each one there again later (dink ▸, settings): welcome, Dink and
+/// Discord (Discord first, so it's kept as it is before Dink changes), Dink pointed at the portal, clips, and done.
+fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
+    const STEPS: u8 = 5;
+    let st = app.dink.lock().unwrap().clone();
+    let mut s = app.settings.get();
+    let before = serde_json::to_string(&s).unwrap_or_default();
+    let w = ui.available_width();
+    ui.add_space(16.0);
+    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(24.0)).color(LIME()));
+    ui.label(rich(&format!("first-time setup · {} of {}", step + 1, STEPS), 14.0, QUIET()));
+    ui.add_space(10.0);
+    let mut next: Option<Option<u8>> = None; // (Some(None): finished)
+    match step {
+        0 => {
+            ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
+            ui.label(wrapped(&format!("your portal opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+            ui.add_space(8.0);
+            ui.label(wrapped("a few things before your first stream: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸).", 16.0, GREY(), w));
+        }
+        1 => {
+            ui.label(rich("Dink and Discord", 18.0, LIME()));
+            ui.label(wrapped("Dink (a RuneLite plugin) tells the portal as things happen: levels, drops, pets, kill counts, for the lines under your portal and for clips. If you don't use Dink, skip this and the next step.", 14.0, GREY(), w));
+            ui.add_space(6.0);
+            ui.label(rich("do you use Dink with Discord too?", 16.0, LIME()));
+            discord_step(app, ui, &mut s, st.listening.clone());
+        }
+        2 => {
+            ui.label(rich("point Dink at the portal", 18.0, LIME()));
+            dink_address_ui(app, ui, &mut s, &st);
+            ui.add_space(6.0);
+            ui.label(wrapped("everything Dink sends shows under your portal to begin with: dink ▸ ▸ \"what shows on your portal\" changes that.", 14.0, QUIET(), w));
+        }
+        3 => {
+            ui.label(rich("clips", 18.0, LIME()));
+            ui.label(wrapped("the portal can keep the last seconds of your stream, for the clip key (Insert) to save as a video, and to save one by itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
+            let mut replay = s.replay_seconds.min(30);
+            if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the portal sent, kept in memory only. 0 keeps nothing.") {
+                s.replay_seconds = replay;
+            }
+            if s.replay_seconds > 0 {
+                ui.checkbox(&mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
+                if s.dink.auto_clip {
+                    ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
+                        .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 kept for good."));
+                }
+            }
+        }
+        _ => {
+            ui.label(rich("done", 18.0, LIME()));
+            ui.checkbox(&mut s.auto_live, rich("go live when RuneLite opens", 16.0, GREY()))
+                .on_hover_text(tip("when RuneLite's window appears, the portal goes live by itself; \"end stream\" is never undone"));
+            if s.start_menu.is_none() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(rich("put the portal in your Start menu?", 16.0, GREY()));
+                    if button(ui, "yes", true, None).clicked() {
+                        match crate::shortcut::make(&app.settings.path) {
+                            Ok(()) => s.start_menu = Some(true),
+                            Err(e) => app.note(e),
+                        }
+                    }
+                    if button(ui, "no thanks", true, None).clicked() { s.start_menu = Some(false); }
+                });
+            } else if s.start_menu == Some(true) {
+                ui.label(rich("in the Start menu", 14.0, QUIET()));
+            }
+            ui.add_space(6.0);
+            ui.label(wrapped("press go live when you're ready. Pause hides the picture (before a bank PIN), and the settings have the rest.", 14.0, GREY(), w));
+        }
+    }
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        if step > 0 && button(ui, "◂ back", false, None).clicked() { next = Some(Some(step - 1)); }
+        if step + 1 < STEPS {
+            if button(ui, if step == 0 { "start" } else { "next ▸" }, false, None).clicked() { next = Some(Some(step + 1)); }
+            if button(ui, "skip the setup", true, None).on_hover_text(tip("straight to the portal: everything here is in dink ▸ and settings ▸, and settings ▸ more runs this again")).clicked() {
+                next = Some(None);
+            }
+        } else if button(ui, "finish", false, None).clicked() {
+            next = Some(None);
+        }
+    });
+    if let Some(n) = next { s.setup_step = n; }
+    if serde_json::to_string(&s).unwrap_or_default() != before {
+        let _ = app.settings.update(|x| *x = s);
+    }
+}
+
+/// Dink's address on this PC, its port, whether it's been heard, and the warning against a Discord address left in
+/// Dink (the drawer's step 2, and the first-time setup's).
+fn dink_address_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, st: &dink::Status) {
+    match (&st.listening, &st.error) {
+        (Some(url), _) => {
+            let w = ui.available_width();
+            let done_by_import = matches!(&app.dink_setup, Some(Ok((lines, _))) if !lines.is_empty());
+            ui.label(wrapped(if done_by_import { "the import in step 1 adds this address to Dink for you; for the record, it's:" }
+                             else { "in RuneLite: Dink's settings ▸ Primary Webhook URLs, this address on a line of its own:" }, 14.0, GREY(), w));
+            ui.horizontal(|ui| {
+                ui.label(rich(&url, 16.0, LIME()));
+                if button(ui, "copy", true, None).clicked() {
+                    win::copy_text(url);
+                    app.note("Dink's address is on the clipboard");
+                }
+            });
+        }
+        (None, Some(e)) => { ui.label(rich(&format!("not listening: {}", e), 16.0, PINK())); }
+        _ => { ui.label(rich("starting…", 16.0, GREY())); }
+    }
+    ui.horizontal(|ui| {
+        ui.label(rich("its port:", 16.0, GREY()));
+        ui.add(egui::DragValue::new(&mut s.dink.port).range(1024..=65535));
+    });
+    match &st.last {
+        Some((kind, at, went)) => ui.label(rich(&format!("heard from Dink {} ago: {} (to {})", ago(at.elapsed()), kind, went), 16.0, TEAL())),
+        None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY())),
+    };
+    if s.dink.discord == Some(true) && forward_has_hook(&s.forward) {
+        // (11/06/2026, Jace: "make this line more obvious ... its important if someone doesnt want duplicates")
+        ui.add_space(2.0);
+        ui.label(wrapped("⚠ delete any Discord address from that list: the portal passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
     }
 }
 
@@ -2240,7 +2339,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         if button(ui, "attach", false, None).clicked() {
             match settings::parse_attach(&app.attach_code) {
                 Ok((relay, channel, key)) => {
-                    let _ = app.settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; });
+                    let _ = app.settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.setup_step = Some(0); });
                     app.attach_note.clear();
                     app.attach_code.clear();
                     app.note(format!("attached: {} · ghillie.wiki/outside?player={}", channel, channel));
@@ -2271,7 +2370,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
             if !(r.starts_with("ws://") || r.starts_with("wss://")) || c.trim().is_empty() || k.len() < 8 {
                 app.attach_note = "a relay (ws:// or wss://), a channel and a key of 8 characters or more".into();
             } else {
-                let _ = app.settings.update(|s| { s.relay = r.trim().into(); s.channel = c.trim().into(); s.key = k; s.code = w.trim().into(); });
+                let _ = app.settings.update(|s| { s.relay = r.trim().into(); s.channel = c.trim().into(); s.key = k; s.code = w.trim().into(); s.setup_step = Some(0); });
             }
         }
     }
@@ -2521,6 +2620,14 @@ impl eframe::App for App {
         if !self.settings.get().attached() {
             egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
                 egui::ScrollArea::vertical().id_salt("attach_scroll").auto_shrink([false, false]).show(ui, |ui| attach_screen(self, ui));
+            });
+            self.pings_ui(&ctx);
+            self.frame_done(&ctx);
+            return;
+        }
+        if let Some(step) = self.settings.get().setup_step {
+            egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("setup_scroll").auto_shrink([false, false]).show(ui, |ui| setup_screen(self, ui, step));
             });
             self.pings_ui(&ctx);
             self.frame_done(&ctx);

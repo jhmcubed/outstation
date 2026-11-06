@@ -171,8 +171,9 @@ pub struct Settings {
     /// Windows Graphics Capture draws it; PrintWindow, the fallback, can't.
     #[serde(default)]
     pub show_cursor: bool,
-    /// go live / end stream
-    #[serde(default = "d_true")]
+    /// go live / end stream (off for a new portal: 11/06/2026, it had begun live, so attaching a code streamed at once,
+    /// before the first-time setup was done; a portal left live stays live as it was)
+    #[serde(default)]
     pub on_air: bool,
     /// "off", "game" or "all"
     #[serde(default = "d_sound")]
@@ -199,6 +200,9 @@ pub struct Settings {
     /// the keeper's last notice shown (its "at"), so a reconnect or a restart doesn't show it again
     #[serde(default)]
     pub notice_seen: u64,
+    /// the first-time setup (ui.rs, setup_screen), from attaching till it's finished or skipped: which step it's at
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_step: Option<u8>,
     /// go live when RuneLite opens (autolive.rs), and with it end the stream when RuneLite closes
     #[serde(default)]
     pub auto_live: bool,
