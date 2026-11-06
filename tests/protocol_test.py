@@ -993,14 +993,14 @@ class ReportData(Base):
         await self.pause()
         await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Cooking": 70},
                          "allSkills": {"Cooking": 70, "Attack": 99}, "combatLevel": {"value": 90, "increased": False}}})
-        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage",
+        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage", "itemId": 11286,
                          "completedEntries": 812, "totalEntries": 1568, "dropperName": "someone"}})
         await self.dink({"type": "LOOT", "content": "loot", "extra": {"source": "Vorkath", "category": "NPC",
-                         "items": [{"name": "Dragon bones", "quantity": 2, "priceEach": 3000}]}})
+                         "items": [{"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000}]}})
         got = [json.loads((await v.recv_data())[1])["report"]["data"] for _ in range(3)]
         self.assertEqual(got[0], {"skills": {"Cooking": 70}, "total": 169, "combat": 90})
-        self.assertEqual(got[1], {"item": "Draconic visage", "done": 812, "total": 1568})
-        self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000}], "value": 6000,
+        self.assertEqual(got[1], {"item": "Draconic visage", "id": 11286, "done": 812, "total": 1568})
+        self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000, "id": 536}], "value": 6000,
                                   "source": "Vorkath"})
 
     async def test_a_player_kills_loot_names_nobody(self):

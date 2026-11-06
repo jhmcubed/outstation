@@ -1249,13 +1249,16 @@ def report_data(kind, extra):
             d["combat"] = number(combat.get("value"))
     elif kind == "LOOT":
         items = [i for i in (extra.get("items") or []) if isinstance(i, dict)][:12]
-        d["items"] = [{"name": short(i.get("name")), "quantity": number(i.get("quantity")) or 0,
-                       "price": number(i.get("priceEach")) or 0} for i in items if short(i.get("name"))]
+        # (each item's id too, for its picture: RuneLite's icons go by id; 11/06/2026)
+        d["items"] = [dict({"name": short(i.get("name")), "quantity": number(i.get("quantity")) or 0,
+                            "price": number(i.get("priceEach")) or 0},
+                           **({"id": number(i.get("id"))} if number(i.get("id")) is not None else {}))
+                      for i in items if short(i.get("name"))]
         d["value"] = sum(i["quantity"] * i["price"] for i in d["items"])
         if str(extra.get("category", "")).upper() != "PLAYER":
             d["source"] = short(extra.get("source"))
     elif kind == "COLLECTION":
-        d = {"item": short(extra.get("itemName")), "done": number(extra.get("completedEntries")),
+        d = {"item": short(extra.get("itemName")), "id": number(extra.get("itemId")), "done": number(extra.get("completedEntries")),
              "total": number(extra.get("totalEntries"))}
     elif kind == "PET":
         d = {"pet": short(extra.get("petName")), "duplicate": bool(extra.get("duplicate")),
