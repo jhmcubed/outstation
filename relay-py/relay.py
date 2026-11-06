@@ -100,6 +100,9 @@ MAX_POST = 16 * 1024 * 1024       # a Dink post with a screenshot attached
 # clips on a player's Outside page (11/06/2026; the Worker's clips.ts, docs/protocol.md "Clips"): in clips_dir/<channel>
 MAX_CLIP, MAX_STRIP, MAX_STILL, MAX_DUR = 8 * 1024 * 1024, 256 * 1024, 16 * 1024, 20
 CLIPS_MOST, CLIPS_DAYS, CLIPS_AN_HOUR = 20, 30, 30
+# messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
+# for it till its portal next opens (at most DMS_KEPT, DMS_DAYS each); a portal may send DMS_A_MINUTE a minute
+DMS_KEPT, DMS_DAYS, DMS_A_MINUTE = 20, 7, 20
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -311,6 +314,8 @@ class Channel:
         self.guess_id = 0
         self.out_seen = (0, time.monotonic())
         self.clips_uploads = []      # when its clips came, for CLIPS_AN_HOUR
+        self.dms = []                # messages to this portal held till its desk opens (send_dm)
+        self.dms_sent = []           # when this portal sent its last messages, for DMS_A_MINUTE
         self.summary = None          # this stream's summary (fold): {"since", "ended", "boss", "kc", "loot", ...}
 
     def summary_line(self):
@@ -910,22 +915,57 @@ class Relay:
         ch.late_joiner(sock)
         sock.send_nowait(ch.banned_line())
         sock.send_nowait(ch.viewer_list())
+        # (messages that came while the portal was closed)
+        now = time.time()
+        for d in [d for d in ch.dms if now - d["at"] / 1000 <= DMS_DAYS * 86400]:
+            sock.send_nowait(json.dumps({"dm": d}))
+        ch.dms = []
         try:
             while True:
                 msg = await sock.recv()
                 if isinstance(msg, str):
-                    self.from_desk(ch, host_name, msg)
+                    self.from_desk(ch, host_name, msg, sock)
         finally:
             ch.desks.discard(sock)
 
-    def from_desk(self, ch, host_name, msg):
+    def send_dm(self, ch, host_name, dm, sock):
+        """A message from this portal to another channel's: to its desks, or held till it opens; the sender told
+        {"dm_sent"} or {"dm_failed"}."""
+        to = str(dm.get("to", "")).strip().lower() if isinstance(dm, dict) else ""
+        text = one_line(dm.get("text") if isinstance(dm, dict) else "", SAY_MAX)
+        now = time.time()
+        ch.dms_sent = [t for t in ch.dms_sent if now - t < 60]
+
+        def fail(why):
+            sock.send_nowait(json.dumps({"dm_failed": {"to": to, "text": text, "why": why}}))
+        if not text or not re.match(r"^[A-Za-z0-9_.~-]{1,64}$", to):
+            return fail("a message needs a channel and some words")
+        if to == ch.name:
+            return fail("that's your own portal")
+        if len(ch.dms_sent) >= DMS_A_MINUTE:
+            return fail("%d messages a minute at most: wait a moment" % DMS_A_MINUTE)
+        other = self.channels.get(to)
+        if other is None or other.key is None:
+            return fail("no portal called %s on this relay" % to)
+        ch.dms_sent.append(now)
+        d = {"from": ch.name, "name": host_name, "text": text, "at": int(now * 1000)}
+        if other.desks:
+            for s in list(other.desks):
+                s.send_nowait(json.dumps({"dm": d}))
+        else:
+            other.dms = [x for x in other.dms if now - x["at"] / 1000 <= DMS_DAYS * 86400][-(DMS_KEPT - 1):] + [d]
+        sock.send_nowait(json.dumps({"dm_sent": {"to": to, "text": text, "at": d["at"], "held": not other.desks}}))
+
+    def from_desk(self, ch, host_name, msg, sock=None):
         try:
             m = json.loads(msg)
         except ValueError:
             return
         if not isinstance(m, dict):
             return
-        if "say" in m:
+        if "dm" in m and sock is not None:
+            self.send_dm(ch, host_name, m.get("dm"), sock)
+        elif "say" in m:
             text = one_line(m.get("say"), SAY_MAX * 2)
             if text:
                 ch.say(host_name, text, host=True)

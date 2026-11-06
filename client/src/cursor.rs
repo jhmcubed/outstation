@@ -3,7 +3,9 @@
 //!
 //! - A small pixel ✼, white with a dark rim; over anything that can be clicked it turns lime and twinkles (its arms
 //!   and its diagonals taking turns reaching out, a frame every 160 ms), as on the site.
-//! - Over text you can type in, an I-beam in the same pixels; at the window's edges, double arrows to resize.
+//! - Over text you can type in, an I-beam in the same pixels. At the window's edges, Windows' own double arrows
+//!   (11/06/2026, Jace: "two different cursors ... 1px location difference"): once an edge is pressed, Windows' own
+//!   resizing shows its arrow whatever this says, so drawn in pixels here the two had taken turns, a pixel apart.
 //! - Each of the portal's windows is subclassed (comctl32's `SetWindowSubclass`) so its `WM_SETCURSOR` is answered
 //!   here, ahead of winit's. Only the portal's own windows: it never touches another program's (RuneLite's least of
 //!   all), and the cursor goes back to Windows' own the moment the hand leaves them.
@@ -46,17 +48,7 @@ fn beam() -> Vec<(i32, i32)> {
     s
 }
 
-fn east_west() -> Vec<(i32, i32)> {
-    let mut s: Vec<(i32, i32)> = (-4..=4).map(|x| (x, 0)).collect();
-    s.extend([(-3, -1), (-3, 1), (-2, -2), (-2, 2), (3, -1), (3, 1), (2, -2), (2, 2)]);
-    s
-}
 
-fn nw_se() -> Vec<(i32, i32)> {
-    let mut s: Vec<(i32, i32)> = (-4..=4).map(|a| (a, a)).collect();
-    s.extend([(-3, -4), (-2, -4), (-4, -3), (-4, -2), (3, 4), (2, 4), (4, 3), (4, 2)]);
-    s
-}
 
 /// One cursor: each of the shape's pixels `px` screen pixels wide, a dark rim round it (85% black), the hot spot its
 /// middle. 32-bit with alpha, so its edges are its own.
@@ -109,17 +101,16 @@ fn made() -> &'static Vec<isize> {
         // the site's 2 px grid at 100%, larger with the screen's scale
         let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() } as f32;
         let px = ((2.0 * dpi / 96.0).round() as i32).max(2);
-        let flip = |s: Vec<(i32, i32)>| s.into_iter().map(|(x, y)| (-x, y)).collect::<Vec<_>>();
-        let swap = |s: Vec<(i32, i32)>| s.into_iter().map(|(x, y)| (y, x)).collect::<Vec<_>>();
         let mut v = vec![make(&star(3, 2), WHITE, px)];
         for (l1, l2) in [(3, 2), (2, 2), (2, 3), (2, 2)] {
             v.push(make(&star(l1, l2), LIME, px));
         }
         v.push(make(&beam(), WHITE, px));
-        v.push(make(&east_west(), WHITE, px));
-        v.push(make(&swap(east_west()), WHITE, px));
-        v.push(make(&nw_se(), WHITE, px));
-        v.push(make(&flip(nw_se()), WHITE, px));
+        // (the edges: Windows' own, the arrows its resizing shows: see the header)
+        use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE};
+        for id in [IDC_SIZEWE, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZENESW] {
+            v.push(unsafe { LoadCursorW(None, id) }.map(|h| h.0 as isize).unwrap_or(0));
+        }
         v
     })
 }

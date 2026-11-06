@@ -1212,6 +1212,61 @@ class Clips(Base):
         self.assertEqual((status, len(got["clips"])), (200, 1))
 
 
+class Messages(Base):
+    """Messages between portals (docs/protocol.md, "Messages between portals"): one portal's desk sends {"dm"} to
+    another channel; that channel's desk gets {"dm"} at once, or as it next connects; the sender is told
+    {"dm_sent"} or {"dm_failed"}."""
+
+    async def other(self):
+        """A second channel, handed out (the Worker) or claimed (relay-py), and its key."""
+        ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+            return ch, got["key"]
+        key = "other-key-" + secrets.token_hex(4)
+        c = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, ch, key))
+        self.clients.append(c)
+        return ch, key
+
+    async def desk_of(self, ch, key, name):
+        c = await Client().open("%s/desk/%s?key=%s&name=%s" % (RELAY, ch, key, name))
+        self.clients.append(c)
+        return c
+
+    async def test_a_message_reaches_the_other_portal_and_its_sender_hears_it_went(self):
+        await self.tx()
+        mine = await self.desk("Moss%20Fern")
+        ch, key = await self.other()
+        theirs = await self.desk_of(ch, key, "Birch")
+        await self.pause()
+        await mine.send(json.dumps({"dm": {"to": ch, "text": "nice drop!"}}))
+        got = await next_of(theirs, "dm")
+        self.assertEqual((got["from"], got["name"], got["text"]), (self.ch, "Moss Fern", "nice drop!"))
+        sent = await next_of(mine, "dm_sent")
+        self.assertEqual((sent["to"], sent["text"], sent["held"]), (ch, "nice drop!", False))
+        await theirs.send(json.dumps({"dm": {"to": self.ch, "text": "ty"}}))
+        self.assertEqual((await next_of(mine, "dm"))["text"], "ty")
+
+    async def test_held_till_the_portal_opens_and_refused_for_no_such_portal(self):
+        await self.tx()
+        mine = await self.desk("Moss%20Fern")
+        ch, key = await self.other()
+        await self.pause()
+        await mine.send(json.dumps({"dm": {"to": ch, "text": "for later"}}))
+        self.assertTrue((await next_of(mine, "dm_sent"))["held"])
+        theirs = await self.desk_of(ch, key, "Birch")
+        self.assertEqual((await next_of(theirs, "dm"))["text"], "for later")
+        await mine.send(json.dumps({"dm": {"to": "nobody" + secrets.token_hex(3), "text": "hello?"}}))
+        self.assertIn("no portal", (await next_of(mine, "dm_failed"))["why"])
+        await mine.send(json.dumps({"dm": {"to": self.ch, "text": "me"}}))
+        self.assertIn("your own", (await next_of(mine, "dm_failed"))["why"])
+        # (a viewer can't send one: only a portal's desk)
+        v = await self.watch()
+        await v.send(json.dumps({"dm": {"to": ch, "text": "from a page"}}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(theirs, "dm", timeout=0.5)
+
+
 class Sound(Base):
     def packet(self, bus=1):
         return struct.pack(">I", 99) + b"AU" + bytes([bus, 1]) + struct.pack(">H", 3) + b"opu"

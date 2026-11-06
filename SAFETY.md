@@ -46,6 +46,8 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 
 Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps.
 
+**Messages between portals** (your friends list's "message"): a message waiting for a portal that's closed, until it next opens: who it's from, their words and when. At most 20, each for a week. One delivered isn't written down anywhere; your portal keeps a conversation only while it's open.
+
 **Your clips on your Outside page,** only if you switched it on: each one's copy, its still and its few small frames, and what it was ("pet vorki"), when, and how long. At most 20, the oldest going first, and each for 30 days. Your portal lists them (dink ▸), keeps up to 3 for good (never pushed out by newer ones, never too old) and takes any down; Jace can take any down too.
 
 **For viewers:**
@@ -127,4 +129,4 @@ Everything it touches in Windows, by file:
 - `feed.rs`: the live view: your own channel watched through the relay.
 - `dink.rs`: a web server on `127.0.0.1` only.
 - `ui.rs`: its own windows (the see-through ones over RuneLite included), the tray icon, and Windows' symbol font. It acts only on windows of its own program, never on another that happens to share a title.
-- `cursor.rs`: the portal's own cursor (ghillie.wiki's ✼), made from its pixels with `CreateIconIndirect` and shown with `SetCursor`. To show it, each window of the portal's own program is wrapped with comctl32's `SetWindowSubclass` (found with `EnumWindows`, kept to windows whose process is the portal's). No other program's window is ever wrapped, RuneLite's least of all, and no hook is set: past the portal's windows the cursor is Windows' own.
+- `cursor.rs`: the portal's own cursor (ghillie.wiki's ✼), made from its pixels with `CreateIconIndirect` and shown with `SetCursor` (at the window's edges, Windows' own resize arrows, `LoadCursorW`). To show it, each window of the portal's own program is wrapped with comctl32's `SetWindowSubclass` (found with `EnumWindows`, kept to windows whose process is the portal's). No other program's window is ever wrapped, RuneLite's least of all, and no hook is set: past the portal's windows the cursor is Windows' own.

@@ -135,6 +135,25 @@ fn tip(text: &str) -> egui::WidgetText {
 #[cfg_attr(not(feature = "station"), allow(dead_code))]
 enum Drawer { None, Settings, Dink, Friends, FriendList }
 
+/// A conversation with another portal (11/06/2026, Jace: "allow for messaging friends directly ... at the top of the
+/// chat box, make a tab for stream chat, and then whenever you get a message from a friend directly it opens a new tab
+/// for their username"): through the relay, from desk to desk, never on the stream; in memory only (the relay holds
+/// what comes while the portal's closed: docs/protocol.md, "Messages between portals").
+struct Thread {
+    channel: String,
+    name: String,
+    lines: Vec<DmLine>,
+    unread: usize,
+}
+
+struct DmLine {
+    mine: bool,
+    text: String,
+    when: String,
+    /// a line from the portal itself (not sent, or held for them)
+    note: bool,
+}
+
 struct Line {
     id: Option<i64>,
     who: i64,
@@ -181,6 +200,9 @@ pub struct App {
     dink: Arc<Mutex<dink::Status>>,
     desk: Desk,
     lines: Vec<Line>,
+    /// conversations with other portals, and the chat box's tab: None the stream's chat, Some(channel) one of these
+    threads: Vec<Thread>,
+    tab: Option<String>,
     poll: Option<Value>,
     poll_ends: Instant,
     poll_form: Option<PollForm>,
@@ -257,6 +279,9 @@ pub struct App {
     page_clips: crate::clipsup::PageClips,
     /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
+    /// step 1's ways open again once it's set up ("change"), and its by-hand rules open
+    discord_change: bool,
+    discord_hand: bool,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -404,7 +429,7 @@ impl App {
         }
         let s = settings.get();
         let mut app = App {
-            settings, tx, _sound: sound, dink, desk, lines: Vec::new(), poll: None, poll_ends: Instant::now(), poll_form: None,
+            settings, tx, _sound: sound, dink, desk, lines: Vec::new(), threads: Vec::new(), tab: None, poll: None, poll_ends: Instant::now(), poll_form: None,
             entry: String::new(), up: false, live: false, open: false, viewers: 0, portal_bps: None, pc_bps,
             started: Instant::now(), drawer: Drawer::None, panel: None,
             attach_code: String::new(), attach_note: String::new(), by_hand: false,
@@ -419,7 +444,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -461,6 +486,56 @@ impl App {
                                when: String::new(), hidden: false, note: true, ping: false });
     }
 
+    /// The conversation with a channel, made if there isn't one (named as the friends list has them, else as their
+    /// portal says).
+    fn thread(&mut self, channel: &str, name: &str) -> &mut Thread {
+        if let Some(i) = self.threads.iter().position(|t| t.channel == channel) {
+            return &mut self.threads[i];
+        }
+        let s = self.settings.get();
+        let friend = s.friends.iter().find(|f| crate::ask::channel_of(f).ok().as_deref() == Some(channel)).cloned();
+        let name = friend.unwrap_or_else(|| if name.is_empty() { channel.to_string() } else { name.to_string() });
+        self.threads.push(Thread { channel: channel.to_string(), name, lines: Vec::new(), unread: 0 });
+        self.threads.last_mut().unwrap()
+    }
+
+    /// Open (or make) a conversation's tab: the friends list's "message".
+    fn open_thread(&mut self, channel: &str, name: &str) {
+        self.thread(channel, name).unread = 0;
+        self.tab = Some(channel.to_string());
+    }
+
+    fn dm_in(&mut self, m: &Value) {
+        let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if let Some(d) = m.get("dm") {
+            let (from, name, text) = (s(d, "from"), s(d, "name"), s(d, "text"));
+            let when = local_hhmm(d.get("at").and_then(|x| x.as_i64()).unwrap_or(0));
+            let open = self.tab.as_deref() == Some(from.as_str());
+            let s2 = self.settings.get();
+            let friend = s2.friends.iter().any(|f| crate::ask::channel_of(f).ok().as_deref() == Some(from.as_str()));
+            let t = self.thread(&from, &name);
+            if t.lines.is_empty() && !friend {
+                t.lines.push(DmLine { mine: false, text: format!("{} isn't on your friends list (their portal's name: {})", t.name, from), when: String::new(), note: true });
+            }
+            t.lines.push(DmLine { mine: false, text, when, note: false });
+            if !open { t.unread += 1; }
+            win::flash(TITLE);
+        } else if let Some(d) = m.get("dm_sent") {
+            let (to, text) = (s(d, "to"), s(d, "text"));
+            let when = local_hhmm(d.get("at").and_then(|x| x.as_i64()).unwrap_or(0));
+            let held = d.get("held").and_then(|x| x.as_bool()).unwrap_or(false);
+            let t = self.thread(&to, "");
+            t.lines.push(DmLine { mine: true, text, when, note: false });
+            if held {
+                t.lines.push(DmLine { mine: false, text: "their portal's closed: the relay holds it for them till it opens (a week at most)".into(), when: String::new(), note: true });
+            }
+        } else if let Some(d) = m.get("dm_failed") {
+            let (to, text, why) = (s(d, "to"), s(d, "text"), s(d, "why"));
+            let t = self.thread(&to, "");
+            t.lines.push(DmLine { mine: false, text: format!("not sent ({}): {}", why, text), when: String::new(), note: true });
+        }
+    }
+
     // ---- what comes in ----
 
     fn drain(&mut self, ctx: &egui::Context) {
@@ -488,6 +563,10 @@ impl App {
     }
 
     fn message(&mut self, m: Value) {
+        if m.get("dm").is_some() || m.get("dm_sent").is_some() || m.get("dm_failed").is_some() {
+            self.dm_in(&m);
+            return;
+        }
         if let Some(n) = m.get("notice") {
             // the keeper's notice to every portal (docs/protocol.md, "A notice from the keeper"): shown once
             let (text, at) = (n.get("text").and_then(|x| x.as_str()).unwrap_or(""), n.get("at").and_then(|x| x.as_u64()).unwrap_or(0));
@@ -627,7 +706,21 @@ impl App {
         if target != Drawer::Settings {
             self.panel = None;
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(w, size.y.max(if target == Drawer::None { 0.0 } else { 700.0 }))));
+        // (filling the screen, the window stays as it is and the drawer takes its share of it: 11/06/2026, Jace, it
+        // had dropped out of full screen. Otherwise it grows by the drawer, kept on its screen: moved left as far as
+        // it grows past the screen's right edge)
+        let (full, outer, screen) = ctx.input(|i| (i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false),
+                                                   i.viewport().outer_rect, i.viewport().monitor_size));
+        if full || w == size.x { return; }
+        let h = size.y.max(if target == Drawer::None { 0.0 } else { 700.0 });
+        let w = screen.map_or(w, |m| w.min(m.x));
+        if let (Some(o), Some(m)) = (outer, screen) {
+            let past = o.left() + (o.width() - size.x) + w - m.x;
+            if past > 0.0 && target != Drawer::None {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2((o.left() - past).max(0.0), o.top())));
+            }
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(w, h.min(screen.map_or(h, |m| m.y - 40.0)))));
     }
 
     // ---- the tray ----
@@ -1611,6 +1704,7 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(wrapped("no friends yet. add friend puts a player here, and whether their portal is live.", 14.0, GREY(), ui.available_width()));
     }
     let mut delete: Option<String> = None;
+    let mut message: Option<(String, String)> = None;
     // the peek's newest picture, if one's come (only the friend it's of shows it)
     {
         let got = app.peek.feed.lock().unwrap().frame.take();
@@ -1639,7 +1733,7 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
         };
         let url = crate::friendlist::page(&ch);
         ui.horizontal(|ui| {
-            let r = ui.add(egui::Label::new(rich(name, 16.0, TEXT())).sense(Sense::click()));
+            let r = ui.add(egui::Label::new(rich(name, 16.0, TEXT())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand);
             // live: a peek at their portal under the hand, the words under it (11/06/2026)
             let live = matches!(st, State::Live(_));
             if live && r.hovered() { app.peek.ask(&relay_ws, &ch); }
@@ -1660,6 +1754,10 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
             });
             if r.clicked() && !win::open_page(&url) { app.note(format!("couldn't open {}", url)); }
             r.context_menu(|ui| {
+                if ui.button(format!("message {}", name)).on_hover_text(tip("a message to their portal's window (not their stream): it opens a tab of its own over your chat")).clicked() {
+                    message = Some((ch.clone(), name.clone()));
+                    ui.close();
+                }
                 if ui.button("their Outside page").clicked() { win::open_page(&url); ui.close(); }
                 if ui.button(format!("delete {}", name)).clicked() { delete = Some(name.clone()); ui.close(); }
             });
@@ -1670,6 +1768,9 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     }
     if let Some(n) = delete {
         let _ = app.settings.update(|x| x.friends.retain(|f| f != &n));
+    }
+    if let Some((ch, n)) = message {
+        app.open_thread(&ch, &n);
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -1726,10 +1827,10 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     if toast && !can {
         ui.label(wrapped("(Windows shows a program's notifications only when it's in the Start menu: settings, then more, then \"put it in the Start menu\")", 13.0, QUIET(), ui.available_width()));
     }
-    let all = ui.add(egui::Label::new(rich("every open portal ↗", 14.0, TEAL())).sense(Sense::click()))
+    let all = ui.add(egui::Label::new(rich("every open portal ↗", 14.0, TEAL())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tip("ghillie.wiki/portals: everyone's open portals, live ones first"));
     if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
-    ui.label(wrapped("a name's state comes from the relay's open portals, read every 20 s while this is open and every minute otherwise. right-click a name to delete it.", 13.0, QUIET(), ui.available_width()));
+    ui.label(wrapped("a name's state comes from the relay's open portals, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
 }
 
 // ---- the dink drawer ----
@@ -1739,10 +1840,21 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     let mut s = app.settings.get();
     let before = serde_json::to_string(&s).unwrap_or_default();
     ui.label(rich("Dink: what goes into your broadcast", 16.0, LIME()));
-    ui.add_space(4.0);
+    ui.label(wrapped("Dink (a RuneLite plugin) tells the portal as things happen: levels, drops, pets, kill counts and the rest, for the lines under your portal. Three steps, Discord first, so it's kept as it is before Dink changes.", 14.0, GREY(), ui.available_width()));
+    ui.add_space(8.0);
+    // (11/06/2026, Jace: "put the 'on to your discord too' under 'Dink..' and above 'on your portal' and ... make it
+    // more clear what its actually doing", and "should probably have someone set up their discord forwarding for dink
+    // before changing dink settings for the portal")
+    ui.label(rich("1. do you use Dink with Discord too?", 16.0, LIME()));
+    discord_step(app, ui, &mut s, st.listening.clone());
+    ui.add_space(12.0);
+    ui.label(rich("2. point Dink at the portal", 16.0, LIME()));
     match (&st.listening, &st.error) {
         (Some(url), _) => {
-            ui.label(rich("Dink's address (in RuneLite: Dink ▸ Primary Webhook URLs, on a line of its own):", 16.0, GREY()));
+            let w = ui.available_width();
+            let done_by_import = matches!(&app.dink_setup, Some(Ok((lines, _))) if !lines.is_empty());
+            ui.label(wrapped(if done_by_import { "the import in step 1 adds this address to Dink for you; for the record, it's:" }
+                             else { "in RuneLite: Dink's settings ▸ Primary Webhook URLs, this address on a line of its own:" }, 14.0, GREY(), w));
             ui.horizontal(|ui| {
                 ui.label(rich(&url, 16.0, LIME()));
                 if button(ui, "copy", true, None).clicked() {
@@ -1762,8 +1874,11 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         Some((kind, at, went)) => ui.label(rich(&format!("heard from Dink {} ago: {} (to {})", ago(at.elapsed()), kind, went), 16.0, TEAL())),
         None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY())),
     };
-    ui.add_space(8.0);
-    ui.label(rich("on your portal", 16.0, LIME()));
+    if s.dink.discord == Some(true) && forward_has_hook(&s.forward) {
+        ui.label(wrapped("(and no Discord address left in that list: the portal passes your Discord its posts now, so one left there would get each twice)", 13.0, QUIET(), ui.available_width()));
+    }
+    ui.add_space(12.0);
+    ui.label(rich("3. what shows on your portal", 16.0, LIME()));
     egui::Grid::new("kinds").num_columns(2).spacing(Vec2::new(18.0, 2.0)).show(ui, |ui| {
         for (i, k) in REPORTS.iter().enumerate() {
             let mut on = s.dink.kind_on(k);
@@ -1806,10 +1921,6 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
             page_clips_ui(app, ui, &s);
         }
     }
-    ui.add_space(10.0);
-    ui.label(rich("on to your Discord too", 16.0, LIME()));
-    dink_setup_ui(app, ui, &mut s, st.listening.clone());
-    forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
     if serde_json::to_string(&s).unwrap_or_default() != before {
         let _ = app.settings.update(|x| *x = s);
     }
@@ -1818,8 +1929,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
 /// Dink and Discord set up as the listening post has them, from Dink's own export (dinksetup.rs).
 fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
     let w = ui.available_width();
-    ui.label(wrapped("the easy way: the portal hears everything Dink can tell it, and your Discord keeps getting just what it gets now, passed on by the portal (so only while the portal's open).", 14.0, GREY(), w));
-    ui.label(wrapped("1. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)   2. press this:", 14.0, TEXT(), w));
+    ui.label(wrapped("a. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)   b. press this:", 14.0, TEXT(), w));
     let Some(portal) = listening else {
         ui.label(rich("(the portal isn't listening for Dink yet: its port, above)", 14.0, PINK()));
         return;
@@ -1850,8 +1960,8 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
     match &app.dink_setup {
         Some(Ok((lines, notes))) if !lines.is_empty() => {
             ui.label(wrapped("done: the Discord rules below are what your Discord got. The import is on the clipboard.", 14.0, TEAL(), w));
-            ui.label(wrapped("3. in RuneLite's chat, type ::dinkimport", 14.0, TEXT(), w));
-            ui.label(wrapped("4. in Dink's settings, delete your Discord address from these (the portal sends to it now; Dink's import can only add):", 14.0, TEXT(), w));
+            ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport", 14.0, TEXT(), w));
+            ui.label(wrapped("d. in Dink's settings, delete your Discord address from these (the portal sends to it now; Dink's import can only add):", 14.0, TEXT(), w));
             for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
             for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
         }
@@ -1859,8 +1969,102 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
         Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
         None => {}
     }
-    ui.add_space(6.0);
-    ui.label(rich("or by hand:", 14.0, GREY()));
+}
+
+/// Whether the Discord rules have somewhere to send (the list, or a kind's own webhooks).
+fn forward_has_hook(rules: &Value) -> bool {
+    let list = |v: Option<&Value>| v.and_then(|x| x.as_array()).is_some_and(|a| a.iter().any(|u| u.as_str().is_some_and(|u| u.starts_with("http"))));
+    list(rules.get("discord")) || rules.get("forward").and_then(|f| f.as_object()).is_some_and(|f| f.values().any(|r| list(r.get("webhooks"))))
+}
+
+/// What Discord gets, in a line: how many kinds go, loot's rule, kill counts'.
+fn forward_summary(rules: &Value) -> String {
+    let f = rules.get("forward").and_then(|x| x.as_object()).cloned().unwrap_or_default();
+    let on: Vec<&String> = f.iter().filter(|(_, v)| match v { Value::Bool(b) => *b, Value::Object(_) => true, _ => false }).map(|(k, _)| k).collect();
+    let mut parts = vec![format!("{} kinds of post", on.len())];
+    if let Some(l) = f.get("LOOT").and_then(|x| x.as_object()) {
+        let n = l.get("allow").and_then(|x| x.as_array()).map_or(0, |a| a.len());
+        parts.push(format!("loot from {} gp{}", crate::dink::gp_words(l.get("minValue").and_then(|x| x.as_i64()).unwrap_or(0)),
+                           match n { 0 => String::new(), 1 => " (or 1 item by name)".to_string(), n => format!(" (or {} items by name)", n) }));
+    }
+    if let Some(k) = f.get("KILL_COUNT").and_then(|x| x.as_object()) {
+        parts.push(format!("every {} kill count", k.get("every").and_then(|x| x.as_i64()).unwrap_or(1)));
+    }
+    let hooks = rules.get("discord").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|u| u.as_str()).map(crate::dinksetup::short).collect::<Vec<_>>()).unwrap_or_default();
+    format!("{} · to {}", parts.join(" · "), if hooks.is_empty() { "each kind's own webhook".to_string() } else { hooks.join(", ") })
+}
+
+/// Step 1: Dink with Discord too? Answered no, it's put away; yes, the ways to set it up (the old portal's rules,
+/// from Dink's own settings, or by hand), and once set up, what Discord gets in a line.
+fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
+    let w = ui.available_width();
+    let set_up = forward_has_hook(&s.forward);
+    if set_up && s.dink.discord != Some(false) {
+        s.dink.discord = Some(true);
+        ui.label(wrapped("yes: Dink tells the portal everything, and the portal passes your Discord what it got before, as Dink sent it (only while the portal's open):", 14.0, GREY(), w));
+        ui.label(wrapped(&forward_summary(&s.forward), 14.0, LIME(), w));
+    } else if s.dink.discord == Some(false) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich("no: Dink tells only the portal.", 14.0, GREY()));
+            if button(ui, "I do, after all", true, None).clicked() { s.dink.discord = None; }
+        });
+        return;
+    } else if s.dink.discord.is_none() {
+        ui.label(wrapped("if Dink posts to a Discord server of yours now, the portal can keep that going just as it is, and still show more under your portal than Discord gets.", 14.0, GREY(), w));
+        ui.horizontal(|ui| {
+            if button(ui, "yes, it does", true, None).clicked() { s.dink.discord = Some(true); }
+            if button(ui, "no, only the portal", true, None).clicked() { s.dink.discord = Some(false); }
+        });
+        return;
+    }
+    // the ways to set it up (open when nothing's set up yet; behind "change" once it is)
+    let open = !set_up || app.discord_change;
+    if set_up {
+        ui.horizontal(|ui| {
+            if button(ui, if app.discord_change { "change ◂" } else { "change ▸" }, true, None).clicked() { app.discord_change = !app.discord_change; }
+            if button(ui, "stop passing it on", true, None)
+                .on_hover_text(tip("the portal stops sending to Discord (put your Discord address back in Dink if Dink should post there itself)")).clicked() {
+                s.forward = json!({"discord": [], "forward": {}});
+                s.dink.discord = None;
+            }
+        });
+    }
+    if !open { return; }
+    ui.add_space(4.0);
+    // a: the old portal's rules (ghillie's own, on the keeper's PC)
+    if let Some(p) = settings::ghillie_path() {
+        let f = p.with_file_name("forward.json");
+        ui.label(rich("from the old portal on this PC:", 14.0, TEXT()));
+        ui.horizontal_wrapped(|ui| {
+            if button(ui, "use its Discord rules", true, None)
+                .on_hover_text(tip(&format!("reads {} again, the rules the old portal passed Discord its posts by", f.display()))).clicked() {
+                app.dink_setup = Some(match std::fs::read_to_string(&f) {
+                    Err(_) => Err(format!("there's no {} here", f.display())),
+                    Ok(t) => match serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')) {
+                        Err(e) => Err(format!("{} isn't readable JSON ({})", f.display(), e)),
+                        Ok(rules) if !forward_has_hook(&rules) => Err(format!("{} has no Discord webhook address in it (its \"discord\" list is empty): put it in by hand below", f.display())),
+                        Ok(rules) => {
+                            s.forward = rules;
+                            Ok((Vec::new(), vec![format!("took {}: {}", f.display(), forward_summary(&s.forward))]))
+                        }
+                    },
+                });
+            }
+        });
+        ui.add_space(4.0);
+    }
+    // b: from Dink's own settings
+    ui.label(rich("from your Dink settings (the easy way):", 14.0, TEXT()));
+    dink_setup_ui(app, ui, s, listening);
+    ui.add_space(4.0);
+    // c: by hand
+    ui.horizontal(|ui| {
+        ui.label(rich("or by hand:", 14.0, TEXT()));
+        if button(ui, if app.discord_hand { "◂" } else { "▸" }, true, None).clicked() { app.discord_hand = !app.discord_hand; }
+    });
+    if app.discord_hand {
+        forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
+    }
 }
 
 /// What's on the player's Outside page now: each clip, how old, and "take it down".
@@ -2074,7 +2278,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         let r = ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md ↗", 14.0, TEAL()))
             .wrap().sense(Sense::click()))
             .on_hover_text(tip("opens SAFETY.md on GitHub in your browser (right-click: copy its address)"));
-        if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
         if r.clicked() && !win::open_page(crate::settings::SAFETY_PAGE) {
             app.attach_note = format!("couldn't open {}", crate::settings::SAFETY_PAGE);
         }
@@ -2445,9 +2649,9 @@ impl App {
         let key = (self.drawer, (self.zoom * 100.0).round() as u32);
         if self.min_sent == Some(key) { return; }
         self.min_sent = Some(key);
-        // (in Windows' own points, before the zoom: so the zoom's share is multiplied in, or a zoomed window could be
-        // made narrower than what's in it and its rows ran off its left edge: 11/06/2026, Jace)
-        let min = if self.drawer == Drawer::None { Vec2::new(MIN_W, 460.0) } else { Vec2::new(MIN_W + DRAWER_W, 640.0) } * self.zoom;
+        // (in egui's points: egui-winit multiplies the zoom in itself, so it isn't here: 11/06/2026, multiplied in a
+        // second time, a zoomed window couldn't be made anywhere near as narrow as it should)
+        let min = if self.drawer == Drawer::None { Vec2::new(MIN_W, 460.0) } else { Vec2::new(MIN_W + DRAWER_W, 640.0) };
         ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min));
         // (and if it's smaller now, it grows to fit)
         if let Some(r) = ctx.input(|i| i.viewport().inner_rect) {
@@ -2891,9 +3095,63 @@ impl App {
         }
     }
 
+    /// The chat box's tabs: the stream's chat, and a conversation with each portal that's messaged (or been messaged).
+    fn chat_tabs(&mut self, ui: &mut egui::Ui) {
+        if self.threads.is_empty() { self.tab = None; return; }
+        let mut close: Option<String> = None;
+        ui.horizontal_wrapped(|ui| {
+            if button(ui, "stream chat", true, Some(self.tab.is_none())).on_hover_text(tip("your stream's chat: what viewers say, and your lines to them")).clicked() {
+                self.tab = None;
+            }
+            for t in &mut self.threads {
+                let on = self.tab.as_deref() == Some(t.channel.as_str());
+                let words = if t.unread > 0 && !on { format!("{} ({})", t.name, t.unread) } else { t.name.clone() };
+                let r = button(ui, &words, true, Some(on))
+                    .on_hover_text(tip(&format!("messages with {}'s portal, only between your portals (never on either stream). Right-click to close.", t.name)));
+                if r.clicked() { self.tab = Some(t.channel.clone()); t.unread = 0; }
+                r.context_menu(|ui| {
+                    if ui.button(format!("close {}", t.name)).clicked() { close = Some(t.channel.clone()); ui.close(); }
+                });
+            }
+        });
+        if let Some(c) = close {
+            self.threads.retain(|t| t.channel != c);
+            if self.tab.as_deref() == Some(c.as_str()) { self.tab = None; }
+        }
+        ui.add_space(4.0);
+    }
+
     fn chat(&mut self, ui: &mut egui::Ui) {
         let mut act: Option<Value> = None;
         let mut notes = Vec::new();
+        self.chat_tabs(ui);
+        if let Some(ch) = self.tab.clone() {
+            let size = self.settings.get().chat_size.clamp(10.0, 40.0);
+            let me = self.settings.get().host_name();
+            egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                egui::ScrollArea::vertical().id_salt(("dm", ch.clone())).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                    if let Some(t) = self.threads.iter().find(|t| t.channel == ch) {
+                        if t.lines.is_empty() {
+                            ui.label(wrapped(&format!("✼ a message to {}'s portal shows in their portal's window, not on their stream", t.name), size, GREY(), ui.available_width()));
+                        }
+                        for l in &t.lines {
+                            let mut job = egui::text::LayoutJob::default();
+                            if l.note {
+                                append(&mut job, &format!("✼ {}", l.text), size, GREY(), false);
+                            } else {
+                                append(&mut job, if l.mine { &me } else { &t.name }, size, if l.mine { LIME() } else { CYAN() }, false);
+                                append(&mut job, &format!("  {}", l.text), size, TEXT(), false);
+                                append(&mut job, &format!("  {}", l.when), size * 0.85, WHEN(), false);
+                            }
+                            job.wrap.max_width = ui.available_width();
+                            ui.add(egui::Label::new(job));
+                        }
+                    }
+                });
+            });
+            return;
+        }
         egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
@@ -2949,23 +3207,28 @@ impl App {
         // (narrow: the line across the window, the buttons under it)
         let narrow = ui.available_width() < 470.0;
         let mut line: Option<egui::Response> = None;
+        // (a conversation's tab open: the line goes to that portal, and the stream's own buttons are put away)
+        let to = self.tab.clone().and_then(|c| self.threads.iter().find(|t| t.channel == c).map(|t| (c, t.name.clone())));
+        let hint = match &to { Some((_, n)) => format!("a message to {}", n), None => "say something".to_string() };
         if narrow {
-            line = Some(field(ui, &mut self.entry, ui.available_width(), "say something", false));
+            line = Some(field(ui, &mut self.entry, ui.available_width(), &hint, false));
             ui.add_space(4.0);
         }
         ui.horizontal_wrapped(|ui| {
             let r = match line.take() { Some(r) => r, None => {
-                let w = ui.available_width() - 290.0;
-                field(ui, &mut self.entry, w.max(80.0), "say something", false)
+                let w = ui.available_width() - if to.is_some() { 70.0 } else { 290.0 };
+                field(ui, &mut self.entry, w.max(80.0), &hint, false)
             } };
             let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if button(ui, "send", false, None).clicked() || enter {
                 let text = self.entry.trim().to_string();
                 if !text.is_empty() {
-                    if self.desk.send(json!({"say": text})) { self.entry.clear(); } else { self.note("not sent: the relay isn't answering"); }
+                    let m = match &to { Some((c, _)) => json!({"dm": {"to": c, "text": text}}), None => json!({"say": text}) };
+                    if self.desk.send(m) { self.entry.clear(); } else { self.note("not sent: the relay isn't answering"); }
                 }
                 r.request_focus();
             }
+            if to.is_some() { return; }
             if button(ui, "a poll…", false, None).clicked() {
                 self.poll_form = Some(PollForm { question: String::new(), options: String::new(), seconds: 60 });
             }

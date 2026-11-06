@@ -44,6 +44,10 @@ const SIGNAL_EVERY = 80; // a viewer's ✼: as often as a hand can press, a doze
 const GUESS_MIN_VALUE = 1_000_000; // a drop from the guessed boss this big ends a guess round by itself
 const GUESS_KEPT = 120_000; // a decided round's result stays this long
 const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused for a minute
+// messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
+// for it till its portal next opens (relay.py's DMS_KEPT, DMS_DAYS, DMS_A_MINUTE)
+const DMS_KEPT = 20, DMS_DAYS = 7, DMS_A_MINUTE = 20;
+interface Dm { from: string; name: string; text: string; at: number }
 const OPEN = 1; // WebSocket.OPEN
 // Flow control: a viewer says {"got": <binary bytes received so far>} about once a second, and past this much
 // sent and not yet acknowledged it's sent no more frames or sound until it catches up. (Cloudflare's server side
@@ -377,6 +381,7 @@ export class Channel extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
+    if (role === "_dm") return this.takeDm(request);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
 
@@ -404,6 +409,7 @@ export class Channel extends DurableObject<Env> {
       } else if (role === "desk") {
         this.openDesk(ws, a, q.get("name") || "");
         await this.tellNotice(ws);
+        await this.tellDms(ws);
       } else {
         this.openSound(ws);
       }
@@ -489,6 +495,56 @@ export class Channel extends DurableObject<Env> {
     this.send(ws, this.viewerList());
   }
 
+  // messages between portals: this portal's to another channel's (through that channel's object), and another's held
+  // here till this portal's desk opens
+
+  dmsSent: number[] = [];
+
+  async sendDm(ws: WebSocket, host: string, dm: any) {
+    const to = typeof dm?.to === "string" ? dm.to.trim().toLowerCase() : "";
+    const text = oneLine(dm?.text, SAY_MAX);
+    const now = Date.now();
+    this.dmsSent = this.dmsSent.filter((t) => now - t < 60_000);
+    const fail = (why: string) => this.send(ws, pyjson({ dm_failed: { to, text, why } }));
+    if (!text || !/^[A-Za-z0-9_.~-]{1,64}$/.test(to)) return fail("a message needs a channel and some words");
+    if (to === this.name) return fail("that's your own portal");
+    if (this.dmsSent.length >= DMS_A_MINUTE) return fail(`${DMS_A_MINUTE} messages a minute at most: wait a moment`);
+    this.dmsSent.push(now);
+    const d: Dm = { from: this.name, name: host, text, at: now };
+    try {
+      const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(to)).fetch(new Request("https://channel/_dm", {
+        method: "POST", headers: { "x-channel": to, "content-type": "application/json" }, body: JSON.stringify(d) }));
+      if (r.status === 404) return fail(`no portal called ${to} on this relay`);
+      if (!r.ok) return fail("the relay couldn't pass it on");
+      const got = (await r.json()) as { held: boolean };
+      this.send(ws, pyjson({ dm_sent: { to, text, at: now, held: got.held } }));
+    } catch {
+      fail("the relay couldn't pass it on");
+    }
+  }
+
+  async takeDm(request: Request): Promise<Response> {
+    if (this.meta.keyHash === null) return new Response(null, { status: 404 });
+    const d = (await request.json()) as Dm;
+    const desks = this.sockets("desk");
+    if (desks.length) {
+      for (const w of desks) this.send(w, pyjson({ dm: d }));
+    } else {
+      const now = Date.now();
+      const kept = ((await this.ctx.storage.get<Dm[]>("dms")) || []).filter((x) => now - x.at <= DMS_DAYS * 86_400_000);
+      await this.ctx.storage.put("dms", [...kept.slice(-(DMS_KEPT - 1)), d]);
+    }
+    return Response.json({ held: !desks.length });
+  }
+
+  /** Messages that came while this portal was closed, to its desk as it connects. */
+  async tellDms(ws: WebSocket) {
+    const now = Date.now();
+    const kept = ((await this.ctx.storage.get<Dm[]>("dms")) || []).filter((x) => now - x.at <= DMS_DAYS * 86_400_000);
+    for (const d of kept) this.send(ws, pyjson({ dm: d }));
+    if (kept.length || (await this.ctx.storage.get("dms"))) await this.ctx.storage.delete("dms");
+  }
+
   /** The keeper's notice, if there is one, to a desk that's just connected. */
   async tellNotice(ws: WebSocket) {
     try {
@@ -535,7 +591,7 @@ export class Channel extends DurableObject<Env> {
     } else if (a.role === "watch") {
       if (typeof msg === "string" && msg.length <= VIEWER_TEXT) this.fromViewer(ws, a, msg);
     } else if (a.role === "desk") {
-      if (typeof msg === "string") this.fromDesk(a.host || this.name, msg);
+      if (typeof msg === "string") this.fromDesk(a.host || this.name, msg, ws);
     } else if (a.role === "sound") this.fromSound(msg);
     else if (a.role === "look" && typeof msg === "string" && msg.length <= VIEWER_TEXT) {
       let m: any;
@@ -820,11 +876,13 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
-  fromDesk(host: string, msg: string) {
+  fromDesk(host: string, msg: string, ws?: WebSocket) {
     let m: any;
     try { m = JSON.parse(msg); } catch { return; }
     if (!m || typeof m !== "object" || Array.isArray(m)) return;
-    if ("say" in m) {
+    if ("dm" in m && ws) {
+      this.ctx.waitUntil(this.sendDm(ws, host, m.dm));
+    } else if ("say" in m) {
       const text = oneLine(m.say, SAY_MAX * 2);
       if (text) this.say(host, text, true);
     } else if (Number.isInteger(m.hide)) {

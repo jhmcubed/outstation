@@ -159,6 +159,19 @@ or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
 
+## Messages between portals (11/06/2026)
+
+One portal's window to another's, through the relay, never on either stream (the client's chat tabs: ui.rs, Thread).
+On the desk socket, both relays:
+
+    → {"dm": {"to": "<channel>", "text": "..."}}            from a desk only (a viewer's is ignored)
+    ← {"dm_sent": {"to", "text", "at", "held"}}              held: their portal's closed, the relay keeps it for them
+    ← {"dm_failed": {"to", "text", "why"}}                   no such portal on this relay, your own, or past 20 a minute
+    ← {"dm": {"from": "<channel>", "name": "<their chat name>", "text", "at"}}   to the other portal's desks
+
+`at` in ms. A message for a portal with no desk connected is held, at most 20 and 7 days each, and handed over as its
+desk next connects. Both portals must be on the same relay.
+
 ## A notice from the keeper (Cloudflare)
 
 One line from the keeper that every friend's client shows in its chat, once (the relay moving, a newer version to get).
