@@ -1,5 +1,5 @@
 //! Clips on the player's Outside page (11/06/2026, Jace: "build the clip uploads that way"): with "put them on my
-//! Outside page" on (dink ▸, off to begin with), a clip that saved itself (a pet, a new log slot, a big drop) goes to
+//! Outside page" on (dink ▸, off to begin with), a clip that saved itself (a pet, a new log slot, a 99, a big drop) goes to
 //! the relay too, as a standard copy (clip.rs, page_copy: 17 s round the moment, at most 768 px wide), its still and
 //! its flipbook (a dozen or so small frames, the hover on the page). The relay keeps 20 a channel for 30 days
 //! (relay/src/clips.ts); anyone who opens the player's Outside page can watch them. The window lists them and takes

@@ -1,6 +1,6 @@
 // Clips on a player's Outside page (11/06/2026, Jace: "store automatically taken clips on people's individual Outside
 // pages"). A portal that's been told to ("put my clips on my Outside page", off to begin with) uploads the clip it
-// saved by itself (a pet, a new log slot, a big drop): a standard copy (17 s round the moment, at most 768 px wide),
+// saved by itself (a pet, a new log slot, a 99, a big drop): a standard copy (17 s round the moment, at most 768 px wide),
 // its still, and its flipbook (a dozen small frames in one JPEG, for the hover). docs/protocol.md, "Clips".
 //
 //   POST   /clips/<channel>?key=<key>         multipart: "meta" (JSON), "strip" (image/jpeg), "clip" (video/mp4)

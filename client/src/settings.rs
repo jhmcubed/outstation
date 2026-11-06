@@ -78,7 +78,7 @@ pub struct Dink {
     /// kill counts on the portal: every Nth (1: each), and always the first and personal bests
     #[serde(default = "d_one")]
     pub kc_every: u32,
-    /// a clip saved by itself when Dink tells of something big (a pet, a new collection log slot, a drop worth
+    /// a clip saved by itself when Dink tells of something big (a pet, a new collection log slot, a 99, a drop worth
     /// clip_gp or more), while live and with the replay buffer on (dink.rs, big_moment)
     #[serde(default = "d_true")]
     pub auto_clip: bool,

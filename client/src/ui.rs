@@ -1779,7 +1779,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.label(rich("clips by themselves", 16.0, LIME()));
     ui.horizontal_wrapped(|ui| {
         let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, or a drop worth", 16.0, colour))
+        ui.checkbox(&mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
             .on_hover_text(tip("Dink's post comes, and a few seconds later the replay buffer is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while live: the buffer holds what the portal sent."));
         ui.add(egui::DragValue::new(&mut s.dink.clip_gp).range(0..=2_147_483_647u64).speed(10000.0).suffix(" gp"));
         ui.label(rich("or more", 16.0, GREY()));
@@ -1787,7 +1787,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     if s.dink.auto_clip && s.replay_seconds == 0 {
         ui.label(rich("(the replay buffer is off, so there's nothing to clip: give it some seconds in the settings)", 14.0, PINK()));
     } else if s.dink.clip_gp == 0 {
-        ui.label(rich("(0 gp: drops never clip themselves; pets and new log slots still do)", 14.0, QUIET()));
+        ui.label(rich("(0 gp: drops never clip themselves; pets, new log slots and 99s still do)", 14.0, QUIET()));
     }
     if s.dink.auto_clip {
         let colour = if s.dink.clips_up { TEXT() } else { GREY() };

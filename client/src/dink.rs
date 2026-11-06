@@ -142,14 +142,21 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     st.lock().unwrap().last = Some((kind, Instant::now(), if went.is_empty() { "nowhere".into() } else { went.join(" and ") }));
 }
 
-/// Is this post something big enough to clip by itself: a pet, a new collection log slot, or a drop worth `gp` or more
-/// (the whole drop, every stack in it)? What it was, in a few words, for the clip's name.
+/// Is this post something big enough to clip by itself: a pet (a duplicate too: kept, 11/06/2026, Jace), a new
+/// collection log slot, a 99 (11/06/2026, Jace: "add 99's"; a skill reaching 99, not a virtual level past it), or a
+/// drop worth `gp` or more (the whole drop, every stack in it)? What it was, in a few words, for the clip's name.
 pub fn big_moment(p: &Value, gp: u64) -> Option<String> {
     let e = extra(p);
     let text = |k: &str| e.get(k).and_then(|x| x.as_str()).map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty());
     match p.get("type").and_then(|x| x.as_str()).unwrap_or("") {
         "PET" => Some(format!("pet {}", text("petName").unwrap_or_else(|| "a pet".into()))),
         "COLLECTION" => Some(format!("log {}", text("itemName").unwrap_or_else(|| "a new slot".into()))),
+        "LEVEL" => {
+            let skills: Vec<String> = e.get("levelledSkills").and_then(|x| x.as_object()).map(|m| {
+                m.iter().filter(|(_, v)| int(Some(v)) == 99).map(|(k, _)| k.trim().to_lowercase()).collect()
+            }).unwrap_or_default();
+            if skills.is_empty() { None } else { Some(format!("99 {}", skills.join(" and "))) }
+        }
         "LOOT" => {
             let all = stacks(p);
             let worth: i64 = all.iter().map(|(_, v)| *v).sum();
@@ -163,7 +170,7 @@ pub fn big_moment(p: &Value, gp: u64) -> Option<String> {
 
 /// A big moment's kind, as Dink names it, from its words (big_moment's).
 fn kind_of(what: &str) -> String {
-    if what.starts_with("pet ") { "PET" } else if what.starts_with("log ") { "COLLECTION" } else { "LOOT" }.to_string()
+    if what.starts_with("pet ") { "PET" } else if what.starts_with("log ") { "COLLECTION" } else if what.starts_with("99 ") { "LEVEL" } else { "LOOT" }.to_string()
 }
 
 /// 4200000 as "4.2m" (the page's own way: gpWords in outside-portal.js)
@@ -347,6 +354,13 @@ mod tests {
         assert_eq!(big_moment(&loot(&[("Coins", 600_000, 1), ("Rune bolts", 400, 1000)]), 1_000_000).as_deref(), Some("drop 1.0m coins"));
         assert_eq!(big_moment(&loot(&[("Skeletal visage", 1, 4_200_000)]), 0), None); // (0: drops never)
         assert_eq!(big_moment(&kc(412, true, false), 1), None);
+        let level = |skills: Value| json!({"type": "LEVEL", "extra": {"levelledSkills": skills}});
+        assert_eq!(big_moment(&level(json!({"Slayer": 99})), 1_000_000).as_deref(), Some("99 slayer"));
+        assert_eq!(big_moment(&level(json!({"Attack": 99, "Strength": 99})), 1_000_000).as_deref(), Some("99 attack and strength"));
+        assert_eq!(big_moment(&level(json!({"Slayer": 98})), 1_000_000), None);
+        assert_eq!(big_moment(&level(json!({"Slayer": 100})), 1_000_000), None); // (a virtual level: not a 99)
+        assert_eq!(kind_of("99 slayer"), "LEVEL");
+        assert_eq!(big_moment(&json!({"type": "PET", "extra": {"petName": "Vorki", "duplicate": true}}), 1).as_deref(), Some("pet vorki"));
         assert_eq!(crate::clip::file_safe("drop 4.2m abyssal whip <a/b>?"), "drop 4.2m abyssal whip a b");
     }
 
