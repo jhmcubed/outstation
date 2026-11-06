@@ -146,7 +146,7 @@ impl Asker {
                     let ch = asked.channel.clone();
                     let _ = settings.update(|s| s.asked = Some(asked));
                     if given {
-                        *said.lock().unwrap() = Some((format!("{} has a portal already: if it's yours and you lost its code, the keeper can give you a new one (the old one stops working)", ch), false));
+                        *said.lock().unwrap() = Some((format!("{} has a portal already: if it's yours and you lost its code, the listening post can give you a new one (the old one stops working)", ch), false));
                     }
                 }
                 Err(e) => *said.lock().unwrap() = Some((e, true)),
@@ -187,7 +187,7 @@ impl Asker {
                 },
                 Ok(Answer::TurnedDown) => {
                     let _ = settings.update(|s| s.asked = None);
-                    *said.lock().unwrap() = Some((format!("the keeper turned down the request for {}", a.player), true));
+                    *said.lock().unwrap() = Some((format!("the listening post turned down the request for {}", a.player), true));
                 }
                 Ok(Answer::Gone) => {
                     let _ = settings.update(|s| s.asked = None);

@@ -27,7 +27,7 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 - **Your picture, sound and chat:** only to the relay in your attach code.
 - **Dink's posts:** only to the portal on your own PC (`127.0.0.1`, which nothing outside your PC can reach). They go on to your Discord webhook if you set one.
 - **GitHub:** once on opening, to see whether there's a newer version. "more ▸" in the settings turns that off.
-- **Asking for a portal** (the first screen's "no code yet? ask for one"): only when you press **ask**, to the keeper's relay: your player's name, your note for the keeper, and a random code your PC keeps to collect the answer. While the request waits, the portal asks the same relay every 20 seconds whether the keeper has answered.
+- **Asking for a portal** (the first screen's "no code yet? ask for one"): only when you press **ask**, to the portal's relay (Jace's, on Cloudflare): your player's name, your note for him, and a random code your PC keeps to collect the answer. While the request waits, the portal asks the same relay every 20 seconds whether he has answered.
 
 Clips (the replay buffer) are written on your own PC, into Videos\outside-portal, by Windows' own video encoder. Nothing about them is sent anywhere. The live view in the window watches your own portal through the relay, as any viewer would.
 

@@ -1742,7 +1742,7 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(12.0);
     if let Some(a) = app.settings.get().asked.clone() {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(a.at);
-        ui.label(wrapped(&format!("asked for {}'s portal {} ago · waiting for the keeper's answer", a.player,
+        ui.label(wrapped(&format!("asked for {}'s portal {} ago · waiting for the listening post's answer", a.player,
                                   ago(Duration::from_secs(now.saturating_sub(a.at)))), 16.0, TEXT(), w));
         ui.label(wrapped("this screen attaches by itself when the answer comes: it looks every 20 s while the portal is open", 14.0, QUIET(), w));
         if button(ui, "never mind (take the request back)", true, None).clicked() { app.asker.cancel(&app.settings); }
@@ -1753,13 +1753,13 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
         }
         if app.asker.open {
             if crate::ask::HOME_RELAY.is_empty() {
-                ui.label(wrapped("asking opens with the first release, once the keeper's relay is up. until then, ask the keeper for an attach code.", 14.0, GREY(), w));
+                ui.label(wrapped("asking opens with the first release, once the listening post's relay is up. until then, ask the listening post for an attach code.", 14.0, GREY(), w));
             } else {
                 egui::Grid::new("ask").num_columns(2).show(ui, |ui| {
                     ui.label(rich("your player's name", 16.0, GREY()));
                     field(ui, &mut app.asker.player, 160.0, "as in the game", false);
                     ui.end_row();
-                    ui.label(rich("a note for the keeper", 16.0, GREY()));
+                    ui.label(rich("a note for the listening post", 16.0, GREY()));
                     field(ui, &mut app.asker.note, 300.0, "how they know you: a clan, a friend, your discord", false);
                     ui.end_row();
                 });
@@ -1800,7 +1800,7 @@ impl eframe::App for App {
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
         let came = self.asked_attached.lock().unwrap().take();
         if let Some(ch) = came {
-            self.note(format!("the keeper said yes: attached to {} · your portal opens at ghillie.wiki/outside?player={}", ch, ch));
+            self.note(format!("the listening post said yes: attached to {} · your portal opens at ghillie.wiki/outside?player={}", ch, ch));
         }
         self.sync_tray(ctx);
         #[allow(unused_mut)]
