@@ -117,6 +117,18 @@ def admin(method, path):
         return e.code, None
 
 
+def admin_json(method, path, body):
+    """(status, JSON or None) from the admin route, with a JSON body."""
+    req = urllib.request.Request(http_url() + path, method=method, data=json.dumps(body).encode(),
+                                 headers={"Authorization": "Bearer " + ADMIN, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            return r.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        return e.code, None
+
+
 def http(method, path, body=None):
     """(status, JSON or None) from a public route, as a friend's client calls it."""
     data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
@@ -1104,6 +1116,40 @@ class Channels(Base):
         self.assertEqual(codes[:10], [4003] * 10)
         self.assertEqual(codes[10], 4029)
 
+
+
+@unittest.skipUnless(WORKER, "the keeper's notice: the Worker only (the keeper's relay)")
+class Notices(Base):
+    """One line from the keeper to every portal: every desk connected hears it at once, each that connects later
+    hears it on connecting, and taking it down says so. Viewers never get it."""
+
+    async def asyncTearDown(self):
+        admin("DELETE", "/admin/notice")
+        await super().asyncTearDown()
+
+    async def test_a_notice_reaches_every_desk_now_and_later_and_comes_down(self):
+        d = await self.desk()
+        v = await self.watch()
+        await self.pause(2)
+        status, got = admin_json("PUT", "/admin/notice", {"text": "the relay moves on sunday"})
+        self.assertEqual((status, got["notice"]["text"]), (200, "the relay moves on sunday"))
+        self.assertEqual((await next_of(d, "notice", timeout=5))["text"], "the relay moves on sunday")
+        late = await self.desk(name="late")
+        self.assertEqual((await next_of(late, "notice"))["text"], "the relay moves on sunday")
+        self.assertEqual(admin("GET", "/admin/notice")[1]["notice"]["text"], "the relay moves on sunday")
+        self.assertEqual(admin("DELETE", "/admin/notice")[0], 200)
+        self.assertIsNone(await next_of(d, "notice", timeout=5))
+        self.assertIsNone(admin("GET", "/admin/notice")[1]["notice"])
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "notice", timeout=0.6)
+
+    async def test_a_notice_needs_the_token_and_words(self):
+        self.assertEqual(admin_json("PUT", "/admin/notice", {"text": "  "})[0], 400)
+        req = urllib.request.Request(http_url() + "/admin/notice", method="PUT", data=b'{"text": "hi"}',
+                                     headers={"Authorization": "Bearer not-the-token-at-all", "Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
 
 
 @unittest.skipUnless(WORKER, "asking for a portal: the Worker only (the keeper's relay)")

@@ -64,7 +64,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, pings, who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), and `{"upload": {"bps", "viewers"}}` each second while live. That's what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, pings, who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers"}}` each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -130,3 +130,12 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 - `DELETE /admin/requests/<channel>`: turned down.
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
+
+## A notice from the keeper (Cloudflare)
+
+One line from the keeper that every friend's client shows in its chat, once (the relay moving, a newer version to get).
+- `PUT /admin/notice` with `{"text"}` (one line, 300 characters at most): every desk connected now hears `{"notice": {"text", "at"}}` at once, and each desk that connects later hears it on connecting.
+- `DELETE /admin/notice` takes it down: desks connected hear `{"notice": null}`.
+- `GET /admin/notice`: `{"notice": {"text", "at"}}` or `{"notice": null}`.
+
+The client shows a notice once, by its `at`, so a reconnect or a restart doesn't show it again. Viewers never get it.

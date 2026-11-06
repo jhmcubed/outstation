@@ -20,6 +20,11 @@
 //   POST   /admin/requests/<channel>                          handed out: the code waits for the asker's client
 //   DELETE /admin/requests/<channel>                          turned down
 // Only the pickup's SHA-256 is kept; the attach code is kept only until the asker's client collects it.
+//
+// A notice from the keeper to every portal (11/06/2026): one line every friend's client shows in its chat.
+//   GET    /admin/notice              the notice now ({"notice": {"text", "at"}} or {"notice": null})
+//   PUT    /admin/notice  {"text"}    a new one, sent at once to every desk connected and to each that connects
+//   DELETE /admin/notice              taken down
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, type Env } from "./channel";
@@ -60,6 +65,15 @@ export class Directory extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
     if (url.pathname === "/requests") return this.requests(request, url);
+    if (url.pathname === "/notice") {
+      if (request.method === "PUT") {
+        const { text } = (await request.json()) as { text: string };
+        await this.ctx.storage.put("notice", { text, at: Date.now() });
+      } else if (request.method === "DELETE") {
+        await this.ctx.storage.delete("notice");
+      }
+      return Response.json({ notice: (await this.ctx.storage.get("notice")) || null });
+    }
     if (request.method === "PUT") await this.ctx.storage.put("c:" + name, { since: Date.now() });
     else if (request.method === "DELETE") await this.ctx.storage.delete("c:" + name);
     const all = await this.ctx.storage.list({ prefix: "c:" });
@@ -179,6 +193,24 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     return new Response("no", { status: 403 });
   }
   const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+  if (parts[1] === "notice" && parts.length === 2) {
+    if (request.method === "GET") return dir.fetch("https://dir/notice");
+    if (request.method !== "PUT" && request.method !== "DELETE") return new Response(null, { status: 405 });
+    let text = "";
+    if (request.method === "PUT") {
+      const body = (await request.json().catch(() => null)) as { text?: unknown } | null;
+      text = oneLine(body?.text, 300);
+      if (!text) return Response.json({ error: "a notice needs some words (DELETE takes one down)" }, { status: 400 });
+    }
+    const r = await dir.fetch(new Request("https://dir/notice", request.method === "PUT"
+      ? { method: "PUT", body: JSON.stringify({ text }) } : { method: "DELETE" }));
+    const now = (await r.json()) as { notice: { text: string; at: number } | null };
+    // to every channel handed out, so each desk connected now hears it (one that connects later asks for it)
+    const names = ((await (await dir.fetch("https://dir/")).json()) as { channel: string }[]).map((c) => c.channel);
+    await Promise.all(names.map((n) => channelStub(env, n).fetch(toChannel(
+      new Request(request.url, { method: "POST", body: JSON.stringify(now) }), n, "/_notice")).catch(() => null)));
+    return Response.json(now);
+  }
   if (parts[1] === "requests") {
     if (parts.length === 2 && request.method === "GET") return dir.fetch(dirRequests(env, "list", ""));
     const name = parts[2] || "";
@@ -225,7 +257,7 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests")) return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice")) return admin(request, env, parts);
 
     // asking for a portal: a friend's client, with a secret of its own (the pickup) that collects the answer
     if (parts[0] === "requests" && parts.length === 2) {

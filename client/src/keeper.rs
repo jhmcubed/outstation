@@ -134,6 +134,33 @@ pub fn answer(channel: &str, yes: bool) -> Result<String, String> {
     }
 }
 
+/// The keeper's notice to every portal now ("" for none).
+pub fn notice() -> Result<String, String> {
+    let v = call("GET", "/admin/notice", true)?;
+    Ok(v.pointer("/notice/text").and_then(|x| x.as_str()).unwrap_or("").to_string())
+}
+
+/// A new notice (every friend's portal shows it in its chat, once), or "" to take it down.
+pub fn set_notice(text: &str) -> Result<String, String> {
+    let m = load();
+    let base = http_base(&field(&m, "relay"));
+    if base.is_empty() { return Err("no relay yet: set its address first (set up ▸)".into()); }
+    let url = format!("{}/admin/notice", base);
+    let bearer = format!("Bearer {}", field(&m, "token"));
+    let r = if text.trim().is_empty() {
+        ureq::delete(&url).header("User-Agent", "ghillie field station").header("Authorization", &bearer).call()
+    } else {
+        ureq::put(&url).header("User-Agent", "ghillie field station").header("Authorization", &bearer)
+            .header("Content-Type", "application/json").send(json!({ "text": text.trim() }).to_string().as_bytes())
+    };
+    match r {
+        Ok(_) => Ok(if text.trim().is_empty() { "the notice is taken down".into() } else { "the notice went to every portal".into() }),
+        Err(ureq::Error::StatusCode(403)) => Err("the relay refused the admin token (is it the one Cloudflare has?)".into()),
+        Err(ureq::Error::StatusCode(c)) => Err(format!("the relay answered {}", c)),
+        Err(e) => Err(format!("the relay is out of reach ({})", e)),
+    }
+}
+
 /// A channel handed out (or a new key for one already out): (channel, attach code).
 pub fn give(player: &str) -> Result<(String, String), String> {
     let ch = channel_of(player)?;
@@ -161,6 +188,9 @@ pub struct Keeper {
     pub asks: Arc<Mutex<Option<Result<Vec<AskRow>, String>>>>,
     /// (asked first) answering a request: (hand it out?, the channel)
     pub confirm_ask: Option<(bool, String)>,
+    /// the notice on the relay now (read with the list), and the one being written
+    pub notice_now: Arc<Mutex<Option<String>>>,
+    pub notice_text: String,
     read_at: Option<Instant>,
     busy: Arc<Mutex<bool>>,
     pub answer: Arc<Mutex<Option<Result<(String, String), String>>>>,
@@ -176,6 +206,7 @@ impl Keeper {
     pub fn new() -> Keeper {
         let m = load();
         Keeper { rows: Arc::new(Mutex::new(None)), asks: Arc::new(Mutex::new(None)), confirm_ask: None,
+                 notice_now: Arc::new(Mutex::new(None)), notice_text: String::new(),
                  read_at: None, busy: Arc::new(Mutex::new(false)),
                  answer: Arc::new(Mutex::new(None)), note: Arc::new(Mutex::new(String::new())), name: String::new(),
                  relay: field(&m, "relay"), setup_open: field(&m, "relay").is_empty(), confirm: None }
@@ -186,12 +217,13 @@ impl Keeper {
         if *self.busy.lock().unwrap() { return; }
         if !now && self.read_at.is_some_and(|t| t.elapsed() < Duration::from_secs(10)) { return; }
         self.read_at = Some(Instant::now());
-        let (rows, asks, busy) = (self.rows.clone(), self.asks.clone(), self.busy.clone());
+        let (rows, asks, busy, notice_now) = (self.rows.clone(), self.asks.clone(), self.busy.clone(), self.notice_now.clone());
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
             let got = listing();
             *rows.lock().unwrap() = Some(got);
             *asks.lock().unwrap() = Some(asking());
+            if let Ok(n) = notice() { *notice_now.lock().unwrap() = Some(n); }
             *busy.lock().unwrap() = false;
             wake();
         });
@@ -233,6 +265,16 @@ impl Keeper {
             *note.lock().unwrap() = match answer(&channel, yes) { Ok(s) => s, Err(e) => e };
             if let Ok(l) = listing() { *rows.lock().unwrap() = Some(Ok(l)); }
             *asks.lock().unwrap() = Some(asking());
+            wake();
+        });
+    }
+
+    /// send a notice (or "" to take it down), off the window's thread
+    pub fn send_notice(&mut self, text: String, wake: impl Fn() + Send + 'static) {
+        let (note, notice_now) = (self.note.clone(), self.notice_now.clone());
+        std::thread::spawn(move || {
+            *note.lock().unwrap() = match set_notice(&text) { Ok(s) => s, Err(e) => e };
+            if let Ok(n) = notice() { *notice_now.lock().unwrap() = Some(n); }
             wake();
         });
     }

@@ -468,6 +468,15 @@ impl App {
     }
 
     fn message(&mut self, m: Value) {
+        if let Some(n) = m.get("notice") {
+            // the keeper's notice to every portal (docs/protocol.md, "A notice from the keeper"): shown once
+            let (text, at) = (n.get("text").and_then(|x| x.as_str()).unwrap_or(""), n.get("at").and_then(|x| x.as_u64()).unwrap_or(0));
+            if !text.is_empty() && at != self.settings.get().notice_seen {
+                let _ = self.settings.update(|s| s.notice_seen = at);
+                self.note(format!("from the listening post: {}", text));
+            }
+            return;
+        }
         if let Some(r) = m.get("relay") {
             self.live = r.get("live").and_then(|x| x.as_bool()).unwrap_or(false);
             self.viewers = r.get("viewers").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
@@ -870,6 +879,20 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(10.0);
         }
     }
+    // a notice to every portal (docs/protocol.md, "A notice from the keeper")
+    ui.label(rich("a notice to every portal", 16.0, LIME()));
+    let now = app.keeper.notice_now.lock().unwrap().clone().unwrap_or_default();
+    ui.label(wrapped(&if now.is_empty() { "none up now".to_string() } else { format!("up now: “{}”", now) }, 14.0, GREY(), ui.available_width()));
+    ui.horizontal(|ui| {
+        let r = field(ui, &mut app.keeper.notice_text, 300.0, "one line every friend's portal shows in its chat", false);
+        let typed = app.keeper.notice_text.trim().to_string();
+        if (button(ui, "send it", true, None).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && !typed.is_empty() {
+            app.keeper.send_notice(typed, wake.clone());
+            app.keeper.notice_text.clear();
+        }
+        if !now.is_empty() && button(ui, "take it down", true, None).clicked() { app.keeper.send_notice(String::new(), wake.clone()); }
+    });
+    ui.add_space(10.0);
     // hand one out
     ui.label(rich("hand one out", 16.0, LIME()));
     ui.horizontal(|ui| {

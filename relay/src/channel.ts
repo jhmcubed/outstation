@@ -319,6 +319,12 @@ export class Channel extends DurableObject<Env> {
                              viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "" });
     }
     if (role === "_revoke") return this.revoke();
+    if (role === "_notice") {
+      // the keeper's notice, set or taken down: to every desk here now
+      const line = pyjson(await request.json());
+      for (const d of this.sockets("desk")) this.send(d, line);
+      return new Response(null, { status: 204 });
+    }
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
 
     // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
@@ -344,6 +350,7 @@ export class Channel extends DurableObject<Env> {
         this.openTransmit(ws, q.get("code") || "", q.get("v"));
       } else if (role === "desk") {
         this.openDesk(ws, a, q.get("name") || "");
+        await this.tellNotice(ws);
       } else {
         this.openSound(ws);
       }
@@ -415,6 +422,15 @@ export class Channel extends DurableObject<Env> {
     this.lateJoiner(ws, "desk");
     this.send(ws, this.bannedLine());
     this.send(ws, this.viewerList());
+  }
+
+  /** The keeper's notice, if there is one, to a desk that's just connected. */
+  async tellNotice(ws: WebSocket) {
+    try {
+      const r = await this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory")).fetch("https://dir/notice");
+      const got = (await r.json()) as { notice: unknown };
+      if (got.notice) this.send(ws, pyjson(got));
+    } catch { /* (no notice, then) */ }
   }
 
   bannedLine(): string {

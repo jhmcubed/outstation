@@ -183,6 +183,9 @@ pub struct Settings {
     /// the ready check above the title while off air (RuneLite, logged in, the relay, Dink, the sound)
     #[serde(default = "d_true")]
     pub ready_check: bool,
+    /// the keeper's last notice shown (its "at"), so a reconnect or a restart doesn't show it again
+    #[serde(default)]
+    pub notice_seen: u64,
     /// the live view: the portal as the site gets it, small, in the window (off: not connected at all)
     #[serde(default = "d_true")]
     pub live_view: bool,
