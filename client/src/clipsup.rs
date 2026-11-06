@@ -103,7 +103,7 @@ impl PageClips {
         std::thread::spawn(move || {
             let r = ureq::post(&url).header("User-Agent", "outside-portal").config().http_status_as_error(false).build().send(&[] as &[u8]);
             match r {
-                Ok(mut r) if r.status().as_u16() == 200 => {
+                Ok(r) if r.status().as_u16() == 200 => {
                     if let Some(Ok(list)) = &mut *rows.lock().unwrap() {
                         for x in list.iter_mut() { if x.id == id { x.kept = keep; } }
                     }

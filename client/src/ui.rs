@@ -176,7 +176,8 @@ struct SettingsPanel {
 pub struct App {
     settings: Shared,
     tx: Transmit,
-    sound: Arc<Mutex<sound::Status>>,
+    /// the sound's status, held for the life of the window (the sound row reads its own copy)
+    _sound: Arc<Mutex<sound::Status>>,
     dink: Arc<Mutex<dink::Status>>,
     desk: Desk,
     lines: Vec<Line>,
@@ -400,7 +401,7 @@ impl App {
         }
         let s = settings.get();
         let mut app = App {
-            settings, tx, sound, dink, desk, lines: Vec::new(), poll: None, poll_ends: Instant::now(), poll_form: None,
+            settings, tx, _sound: sound, dink, desk, lines: Vec::new(), poll: None, poll_ends: Instant::now(), poll_form: None,
             entry: String::new(), up: false, live: false, open: false, viewers: 0, portal_bps: None, pc_bps,
             started: Instant::now(), drawer: Drawer::None, panel: None,
             attach_code: String::new(), attach_note: String::new(), by_hand: false,
@@ -2413,7 +2414,7 @@ impl App {
             }
         }
         if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
-            let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("edge")));
+            let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("edge")));
             p.rect_stroke(ctx.content_rect(), 0.0, Stroke::new(1.0, DIM()), egui::StrokeKind::Inside);
         }
         crate::cursor::adopt();
@@ -2757,7 +2758,7 @@ impl App {
         }
         let gap = ui.spacing().item_spacing.x;
         let beside = words.as_ref().is_some_and(|(t, _)| check_w(ui, "the live view") + gap + text_w(ui, t, 14.0) <= ui.available_width());
-        let mut toggle = |ui: &mut egui::Ui, feed_tex: &mut Option<(egui::TextureHandle, Instant)>| {
+        let toggle = |ui: &mut egui::Ui, feed_tex: &mut Option<(egui::TextureHandle, Instant)>| {
             let mut on = s.live_view;
             if ui.checkbox(&mut on, rich("the live view", 14.0, GREY())).on_hover_text(tip("the portal as the site gets it, through the relay as a viewer's page would (off: not connected at all, so it costs nothing)")).changed() {
                 let _ = self.settings.update(|x| x.live_view = on);
@@ -3079,7 +3080,7 @@ impl App {
     }
 
     fn close_modal(&mut self, ctx: &egui::Context) {
-        egui::Modal::new(egui::Id::new("closing")).frame(egui::Frame::new().fill(ABYSS()).stroke(Stroke::new(1.0, LIME()))
+        egui::Modal::new(egui::Id::unique("closing")).frame(egui::Frame::new().fill(ABYSS()).stroke(Stroke::new(1.0, LIME()))
             .inner_margin(egui::Margin::same(16))).show(ctx, |ui| {
             ui.label(rich("the portal is live.", 16.0, LIME()));
             ui.add_space(8.0);
@@ -3140,7 +3141,7 @@ impl App {
                 p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
                 p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
                 p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the portal's window, to keep it there", body(14.0), GREY());
-                let resp = ui.interact(rect, ui.id().with("drag"), Sense::click_and_drag());
+                let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
                 if resp.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
@@ -3208,7 +3209,7 @@ impl App {
             let to_rect = |m: &[f64; 4]| egui::Rect::from_min_size(
                 egui::pos2(rect.left() + m[0] as f32 * rect.width(), rect.top() + m[1] as f32 * rect.height()),
                 Vec2::new(m[2] as f32 * rect.width(), m[3] as f32 * rect.height()));
-            let resp = ui.interact(rect, ui.id().with("masks"), Sense::click_and_drag());
+            let resp = ui.interact(rect, ui.scope_id().with("masks"), Sense::click_and_drag());
             if resp.drag_started() {
                 if let Some(p) = resp.interact_pointer_pos() {
                     drag = Some(match masks.iter().rposition(|m| to_rect(m).contains(p)) {
