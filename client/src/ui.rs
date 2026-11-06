@@ -282,6 +282,8 @@ pub struct App {
     /// step 1's ways open again once it's set up ("change"), and its by-hand rules open
     discord_change: bool,
     discord_hand: bool,
+    /// what "use its Discord rules" (the old portal's forward.json) last said, under its own button
+    old_rules: Option<Result<String, String>>,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -444,7 +446,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, discord_change: false, discord_hand: false, old_rules: None,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -2038,19 +2040,24 @@ fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Setti
         ui.horizontal_wrapped(|ui| {
             if button(ui, "use its Discord rules", true, None)
                 .on_hover_text(tip(&format!("reads {} again, the rules the old portal passed Discord its posts by", f.display()))).clicked() {
-                app.dink_setup = Some(match std::fs::read_to_string(&f) {
+                app.old_rules = Some(match std::fs::read_to_string(&f) {
                     Err(_) => Err(format!("there's no {} here", f.display())),
                     Ok(t) => match serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')) {
                         Err(e) => Err(format!("{} isn't readable JSON ({})", f.display(), e)),
                         Ok(rules) if !forward_has_hook(&rules) => Err(format!("{} has no Discord webhook address in it (its \"discord\" list is empty): put it in by hand below", f.display())),
                         Ok(rules) => {
                             s.forward = rules;
-                            Ok((Vec::new(), vec![format!("took {}: {}", f.display(), forward_summary(&s.forward))]))
+                            Ok(format!("took {}: {}", f.display(), forward_summary(&s.forward)))
                         }
                     },
                 });
             }
         });
+        match &app.old_rules {
+            Some(Ok(t)) => { ui.label(wrapped(t, 14.0, TEAL(), w)); }
+            Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
+            None => {}
+        }
         ui.add_space(4.0);
     }
     // b: from Dink's own settings
