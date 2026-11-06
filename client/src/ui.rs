@@ -419,6 +419,10 @@ impl App {
             }
             if std::env::args().any(|a| a == "--tray") { app.hidden = true; }
         }
+        if s.start_menu == Some(true) {
+            let p = (*app.settings.path).clone();
+            std::thread::spawn(move || if let Err(e) = crate::shortcut::make(&p) { crate::transmit::log(&format!("the Start menu's shortcut: {}", e)); });
+        }
         if let Some(what) = crate::crash::last_time() {
             app.note(format!("the portal stopped unexpectedly last time ({}). settings ▸ more ▸ \"copy my log\" puts what happened on the clipboard, to send to the listening post", what));
         }
@@ -1533,6 +1537,16 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             s.key.clear();
         }
         ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            let there = crate::shortcut::exists();
+            let words = if there { "take it out of the Start menu" } else { "put it in the Start menu" };
+            if button(ui, words, true, None).on_hover_text(tip("a shortcut in your own Start menu, with the ✼: nothing else (it doesn't start with Windows)")).clicked() {
+                let r = if there { crate::shortcut::remove() } else { crate::shortcut::make(&settings.path) };
+                if r.is_ok() { s.start_menu = Some(!there); }
+            }
+            ui.label(rich(if crate::shortcut::exists() { "in the Start menu" } else { "not in the Start menu" }, 14.0, QUIET()));
+        });
+        ui.add_space(8.0);
         ui.label(rich("if something goes wrong", 16.0, LIME()));
         ui.horizontal_wrapped(|ui| {
             if button(ui, "copy my log", true, None)
@@ -1777,6 +1791,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md", 14.0, TEAL())).wrap());
     });
+    start_menu_offer(app, ui);
     if let Some(p) = settings::ghillie_path() {
         ui.add_space(14.0);
         ui.label(rich("ghillie's own portal settings are on this PC:", 16.0, GREY()));
@@ -1791,6 +1806,23 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     }
+}
+
+/// The Start menu, offered once (shortcut.rs): yes makes the shortcut, either answer puts the question away.
+fn start_menu_offer(app: &mut App, ui: &mut egui::Ui) {
+    if app.settings.get().start_menu.is_some() { return; }
+    ui.add_space(12.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(rich("put the portal in your Start menu?", 16.0, GREY()))
+            .on_hover_text(tip("a shortcut in your own Start menu, with the ✼: nothing else. It still doesn't start with Windows, and settings ▸ more takes it out."));
+        if button(ui, "yes", true, None).clicked() {
+            match crate::shortcut::make(&app.settings.path) {
+                Ok(()) => { let _ = app.settings.update(|s| s.start_menu = Some(true)); app.attach_note = format!("in the Start menu as \"{}\"", crate::shortcut::NAME); }
+                Err(e) => app.attach_note = e,
+            }
+        }
+        if button(ui, "no thanks", true, None).clicked() { let _ = app.settings.update(|s| s.start_menu = Some(false)); }
+    });
 }
 
 /// "no code yet? ask for one": the player's name and a note for the keeper, sent to the keeper's relay (ask.rs); then,

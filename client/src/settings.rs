@@ -186,6 +186,9 @@ pub struct Settings {
     /// the keeper's last notice shown (its "at"), so a reconnect or a restart doesn't show it again
     #[serde(default)]
     pub notice_seen: u64,
+    /// the Start menu's shortcut (shortcut.rs): not asked yet, yes (kept pointing at this copy), or no
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_menu: Option<bool>,
     /// the live view: the portal as the site gets it, small, in the window (off: not connected at all)
     #[serde(default = "d_true")]
     pub live_view: bool,

@@ -13,7 +13,7 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 | watch your keyboard? | **No.** Windows tells it only when one of its own four keys is pressed: the static key (Pause), the sound key (Scroll Lock), the clip key (Insert) and the mask key (End). You can change each. |
 | show something you'd rather keep to yourself? | **Only what you allow.** Draw your own masks over any part of the game (the chat, the map, the world number): those parts are blacked out on your PC, before a frame is made, so they never leave it. The mask key turns them off and on. |
 | show your mouse pointer? | **Only if you switch it on.** "my cursor in the picture" (off to begin with) has Windows Graphics Capture draw the pointer into the frames where it's over RuneLite. Windows draws it: the portal never reads where the pointer is. |
-| need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. |
+| need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. If you say yes on its first screen, it puts one shortcut in your own Start menu (settings ▸ more takes it out). |
 | need anything else installed? | **No.** Everything it needs comes with Windows 10 and 11: the safety check below fails a release that would need anything more. |
 | let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. The ring, the ✼ and the chat over the game are drawn in see-through windows of the portal's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off, and "viewers may ping" switches pings off altogether. |
 

@@ -29,6 +29,7 @@ mod hotkeys;
 mod keeper;
 mod net;
 mod settings;
+mod shortcut;
 mod sound;
 #[cfg(feature = "station")]
 mod station;
