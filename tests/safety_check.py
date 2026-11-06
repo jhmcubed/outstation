@@ -277,7 +277,7 @@ def main(argv):
         failed |= bool(extra)
         kinds = resource_kinds(p)
         has = {3, 14, 16} <= kinds
-        print("  its icon and name in Windows: %s" % ("yes (the ✼, and outside-portal in its details)" if has else
+        print("  its icon and name in Windows: %s" % ("yes (its icon, and outside-portal in its details)" if has else
                                                        "no (build.rs adds them in an MSVC build only)"))
         failed |= needs_icon and not has
     src = check_source()
