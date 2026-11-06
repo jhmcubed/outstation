@@ -1875,7 +1875,9 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY())),
     };
     if s.dink.discord == Some(true) && forward_has_hook(&s.forward) {
-        ui.label(wrapped("(and no Discord address left in that list: the portal passes your Discord its posts now, so one left there would get each twice)", 13.0, QUIET(), ui.available_width()));
+        // (11/06/2026, Jace: "make this line more obvious ... its important if someone doesnt want duplicates")
+        ui.add_space(2.0);
+        ui.label(wrapped("⚠ delete any Discord address from that list: the portal passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
     }
     ui.add_space(12.0);
     ui.label(rich("3. what shows on your portal", 16.0, LIME()));
