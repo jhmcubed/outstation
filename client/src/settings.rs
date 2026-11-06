@@ -84,13 +84,16 @@ pub struct Dink {
     pub auto_clip: bool,
     #[serde(default = "d_clip_gp")]
     pub clip_gp: u64,
+    /// and each one put on the player's Outside page too (clipsup.rs): a standard copy, off to begin with
+    #[serde(default)]
+    pub clips_up: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl Default for Dink {
     fn default() -> Self {
-        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), extra: Map::new() }
+        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, extra: Map::new() }
     }
 }
 

@@ -5,6 +5,7 @@
 //   ws(s)://<relay>/desk/<channel>?key=<key>&name=<name in the chat>   the chat window
 //   ws(s)://<relay>/watch/<channel>?code=<watch code>                  a viewer (Outside)
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
+//   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
 //
 // Channels are handed out by the relay's owner (Authorization: Bearer <ADMIN_TOKEN>, a Worker secret):
 //   POST   /admin/channels/<channel>    a new key for it: {"channel", "key", "code"} (code: the attach code)
@@ -28,6 +29,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, type Env } from "./channel";
+import { fileKey, serveFile, ID } from "./clips";
 import { oneLine } from "./text";
 
 export { Channel };
@@ -193,6 +195,15 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     return new Response("no", { status: 403 });
   }
   const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+  if (parts[1] === "clips") {
+    // a channel's clips, whatever its watch code; and any one taken down
+    const name = parts[2] || "";
+    if (!NAME.test(name) || parts.length > 4) return new Response("which channel?", { status: 400 });
+    const url = new URL(request.url);
+    if (parts.length === 4) url.searchParams.set("id", parts[3]);
+    if (request.method !== "GET" && !(request.method === "DELETE" && parts.length === 4)) return new Response(null, { status: 405 });
+    return channelStub(env, name).fetch(toChannel(new Request(url.toString(), request), name, "/_clips_admin"));
+  }
   if (parts[1] === "notice" && parts.length === 2) {
     if (request.method === "GET") return dir.fetch("https://dir/notice");
     if (request.method !== "PUT" && request.method !== "DELETE") return new Response(null, { status: 405 });
@@ -258,7 +269,26 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice")) return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips")) return admin(request, env, parts);
+
+    // clips on a player's Outside page (clips.ts): the files straight from the bucket, the rest through the channel
+    if (parts[0] === "clips" && (parts.length === 2 || parts.length === 3) && NAME.test(parts[1])) {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
+                                                             "access-control-allow-headers": "range, content-type", "access-control-max-age": "86400" } });
+      }
+      if (parts.length === 3) {
+        const m = /^([A-Za-z0-9_-]{16,32})\.(mp4|jpg)$/.exec(parts[2]);
+        if ((request.method === "GET" || request.method === "HEAD") && m) return serveFile(env.CLIPS, fileKey(parts[1], m[1], m[2] as "mp4" | "jpg"), request);
+        if (request.method === "DELETE" && ID.test(parts[2])) {
+          url.searchParams.set("id", parts[2]);
+          return channelStub(env, parts[1]).fetch(toChannel(new Request(url.toString(), request), parts[1], "/_clips"));
+        }
+        return new Response(null, { status: 404 });
+      }
+      if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_clips"));
+      return new Response(null, { status: 405 });
+    }
 
     // asking for a portal: a friend's client, with a secret of its own (the pickup) that collects the answer
     if (parts[0] === "requests" && parts.length === 2) {

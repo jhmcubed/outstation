@@ -97,6 +97,11 @@ GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 512 * 1024          # a frame is ~10-30 KB; anything bigger is refused
 VIEWER_BUFFER = 1024 * 1024       # a slow viewer skips frames past this much queued
 MAX_POST = 16 * 1024 * 1024       # a Dink post with a screenshot attached
+# clips on a player's Outside page (11/06/2026; the Worker's clips.ts, docs/protocol.md "Clips"): in clips_dir/<channel>
+MAX_CLIP, MAX_STRIP, MAX_STILL, MAX_DUR = 8 * 1024 * 1024, 256 * 1024, 16 * 1024, 20
+CLIPS_MOST, CLIPS_DAYS, CLIPS_AN_HOUR = 20, 30, 30
+CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
+DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
 VIEWER_TEXT = 2048                # anything longer from a viewer is thrown away unread
 CHAT_KEPT = 50                    # lines a late viewer (or a newly opened desk) gets at once
 SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: room to spam a little for fun (Jace, 11/05)
@@ -304,6 +309,7 @@ class Channel:
         self.guess = None            # the drop guess round (11/05/2026): see from_desk's guess_open
         self.guess_id = 0
         self.out_seen = (0, time.monotonic())
+        self.clips_uploads = []      # when its clips came, for CLIPS_AN_HOUR
         self.summary = None          # this stream's summary (fold): {"since", "ended", "boss", "kc", "loot", ...}
 
     def summary_line(self):
@@ -322,6 +328,11 @@ class Channel:
         if self.summary is not None:
             self.summary["ended"] = int(time.time() * 1000)
             self.tell_summary()
+
+    def tell_clip(self, msg):
+        line = json.dumps(msg)
+        for v in list(self.viewers) + list(self.desks) + list(self.lookers):
+            v.send_nowait(line)
 
     def tell_summary(self):
         if self.summary is None:
@@ -588,8 +599,9 @@ def too_old(v, min_client):
 
 
 class Relay:
-    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client=""):
+    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None):
         self.delay = delay
+        self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
         # how many may watch a channel at once (0: no limit). Each viewer gets their own copy
         # from the transmitter's home upload, so it's that upload that sets the number
@@ -637,6 +649,9 @@ class Relay:
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
+            return
+        if path and path[0] == "clips" and 2 <= len(path) <= 3 and not key:
+            await self.clips(reader, writer, method, headers, path, q)
             return
         if method == "POST" and len(path) == 2 and path[0] == "dink":
             await self.dink(reader, writer, headers, path[1], q.get("key", ""))
@@ -1067,6 +1082,154 @@ class Relay:
         finally:
             writer.close()
 
+    # ---- clips on a player's Outside page ----
+
+    def clip_folder_of(self, name):
+        return os.path.join(self.clips_dir, name) if self.clips_dir and re.match(r"^[A-Za-z0-9_.~-]{1,64}$", name) \
+            and name not in (".", "..") else None
+
+    def clip_list(self, name):
+        """The channel's clips, newest first, without what's past the most or too old (whose files go too)."""
+        folder = self.clip_folder_of(name)
+        try:
+            with open(os.path.join(folder, "list.json"), encoding="utf-8") as f:
+                clips = json.load(f)
+        except (OSError, ValueError, TypeError):
+            return []
+        clips.sort(key=lambda c: -c.get("at", 0))
+        now = time.time()
+        kept = [c for c in clips if now - c.get("at", 0) <= CLIPS_DAYS * 86400][:CLIPS_MOST]
+        gone = [c for c in clips if c not in kept]
+        if gone:
+            self.drop_clips(name, gone, kept)
+        return kept
+
+    def save_list(self, name, clips):
+        folder = self.clip_folder_of(name)
+        os.makedirs(folder, exist_ok=True)
+        tmp = os.path.join(folder, "list.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(clips, f)
+        os.replace(tmp, os.path.join(folder, "list.json"))
+
+    def drop_clips(self, name, gone, kept):
+        folder = self.clip_folder_of(name)
+        for c in gone:
+            for ext in ("mp4", "jpg"):
+                try:
+                    os.remove(os.path.join(folder, "%s.%s" % (c["id"], ext)))
+                except OSError:
+                    pass
+        self.save_list(name, kept)
+        ch = self.channels.get(name)
+        for c in gone:
+            if ch is not None:
+                ch.tell_clip({"clip_gone": c["id"]})
+
+    async def clips(self, reader, writer, method, headers, path, q):
+        cors = "Access-Control-Allow-Origin: *\r\n"
+
+        async def answer(status, body=None, extra=""):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%s%s%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, cors, kind, extra, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        name = path[1]
+        folder = self.clip_folder_of(name)
+        if method == "OPTIONS":
+            return await answer("204 No Content", None, "Access-Control-Allow-Methods: GET, HEAD, POST, DELETE\r\n"
+                                "Access-Control-Allow-Headers: range, content-type\r\nAccess-Control-Max-Age: 86400\r\n")
+        if folder is None:
+            return await answer("404 Not Found")
+        ch = self.channels.get(name)
+        if len(path) == 3:
+            m = re.match(r"^([A-Za-z0-9_-]{16,32})\.(mp4|jpg)$", path[2])
+            if method in ("GET", "HEAD") and m:
+                return await self.clip_file(writer, os.path.join(folder, path[2]), "video/mp4" if m.group(2) == "mp4" else "image/jpeg",
+                                            headers.get("range", ""), method == "HEAD")
+            if method == "DELETE" and CLIP_ID.match(path[2]):
+                if ch is None or ch.key is None or q.get("key", "") != ch.key:
+                    return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+                clips = self.clip_list(name)
+                c = next((c for c in clips if c["id"] == path[2]), None)
+                if c is None:
+                    return await answer("404 Not Found", {"error": "no such clip"})
+                self.drop_clips(name, [c], [x for x in clips if x is not c])
+                return await answer("204 No Content")
+            return await answer("404 Not Found")
+        if method == "GET":
+            if ch is not None and ch.code and q.get("code", "") != ch.code:
+                return await answer("403 Forbidden", {"error": "wrong watch code"})
+            return await answer("200 OK", {"clips": self.clip_list(name)})
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        if ch is None or ch.key is None or len(q.get("key", "")) < 8 or q.get("key", "") != ch.key:
+            return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+        try:
+            n = int(headers.get("content-length", "0") or 0)
+        except ValueError:
+            n = 0
+        if n > MAX_CLIP + MAX_STRIP + 64 * 1024 or n <= 0:
+            return await answer("413 Payload Too Large", {"error": "a clip is 8 MB at most"})
+        now = time.time()
+        ch.clips_uploads = [t for t in ch.clips_uploads if now - t < 3600]
+        if len(ch.clips_uploads) >= CLIPS_AN_HOUR:
+            return await answer("429 Too Many Requests", {"error": "%d clips an hour at most: try again later" % CLIPS_AN_HOUR})
+        try:
+            body = await reader.readexactly(n)
+        except asyncio.IncompleteReadError:
+            return await answer("400 Bad Request")
+        got = clip_upload(headers.get("content-type", ""), body)
+        if isinstance(got, tuple):
+            return await answer(got[0], {"error": got[1]})
+        meta, clip, strip = got["meta"], got["clip"], got["strip"]
+        ch.clips_uploads.append(now)
+        meta["id"] = base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip("=")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, meta["id"] + ".mp4"), "wb") as f:
+            f.write(clip)
+        with open(os.path.join(folder, meta["id"] + ".jpg"), "wb") as f:
+            f.write(strip)
+        self.save_list(name, self.clip_list(name) + [meta])
+        if any(c["id"] == meta["id"] for c in self.clip_list(name)):
+            ch.tell_clip({"clip": meta})
+        self.log("clip      %s  %s (%d KB)" % (name, meta["what"], len(clip) // 1024))
+        return await answer("201 Created", {"id": meta["id"]})
+
+    async def clip_file(self, writer, path, kind, rng, head_only):
+        """A clip's file, whole or the range asked for (a video's player asks in ranges)."""
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = -1
+        status, start, end = "200 OK", 0, size - 1
+        m = re.match(r"^bytes=(\d*)-(\d*)$", rng.strip()) if rng and size >= 0 else None
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start, end = int(m.group(1)), min(size - 1, int(m.group(2)) if m.group(2) else size - 1)
+            else:
+                start, end = max(0, size - int(m.group(2))), size - 1
+            status = "206 Partial Content" if start <= end else "416 Range Not Satisfiable"
+        if size < 0 or status.startswith("416"):
+            writer.write(("HTTP/1.1 %s\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                          % ("404 Not Found" if size < 0 else status)).encode())
+        else:
+            with open(path, "rb") as f:
+                f.seek(start)
+                data = b"" if head_only else f.read(end - start + 1)
+            writer.write(("HTTP/1.1 %s\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: %s\r\nAccept-Ranges: bytes\r\n"
+                          "Cache-Control: public, max-age=31536000, immutable\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, "Content-Range: bytes %d-%d/%d\r\n" % (start, end, size) if status.startswith("206") else "",
+                             end - start + 1)).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
     async def dink(self, reader, writer, headers, name, key):
         async def answer(status):
             writer.write(("HTTP/1.1 %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" % status).encode())
@@ -1271,6 +1434,50 @@ async def read_chunked(reader):
         await reader.readexactly(2)
 
 
+def clip_upload(content_type, body):
+    """An upload's parts, checked (the Worker's readUpload): {"meta", "clip", "strip"}, or (status, why not)."""
+    if not content_type.lower().startswith("multipart/"):
+        return ("400 Bad Request", "an upload is multipart: meta, strip and clip")
+    try:
+        msg = BytesParser(policy=policy.HTTP).parsebytes(b"Content-Type: " + content_type.encode("latin-1") + b"\r\n\r\n" + body)
+        parts = {p.get_param("name", header="content-disposition"): p.get_payload(decode=True) for p in msg.iter_parts()}
+    except (ValueError, LookupError, TypeError):
+        return ("400 Bad Request", "an upload is multipart: meta, strip and clip")
+    clip, strip, meta = parts.get("clip"), parts.get("strip"), parts.get("meta")
+    if not isinstance(clip, bytes) or not isinstance(strip, bytes) or not isinstance(meta, bytes):
+        return ("400 Bad Request", "an upload is multipart: meta, strip and clip")
+    if len(clip) > MAX_CLIP:
+        return ("413 Payload Too Large", "a clip is 8 MB at most")
+    if len(strip) > MAX_STRIP:
+        return ("413 Payload Too Large", "a flipbook is 256 KB at most")
+    if len(clip) < 12 or clip[4:8] != b"ftyp":
+        return ("415 Unsupported Media Type", "the clip isn't an .mp4")
+    if strip[:2] != b"\xff\xd8":
+        return ("415 Unsupported Media Type", "the flipbook isn't a JPEG")
+    try:
+        m = json.loads(meta.decode("utf-8"))
+        assert isinstance(m, dict)
+    except (ValueError, UnicodeDecodeError, AssertionError):
+        return ("400 Bad Request", "meta isn't JSON")
+
+    def num(v, lo, hi):
+        return min(hi, max(lo, v)) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else lo
+
+    def text(v, most):
+        return re.sub(r"[\x00-\x1f\x7f]", " ", v).strip()[:most] if isinstance(v, str) else ""
+    still = text(m.get("still"), MAX_STILL + 1)
+    if len(still) > MAX_STILL or not re.match(r"^[A-Za-z0-9+/=]*$", still):
+        return ("413 Payload Too Large", "the still is 16 KB at most, base64")
+    now = time.time()
+    out = {"what": text(m.get("what"), 60) or "a clip", "kind": text(m.get("kind"), 24).upper(),
+           "at": round(num(m.get("at"), now - 86400, now + 60)), "dur": round(num(m.get("dur"), 0, MAX_DUR) * 10) / 10,
+           "w": round(num(m.get("w"), 0, 4096)), "h": round(num(m.get("h"), 0, 4096)), "still": still,
+           "frames": round(num(m.get("frames"), 1, 60)), "fps": round(num(m.get("fps"), 1, 30) * 10) / 10, "size": len(clip)}
+    if not out["dur"]:
+        return ("400 Bad Request", "a clip needs its length (dur, up to 20 s)")
+    return {"meta": out, "clip": clip, "strip": strip}
+
+
 def dink_payload(content_type, body):
     """Dink's JSON: the payload_json part of a multipart post, or a plain JSON body."""
     try:
@@ -1380,10 +1587,10 @@ def dink_report(p):
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
-                settings=None, min_client=""):
+                settings=None, min_client="", clips_dir=None):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet."""
-    relay = Relay(delay, log, forward, max_viewers, min_client)
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -1424,6 +1631,8 @@ def main(argv=None):
     ap.add_argument("--forward", default=DEFAULT_FORWARD,
                     help="Dink-to-Discord rules (forward.py); used when the file exists")
     ap.add_argument("--no-forward", action="store_true", help="forward nothing to Discord")
+    ap.add_argument("--clips", default=DEFAULT_CLIPS,
+                    help="where clips on players' Outside pages are kept (\"\" takes none)")
     ap.add_argument("--min-client", default="",
                     help="the oldest outside-portal client let in (e.g. 0.2.0); older ones are told to update")
     a = ap.parse_args(argv)
@@ -1435,7 +1644,8 @@ def main(argv=None):
             forward = None
     try:
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
-                          max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client))
+                          max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
+                          clips_dir=a.clips or None))
     except KeyboardInterrupt:
         pass
 

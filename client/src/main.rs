@@ -5,6 +5,7 @@
 //!     outside-portal.exe --once frame.png     one frame to a file, nothing sent
 //!     outside-portal.exe --bench 60           what a frame costs, stage by stage, nothing sent
 //!     outside-portal.exe --clip-selftest DIR  a two-second clip from made-up frames and a tone, into DIR
+//!     outside-portal.exe --page-selftest DIR  the Outside page's copy of a clip (clipsup.rs) from made-up frames, its sizes
 //!     outside-portal.exe --settings <file>    another settings file (one window per file)
 //!     outside-portal.exe --show-settings      open with the settings drawer out
 //!
@@ -19,6 +20,7 @@ mod ask;
 mod autolive;
 mod capture;
 mod clip;
+mod clipsup;
 mod clock;
 mod crash;
 mod cursor;
@@ -68,6 +70,14 @@ fn main() {
         win::console();
         match clip::selftest(std::path::Path::new(&dir)) {
             Ok(p) => println!("{}", p.display()),
+            Err(e) => { eprintln!("{}", e); std::process::exit(1); }
+        }
+        return;
+    }
+    if let Some(dir) = arg_after(&args, "--page-selftest") {
+        win::console();
+        match clip::page_selftest(std::path::Path::new(&dir)) {
+            Ok(said) => println!("{}", said),
             Err(e) => { eprintln!("{}", e); std::process::exit(1); }
         }
         return;

@@ -131,6 +131,31 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
 
+## Clips (11/06/2026)
+
+A portal with "put them on my Outside page" on (client/src/clipsup.rs) uploads the clips that saved themselves; the
+player's Outside page shows them (ghillie's public/outside-portal.js, "recovered footage"). Both relays: the Worker
+keeps the files in its R2 bucket `CLIPS` (relay/src/clips.ts; `npx wrangler r2 bucket create outside-clips` once),
+relay-py in a folder (`--clips`, ~/Documents/ghillie portal/clips; "" takes none).
+
+    POST   /clips/<channel>?key=<key>           multipart/form-data: meta (JSON), strip (image/jpeg), clip (video/mp4)
+                                                201 {"id"}; 403 wrong key; 413 over 8 MB (the strip 256 KB, the still 16 KB);
+                                                415 not an .mp4 or not a JPEG; 429 over 30 an hour
+    GET    /clips/<channel>?code=<watch code>   {"clips": [Clip, …]} newest first (403 without a friends-only channel's code)
+    GET    /clips/<channel>/<id>.mp4            the clip: whole, or the Range asked for (206), cached for a year
+    GET    /clips/<channel>/<id>.jpg            its flipbook
+    DELETE /clips/<channel>/<id>?key=<key>      taken down (204)
+    GET    /admin/clips/<channel>               (the Worker, the keeper's token) the list, whatever the channel's code
+    DELETE /admin/clips/<channel>/<id>          taken down
+
+meta: `{"what": "pet vorki", "kind": "PET", "at": <unix s, the moment>, "dur": <s, at most 20>, "w", "h", "frames": <the
+flipbook's frames>, "fps": <their rate>, "still": <a small JPEG, base64>}`. A Clip is the same with its `id` and `size`.
+A clip's files have unguessable addresses (16 random bytes), so the Worker serves them straight from the bucket
+without waking the channel. At most 20 a channel and 30 days each, the oldest going first. Viewers, desks and lookers
+are told `{"clip": Clip}` as one comes and `{"clip_gone": "<id>"}` as one goes. The page's copy (client/src/clip.rs,
+page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
+the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
+
 ## A notice from the keeper (Cloudflare)
 
 One line from the keeper that every friend's client shows in its chat, once (the relay moving, a newer version to get).

@@ -9,6 +9,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { dinkReport, oneLine, pyjson } from "./text";
+import { type Clip, fileKey, json, newId, readUpload, trim, ID } from "./clips";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
@@ -20,6 +21,10 @@ export interface Env {
   ASKS_AN_HOUR?: string; // (tests) requests for a portal from one address in an hour (index.ts's ASKS_AN_HOUR)
   POLL_MIN_SECONDS?: string; // (tests: a poll that ends quickly)
   POLL_KEPT_SECONDS?: string;
+  CLIPS?: R2Bucket; // the clips on players' Outside pages (clips.ts); unbound, the relay takes none
+  CLIPS_MOST?: string; // a channel's clips at most (20)
+  CLIPS_DAYS?: string; // and for how long (30 days)
+  CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -372,6 +377,8 @@ export class Channel extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
+    if (role === "_clips") return this.clips(request, q, ip, false);
+    if (role === "_clips_admin") return this.clips(request, q, ip, true);
 
     // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
     // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit)
@@ -1052,6 +1059,64 @@ export class Channel extends DurableObject<Env> {
     if (report) this.deliver(pyjson({ report }));
     this.dinkCounts(payload);
     return new Response(null, { status: 204 });
+  }
+
+  // clips on the player's Outside page (clips.ts): the upload and the taking down (its key, or the keeper's: admin,
+  // which index.ts has already let through), the list (its watch code, if it has one)
+
+  clipsUploads: number[] = []; // (in memory: a sleep forgets, which only loosens it)
+
+  async clipList(): Promise<Clip[]> {
+    const all = await this.ctx.storage.list<Clip>({ prefix: "clip:" });
+    const most = parseInt(this.env.CLIPS_MOST || "") || 20, days = parseFloat(this.env.CLIPS_DAYS || "") || 30;
+    const { kept, gone } = trim([...all.values()], most, days);
+    if (gone.length) await this.dropClips(gone);
+    return kept;
+  }
+
+  async dropClips(gone: Clip[]) {
+    await this.ctx.storage.delete(gone.map((c) => "clip:" + c.id));
+    await this.env.CLIPS?.delete(gone.flatMap((c) => [fileKey(this.name, c.id, "mp4"), fileKey(this.name, c.id, "jpg")]));
+    for (const c of gone) this.tellClip({ clip_gone: c.id });
+  }
+
+  tellClip(msg: object) {
+    const line = pyjson(msg);
+    for (const v of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look")]) this.send(v, line);
+  }
+
+  async clips(request: Request, q: URLSearchParams, ip: string, admin: boolean): Promise<Response> {
+    const id = q.get("id") || "";
+    if (request.method === "GET") {
+      if (!admin && this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      return json({ clips: await this.clipList() });
+    }
+    if (!admin) {
+      const no = await this.checkKey(q.get("key") || "", ip);
+      if (no) return json({ error: no[1] }, 403);
+    }
+    if (request.method === "DELETE") {
+      if (!ID.test(id)) return json({ error: "which clip?" }, 400);
+      const c = await this.ctx.storage.get<Clip>("clip:" + id);
+      if (!c) return json({ error: "no such clip" }, 404);
+      await this.dropClips([c]);
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST" || admin) return new Response(null, { status: 405 });
+    if (!this.env.CLIPS) return json({ error: "this relay doesn't keep clips" }, 503);
+    const now = Date.now(), most = parseInt(this.env.CLIPS_AN_HOUR || "") || 30;
+    this.clipsUploads = this.clipsUploads.filter((t) => now - t < 3_600_000);
+    if (this.clipsUploads.length >= most) return json({ error: `${most} clips an hour at most: try again later` }, 429);
+    const got = await readUpload(request);
+    if (Array.isArray(got)) return json({ error: got[1] }, got[0]);
+    this.clipsUploads.push(now);
+    const clip: Clip = { id: newId(), ...got.meta };
+    await this.env.CLIPS.put(fileKey(this.name, clip.id, "mp4"), got.clip, { httpMetadata: { contentType: "video/mp4" } });
+    await this.env.CLIPS.put(fileKey(this.name, clip.id, "jpg"), got.strip, { httpMetadata: { contentType: "image/jpeg" } });
+    await this.ctx.storage.put("clip:" + clip.id, clip);
+    const kept = await this.clipList(); // (the oldest past the most go, and are told gone)
+    if (kept.some((c) => c.id === clip.id)) this.tellClip({ clip });
+    return json({ id: clip.id }, 201);
   }
 
   // Jace's admin (index.ts checks the admin token before it reaches here)

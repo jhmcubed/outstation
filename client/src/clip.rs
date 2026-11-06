@@ -57,7 +57,12 @@ pub fn take_note() -> Option<String> {
     buffer().note.lock().unwrap().take()
 }
 
-fn say(s: String) {
+/// What's in the buffer now (for the page's copy: clipsup.rs).
+pub fn snapshot() -> Vec<(Instant, Vec<u8>)> {
+    buffer().items.lock().unwrap().iter().cloned().collect()
+}
+
+pub fn say(s: String) {
     crate::transmit::log(&s);
     *buffer().note.lock().unwrap() = Some(s);
 }
@@ -111,6 +116,18 @@ fn rel(stamp: u32, base: u32) -> i64 {
 
 /// The kept messages as an .mp4 in folder. Its path.
 pub fn write(items: &[(Instant, Vec<u8>)], folder: &std::path::Path, name: Option<&str>) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    let file = match name {
+        Some(n) => folder.join(n),
+        None => folder.join(format!("clip {}.mp4", stamp_now())),
+    };
+    write_to(items, &file, None, None)?;
+    Ok(file)
+}
+
+/// The kept messages as an .mp4 at `file`: at most `max_w` wide (scaled down, never up), at `bitrate` (bits a second:
+/// None, as the clip key's). Its size and length (ms).
+pub fn write_to(items: &[(Instant, Vec<u8>)], file: &std::path::Path, max_w: Option<u32>, bitrate: Option<u32>) -> Result<(u32, u32, i64), String> {
     let mut frames: Vec<(u32, &[u8])> = Vec::new();
     let mut sounds: Vec<(u32, &[u8])> = Vec::new();
     for (_, m) in items {
@@ -131,7 +148,8 @@ pub fn write(items: &[(Instant, Vec<u8>)], folder: &std::path::Path, name: Optio
     let t0 = Instant::now();
     // the picture: the frames' times (each decoded only as it's written, never all at once), never two at one time
     let first = decode(pics[0].1).ok_or("the first frame wouldn't decode")?;
-    let (w, h) = (first.1 / 2 * 2, first.2 / 2 * 2); // (H.264 wants even sizes)
+    let (fw0, fh0) = match max_w { Some(m) if first.1 > m => (m, ((first.2 as f64) * m as f64 / first.1 as f64).round() as u32), _ => (first.1, first.2) };
+    let (w, h) = (fw0 / 2 * 2, fh0 / 2 * 2); // (H.264 wants even sizes)
     let mut video: Vec<(i64, &[u8])> = Vec::new();
     let mut last = -1;
     for (t, jpeg) in &pics {
@@ -175,17 +193,113 @@ pub fn write(items: &[(Instant, Vec<u8>)], folder: &std::path::Path, name: Optio
     let audio: Vec<i16> = mix.into_iter().map(|x| x.clamp(-32768, 32767) as i16).collect();
     let t2 = Instant::now();
 
-    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    let file = match name {
-        Some(n) => folder.join(n),
-        None => folder.join(format!("clip {}.mp4", stamp_now())),
-    };
-    mp4(&file, w, h, &video, &audio, t_end).map_err(|e| format!("Windows' encoder refused it ({})", e))?;
+    mp4(file, w, h, &video, &audio, t_end, bitrate).map_err(|e| format!("Windows' encoder refused it ({})", e))?;
     crate::transmit::log(&format!("clip: {} frames {}x{}, {:.1} s of sound mixed in {:.1} s, written in {:.1} s ({:.1} s in all)",
                                   video.len(), w, h, t_end as f64 / 1000.0, (t2 - t1).as_secs_f64(),
                                   t2.elapsed().as_secs_f64(), t0.elapsed().as_secs_f64()));
-    Ok(file)
+    Ok((w, h, t_end))
 }
+
+/// What a clip on the player's Outside page is made of (relay/src/clips.ts): the standard copy, the still and the
+/// flipbook.
+pub struct PageCopy {
+    pub mp4: Vec<u8>,
+    /// the moment, small (STILL_W wide), a JPEG
+    pub still: Vec<u8>,
+    /// the flipbook: `frames` small frames (the still's size) one under another in one JPEG, `fps` a second
+    pub strip: Vec<u8>,
+    pub frames: u32,
+    pub fps: f64,
+    pub dur: f64,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// the standard copy: from BEFORE ms before the moment to AFTER ms after it, at most PAGE_W wide, at PAGE_BITRATE
+pub const BEFORE: u64 = 12_000;
+pub const AFTER: u64 = 5_000;
+pub const PAGE_W: u32 = 768;
+const PAGE_BITRATE: u32 = 1_500_000;
+const PAGE_MOST: usize = 8 * 1024 * 1024;
+/// the still and the flipbook's frames: this wide; the flipbook, the moment's few seconds, at most this many frames
+const STILL_W: u32 = 160;
+const STRIP_BEFORE: u64 = 1_500;
+const STRIP_AFTER: u64 = 1_000;
+const STRIP_MOST: usize = 20;
+
+/// The buffer's frames (when each was sent, its JPEG), in order.
+fn frames_of(items: &[(Instant, Vec<u8>)]) -> Vec<(Instant, &[u8])> {
+    items.iter().filter(|(_, m)| m.len() > 8 && m[4] == 0xFF && m[5] == 0xD8).map(|(t, m)| (*t, &m[4..])).collect()
+}
+
+/// A frame made small (STILL_W wide) as RGB, its size.
+fn small(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let (rgb, w, h) = decode(jpeg)?;
+    let sw = STILL_W.min(w);
+    let sh = (((h as f64) * sw as f64 / w as f64).round() as u32).max(2) / 2 * 2;
+    let rgba: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+    let out = crate::capture::resize(&rgba, w, h, sw, sh);
+    Some((out.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect(), sw, sh))
+}
+
+fn rgb_jpeg(rgb: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
+    let mut out = Vec::new();
+    let _ = jpeg_encoder::Encoder::new(&mut out, quality).encode(rgb, w as u16, h as u16, jpeg_encoder::ColorType::Rgb);
+    out
+}
+
+/// The still and the flipbook from the frames round `moment`: (still, strip, its frames, their rate).
+pub fn still_and_strip(items: &[(Instant, Vec<u8>)], moment: Instant) -> Result<(Vec<u8>, Vec<u8>, u32, f64), String> {
+    use std::time::Duration;
+    let frames = frames_of(items);
+    if frames.is_empty() {
+        return Err("no frames round the moment (was the portal live?)".into());
+    }
+    let near = |at: Instant| frames.iter().min_by_key(|(t, _)| if *t > at { *t - at } else { at - *t }).unwrap().1;
+    let (srgb, sw, sh) = small(near(moment)).ok_or("the moment's frame wouldn't decode")?;
+    let still = rgb_jpeg(&srgb, sw, sh, 70);
+    let s_from = moment.checked_sub(Duration::from_millis(STRIP_BEFORE)).unwrap_or(moment);
+    let s_to = moment + Duration::from_millis(STRIP_AFTER);
+    let mut pick: Vec<(Instant, &[u8])> = frames.iter().filter(|(t, _)| *t >= s_from && *t <= s_to).cloned().collect();
+    if pick.is_empty() { pick.push((moment, near(moment))); }
+    if pick.len() > STRIP_MOST {
+        let n = pick.len();
+        pick = (0..STRIP_MOST).map(|i| pick[i * n / STRIP_MOST]).collect();
+    }
+    let mut strip_rgb = Vec::new();
+    let mut n = 0u32;
+    for (_, j) in &pick {
+        if let Some((rgb, w, h)) = small(j) {
+            if (w, h) == (sw, sh) { strip_rgb.extend_from_slice(&rgb); n += 1; }
+        }
+    }
+    let span = pick.last().unwrap().0.duration_since(pick[0].0).as_secs_f64();
+    let fps = if n > 1 && span > 0.0 { ((n - 1) as f64 / span).clamp(1.0, 30.0) } else { 4.0 };
+    let strip = rgb_jpeg(&strip_rgb, sw, sh * n.max(1), 60);
+    Ok((still, strip, n.max(1), (fps * 10.0).round() / 10.0))
+}
+
+/// The page's copy of what the buffer holds round `moment` (when Dink told of it), its still and its flipbook.
+pub fn page_copy(items: &[(Instant, Vec<u8>)], moment: Instant) -> Result<PageCopy, String> {
+    use std::time::Duration;
+    let from = moment.checked_sub(Duration::from_millis(BEFORE)).unwrap_or(moment);
+    let to = moment + Duration::from_millis(AFTER);
+    let window: Vec<(Instant, Vec<u8>)> = items.iter().filter(|(t, _)| *t >= from && *t <= to).cloned().collect();
+    let (still, strip, frames, fps) = still_and_strip(&window, moment)?;
+    // the copy itself, through a file of its own in the temporary folder
+    let tmp = std::env::temp_dir().join(format!("outside-portal-{}-{}.mp4", std::process::id(),
+                                                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
+    let made = write_to(&window, &tmp, Some(PAGE_W), Some(PAGE_BITRATE));
+    let bytes = std::fs::read(&tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let (w, h, ms) = made?;
+    let mp4 = bytes.map_err(|e| e.to_string())?;
+    if mp4.len() > PAGE_MOST {
+        return Err(format!("the page's copy came out at {:.1} MB, over the relay's 8", mp4.len() as f64 / 1048576.0));
+    }
+    Ok(PageCopy { mp4, still, strip, frames, fps, dur: (ms as f64 / 100.0).round() / 10.0, w, h })
+}
+
 
 /// A frame as H.264 wants it in: NV12 (a full-size Y plane, then U and V together at half size; BT.601, limited
 /// range), w and h even. Converting here keeps Windows from slotting in a slow converter of its own.
@@ -235,7 +349,7 @@ fn stamp_now() -> String {
 }
 
 /// H.264 and AAC into an .mp4, through Media Foundation's sink writer.
-fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, &[u8])], audio: &[i16], t_end_ms: i64) -> windows::core::Result<()> {
+fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, &[u8])], audio: &[i16], t_end_ms: i64, bitrate: Option<u32>) -> windows::core::Result<()> {
     use windows::core::HSTRING;
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
@@ -257,7 +371,7 @@ fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, &[u8])], audio: &[
             let vo = MFCreateMediaType()?;
             vo.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
             vo.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
-            vo.SetUINT32(&MF_MT_AVG_BITRATE, ((w * h) as f64 * 30.0 * 0.15).clamp(1_000_000.0, 20_000_000.0) as u32)?;
+            vo.SetUINT32(&MF_MT_AVG_BITRATE, bitrate.unwrap_or(((w * h) as f64 * 30.0 * 0.15).clamp(1_000_000.0, 20_000_000.0) as u32))?;
             vo.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
             vo.SetUINT64(&MF_MT_FRAME_SIZE, size)?;
             vo.SetUINT64(&MF_MT_FRAME_RATE, ratio(30, 1))?;
@@ -319,11 +433,13 @@ fn mp4(path: &std::path::Path, w: u32, h: u32, video: &[(i64, &[u8])], audio: &[
                     let next = video.get(vi_at + 1).map(|v| v.0).unwrap_or(t_end_ms);
                     vi_at += 1;
                     let Some((rgb, fw, fh)) = decode(jpeg) else { continue };
-                    let rgb = if fw >= w && fh >= h { rgb } else {
+                    // (as it is when it's the size, or a pixel over: H.264's even sizes; else scaled to it)
+                    let fits = fw >= w && fh >= h && fw - w <= 1 && fh - h <= 1;
+                    let rgb = if fits { rgb } else {
                         let bgra: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[2], p[1], p[0], 255]).collect();
                         crate::capture::resize(&bgra, fw, fh, w, h).chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]).collect()
                     };
-                    let stride = if fw >= w && fh >= h { fw } else { w };
+                    let stride = if fits { fw } else { w };
                     let px = nv12(&rgb, stride, w, h);
                     writer.WriteSample(vs, &sample(&px, t * 10_000, (next - t).max(1) * 10_000)?)?;
                 } else {
@@ -389,4 +505,82 @@ pub fn selftest(folder: &std::path::Path) -> Result<std::path::PathBuf, String> 
         items.push((now, m));
     }
     write(&items, folder, Some("selftest.mp4"))
+}
+
+/// The page's copy from 20 s of made-up frames (moving noise, the hardest for the encoder: 1280 x 720, 8 a second) and
+/// a tone, the moment at 15 s: page.mp4, still.jpg and strip.jpg into DIR, and their sizes (--page-selftest DIR).
+pub fn page_selftest(folder: &std::path::Path) -> Result<String, String> {
+    use std::time::Duration;
+    let t0 = Instant::now();
+    let (w, h) = (1280u32, 720u32);
+    let mut items = Vec::new();
+    let mut seed = 0x9e3779b9u32;
+    for i in 0..160u32 {
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                let j = ((y * w + x) * 4) as usize;
+                let g = ((x + i * 7) % 256) as u8 / 2 + (seed & 63) as u8;
+                px[j..j + 4].copy_from_slice(&[g / 2, g, g / 3, 255]);
+            }
+        }
+        let img = crate::capture::Image { bgra: px, w, h, taken: t0, seq: None };
+        items.push((t0 + Duration::from_millis(i as u64 * 125), img.jpeg(1000 + i * 125, 60)));
+    }
+    let mut enc = opus::Encoder::new(RATE as u32, opus::Channels::Stereo, opus::Application::Audio).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 4000];
+    for g in 0..(20 * 50 / 3) as u32 {
+        let mut m = (1000 + g * 60).to_be_bytes().to_vec();
+        m.extend_from_slice(b"AU");
+        m.push(1);
+        m.push(3);
+        for f in 0..3u32 {
+            let frame: Vec<i16> = (0..960).flat_map(|k| {
+                let s = (0.2 * (2.0 * std::f64::consts::PI * 440.0 * (((g * 3 + f) * 960 + k) as f64) / RATE as f64).sin() * 32767.0) as i16;
+                [s, s]
+            }).collect();
+            let n = enc.encode(&frame, &mut buf).map_err(|e| e.to_string())?;
+            m.extend_from_slice(&(n as u16).to_be_bytes());
+            m.extend_from_slice(&buf[..n]);
+        }
+        items.push((t0 + Duration::from_millis(g as u64 * 60), m));
+    }
+    let started = Instant::now();
+    let page = page_copy(&items, t0 + Duration::from_secs(15))?;
+    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    for (name, data) in [("page.mp4", &page.mp4), ("still.jpg", &page.still), ("strip.jpg", &page.strip)] {
+        std::fs::write(folder.join(name), data).map_err(|e| e.to_string())?;
+    }
+    Ok(format!("page.mp4 {} bytes, {:.1} s, {}x{}; still.jpg {} bytes; strip.jpg {} bytes, {} frames at {} a second; made in {:.1} s",
+               page.mp4.len(), page.dur, page.w, page.h, page.still.len(), page.strip.len(), page.frames, page.fps,
+               started.elapsed().as_secs_f64()))
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn the_still_is_the_moment_and_the_flipbook_its_few_seconds() {
+        // 10 s of frames at 8 a second, 768 x 432, each a different grey
+        let t0 = Instant::now();
+        let items: Vec<(Instant, Vec<u8>)> = (0..80u32).map(|i| {
+            let v = (i * 3) as u8;
+            let img = crate::capture::Image { bgra: [v, v, v, 255].repeat(768 * 432), w: 768, h: 432, taken: t0, seq: None };
+            (t0 + Duration::from_millis(i as u64 * 125), img.jpeg(i, 80))
+        }).collect();
+        let moment = t0 + Duration::from_millis(5000);
+        let (still, strip, n, fps) = still_and_strip(&items, moment).unwrap();
+        let (srgb, sw, sh) = decode(&still).unwrap();
+        assert_eq!((sw, sh), (160, 90));
+        assert!((srgb[0] as i32 - 120).abs() <= 3, "the frame at 5 s (grey 120), not {}", srgb[0]); // (frame 40)
+        // 1.5 s before to 1 s after at 8 a second: 21 frames, thinned to 20
+        assert_eq!(n, 20);
+        assert!((fps - 7.6).abs() < 0.5, "{}", fps);
+        let (_, w, h) = decode(&strip).unwrap();
+        assert_eq!((w, h), (160, 90 * 20));
+        assert!(still.len() < 12 * 1024 && strip.len() < 256 * 1024, "{} {}", still.len(), strip.len());
+    }
 }

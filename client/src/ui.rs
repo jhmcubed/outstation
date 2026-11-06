@@ -250,6 +250,8 @@ pub struct App {
     /// a peek at a friend's portal under the hand (feed.rs, Peek), and its picture as it last came: (it, whose, when)
     peek: crate::feed::Peek,
     peek_tex: Option<(egui::TextureHandle, String, Instant)>,
+    /// the clips on the player's Outside page, as the dink drawer last read them (clipsup.rs)
+    page_clips: crate::clipsup::PageClips,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -411,7 +413,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(),
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1787,11 +1789,49 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     } else if s.dink.clip_gp == 0 {
         ui.label(rich("(0 gp: drops never clip themselves; pets and new log slots still do)", 14.0, QUIET()));
     }
+    if s.dink.auto_clip {
+        let colour = if s.dink.clips_up { TEXT() } else { GREY() };
+        ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
+            .on_hover_text(tip("a copy of each goes to the relay too: the 17 s round the moment, at most 768 px wide, with a still and a few moving frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days; take any down below."));
+        if s.dink.clips_up {
+            page_clips_ui(app, ui, &s);
+        }
+    }
     ui.add_space(10.0);
     ui.label(rich("on to your Discord too", 16.0, LIME()));
     forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
     if serde_json::to_string(&s).unwrap_or_default() != before {
         let _ = app.settings.update(|x| *x = s);
+    }
+}
+
+/// What's on the player's Outside page now: each clip, how old, and "take it down".
+fn page_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings) {
+    let ctx = ui.ctx().clone();
+    if app.page_clips.read_at.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+        let c = ctx.clone();
+        app.page_clips.read(s, move || c.request_repaint());
+    }
+    let rows = app.page_clips.rows.lock().unwrap().clone();
+    let mut down: Option<String> = None;
+    match rows {
+        None => { ui.label(rich("reading what's on your page…", 14.0, QUIET())); }
+        Some(Err(e)) => { ui.label(rich(&e, 14.0, PINK())); }
+        Some(Ok(list)) if list.is_empty() => { ui.label(rich("nothing on your page yet: the next big moment goes there", 14.0, QUIET())); }
+        Some(Ok(list)) => {
+            ui.label(rich(&format!("on your page ({} of 20):", list.len()), 14.0, GREY()));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            for r in &list {
+                ui.horizontal(|ui| {
+                    ui.label(rich(&format!("{} · {:.0} s · {} ago", r.what, r.dur, ago(Duration::from_secs(now.saturating_sub(r.at)))), 14.0, TEXT()));
+                    if button(ui, "take it down", true, None).clicked() { down = Some(r.id.clone()); }
+                });
+            }
+        }
+    }
+    if let Some(id) = down {
+        let c = ctx.clone();
+        app.page_clips.delete(s, &id, move || c.request_repaint());
     }
 }
 

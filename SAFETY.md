@@ -30,7 +30,7 @@ The short answer: the portal does what streaming software does (OBS, Discord's s
 - **The friends list** (friends ▸): while anyone's on it, the relay's list of open portals, read every minute (every 20 seconds while the list is open), to show who's live. Nothing about you goes with it. Clicking a name asks Windows to open that player's Outside page on ghillie.wiki in your browser: it's the only page the portal ever opens, and the only thing it ever asks Windows to start. With the hand over a live friend's name, it watches their portal through the same relay, as their page would, for a small picture of it; the hand gone, it stops. When a friend goes live, Windows shows its own notification (only if the portal's in your Start menu: Windows shows a program's notifications only then); nothing about it is sent anywhere.
 - **Asking for a portal** (the first screen's "no code yet? ask for one"): only when you press **ask**, to the portal's relay (Jace's, on Cloudflare: `relay.ghillie.workers.dev`): your player's name, your note for him, and a random code your PC keeps to collect the answer. While the request waits, the portal asks the same relay every 20 seconds whether he has answered.
 
-Clips (the replay buffer) are written on your own PC, into Videos\outside-portal, by Windows' own video encoder, when you press the clip key or, if you leave "clips by themselves" on, when Dink tells of a pet, a new collection log slot or a big drop. Nothing about them is sent anywhere. The live view in the window watches your own portal through the relay, as any viewer would.
+Clips (the replay buffer) are written on your own PC, into Videos\outside-portal, by Windows' own video encoder, when you press the clip key or, if you leave "clips by themselves" on, when Dink tells of a pet, a new collection log slot or a big drop. They stay on your PC, unless you switch on **"and put them on my Outside page"** (dink ▸, off to begin with): then each clip that saved itself also goes to your relay as a copy of its own (the 17 seconds round the moment, at most 768 px wide, with a still and a few small frames for the hover), and anyone who opens your Outside page can watch it. Only those clips, never the ones from the clip key. The live view in the window watches your own portal through the relay, as any viewer would.
 
 Nothing else. The safety check below proves the program has no other address in it.
 
@@ -44,7 +44,9 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 - the version of the portal you run, and your time on air by month (the last four months, so Jace can see what the relay costs)
 - the chat so far (its last 50 lines), the poll and the drop guess going on, who you've banned, and the last 8 field reports from Dink
 
-Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps. Clips are made on your own PC only.
+Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps.
+
+**Your clips on your Outside page,** only if you switched it on: each one's copy, its still and its few small frames, and what it was ("pet vorki"), when, and how long. At most 20, the oldest going first, and each for 30 days. Your portal lists them (dink ▸) and takes any down; Jace can take any down too.
 
 **For viewers:**
 - the name they type for the chat, and their lines in it (the chat's last 50, everyone's together)
@@ -120,7 +122,8 @@ Everything it touches in Windows, by file:
   - your network's byte counter (`GetIfTable2`)
   - the clipboard (for the attach code and Dink's address)
 - `hotkeys.rs`: `RegisterHotKey` for its four keys.
-- `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder.
+- `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder; and, for your Outside page, the copy of its own (through a file in your temporary folder, deleted once read).
+- `clipsup.rs`: with "put them on my Outside page" on, that copy sent to your relay, and the list of what's there.
 - `feed.rs`: the live view: your own channel watched through the relay.
 - `dink.rs`: a web server on `127.0.0.1` only.
 - `ui.rs`: its own windows (the see-through ones over RuneLite included), the tray icon, and Windows' symbol font. It acts only on windows of its own program, never on another that happens to share a title.

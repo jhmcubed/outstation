@@ -12,6 +12,10 @@
       { "name": "DIRECTORY", "class_name": "Directory" }
     ]
   },
+  // the clips on players' Outside pages (src/clips.ts): made once with `npx wrangler r2 bucket create outside-clips`
+  "r2_buckets": [
+    { "binding": "CLIPS", "bucket_name": "outside-clips" }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] }
   ],

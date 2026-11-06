@@ -86,8 +86,9 @@ def setUpModule():
             shell=sys.platform == "win32")
         up = wait_up(90)
     else:
+        STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward", "--min-client", MIN_CLIENT],
+                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         up = wait_up(15)
     if not up:
@@ -1067,6 +1068,120 @@ class Summary(ReportData):
         back = await self.last_summary(v)
         self.assertEqual(back["since"], since)                              # (back within 15 minutes: the same stream)
         self.assertNotIn("ended", back)
+
+
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64       # (only its first bytes are looked at)
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+
+def clip_upload(meta, clip=MP4, strip=JPEG):
+    b = "clipboundary"
+    out = b""
+    for name, kind, data in (("meta", "application/json", json.dumps(meta).encode()), ("strip", "image/jpeg", strip),
+                             ("clip", "video/mp4", clip)):
+        fn = '' if name == "meta" else '; filename="%s"' % name
+        out += CRLF.join(["--" + b, 'Content-Disposition: form-data; name="%s"%s' % (name, fn), "Content-Type: " + kind, "", ""]).encode()
+        out += data + CRLF.encode()
+    return out + ("--%s--" % b + CRLF).encode(), "multipart/form-data; boundary=" + b
+
+
+def fetch(method, path, headers=None):
+    """(status, headers, body) from any route."""
+    req = urllib.request.Request(http_url() + path, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+class Clips(Base):
+    """Clips on a player's Outside page (docs/protocol.md, "Clips"): uploaded with the channel's key, listed for
+    anyone (with the watch code, if it has one), the files served whole or in ranges, told to viewers as they come,
+    at most 20 a channel, and taken down by the channel's own portal."""
+
+    def meta(self, what="pet vorki", at=None):
+        return {"what": what, "kind": "PET", "at": at or int(time.time()), "dur": 17, "w": 768, "h": 432, "still": "AAAA"}
+
+    async def up(self, meta=None, key=None, clip=MP4, strip=JPEG):
+        body, ct = clip_upload(meta or self.meta(), clip, strip)
+        return await post("/clips/%s?key=%s" % (self.ch, key or self.key), body, ct)
+
+    async def test_an_upload_is_listed_told_and_served_in_ranges(self):
+        await self.tx()
+        v = await self.watch()
+        await self.pause()
+        self.assertEqual(await self.up(), 201)
+        told = await next_of(v, "clip")
+        self.assertEqual((told["what"], told["kind"], told["dur"], told["still"]), ("pet vorki", "PET", 17, "AAAA"))
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(status, 200)
+        self.assertEqual([c["id"] for c in got["clips"]], [told["id"]])
+        st, h, body = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.mp4" % (self.ch, told["id"]))
+        self.assertEqual((st, body, h.get("content-type")), (200, MP4, "video/mp4"))
+        st, h, body = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.mp4" % (self.ch, told["id"]), {"Range": "bytes=4-11"})
+        self.assertEqual((st, body, h.get("content-range")), (206, b"ftypmp42", "bytes 4-11/%d" % len(MP4)))
+        st, h, body = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.jpg" % (self.ch, told["id"]))
+        self.assertEqual((st, body), (200, JPEG))
+        self.assertEqual(h.get("access-control-allow-origin"), "*")
+
+    async def test_the_wrong_key_and_what_isnt_a_clip_are_refused(self):
+        await self.tx()
+        self.assertEqual(await self.up(key="wrong-key-123456"), 403)
+        self.assertEqual(await self.up(clip=b"not a video at all, no"), 415)
+        self.assertEqual(await self.up(strip=b"\x89PNG not a jpeg"), 415)
+        self.assertEqual(await self.up(clip=b"\x00\x00\x00\x18ftyp" + b"\x00" * (8 * 1024 * 1024)), 413)
+        self.assertEqual(await self.up(meta=dict(self.meta(), still="x" * 20000)), 413)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(got["clips"], [])
+
+    async def test_twenty_at_most_the_oldest_going_and_its_own_portal_takes_one_down(self):
+        await self.tx()
+        now = int(time.time())
+        for i in range(21):
+            self.assertEqual(await self.up(meta=self.meta("drop %d" % i, at=now - 600 + i * 10)), 201)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        whats = [c["what"] for c in got["clips"]]
+        self.assertEqual(len(whats), 20)
+        self.assertEqual((whats[0], whats[-1]), ("drop 20", "drop 1"))   # (newest first; "drop 0" gone)
+        one = got["clips"][0]["id"]
+        st, _, _ = await asyncio.to_thread(fetch, "DELETE", "/clips/%s/%s?key=%s" % (self.ch, one, "wrong-key-123456"))
+        self.assertEqual(st, 403)
+        v = await self.watch()
+        await self.pause()
+        st, _, _ = await asyncio.to_thread(fetch, "DELETE", "/clips/%s/%s?key=%s" % (self.ch, one, self.key))
+        self.assertEqual(st, 204)
+        self.assertEqual(await next_of(v, "clip_gone"), one)
+        st, _, _ = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.mp4" % (self.ch, one))
+        self.assertEqual(st, 404)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(len(got["clips"]), 19)
+
+    @unittest.skipUnless(WORKER, "the keeper's routes are the Worker's")
+    async def test_the_keeper_sees_and_takes_down_any_channels_clips(self):
+        await self.tx(code="moss")
+        await self.pause()
+        self.assertEqual(await self.up(), 201)
+        status, got = await asyncio.to_thread(admin, "GET", "/admin/clips/" + self.ch)    # (whatever its code)
+        self.assertEqual((status, len(got["clips"])), (200, 1))
+        one = got["clips"][0]["id"]
+        status, _ = await asyncio.to_thread(admin, "DELETE", "/admin/clips/%s/%s" % (self.ch, one))
+        self.assertEqual(status, 204)
+        status, got = await asyncio.to_thread(admin, "GET", "/admin/clips/" + self.ch)
+        self.assertEqual(got["clips"], [])
+        req = urllib.request.Request(http_url() + "/admin/clips/" + self.ch, headers={"Authorization": "Bearer not-the-token-at-all"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            await asyncio.to_thread(urllib.request.urlopen, req)
+        self.assertEqual(e.exception.code, 403)
+
+    async def test_a_friends_only_portals_clips_need_its_code(self):
+        await self.tx(code="moss")
+        await self.pause()
+        self.assertEqual(await self.up(), 201)
+        status, _ = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(status, 403)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/%s?code=moss" % self.ch)
+        self.assertEqual((status, len(got["clips"])), (200, 1))
 
 
 class Sound(Base):

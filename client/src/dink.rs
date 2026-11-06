@@ -120,11 +120,22 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     // on, so the clip holds the moment and a little after it
     if s.dink.auto_clip && s.on_air && s.replay_seconds > 0 {
         if let Some(what) = big_moment(&payload, s.dink.clip_gp) {
-            went.push("a clip");
-            let (folder, wait) = (s.clip_folder.clone(), Duration::from_secs((s.replay_seconds / 4).clamp(1, 4) as u64));
+            went.push(if s.dink.clips_up { "a clip, on your Outside page too" } else { "a clip" });
+            // (on the page too: the page's copy runs to 5 s after the moment, so it waits that long, if the buffer
+            // holds that much)
+            let up = s.dink.clips_up;
+            let secs = if up { (crate::clip::AFTER / 1000).min((s.replay_seconds / 3).max(1) as u64) } else { (s.replay_seconds / 4).clamp(1, 4) as u64 };
+            let (folder, wait, moment, settings) = (s.clip_folder.clone(), Duration::from_secs(secs), Instant::now(), settings.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(wait);
-                crate::clip::save_as(&folder, Some(what));
+                crate::clip::save_as(&folder, Some(what.clone()));
+                if up {
+                    let s = settings.get();
+                    match crate::clipsup::upload(&s, &what, &kind_of(&what), moment) {
+                        Ok(said) => crate::clip::say(said),
+                        Err(e) => crate::clip::say(format!("the clip didn't reach your Outside page: {}", e)),
+                    }
+                }
             });
         }
     }
@@ -148,6 +159,11 @@ pub fn big_moment(p: &Value, gp: u64) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// A big moment's kind, as Dink names it, from its words (big_moment's).
+fn kind_of(what: &str) -> String {
+    if what.starts_with("pet ") { "PET" } else if what.starts_with("log ") { "COLLECTION" } else { "LOOT" }.to_string()
 }
 
 /// 4200000 as "4.2m" (the page's own way: gpWords in outside-portal.js)
