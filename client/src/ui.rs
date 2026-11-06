@@ -2545,6 +2545,14 @@ impl eframe::App for App {
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
         for n in crate::autolive::take_notes() { self.note(n); }
         for n in crate::hotkeys::take_notes() { self.note(n); }
+        // those asking for a portal (the keeper's build): counted on the portals button, and a line in the chat for each new one
+        #[cfg(feature = "station")]
+        {
+            let c = ctx.clone();
+            if self.drawer != Drawer::Friends { self.keeper.watch_asks(move || c.request_repaint()); }
+            let new = self.keeper.new_asks();
+            if let Some(line) = crate::keeper::asking_line(&new.iter().map(|r| r.player.clone()).collect::<Vec<_>>()) { self.note(line); }
+        }
         if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
             #[cfg(feature = "station")]
             self.station_relay();
@@ -2855,7 +2863,11 @@ impl App {
                                                                                 (n, true) => format!("friends · {} live ◂", n), (n, false) => format!("friends · {} live ▸", n) };
         let gap = ui.spacing().item_spacing.x;
         let mut need = button_w(ui, &watching) + button_w(ui, "settings ▸") + button_w(ui, "dink ▸") + button_w(ui, &friends_words) + gap * 5.0;
-        if cfg!(feature = "station") { need += button_w(ui, "portals ▸") + gap; }
+        #[cfg(feature = "station")]
+        let portals_words = crate::keeper::portals_words(self.keeper.asking_now(), self.drawer == Drawer::Friends);
+        #[cfg(not(feature = "station"))]
+        let portals_words = String::new();
+        if cfg!(feature = "station") { need += button_w(ui, &portals_words) + gap; }
         if self.signals > 0 { need += text_w(ui, &format!("✼ {}", self.signals), 14.0) + gap; }
         let fits = need <= ui.available_width();
         let row = |ui: &mut egui::Ui, this: &mut App| {
@@ -2879,9 +2891,8 @@ impl App {
                 match which {
                     0 => { ui.label(rich(&format!("✼ {}", this.signals), 14.0, PINK())).on_hover_text(tip("viewers' signals since this opened")); }
                     1 => {
-                        let f_open = this.drawer == Drawer::Friends;
-                        if button(ui, if f_open { "portals ◂" } else { "portals ▸" }, true, None)
-                            .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), answer those asking, a notice to every portal, or take one back")).clicked() {
+                        if button(ui, &portals_words, true, None)
+                            .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), answer those asking (counted here, looked at every minute), a notice to every portal, or take one back")).clicked() {
                             this.open_drawer(&ctx, Drawer::Friends);
                         }
                     }

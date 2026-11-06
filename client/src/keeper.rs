@@ -177,6 +177,21 @@ pub fn take(player: &str) -> Result<String, String> {
     Ok(ch)
 }
 
+/// The portals button's words: with how many are asking for a portal, when any are.
+pub fn portals_words(asking: usize, open: bool) -> String {
+    let arrow = if open { "◂" } else { "▸" };
+    if asking == 0 { format!("portals {}", arrow) } else { format!("portals · {} asking {}", asking, arrow) }
+}
+
+/// The chat's line for those newly asking for a portal (None for nobody).
+pub fn asking_line(players: &[String]) -> Option<String> {
+    match players {
+        [] => None,
+        [one] => Some(format!("{} is asking for a portal · open portals to hand one out or turn it down", one)),
+        many => Some(format!("{} are asking for a portal: {} · open portals to answer them", many.len(), many.join(", "))),
+    }
+}
+
 /// What to send them with the code (the words are placeholders, Jace's to change; friends.py's message).
 pub fn message(channel: &str, code: &str) -> String {
     format!("your portal's attach code:\n\n{}\n\nopen outside-portal, paste it, and press go live. your portal opens at {}{}\n\
@@ -194,6 +209,10 @@ pub struct Keeper {
     pub notice_now: Arc<Mutex<Option<String>>>,
     pub notice_text: String,
     read_at: Option<Instant>,
+    /// (those asking, looked at every minute with the drawer shut too) when last, and the requests already told of in
+    /// the chat (channel and when they asked: someone turned down who asks again is told of again)
+    asks_at: Option<Instant>,
+    told: std::collections::HashSet<(String, u64)>,
     busy: Arc<Mutex<bool>>,
     pub answer: Arc<Mutex<Option<Result<(String, String), String>>>>,
     pub note: Arc<Mutex<String>>,
@@ -209,7 +228,7 @@ impl Keeper {
         let m = load();
         Keeper { rows: Arc::new(Mutex::new(None)), asks: Arc::new(Mutex::new(None)), confirm_ask: None,
                  notice_now: Arc::new(Mutex::new(None)), notice_text: String::new(),
-                 read_at: None, busy: Arc::new(Mutex::new(false)),
+                 read_at: None, asks_at: None, told: std::collections::HashSet::new(), busy: Arc::new(Mutex::new(false)),
                  answer: Arc::new(Mutex::new(None)), note: Arc::new(Mutex::new(String::new())), name: String::new(),
                  relay: field(&m, "relay"), setup_open: field(&m, "relay").is_empty(), confirm: None }
     }
@@ -229,6 +248,36 @@ impl Keeper {
             *busy.lock().unwrap() = false;
             wake();
         });
+    }
+
+    /// Those asking, read again once a minute with the drawer shut (11/06/2026, Jace: "add the asking count and a chat
+    /// line"), so the portals button can count them and the chat can say so; with the drawer open its own read (every
+    /// 10 s) has them. Nothing without an admin token.
+    pub fn watch_asks(&mut self, wake: impl Fn() + Send + 'static) {
+        let minute = Duration::from_secs(60);
+        if *self.busy.lock().unwrap() || self.asks_at.is_some_and(|t| t.elapsed() < minute)
+            || self.read_at.is_some_and(|t| t.elapsed() < minute) { return; }
+        self.asks_at = Some(Instant::now());
+        if !self.has_token() { return; }
+        let (asks, busy) = (self.asks.clone(), self.busy.clone());
+        *busy.lock().unwrap() = true;
+        std::thread::spawn(move || {
+            // (a relay out of reach keeps the last count: the drawer says why when it's opened)
+            if let Ok(a) = asking() { *asks.lock().unwrap() = Some(Ok(a)); }
+            *busy.lock().unwrap() = false;
+            wake();
+        });
+    }
+
+    /// how many are asking now (0 till the first read)
+    pub fn asking_now(&self) -> usize {
+        match &*self.asks.lock().unwrap() { Some(Ok(a)) => a.len(), _ => 0 }
+    }
+
+    /// The requests not yet told of in the chat, oldest first.
+    pub fn new_asks(&mut self) -> Vec<AskRow> {
+        let Some(Ok(asks)) = self.asks.lock().unwrap().clone() else { return Vec::new() };
+        asks.into_iter().filter(|r| self.told.insert((r.channel.clone(), r.at_ms))).collect()
     }
 
     pub fn has(&self, channel: &str) -> bool {
@@ -311,6 +360,24 @@ mod tests {
         assert!(channel_of("").is_err());
         assert!(channel_of("thirteen chars").is_err());
         assert!(channel_of("no/slash").is_err());
+    }
+
+    #[test]
+    fn those_asking_are_counted_and_told_once() {
+        assert_eq!(portals_words(0, false), "portals ▸");
+        assert_eq!(portals_words(2, true), "portals · 2 asking ◂");
+        assert_eq!(asking_line(&[]), None);
+        assert_eq!(asking_line(&["Moss Fern".into()]).unwrap(), "Moss Fern is asking for a portal · open portals to hand one out or turn it down");
+        assert_eq!(asking_line(&["a".into(), "b".into()]).unwrap(), "2 are asking for a portal: a, b · open portals to answer them");
+        let mut k = Keeper::new();
+        let row = |ch: &str, at: u64| AskRow { channel: ch.into(), player: ch.into(), note: String::new(), at_ms: at, given: false };
+        *k.asks.lock().unwrap() = Some(Ok(vec![row("moss", 1), row("fern", 2)]));
+        assert_eq!(k.asking_now(), 2);
+        assert_eq!(k.new_asks().len(), 2);
+        assert_eq!(k.new_asks().len(), 0);
+        // (turned down and asking again: a new request, told of again)
+        *k.asks.lock().unwrap() = Some(Ok(vec![row("moss", 5)]));
+        assert_eq!(k.new_asks().iter().map(|r| r.channel.clone()).collect::<Vec<_>>(), vec!["moss".to_string()]);
     }
 
     #[test]
