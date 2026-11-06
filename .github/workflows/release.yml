@@ -36,22 +36,22 @@ jobs:
       - name: unit tests
         run: cargo test --release --locked
       - name: the safety check, on the exe being published
-        run: python tests/safety_check.py --list --needs-icon target/release/outside-portal.exe
+        run: python tests/safety_check.py --list --needs-icon target/release/outstation.exe
       - name: the files
         shell: bash
         run: |
           mkdir out
-          cp target/release/outside-portal.exe out/
+          cp target/release/outstation.exe out/
           cp LICENSE SAFETY.md out/
           cp client/assets/fonts/README.md out/FONTS.md
           cd out
-          sha256sum outside-portal.exe > SHA256SUMS.txt
+          sha256sum outstation.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: GitHub's build attestation (public repositories)
         if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: out/outside-portal.exe
+          subject-path: out/outstation.exe
       - name: the release
         shell: bash
         env:
@@ -61,9 +61,11 @@ jobs:
           {
             echo "Built by GitHub from commit $GITHUB_SHA, from this repository's code alone."
             echo
-            echo "- SHA-256 of outside-portal.exe: \`$sum\`"
+            echo "- SHA-256 of outstation.exe: \`$sum\`"
             echo "- The safety check passed on this very file (the workflow's log lists every Windows function it imports)."
             echo "- How to check it yourself: SAFETY.md, \"Checking it yourself\"."
+            echo
+            echo "Created using intellectual property belonging to Jagex Limited under the terms of Jagex's Fan Content Policy. This content is not endorsed by or affiliated with Jagex."
           } > notes.md
-          gh release create "$GITHUB_REF_NAME" out/outside-portal.exe out/SHA256SUMS.txt out/SAFETY.md out/LICENSE out/FONTS.md \
-            --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" out/outstation.exe out/SHA256SUMS.txt out/SAFETY.md out/LICENSE out/FONTS.md \
+            --title "⊂λ,ｍ⊙ outstation $GITHUB_REF_NAME" --notes-file notes.md

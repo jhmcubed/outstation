@@ -92,14 +92,16 @@ fn version_info(version: &str) -> Vec<u8> {
         block(k, &val, (val.len() / 2) as u16, true, &[])
     };
     let strings = block("040904B0", &[], 0, true, &[
-        s("FileDescription", "outside-portal"),
-        s("ProductName", "outside-portal"),
+        s("FileDescription", "⊂λ,ｍ⊙ outstation"),
+        s("ProductName", "⊂λ,ｍ⊙ outstation"),
         s("FileVersion", version),
         s("ProductVersion", version),
-        s("OriginalFilename", "outside-portal.exe"),
-        s("InternalName", "outside-portal"),
-        s("Comments", "the portal: your RuneLite, live on your Outside page (ghillie.wiki)"),
-        s("LegalCopyright", "MIT licence: github.com/jhmcubed/outside-portal"),
+        s("OriginalFilename", "outstation.exe"),
+        s("InternalName", "outstation"),
+        s("Comments", "your RuneLite, live on your Outside page (ghillie.wiki)"),
+        s("LegalCopyright", "MIT licence: github.com/jhmcubed/outstation"),
+        // (Jagex's Fan Content Policy's words, 11/06/2026)
+        s("LegalTrademarks", "Created using intellectual property belonging to Jagex Limited under the terms of Jagex's Fan Content Policy. This content is not endorsed by or affiliated with Jagex."),
     ]);
     let string_info = block("StringFileInfo", &[], 0, true, &[strings]);
     let translation = block("Translation", &[0x09, 0x04, 0xB0, 0x04], 4, false, &[]);

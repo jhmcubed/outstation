@@ -70,14 +70,14 @@ pub const CYAN: Color32 = Color32::from_rgb(0x5f, 0xe6, 0xf5);
 pub const ROLES: &[(&str, &str, &str)] = &[
     ("bg", "the window", "behind everything"),
     ("plate", "the plates", "the raised panels things sit on"),
-    ("inset", "the dark windows", "the chat, the live view, the sample, the boxes you type in"),
+    ("inset", "the dark windows", "the chat, the monitor, the sample, the boxes you type in"),
     ("line", "the lines", "the edges round plates, boxes and buttons"),
     ("text", "the words", "the chat's lines and the main words"),
     ("dim", "the quiet words", "labels and explanations"),
     ("lime", "the lettering", "titles, values, buttons and what's on"),
     ("teal", "the hover", "whatever the hand is over"),
-    ("pink", "the accent", "live, warnings and what matters"),
-    ("cyan", "viewers' names", "names in the chat"),
+    ("pink", "the accent", "transmitting, warnings and what matters"),
+    ("cyan", "observers' names", "names in the chat"),
 ];
 
 static PAL: RwLock<Option<Palette>> = RwLock::new(None);

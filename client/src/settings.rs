@@ -301,13 +301,13 @@ impl Settings {
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// where the releases are, for "a newer one is out" and "too old for the relay" (shown, never opened or fetched)
-pub const RELEASES: &str = "github.com/jhmcubed/outside-portal/releases";
+pub const RELEASES: &str = "github.com/jhmcubed/outstation/releases";
 /// what the portal does and doesn't, line by line, and how to check it (the attach screen's link)
-pub const SAFETY_PAGE: &str = "https://github.com/jhmcubed/outside-portal/blob/main/SAFETY.md";
+pub const SAFETY_PAGE: &str = "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md";
 
 /// The words for a relay's 4026 (this client too old for it), from the relay's own reason.
 pub fn too_old_note(reason: &str) -> String {
-    let why = if reason.trim().is_empty() { "this portal is too old for the relay" } else { reason.trim() };
+    let why = if reason.trim().is_empty() { "this outstation is too old for the relay" } else { reason.trim() };
     format!("{} (this is {}): get the newest at {}", why, VERSION, RELEASES)
 }
 
@@ -319,9 +319,27 @@ pub fn enc(s: &str) -> String {
     out
 }
 
+/// The program's own name, as Windows and the window show it (its files and folders are plain `outstation`).
+pub const NAME: &str = "⊂λ,ｍ⊙ outstation";
+
+/// The key's prefix (11/06/2026: the attach code is the station's key now, "outstation1:"); a key from before,
+/// "portal1:", is the same inside and still read.
+pub const KEY_PREFIX: &str = "outstation1:";
+pub const OLD_KEY_PREFIX: &str = "portal1:";
+pub fn is_key(s: &str) -> bool {
+    let s = s.trim();
+    s.starts_with(KEY_PREFIX) || s.starts_with(OLD_KEY_PREFIX)
+}
+
 pub fn default_path() -> PathBuf {
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("outside-portal").join("settings.json")
+    let now = base.join("outstation");
+    // (11/06/2026, the name's outstation: the folder it had as outside-portal moved once, settings, log and all)
+    let old = base.join("outside-portal");
+    if !now.exists() && old.is_dir() {
+        let _ = std::fs::rename(&old, &now);
+    }
+    now.join("settings.json")
 }
 
 
@@ -377,19 +395,21 @@ fn write(p: &Path, s: &Settings) -> std::io::Result<()> {
     std::fs::rename(&tmp, p)
 }
 
-/// An attach code: "portal1:" and base64url JSON {"relay", "channel", "key"}.
+/// A station key (the attach code): "outstation1:" (or, from before, "portal1:") and base64url JSON {"relay",
+/// "channel", "key"}.
 pub fn parse_attach(code: &str) -> Result<(String, String, String), String> {
     use base64::Engine;
     let code = code.trim();
-    let raw = code.strip_prefix("portal1:").ok_or("that isn't an attach code (it starts portal1:)")?;
+    let raw = code.strip_prefix(KEY_PREFIX).or_else(|| code.strip_prefix(OLD_KEY_PREFIX))
+        .ok_or_else(|| format!("that isn't a station key (it starts {})", KEY_PREFIX))?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(raw.trim_end_matches('=').as_bytes())
-        .map_err(|_| "the attach code is cut short or changed".to_string())?;
-    let v: Value = serde_json::from_slice(&bytes).map_err(|_| "the attach code is cut short or changed".to_string())?;
+        .map_err(|_| "the station key is cut short or changed".to_string())?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|_| "the station key is cut short or changed".to_string())?;
     let get = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
     match (get("relay"), get("channel"), get("key")) {
         (Some(r), Some(c), Some(k)) if (r.starts_with("ws://") || r.starts_with("wss://")) && !c.is_empty() && k.len() >= 8 => Ok((r, c, k)),
-        _ => Err("the attach code is missing its relay, channel or key".into()),
+        _ => Err("the station key is missing its relay, channel or key".into()),
     }
 }
 
@@ -402,9 +422,14 @@ mod tests {
     fn an_attach_code_reads_back() {
         use base64::Engine;
         let json = r#"{"relay": "wss://outside-portal.x.workers.dev", "channel": "ja", "key": "abcdefghijkl"}"#;
-        let code = format!("portal1:{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json));
-        assert_eq!(parse_attach(&code).unwrap(), ("wss://outside-portal.x.workers.dev".into(), "ja".into(), "abcdefghijkl".into()));
-        assert!(parse_attach("portal1:!!!").is_err());
+        let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json);
+        // (a key now, and one from before the name was outstation: the same inside)
+        for code in [format!("outstation1:{}", body), format!("portal1:{}", body)] {
+            assert!(is_key(&code));
+            assert_eq!(parse_attach(&code).unwrap(), ("wss://outside-portal.x.workers.dev".into(), "ja".into(), "abcdefghijkl".into()));
+        }
+        assert!(parse_attach("outstation1:!!!").is_err());
+        assert!(!is_key("hello"));
         assert!(parse_attach("hello").is_err());
     }
 

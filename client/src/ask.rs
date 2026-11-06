@@ -78,7 +78,7 @@ pub fn ask(relay: &str, player: &str, note: &str) -> Result<(Asked, bool), Strin
     let pickup = new_pickup()?;
     let url = format!("{}/requests/{}", http_base(relay), channel);
     let body = json!({ "player": player.trim(), "note": note.trim(), "pickup": pickup }).to_string();
-    let r = ureq::post(&url).header("User-Agent", "outside-portal").header("Content-Type", "application/json")
+    let r = ureq::post(&url).header("User-Agent", "outstation").header("Content-Type", "application/json")
         .config().http_status_as_error(false).build().send(body.as_bytes());
     let mut r = r.map_err(|e| error_of(e, None))?;
     let status = r.status().as_u16();
@@ -92,7 +92,7 @@ pub fn ask(relay: &str, player: &str, note: &str) -> Result<(Asked, bool), Strin
 /// What the keeper said, if anything yet (an answer is collected once: given or turned down, the relay forgets it).
 pub fn check(a: &Asked) -> Result<Answer, String> {
     let url = format!("{}/requests/{}?pickup={}", a.relay, a.channel, crate::settings::enc(&a.pickup));
-    let r = ureq::get(&url).header("User-Agent", "outside-portal").config().http_status_as_error(false).build().call();
+    let r = ureq::get(&url).header("User-Agent", "outstation").config().http_status_as_error(false).build().call();
     let mut r = r.map_err(|e| error_of(e, None))?;
     let status = r.status().as_u16();
     let text = r.body_mut().read_to_string().unwrap_or_default();
@@ -103,7 +103,7 @@ pub fn check(a: &Asked) -> Result<Answer, String> {
         (200, "waiting") => Ok(Answer::Waiting),
         (200, "turned down") => Ok(Answer::TurnedDown),
         (200, "given") => v.get("code").and_then(|x| x.as_str()).map(|c| Answer::Given(c.to_string()))
-            .ok_or_else(|| "the relay said yes but gave no code".to_string()),
+            .ok_or_else(|| "the relay said yes but gave no station key".to_string()),
         _ => Err(error_of(ureq::Error::StatusCode(status), Some(text))),
     }
 }
@@ -111,7 +111,7 @@ pub fn check(a: &Asked) -> Result<Answer, String> {
 /// Take a request back.
 pub fn cancel(a: &Asked) {
     let url = format!("{}/requests/{}?pickup={}", a.relay, a.channel, crate::settings::enc(&a.pickup));
-    let _ = ureq::delete(&url).header("User-Agent", "outside-portal").call();
+    let _ = ureq::delete(&url).header("User-Agent", "outstation").call();
 }
 
 /// The attach screen's side of it: the form, and the look every 20 s while a request waits (off the window's thread).
@@ -146,7 +146,7 @@ impl Asker {
                     let ch = asked.channel.clone();
                     let _ = settings.update(|s| s.asked = Some(asked));
                     if given {
-                        *said.lock().unwrap() = Some((format!("{} has a portal already: if it's yours and you lost its code, the listening post can give you a new one (the old one stops working)", ch), false));
+                        *said.lock().unwrap() = Some((format!("{} has an outstation already: if it's yours and you lost its station key, the listening post can re-key it (the old key stops working)", ch), false));
                     }
                 }
                 Err(e) => *said.lock().unwrap() = Some((e, true)),
@@ -187,11 +187,11 @@ impl Asker {
                 },
                 Ok(Answer::TurnedDown) => {
                     let _ = settings.update(|s| s.asked = None);
-                    *said.lock().unwrap() = Some((format!("the listening post turned down the request for {}", a.player), true));
+                    *said.lock().unwrap() = Some((format!("the listening post denied the request for {}", a.player), true));
                 }
                 Ok(Answer::Gone) => {
                     let _ = settings.update(|s| s.asked = None);
-                    *said.lock().unwrap() = Some(("the request isn't there any more (nobody answers after 14 days): ask again".into(), true));
+                    *said.lock().unwrap() = Some(("the request isn't there any more (nobody answers after 14 days): request again".into(), true));
                 }
                 Err(e) => *said.lock().unwrap() = Some((format!("couldn't look at the request: {}", e), true)),
             }

@@ -1,63 +1,67 @@
-# outside-portal
+# ⊂λ,ｍ⊙ outstation
 
-A live portal from your RuneLite to your Outside page on [ghillie.wiki](https://ghillie.wiki) (`ghillie.wiki/outside?player=<you>`): a few frames a second of your game, its sound if you want, and a chat with whoever's watching.
+An outstation on your PC, transmitting your RuneLite to your Outside page on [ghillie.wiki](https://ghillie.wiki) (`ghillie.wiki/outside?player=<you>`): a few frames a second of your game, its sound if you want, and a chat with whoever's observing.
 
-**Being built.** The relay and the portal both work, tested on one PC. Nothing is released yet.
+**Being built.** The relay and the outstation both work, tested on one PC. Nothing is released yet.
+
+**Not Jagex's, and not RuneLite's.** Created using intellectual property belonging to Jagex Limited under the terms of Jagex's Fan Content Policy. This content is not endorsed by or affiliated with Jagex. It isn't a RuneLite plugin either, and isn't made by or affiliated with RuneLite.
 
 **Is it safe for my account?** It does what streaming software does and nothing more: it never touches RuneLite or the game, and it can't press a key or click for you. [SAFETY.md](SAFETY.md) says it in plain words: what's in the picture, everything that leaves your PC and where it goes, everything that comes back and what none of it can do, what the relay keeps, and how to check every line yourself.
 
 <p>
-  <img src="docs/pictures/first.png" width="32%" alt="the first screen: paste an attach code, or ask for one with your player's name and a note">
-  <img src="docs/pictures/ready.png" width="32%" alt="attached and off air, the ready check ticking RuneLite, logged in, the relay and Dink">
-  <img src="docs/pictures/live.png" width="32%" alt="live, with two viewers chatting">
+  <img src="docs/pictures/first.png" width="32%" alt="the first screen: paste a station key, or request one with your player's name and a note">
+  <img src="docs/pictures/ready.png" width="32%" alt="attached and dark, the station check ticking RuneLite, logged in, the relay and Dink">
+  <img src="docs/pictures/live.png" width="32%" alt="transmitting, with two observers chatting">
 </p>
 
-The first screen, ready to go live, and live with two viewers chatting. (Pictured under Wine, with a stand-in window in RuneLite's place.)
+The first screen, ready to transmit, and transmitting with two observers chatting. (Pictured under Wine, with a stand-in window in RuneLite's place, before the name was outstation: some words in them are the old ones.)
+
+**Its words.** The window speaks ⊂λ,ｍ⊙'s language. Your **station key** is the code that attaches it to your channel; **transmitting** is live and **dark** is off air; **observers** are your viewers, and **on standby** the ones waiting for a seat; **the tape** is the replay buffer (the last seconds, always rolling); **redactions** are masks; **the monitor** is the small live view of what went out; **field reports** are Dink's posts; **the station check** is the ready check. The keeper **issues** keys, **denies** a request, **re-keys** a channel (a new key; the old one stops working) and **stands one down** (takes it back).
 
 ## In plain words
 
-- **The portal** runs on your PC beside RuneLite. It reads RuneLite's window the way streaming software does, and sends it to the relay. It never touches the game: nothing a viewer does becomes input to it.
-- **The relay** passes your stream on to everyone watching, so your home connection sends one copy however many watch. It runs on Cloudflare.
+- **The outstation** runs on your PC beside RuneLite. It reads RuneLite's window the way streaming software does, and sends it to the relay. It never touches the game: nothing a viewer does becomes input to it.
+- **The relay** passes your transmission on to everyone observing, so your home connection sends one copy however many watch. It runs on Cloudflare.
 - **Your channel** is named after your player. Its key is yours alone.
 - **What goes out:** RuneLite's game area (not its side panel, and, but for one rare fallback, not the windows over it), your sound only if you turn it on, and the chat. No picture goes out while you're paused (the Pause key) or minimised, and the half second before either is taken back. If you use Dink, your level-ups, drops and the like go out too: only each one's line and a few numbers, never the screenshot, and nothing that names another player.
-- **What comes back:** viewers' chat lines, pings, ✼ and votes, shown as text and drawn in the portal's own windows. Nothing a viewer sends can press a key, click, open a page or reach RuneLite.
+- **What comes back:** viewers' chat lines, pings, ✼ and votes, shown as text and drawn in the outstation's own windows. Nothing a viewer sends can press a key, click, open a page or reach RuneLite.
 - **Whatever's drawn in the game area is in the picture:** your login screen (an older account's username is typed there in plain sight), the game's chat with other players' names, RuneLite's overlays. Log in before going live, and mask what you'd rather not show (SAFETY.md, "What's in the picture").
 
 ## Setting it up
 
-1. **Download** `outside-portal.exe` from the latest release (Releases, on the right of this page). It's one file, with nothing to install. Put it anywhere, your Desktop or Documents.
-2. **Open it.** The first time, Windows may say "Windows protected your PC", because the portal isn't signed yet: press **More info**, then **Run anyway**. To check it's the real file first, see [SAFETY.md](SAFETY.md), "Checking it yourself". It asks once whether to put itself in your Start menu.
+1. **Download** `outstation.exe` from the latest release (Releases, on the right of this page). It's one file, with nothing to install. Put it anywhere, your Desktop or Documents.
+2. **Open it.** The first time, Windows may say "Windows protected your PC", because the outstation isn't signed yet: press **More info**, then **Run anyway**. To check it's the real file first, see [SAFETY.md](SAFETY.md), "Checking it yourself". It asks once whether to put itself in your Start menu.
 3. **Attach it to your channel.**
-   - Got an attach code from Jace (it starts `portal1:`)? Paste it and press **attach**. If it's on your clipboard when the portal opens, it's pasted for you.
-   - No code yet? Press **no code yet? ask for one**, type your player's name and a note so Jace knows who you are, and press **ask**. Leave the portal open (or open it again later): when he says yes, it attaches by itself.
-   - Once it's attached, the **first-time setup** walks you through the rest a step at a time: Dink and Discord, pointing Dink at the portal, clips, the Start menu. Each step can be skipped, and settings ▸ more runs it again.
-4. **Check it's ready.** Above the title, the ready check ticks what the portal needs: RuneLite open, logged in, the relay answering, and Dink heard (only if you use Dink). Hover over any of them to see how to fix it.
-5. **Go live.** Your portal is at `ghillie.wiki/outside?player=<your name>`. **end stream** stops it.
-6. **Your drops and level-ups under it** (if you use [Dink](https://github.com/pajlads/DinkPlugin)): **dink ▸** goes in three steps (the first-time setup does the same). 1: does Dink post to a Discord of yours? If so, the portal keeps that going as it is (`::dinkexport all` in RuneLite's chat, **read my Dink settings**, `::dinkimport`). 2: the portal's address goes in Dink's Primary Webhook URLs, and **no Discord address left there**, or Discord gets every post twice. 3: what shows under your portal (**default** is everything).
+   - Got a station key from Jace (it starts `outstation1:`, or `portal1:` from before the name changed)? Paste it and press **attach**. If it's on your clipboard when the outstation opens, it's pasted for you.
+   - No key yet? Press **no key yet? request one**, type your player's name and a note so Jace knows who you are, and press **request**. Leave the outstation open (or open it again later): once he issues your key, it attaches by itself.
+   - Once it's attached, the **first-time setup** walks you through the rest a step at a time: Dink and Discord, pointing Dink at the outstation, clips, the Start menu. Each step can be skipped, and settings ▸ more runs it again.
+4. **Check it's ready.** Above the title, the station check ticks what the outstation needs: RuneLite open, logged in, the relay answering, and Dink heard (only if you use Dink). Hover over any of them to see how to fix it.
+5. **Transmit.** Your outstation is at `ghillie.wiki/outside?player=<your name>`. **go dark** stops it.
+6. **Your drops and level-ups under it** (if you use [Dink](https://github.com/pajlads/DinkPlugin)): **dink ▸** goes in three steps (the first-time setup does the same). 1: does Dink post to a Discord of yours? If so, the outstation keeps that going as it is (`::dinkexport all` in RuneLite's chat, **read my Dink settings**, `::dinkimport`). 2: the outstation's address goes in Dink's Primary Webhook URLs, and **no Discord address left there**, or Discord gets every post twice. 3: which field reports go out (**default** is everything).
 
-## While you stream
+## While you transmit
 
-- **Press Pause before typing a bank PIN.** Viewers see static, and the half second before the press is taken back. The sound, if it's on, and the chat carry on. Every key can be changed in the settings.
-- **Log in before going live,** or switch on "nothing while logged out" (settings ▸ more; it needs RuneLite's "username in title"). An older account types its username on RuneLite's login screen, where viewers would see it.
+- **Press Pause before typing a bank PIN.** Observers see static, and the half second before the press is taken back. The sound, if it's on, and the chat carry on. Every key can be changed in the settings.
+- **Log in before you transmit,** or switch on "nothing while logged out" (settings ▸ more; it needs RuneLite's "username in title"). An older account types its username on RuneLite's login screen, where viewers would see it.
 - **Minimised, nothing goes out.**
-- **Masks:** **edit masks** lets you black out any part of the game (the chat, the world number) on your own PC, before a frame leaves it.
+- **Redactions:** **redact** lets you black out any part of the game (the chat, the world number) on your own PC, before a frame leaves it.
 - **The sound:** off (to begin with), the game, or game + desktop. "game + desktop" is everything your PC plays, a Discord call's voices included. Never a microphone.
-- **The chat:** right-click a line to take it back, or to block or ban whoever wrote it. "viewers may chat" switches the chat off.
-- **Clips:** the clip key (Insert) saves the last seconds as a video in `Videos\outside-portal` (give the replay buffer some seconds in the settings first). With Dink, a pet, a new collection log slot, a 99 or a drop worth a million or more saves one by itself, named for it (**dink ▸**, "clips by themselves"). Switch on "and put them on my Outside page" there, and those go under "recovered footage" on your page too: a still each, moving under the hand, playing when pressed. The newest 20 stay for 30 days; **keep** holds up to 3 for good, and the same drawer takes any down.
-- **Going live by itself:** settings ▸ more ▸ **go live by itself whenever RuneLite opens**, and with it **end the stream when RuneLite closes** (after 30 s, so an update's restart doesn't end it). If you press end stream while RuneLite's open, the portal stays off air until RuneLite next opens.
-- **Dink and your Discord, as Jace has them:** dink ▸, "do you use Dink with Discord too?", yes. Type `::dinkexport all` in RuneLite's chat, press **read my Dink settings**, type `::dinkimport`, then delete your Discord address from Dink's webhook list (the portal names the boxes). The portal then hears everything Dink can tell it, and your Discord keeps getting just what it got before, passed on by the portal while it's open. **undo** puts your old Dink settings back on the clipboard.
-- **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their portal is live (lime), off air (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete. Hover over a live one for a small live view of their portal. The chat says "Moss Fern has gone live." when one does, and so does a Windows notification if the portal's in your Start menu.
+- **The chat:** right-click a line to take it back, or to block or ban whoever wrote it. "observers may chat" switches the chat off.
+- **Clips:** the clip key (Insert) saves the last seconds as a video in `Videos\outstation` (give the tape some seconds in the settings first). With Dink, a pet, a new collection log slot, a 99 or a drop worth a million or more saves one by itself, named for it (**dink ▸**, "clips by themselves"). Switch on "and put them on my Outside page" there, and those go under "recovered footage" on your page too: a still each, moving under the hand, playing when pressed. The newest 20 stay for 30 days; **file it** holds up to 3 for good, and the same drawer takes any down.
+- **Transmitting by itself:** settings ▸ more ▸ **transmit by itself whenever RuneLite opens**, and with it **go dark when RuneLite closes** (after 30 s, so an update's restart doesn't end it). If you press go dark while RuneLite's open, the outstation stays dark until RuneLite next opens.
+- **Dink and your Discord, as Jace has them:** dink ▸, "do you use Dink with Discord too?", yes. Type `::dinkexport all` in RuneLite's chat, press **read my Dink settings**, type `::dinkimport`, then delete your Discord address from Dink's webhook list (the outstation names the boxes). The outstation then hears everything Dink can tell it, and your Discord keeps getting just what it got before, passed on by the outstation while it's open. **undo** puts your old Dink settings back on the clipboard.
+- **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their outstation is transmitting (lime), dark (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete, or "message" to write to their outstation. Hover over a transmitting one for a small live view of it. The chat says "Moss Fern's outstation is transmitting." when one starts, and so does a Windows notification if the outstation's in your Start menu.
 
 ## If something goes wrong
 
 - **"RuneLite" isn't ticked:** RuneLite has to be open and not minimised, and its window's title has to start with "RuneLite" (settings ▸ more).
 - **"logged in" isn't ticked:** log in, or turn on RuneLite's "username in title". It's only needed for "nothing while logged out" (settings ▸ more).
 - **The picture is black:** in settings ▸ more, try another "taken by".
-- **Something over RuneLite shows in the live view:** the portal fell back to taking that part of the screen. Try another "taken by" in settings ▸ more.
-- **A key does nothing in RuneLite:** the portal holds its four keys (Pause, Scroll Lock, Insert, End) while it's open. Give it others in the settings' hotkeys.
+- **Something over RuneLite shows in the monitor:** the outstation fell back to taking that part of the screen. Try another "taken by" in settings ▸ more.
+- **A key does nothing in RuneLite:** the outstation holds its four keys (Pause, Scroll Lock, Insert, End) while it's open. Give it others in the settings' hotkeys.
 - **Dink isn't heard:** the address from **dink ▸** has to be on a line of its own in Dink's Primary Webhook URLs, in the RuneLite profile you're playing on.
 - **"too old for the relay":** download the newest release and open that one.
-- **It crashed:** it says so, and says so again the next time it opens. In the settings, under **more**, press **copy my log**, then paste it into a new issue here ("Something went wrong") or send it to Jace. Your key, codes and webhook addresses are taken out first.
+- **It crashed:** it says so, and says so again the next time it opens. In the settings, under **more**, press **copy the station log**, then paste it into a new issue here ("Something went wrong") or send it to Jace. Your keys, codes and webhook addresses are taken out first.
 
 ## Which Windows
 
@@ -66,9 +70,10 @@ Windows 10 or 11, 64-bit. It uses Windows Graphics Capture, as OBS does, and fal
 ## Uninstalling
 
 Close it (from the ✼ by the clock, if it's in the tray), then delete:
-- `outside-portal.exe`, wherever you put it
-- `%APPDATA%\outside-portal`: its settings, its log and its icon (the settings hold your channel's key and your Discord webhook addresses: don't send that folder to anyone)
-- `Videos\outside-portal`, if you saved clips
+- `outstation.exe`, wherever you put it
+- `%APPDATA%\outstation`: its settings, its log and its icon (the settings hold your channel's key and your Discord webhook addresses: don't send that folder to anyone)
+- `Videos\outstation`, if you saved clips
+- (a copy from before 11/06/2026, when it was called outside-portal, moves its own folders to these names the first time the new one opens)
 - the Start menu's shortcut, if you added one (settings ▸ more takes it out)
 
 Your channel stays yours until Jace takes it back: ask him if you want it gone.
@@ -77,10 +82,10 @@ Your channel stays yours until Jace takes it back: ask him if you want it gone.
 
 ### The parts
 
-- `client/`: the broadcaster, `outside-portal.exe` (Rust): the capture, the sound, the chat window with its drawers, Dink, the tray. `client/PARITY.md` lists everything ghillie's Python portal did and what the client does for each.
+- `client/`: the outstation, `outstation.exe` (Rust): the capture, the sound, the chat window with its drawers, Dink, the tray. `client/PARITY.md` lists everything ghillie's Python portal did and what the client does for each.
   - Building it on Windows: Rust, with cmake and ninja on the PATH for libopus. GitHub's machines build the releases with MSVC; Jace's PC uses the gnullvm toolchain (`rust-toolchain.toml`). Then `cargo build --release`.
-  - `outside-portal.exe --once frame.png` writes one frame; `--bench 30` times a frame stage by stage.
-  - The keeper's own build, the field station: `cargo build --release --features station` (ghillie's `tools/launcher/build_station.py`). The same portal, with the keeper's tools in its tray (what ghillie's `launcher.json` starts, modes, links) and friends' portals handed out from a drawer (`client/src/station.rs`, `keeper.rs`). A release is never built with it.
+  - `outstation.exe --once frame.png` writes one frame; `--bench 30` times a frame stage by stage.
+  - The keeper's own build, the field station: `cargo build --release --features station` (ghillie's `tools/launcher/build_station.py`). The same outstation, with the keeper's tools in its tray (what ghillie's `launcher.json` starts, modes, links) and friends' station keys issued from a drawer (`client/src/station.rs`, `keeper.rs`). A release is never built with it.
 
 - `relay/`: the relay on Cloudflare: a Worker, with a Durable Object for each channel (TypeScript). Its README says how to run it and deploy it.
 - `relay-py/`: the same relay in Python, standard library only, for running on your own PC (`py relay-py/relay.py`). It's also the reference.

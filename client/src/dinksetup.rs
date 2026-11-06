@@ -151,7 +151,7 @@ pub fn plan(export: &str, portal: &str, loot_min: u64) -> Result<Plan, String> {
         notes.push("Dink's \"Rarity Override\" for loot isn't copied: a rare drop under the loot value reaches Discord only if it's on the allow list".into());
     }
     if discord.is_empty() {
-        notes.push("there was no Discord address in Dink: the portal hears Dink, nothing goes on to Discord".into());
+        notes.push("there was no Discord address in Dink: the outstation hears Dink, nothing goes on to Discord".into());
     }
     let rules = json!({"discord": primary, "forward": Value::Object(forward), "_from": "Dink's ::dinkexport all (dinksetup.rs)"});
     Ok(Plan { rules, import: Value::Object(import).to_string(), discord, notes })

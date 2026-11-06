@@ -69,7 +69,7 @@ my own chat box on my computer that i can respond back in"):
   The transmit, desk and sound roles need the key, and the public side
   (the Funnel's port) refuses all three.
 
-The client's version (11/06/2026): outside-portal's client adds v=<its version> to the transmit, desk and
+The client's version (11/06/2026): outstation's client adds v=<its version> to the transmit, desk and
 sound addresses. With --min-client set, a client that says an older version is turned away with 4026 and
 the oldest version allowed in the reason, so it can say where to get a newer one instead of trying again.
 A connection that says no version (ghillie's Python portal, which predates it) is let in as before.
@@ -682,7 +682,7 @@ class Relay:
         role, name = path
         try:
             if role in CLIENT_ROLES and too_old(q.get("v"), self.min_client):
-                await sock.close(4026, "this portal is too old for the relay: %s or newer is needed" % self.min_client)
+                await sock.close(4026, "this outstation is too old for the relay: %s or newer is needed" % self.min_client)
                 return
             if role == "transmit":
                 await self.transmit(sock, name, q.get("key", ""), q.get("code", ""))
@@ -1657,7 +1657,7 @@ async def serve(host, port, delay, ready=None, log=print, forward=None, public_p
     holder = asyncio.ensure_future(relay.release_held())
     uploads = asyncio.ensure_future(relay.tell_upload())
     watcher = asyncio.ensure_future(relay.watch_settings(settings)) if settings else None
-    log("the portal's relay on ws://%s:%d%s" % (host, port, "  (delay %g s)" % delay if delay else ""))
+    log("the outstation relay on ws://%s:%d%s" % (host, port, "  (delay %g s)" % delay if delay else ""))
     if public:
         log("its public side (the page and watching only) on http://%s:%d" % (host, public_port))
     if forward is not None:
@@ -1695,7 +1695,7 @@ def main(argv=None):
     ap.add_argument("--clips", default=DEFAULT_CLIPS,
                     help="where clips on players' Outside pages are kept (\"\" takes none)")
     ap.add_argument("--min-client", default="",
-                    help="the oldest outside-portal client let in (e.g. 0.2.0); older ones are told to update")
+                    help="the oldest outstation client let in (e.g. 0.2.0); older ones are told to update")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):

@@ -450,7 +450,7 @@ impl Tray {
         let links_menu = Submenu::new("links", true);
         let links: Vec<MenuItem> = st.links.iter().map(|l| MenuItem::new(&l.label, l.ok, None)).collect();
         for l in &links { let _ = links_menu.append(l); }
-        let friends = MenuItem::new("friends' portals…", true, None);
+        let friends = MenuItem::new("friends' outstations…", true, None);
         let stop_all = MenuItem::new("stop all I started (0)", false, None);
         let _ = menu.append_items(&[&modes_menu, &links_menu, &friends, &stop_all]);
         Tray { services, modes, links, friends, stop_all }

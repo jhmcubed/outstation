@@ -1,5 +1,5 @@
 //! The Start menu (11/06/2026): asked once on the first screen, a shortcut to this program in your own Start menu
-//! (%APPDATA%\Microsoft\Windows\Start Menu\Programs), with the ✼ for its icon (portal.ico beside the settings, made
+//! (%APPDATA%\Microsoft\Windows\Start Menu\Programs), with the ✼ for its icon (outstation.ico beside the settings, made
 //! from the window's own icon). Nothing else: it still doesn't start with Windows, and nothing needs admin. Once you've
 //! said yes, each start points it at wherever this copy is (a newer version saved somewhere else takes its place);
 //! "take it out of the Start menu" (settings ▸ more) removes it. It carries the program's id (notify.rs, AUMID): Windows
@@ -8,7 +8,9 @@
 use std::path::PathBuf;
 
 /// The shortcut's name in the Start menu (and so what a search there finds).
-pub const NAME: &str = "outside-portal";
+pub const NAME: &str = crate::settings::NAME;
+/// the shortcut's name before 11/06/2026 (taken out as the new one's made)
+const OLD_NAME: &str = "outside-portal";
 
 fn start_menu() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA")?;
@@ -35,7 +37,7 @@ fn icon_file(beside: &std::path::Path) -> std::io::Result<PathBuf> {
     ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
     ico.extend_from_slice(&22u32.to_le_bytes()); // where the image starts
     ico.extend_from_slice(png);
-    let p = beside.with_file_name("portal.ico");
+    let p = beside.with_file_name("outstation.ico");
     if std::fs::read(&p).ok().as_deref() != Some(ico.as_slice()) {
         std::fs::write(&p, &ico)?;
     }
@@ -46,11 +48,14 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Make (or point again) the Start menu's shortcut at this copy. `settings_path`: where portal.ico goes.
+/// Make (or point again) the Start menu's shortcut at this copy. `settings_path`: where outstation.ico goes.
 pub fn make(settings_path: &std::path::Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let link = link_path().ok_or("Windows didn't say where your Start menu is")?;
     let ico = icon_file(settings_path).map_err(|e| format!("couldn't write the icon: {}", e))?;
+    // (the shortcut it had before the name was outstation, and its icon)
+    if let Some(old) = start_menu().map(|d| d.join(format!("{}.lnk", OLD_NAME))) { let _ = std::fs::remove_file(old); }
+    let _ = std::fs::remove_file(settings_path.with_file_name("portal.ico"));
     if let Some(d) = link.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
     // (on a thread of its own: COM wants its own apartment, and the window's thread has one already)
     std::thread::spawn(move || -> Result<(), String> {
@@ -62,7 +67,7 @@ pub fn make(settings_path: &std::path::Path) -> Result<(), String> {
             let made = (|| -> windows::core::Result<()> {
                 let sl: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
                 let (path, dir, icon) = (wide(&exe.to_string_lossy()), wide(&exe.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()), wide(&ico.to_string_lossy()));
-                let about = wide("the portal: your RuneLite, live on your Outside page (ghillie.wiki)");
+                let about = wide("⊂λ,ｍ⊙ outstation: your RuneLite, transmitting to your Outside page (ghillie.wiki)");
                 sl.SetPath(PCWSTR(path.as_ptr()))?;
                 sl.SetWorkingDirectory(PCWSTR(dir.as_ptr()))?;
                 sl.SetDescription(PCWSTR(about.as_ptr()))?;

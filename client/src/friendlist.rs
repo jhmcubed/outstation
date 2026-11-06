@@ -46,8 +46,8 @@ pub fn relay_ws(s: &Settings) -> String {
 }
 
 fn read(base: &str) -> Result<HashMap<String, Seen>, String> {
-    if base.is_empty() { return Err("not attached yet: the list reads the relay your portal's attached to".into()); }
-    let mut r = ureq::get(&format!("{}/channels", base)).header("User-Agent", "outside-portal").call()
+    if base.is_empty() { return Err("not attached yet: the list reads the relay your outstation's attached to".into()); }
+    let mut r = ureq::get(&format!("{}/channels", base)).header("User-Agent", "outstation").call()
         .map_err(|e| format!("the relay is out of reach ({})", e))?;
     let v: Value = serde_json::from_str(&r.body_mut().read_to_string().unwrap_or_default()).unwrap_or(Value::Null);
     let mut out = HashMap::new();
@@ -134,9 +134,10 @@ impl FriendList {
     }
 }
 
-/// A change as the chat says it, as the game says "has logged in.": "<name> has gone live." or "<name> has gone off air."
+/// A change as the chat says it, as the game says "has logged in.": "<name>'s outstation is transmitting." or
+/// "<name>'s outstation has gone dark."
 pub fn line(c: &(String, bool)) -> String {
-    format!("{} has gone {}.", c.0, if c.1 { "live" } else { "off air" })
+    if c.1 { format!("{}'s outstation is transmitting.", c.0) } else { format!("{}'s outstation has gone dark.", c.0) }
 }
 
 /// Why a name can't be added (the game's own words, near enough), or the name as it's kept.
@@ -184,8 +185,8 @@ mod tests {
         assert!(f.changes(&s).is_empty()); // (the first read tells nothing)
         *f.seen.lock().unwrap() = Some(Ok(HashMap::from([("mossfern".to_string(), seen(false)), ("birchbark".to_string(), seen(true))])));
         assert_eq!(f.changes(&s), vec![("Moss Fern".to_string(), false), ("Birch Bark".to_string(), true)]);
-        assert_eq!(line(&("Birch Bark".to_string(), true)), "Birch Bark has gone live.");
-        assert_eq!(line(&("Moss Fern".to_string(), false)), "Moss Fern has gone off air.");
+        assert_eq!(line(&("Birch Bark".to_string(), true)), "Birch Bark's outstation is transmitting.");
+        assert_eq!(line(&("Moss Fern".to_string(), false)), "Moss Fern's outstation has gone dark.");
         assert_eq!(f.state("Birch Bark"), State::Live(seen(true)));
         assert_eq!(f.state("Moss Fern"), State::OffAir);
         assert_eq!(f.state("Nobody Here"), State::NoPortal);

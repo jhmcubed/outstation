@@ -1,15 +1,15 @@
 name: Something went wrong
-description: The portal crashed, wouldn't go live, or did something odd.
+description: The outstation crashed, wouldn't transmit, or did something odd.
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for saying. In the portal, open the settings, then **more**, and press **copy my log**: it puts the portal's log on the clipboard with your key, codes and webhook addresses taken out. Paste it in the last box.
+        Thanks for saying. In the outstation, open the settings, then **more**, and press **copy the station log**: it puts the outstation's log on the clipboard with your keys, codes and webhook addresses taken out. Paste it in the last box.
   - type: input
     id: version
     attributes:
-      label: The portal's version
-      description: The log's first line says it (for example, outside-portal 0.1.0).
+      label: The outstation's version
+      description: The log's first line says it (for example, outstation 0.1.0).
   - type: input
     id: windows
     attributes:
@@ -26,5 +26,5 @@ body:
     id: log
     attributes:
       label: Its log
-      description: "copy my log", pasted here.
+      description: "copy the station log", pasted here.
       render: text

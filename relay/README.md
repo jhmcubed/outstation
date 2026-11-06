@@ -1,4 +1,4 @@
-# the relay on Cloudflare
+# the relay on Cloudflare (⊂λ,ｍ⊙ outstation's)
 
 A Worker (`src/index.ts`) routes each socket to its channel's Durable Object (`src/channel.ts`). The protocol is `../docs/protocol.md`, and it's the same as `../relay-py/relay.py`'s.
 
@@ -8,7 +8,7 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 - the chat so far, the poll and the drop guess, the blocks and bans
 - the reports, the stream's summary and each boss's last kill count
 - the version that last transmitted, and the time on air by month
-- messages held for the portal, and the list of its clips (the clips' files are in R2)
+- messages held for the outstation, and the list of its clips (the clips' files are in R2)
 
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
 

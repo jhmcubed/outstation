@@ -1948,7 +1948,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outside-portal"
+name = "outstation"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",

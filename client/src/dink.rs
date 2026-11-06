@@ -104,7 +104,7 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
         }
     }
     if s.attached() && portal_wants(&s, &payload) {
-        went.push("the portal");
+        went.push("your Outside page");
         let url = format!("{}/dink/{}?key={}", s.http_base(), enc(&s.channel), enc(&s.key));
         // (only what the relay uses leaves this PC: for_relay; and when it came, so two drops alike in a few seconds
         // stay two at the relay, whose own check for a post sent twice would take them for one)

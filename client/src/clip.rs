@@ -6,7 +6,7 @@
 //! what it sent, the frames (4 bytes when each was taken, then a JPEG) and the sound (the same clock, "AU", the bus,
 //! Opus packets). The clip key, or "clip" in the window, writes them as an ordinary .mp4 with Windows' own encoders
 //! (Media Foundation): H.264, the frames at their own times, and AAC, both sound busses mixed into one stereo track,
-//! lined up with the frames by their stamps. Into `clip_folder` (Videos\outside-portal by default), named for when.
+//! lined up with the frames by their stamps. Into `clip_folder` (Videos\outstation by default), named for when.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -69,7 +69,10 @@ pub fn say(s: String) {
 
 pub fn default_folder() -> std::path::PathBuf {
     let home = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from).unwrap_or_else(|| ".".into());
-    home.join("Videos").join("outside-portal")
+    let (now, old) = (home.join("Videos").join("outstation"), home.join("Videos").join("outside-portal"));
+    // (11/06/2026, the name's outstation: the clips saved as outside-portal moved once)
+    if !now.exists() && old.is_dir() { let _ = std::fs::rename(&old, &now); }
+    now
 }
 
 /// The clip key or "clip": the buffer saved as a clip, on a thread of its own.
@@ -81,7 +84,7 @@ pub fn save(folder: &str) {
 pub fn save_as(folder: &str, what: Option<String>) {
     let b = buffer();
     if b.seconds.load(Ordering::Relaxed) == 0 {
-        return say("no clip: the replay buffer is off (its seconds in the settings)".into());
+        return say("no clip: the tape is off (its seconds in the settings)".into());
     }
     if b.writing.swap(true, Ordering::SeqCst) {
         return say("no clip: one is still being written".into());
@@ -138,7 +141,7 @@ pub fn write_to(items: &[(Instant, Vec<u8>)], file: &std::path::Path, max_w: Opt
         if &m[4..6] == b"AU" { sounds.push((stamp, m)); } else if m[4] == 0xFF && m[5] == 0xD8 { frames.push((stamp, &m[4..])); }
     }
     if frames.is_empty() {
-        return Err("no frames in the replay buffer (is it on, and is the portal live?)".into());
+        return Err("no frames on the tape (is it on, and is the outstation transmitting?)".into());
     }
     let base = frames[0].0;
     let mut pics: Vec<(i64, &[u8])> = frames.iter().map(|(s, j)| (rel(*s, base), *j)).collect();
@@ -253,7 +256,7 @@ pub fn still_and_strip(items: &[(Instant, Vec<u8>)], moment: Instant) -> Result<
     use std::time::Duration;
     let frames = frames_of(items);
     if frames.is_empty() {
-        return Err("no frames round the moment (was the portal live?)".into());
+        return Err("no frames round the moment (was the outstation transmitting?)".into());
     }
     let near = |at: Instant| frames.iter().min_by_key(|(t, _)| if *t > at { *t - at } else { at - *t }).unwrap().1;
     let (srgb, sw, sh) = small(near(moment)).ok_or("the moment's frame wouldn't decode")?;
@@ -287,7 +290,7 @@ pub fn page_copy(items: &[(Instant, Vec<u8>)], moment: Instant) -> Result<PageCo
     let window: Vec<(Instant, Vec<u8>)> = items.iter().filter(|(t, _)| *t >= from && *t <= to).cloned().collect();
     let (still, strip, frames, fps) = still_and_strip(&window, moment)?;
     // the copy itself, through a file of its own in the temporary folder
-    let tmp = std::env::temp_dir().join(format!("outside-portal-{}-{}.mp4", std::process::id(),
+    let tmp = std::env::temp_dir().join(format!("outstation-{}-{}.mp4", std::process::id(),
                                                  std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
     let made = write_to(&window, &tmp, Some(PAGE_W), Some(PAGE_BITRATE));
     let bytes = std::fs::read(&tmp);

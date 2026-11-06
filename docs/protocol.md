@@ -1,4 +1,4 @@
-# The portal's protocol
+# ⊂λ,ｍ⊙ outstation's protocol
 
 Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Python relay (`relay-py/relay.py`).
 `tests/protocol_test.py` runs the same tests against either, so they stay the same.
@@ -72,7 +72,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other portals (below, "Messages between portals"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers"}}` each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers"}}` each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -83,7 +83,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 - `{"chat_on": bool}`: off, viewers' lines go nowhere (the host's still go out); the status line's `chat` says so.
 - `{"pings": bool}`: off, viewers' pings go nowhere; the status line's `pings` says so.
 - `{"guess_open": {"boss", "what"}}`, `{"guess_close": true}`, `{"guess_drop": true, "item"}`, `{"guess_off": true}`, `{"guess_min_value": gp}`: a drop guess (below, "Drop guesses").
-- `{"dm": {"to", "text"}}`: a message to another portal (below, "Messages between portals").
+- `{"dm": {"to", "text"}}`: a message to another outstation (below, "Messages between outstations").
 - `{"title": text}`: the broadcast's title, in every status line from then on (and in `GET /channels`): one line, at most 100 characters, `""` for none. The client sends it on connecting and whenever it changes; the Worker keeps it through a sleep.
 - `{"cap": n}`: the channel's own cap on viewers (0 means none). On the Python relay it takes the place of `--max-viewers` for that channel. On Cloudflare the Worker's `MAX_VIEWERS` is a ceiling over it.
 
@@ -94,9 +94,9 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 - It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
 - Anything else it sends is thrown away.
 
-## The open portals
+## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. The portals page on ghillie.wiki and the client's friends list read it.
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
 
 ## The stream's summary
 
@@ -142,11 +142,11 @@ The outside-portal client takes Dink's posts on its own PC (`127.0.0.1`) and pos
 - `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound and desks are cut off. Viewers stay, off air.
 - `GET /admin/channels`: the list, each with `channel`, `since`, `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
 
-The attach code is `portal1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up.
+The attach code (the station key, in the client's words) is `outstation1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up. Keys made before 11/06/2026 start `portal1:`, with the same inside; the client still reads them.
 
 Only the key's SHA-256 is kept.
 
-## Asking for a portal (Cloudflare)
+## Asking for a station key (Cloudflare)
 
 So a friend needn't email the keeper for a code: their client asks, the keeper answers from his list, and the client collects the answer itself.
 
@@ -196,18 +196,18 @@ or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
 
-## Messages between portals (11/06/2026)
+## Messages between outstations (11/06/2026)
 
-One portal's window to another's, through the relay, never on either stream (the client's chat tabs: ui.rs, Thread).
+One outstation's window to another's, through the relay, never on either stream (the client's chat tabs: ui.rs, Thread).
 On the desk socket, both relays:
 
     → {"dm": {"to": "<channel>", "text": "..."}}            from a desk only (a viewer's is ignored)
-    ← {"dm_sent": {"to", "text", "at", "held"}}              held: their portal's closed, the relay keeps it for them
-    ← {"dm_failed": {"to", "text", "why"}}                   no such portal on this relay, your own, or past 20 a minute
-    ← {"dm": {"from": "<channel>", "name": "<their chat name>", "text", "at"}}   to the other portal's desks
+    ← {"dm_sent": {"to", "text", "at", "held"}}              held: their outstation's closed, the relay keeps it for them
+    ← {"dm_failed": {"to", "text", "why"}}                   no such outstation on this relay, your own, or past 20 a minute
+    ← {"dm": {"from": "<channel>", "name": "<their chat name>", "text", "at"}}   to the other outstation's desks
 
-`at` in ms. A message for a portal with no desk connected is held, at most 20 and 7 days each, and handed over as its
-desk next connects. Both portals must be on the same relay.
+`at` in ms. A message for an outstation with no desk connected is held, at most 20 and 7 days each, and handed over as its
+desk next connects. Both outstations must be on the same relay.
 
 ## A notice from the keeper (Cloudflare)
 

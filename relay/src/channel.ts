@@ -17,7 +17,7 @@ export interface Env {
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
-  MIN_CLIENT?: string; // the oldest outside-portal client let in (its v=); older ones are told to update (4026)
+  MIN_CLIENT?: string; // the oldest outstation client let in (its v=); older ones are told to update (4026)
   ASKS_AN_HOUR?: string; // (tests) requests for a portal from one address in an hour (index.ts's ASKS_AN_HOUR)
   POLL_MIN_SECONDS?: string; // (tests: a poll that ends quickly)
   POLL_KEPT_SECONDS?: string;
@@ -389,7 +389,7 @@ export class Channel extends DurableObject<Env> {
     // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit)
     const min = this.env.MIN_CLIENT || "";
     const no: [number, string] | null = role === "watch" || role === "look" ? null
-      : tooOld(q.get("v"), min) ? [4026, `this portal is too old for the relay: ${min} or newer is needed`]
+      : tooOld(q.get("v"), min) ? [4026, `this outstation is too old for the relay: ${min} or newer is needed`]
       : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];

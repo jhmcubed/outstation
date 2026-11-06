@@ -1,9 +1,9 @@
 [package]
-name = "outside-portal"
+name = "outstation"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "the portal's broadcaster: RuneLite's window, its sound and the chat, to the relay"
+description = "⊂λ,ｍ⊙ outstation: RuneLite's window, its sound and the chat, to the relay"
 publish = false
 
 [dependencies]

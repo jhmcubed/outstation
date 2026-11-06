@@ -7,7 +7,7 @@
 //! friends list says so, and the chat's line is all there is. Nothing is sent anywhere: a toast is Windows' own.
 
 /// The id the Start menu's shortcut carries, and the toasts are sent under.
-pub const AUMID: &str = "ghillie.outside-portal";
+pub const AUMID: &str = "ghillie.outstation";
 
 /// The toast's XML, its words escaped (only text: no pictures, no sound of its own beyond Windows' usual).
 pub fn toast_xml(title: &str, body: &str) -> String {

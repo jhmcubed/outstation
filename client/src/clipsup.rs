@@ -25,7 +25,7 @@ pub fn upload(s: &Settings, what: &str, kind: &str, moment: Instant) -> Result<S
     });
     let (body, ct) = multipart(&meta.to_string(), &page.strip, &page.mp4);
     let url = format!("{}/clips/{}?key={}", s.http_base(), enc(&s.channel), enc(&s.key));
-    let r = ureq::post(&url).header("User-Agent", "outside-portal").header("Content-Type", &ct)
+    let r = ureq::post(&url).header("User-Agent", "outstation").header("Content-Type", &ct)
         .config().http_status_as_error(false).build().send(body.as_slice());
     let mut r = r.map_err(|e| format!("the relay is out of reach ({})", e))?;
     let status = r.status().as_u16();
@@ -79,7 +79,7 @@ impl PageClips {
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
             let got = (|| -> Result<Vec<Row>, String> {
-                let mut r = ureq::get(&url).header("User-Agent", "outside-portal").call().map_err(|e| match e {
+                let mut r = ureq::get(&url).header("User-Agent", "outstation").call().map_err(|e| match e {
                     ureq::Error::StatusCode(404) => "this relay doesn't keep clips".to_string(),
                     ureq::Error::StatusCode(c) => format!("couldn't read what's on your page: the relay answered {}", c),
                     _ => format!("couldn't read what's on your page: the relay ({}) isn't answering", base),
@@ -104,9 +104,10 @@ impl PageClips {
     pub fn keep(&mut self, s: &Settings, id: &str, keep: bool, wake: impl Fn() + Send + 'static) {
         let url = format!("{}/clips/{}/{}?key={}&keep={}", s.http_base(), enc(&s.channel), enc(id), enc(&s.key), if keep { 1 } else { 0 });
         let (rows, busy, id) = (self.rows.clone(), self.busy.clone(), id.to_string());
+        let failed = if keep { "couldn't file the clip" } else { "couldn't let the clip go" };
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
-            let r = ureq::post(&url).header("User-Agent", "outside-portal").config().http_status_as_error(false).build().send(&[] as &[u8]);
+            let r = ureq::post(&url).header("User-Agent", "outstation").config().http_status_as_error(false).build().send(&[] as &[u8]);
             match r {
                 Ok(r) if r.status().as_u16() == 200 => {
                     if let Some(Ok(list)) = &mut *rows.lock().unwrap() {
@@ -116,9 +117,9 @@ impl PageClips {
                 Ok(mut r) => {
                     let t = r.body_mut().read_to_string().unwrap_or_default();
                     let why = serde_json::from_str::<Value>(&t).ok().and_then(|v| v.get("error").and_then(|x| x.as_str()).map(|x| x.to_string()));
-                    crate::clip::say(format!("couldn't keep the clip: {}", why.unwrap_or_else(|| format!("the relay answered {}", r.status().as_u16()))));
+                    crate::clip::say(format!("{}: {}", failed, why.unwrap_or_else(|| format!("the relay answered {}", r.status().as_u16()))));
                 }
-                Err(e) => crate::clip::say(format!("couldn't keep the clip ({})", e)),
+                Err(e) => crate::clip::say(format!("{} ({})", failed, e)),
             }
             *busy.lock().unwrap() = false;
             wake();
@@ -131,7 +132,7 @@ impl PageClips {
         let (rows, busy, id) = (self.rows.clone(), self.busy.clone(), id.to_string());
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
-            let r = ureq::delete(&url).header("User-Agent", "outside-portal").call();
+            let r = ureq::delete(&url).header("User-Agent", "outstation").call();
             if let Some(Ok(list)) = &mut *rows.lock().unwrap() {
                 if r.is_ok() { list.retain(|x| x.id != id); }
             }

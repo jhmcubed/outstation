@@ -32,8 +32,8 @@ pub fn install(log_path: PathBuf) {
         }
         if !SHOWN.swap(true, Ordering::SeqCst) {
             let log = LOG_PATH.get().map(|p| p.display().to_string()).unwrap_or_else(|| "portal.log".into());
-            message(&format!("the portal hit a fault and part of it stopped:\n\n{}\n\nclose it and open it again. \
-                              what happened is written in\n{}\n\n\"copy my log\" (in the settings, under more) puts it on the clipboard, to send to the listening post.",
+            message(&format!("the outstation hit a fault and part of it stopped:\n\n{}\n\nclose it and open it again. \
+                              what happened is written in\n{}\n\n\"copy the station log\" (in the settings, under more) puts it on the clipboard, to send to the listening post.",
                              one_line(&what), log));
         }
     }));
@@ -60,7 +60,7 @@ pub fn log_for_sending() -> String {
     text.push_str(&std::fs::read_to_string(p).unwrap_or_default());
     let lines: Vec<&str> = text.lines().collect();
     let tail = &lines[lines.len().saturating_sub(400)..];
-    format!("outside-portal {} · its log, the last {} lines\n{}", crate::settings::VERSION, tail.len(), scrub(&tail.join("\n")))
+    format!("outstation {} · its station log, the last {} lines\n{}", crate::settings::VERSION, tail.len(), scrub(&tail.join("\n")))
 }
 
 /// Keys, watch codes, pickups and Discord webhook addresses out of a text meant to be sent to someone.
@@ -69,7 +69,7 @@ pub fn scrub(text: &str) -> String {
     let word_end = |c: char| c.is_whitespace() || c == ')' || c == '"';
     let mut t = text.to_string();
     for k in ["key=", "code=", "pickup=", "token="] { t = blank_after(&t, k, value_end); }
-    for k in ["discord.com/api/webhooks/", "discordapp.com/api/webhooks/", "portal1:"] { t = blank_after(&t, k, word_end); }
+    for k in ["discord.com/api/webhooks/", "discordapp.com/api/webhooks/", "outstation1:", "portal1:"] { t = blank_after(&t, k, word_end); }
     t
 }
 
@@ -91,7 +91,7 @@ fn message(text: &str) {
     use windows::core::PCWSTR;
     use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONWARNING, MB_OK};
     let w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    let t: Vec<u16> = "⊂λ,ｍ⊙ ✼ the portal".encode_utf16().chain(std::iter::once(0)).collect();
+    let t: Vec<u16> = "⊂λ,ｍ⊙ ✼ the outstation".encode_utf16().chain(std::iter::once(0)).collect();
     unsafe { MessageBoxW(None, PCWSTR(w.as_ptr()), PCWSTR(t.as_ptr()), MB_OK | MB_ICONWARNING); }
 }
 

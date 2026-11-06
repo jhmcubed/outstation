@@ -1,5 +1,7 @@
 # Parity with the Python portal
 
+(11/06/2026: the client is ⊂λ,ｍ⊙ outstation now, `outstation.exe`, with its own words: the attach code is the station key, go live is transmit, the replay buffer the tape, masks redactions. This list keeps the words it had when each line was checked.)
+
 The client replaces ghillie's Python portal (`tools/portal/capture.py`, `sound.py`, `portal-sound`, `tools/launcher/portal_chat.py`, `portal_settings.py`, the relay's Dink handling and `forward.py`), for Jace and everyone else. This is that list (ghillie's `claude/the-portal.md`, "Parity"), with what the client does for each line and how it was checked.
 
 The marks:

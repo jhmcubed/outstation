@@ -47,7 +47,7 @@ pub fn start(settings: Shared) {
             if open && !was_open && !s.on_air {
                 if settings.update(|x| x.on_air = true).is_ok() {
                     WENT_LIVE.store(true, Ordering::SeqCst);
-                    note("RuneLite opened: going live (settings ▸ more: go live by itself whenever RuneLite opens)");
+                    note("RuneLite opened: transmitting (settings ▸ more: transmit by itself whenever RuneLite opens)");
                 }
             }
             if open {
@@ -59,7 +59,7 @@ pub fn start(settings: Shared) {
                 if t.elapsed() >= GONE_FOR {
                     gone_since = None;
                     if s.auto_end && s.on_air && settings.update(|x| x.on_air = false).is_ok() {
-                        note("RuneLite closed: the stream's ended (it goes live again when RuneLite opens)");
+                        note("RuneLite closed: gone dark (it transmits again when RuneLite opens)");
                     }
                 }
             }

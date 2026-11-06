@@ -11,7 +11,7 @@
 //   POST   /admin/channels/<channel>    a new key for it: {"channel", "key", "code"} (code: the attach code)
 //   DELETE /admin/channels/<channel>    taken back: its transmitter cut off, its key refused
 //   GET    /admin/channels              the channels handed out (live, title, client: its last transmitter's version)
-// The attach code is "portal1:" and base64url JSON {"relay", "channel", "key"}: the client takes it in one paste.
+// The attach code (the station key) is "outstation1:" ("portal1:" before 11/06/2026) and base64url JSON {"relay", "channel", "key"}: the client takes it in one paste.
 //
 // Asking for a portal (11/06/2026), so nobody has to email the keeper for a code:
 //   POST   /requests/<channel>  {"player", "note", "pickup"}   a friend's client asks for that player's channel
@@ -159,7 +159,7 @@ function sameText(a: string, b: string): boolean {
 function attachCode(relay: string, channel: string, key: string): string {
   const json = JSON.stringify({ relay, channel, key });
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
-  return "portal1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return "outstation1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function channelStub(env: Env, name: string) {
@@ -335,7 +335,7 @@ export default {
     }
 
     if (url.pathname === "/" && (request.method === "GET" || request.method === "HEAD")) {
-      return new Response("the portal's relay (outside-portal)\n", { headers: { "content-type": "text/plain" } });
+      return new Response("the relay for ⊂λ,ｍ⊙ outstation\n", { headers: { "content-type": "text/plain" } });
     }
     return new Response(null, { status: 404 });
   },

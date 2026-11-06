@@ -22,7 +22,7 @@ const STATIC: i32 = 1;
 const SOUND: i32 = 2;
 const CLIP: i32 = 3;
 const MASK: i32 = 4;
-const NAMES: [&str; 4] = ["static", "sound", "clip", "mask"];
+const NAMES: [&str; 4] = ["static", "sound", "clip", "redaction"];
 
 /// Which keys another program holds (Windows refused them): the settings say so beside each.
 static TAKEN: [AtomicBool; 4] = [AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false)];
@@ -88,7 +88,7 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                         STATIC => {
                             let now = !obscured.load(Ordering::Relaxed);
                             obscured.store(now, Ordering::Relaxed);
-                            note(if now { "static key: viewers see static, the sound and the chat going on (press it again for the picture)".into() } else { "static key: the picture's back".into() });
+                            note(if now { "static key: observers see static, the sound and the chat going on (press it again for the picture)".into() } else { "static key: the picture's back".into() });
                         }
                         SOUND => {
                             let m = crate::sound::next_mode(&settings.get().sound);
@@ -99,7 +99,7 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                         MASK => {
                             let on = !settings.get().masks_on;
                             let _ = settings.update(|s| s.masks_on = on);
-                            note(if on { "mask key: masks on".into() } else { "mask key: masks off (everything goes out)".into() });
+                            note(if on { "redaction key: redactions on".into() } else { "redaction key: redactions off (everything goes out)".into() });
                         }
                         _ => {}
                     }

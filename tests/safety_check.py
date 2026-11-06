@@ -1,8 +1,8 @@
 """The safety check: proof, from the built program itself, that it can't reach into another program, play the game,
 or watch the keyboard (SAFETY.md says what each line means).
 
-    py tests/safety_check.py target/release/outside-portal.exe       the exe's import table, and the client's source
-    py tests/safety_check.py --list target/release/outside-portal.exe  every Windows function it imports
+    py tests/safety_check.py target/release/outstation.exe       the exe's import table, and the client's source
+    py tests/safety_check.py --list target/release/outstation.exe  every Windows function it imports
 
 A Windows program names, in its import table, every function in Windows it links to: its own code's and every
 library's. This reads that table straight out of the file (no tools needed) and fails if any function on the
@@ -226,12 +226,12 @@ def check_source():
 # The only addresses written into the client: everything else it reaches is one you gave it (the relay from your
 # attach code, your Discord webhook if you set one).
 ADDRESSES = {
-    "https://api.github.com/repos/jhmcubed/outside-portal/releases/latest": "is there a newer version? (check_updates)",
+    "https://api.github.com/repos/jhmcubed/outstation/releases/latest": "is there a newer version? (check_updates)",
     "https://relay.ghillie.workers.dev": "the listening post's relay: where asking for a portal goes (ask.rs HOME_RELAY), and the "
                                          "friends list's open portals before you're attached",
     "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; and the Outside pages the "
                             "friends list opens in your browser when you click a name (win.rs open_page: ghillie.wiki's only)",
-    "https://github.com/jhmcubed/outside-portal/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
+    "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
                                                                      "screen's link (win.rs open_page)",
     "http://127.0.0.1": "Dink's address on this PC, shown to you",
     "ws://127.0.0.1": "a relay of your own on this PC (relay-py), only when you choose one by hand",
@@ -259,7 +259,7 @@ def check_network():
 def main(argv):
     listing = "--list" in argv
     needs_icon = "--needs-icon" in argv    # (a release, built with MSVC, carries build.rs's icon and version block)
-    paths = [a for a in argv if not a.startswith("--")] or [os.path.join(ROOT, "target", "release", "outside-portal.exe")]
+    paths = [a for a in argv if not a.startswith("--")] or [os.path.join(ROOT, "target", "release", "outstation.exe")]
     failed = False
     for p in paths:
         got, bad, known = check_exe(p)
@@ -279,7 +279,7 @@ def main(argv):
         failed |= bool(extra)
         kinds = resource_kinds(p)
         has = {3, 14, 16} <= kinds
-        print("  its icon and name in Windows: %s" % ("yes (its icon, and outside-portal in its details)" if has else
+        print("  its icon and name in Windows: %s" % ("yes (its icon, and ⊂λ,ｍ⊙ outstation in its details)" if has else
                                                        "no (build.rs adds them in an MSVC build only)"))
         failed |= needs_icon and not has
     src = check_source()

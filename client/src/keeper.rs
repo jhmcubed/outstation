@@ -129,10 +129,10 @@ pub fn asking() -> Result<Vec<AskRow>, String> {
 pub fn answer(channel: &str, yes: bool) -> Result<String, String> {
     if yes {
         call("POST", &format!("/admin/requests/{}", channel), true)?;
-        Ok(format!("{}: handed out · their portal attaches itself within a minute, at {}{}", channel, SITE.trim_start_matches("https://"), channel))
+        Ok(format!("{}: issued · their outstation attaches itself within a minute, at {}{}", channel, SITE.trim_start_matches("https://"), channel))
     } else {
         call("DELETE", &format!("/admin/requests/{}", channel), true)?;
-        Ok(format!("{}: turned down · their portal says so", channel))
+        Ok(format!("{}: denied · their outstation says so", channel))
     }
 }
 
@@ -156,7 +156,7 @@ pub fn set_notice(text: &str) -> Result<String, String> {
             .header("Content-Type", "application/json").send(json!({ "text": text.trim() }).to_string().as_bytes())
     };
     match r {
-        Ok(_) => Ok(if text.trim().is_empty() { "the notice is taken down".into() } else { "the notice went to every portal".into() }),
+        Ok(_) => Ok(if text.trim().is_empty() { "the bulletin is taken down".into() } else { "the bulletin went to every outstation".into() }),
         Err(ureq::Error::StatusCode(403)) => Err("the relay refused the admin token (is it the one Cloudflare has?)".into()),
         Err(ureq::Error::StatusCode(c)) => Err(format!("the relay answered {}", c)),
         Err(e) => Err(format!("the relay is out of reach ({})", e)),
@@ -167,7 +167,7 @@ pub fn set_notice(text: &str) -> Result<String, String> {
 pub fn give(player: &str) -> Result<(String, String), String> {
     let ch = channel_of(player)?;
     let got = call("POST", &format!("/admin/channels/{}", ch), true)?;
-    let code = got.get("code").and_then(|x| x.as_str()).ok_or("the relay gave no attach code")?.to_string();
+    let code = got.get("code").and_then(|x| x.as_str()).ok_or("the relay gave no station key")?.to_string();
     Ok((ch, code))
 }
 
@@ -180,22 +180,22 @@ pub fn take(player: &str) -> Result<String, String> {
 /// The portals button's words: with how many are asking for a portal, when any are.
 pub fn portals_words(asking: usize, open: bool) -> String {
     let arrow = if open { "◂" } else { "▸" };
-    if asking == 0 { format!("portals {}", arrow) } else { format!("portals · {} asking {}", asking, arrow) }
+    if asking == 0 { format!("outstations {}", arrow) } else { format!("outstations · {} requesting {}", asking, arrow) }
 }
 
 /// The chat's line for those newly asking for a portal (None for nobody).
 pub fn asking_line(players: &[String]) -> Option<String> {
     match players {
         [] => None,
-        [one] => Some(format!("{} is asking for a portal · open portals to hand one out or turn it down", one)),
-        many => Some(format!("{} are asking for a portal: {} · open portals to answer them", many.len(), many.join(", "))),
+        [one] => Some(format!("{} is requesting a key · open outstations to issue one or deny it", one)),
+        many => Some(format!("{} are requesting keys: {} · open outstations to answer them", many.len(), many.join(", "))),
     }
 }
 
 /// What to send them with the code (the words are placeholders, Jace's to change; friends.py's message).
 pub fn message(channel: &str, code: &str) -> String {
-    format!("your portal's attach code:\n\n{}\n\nopen outside-portal, paste it, and press go live. your portal opens at {}{}\n\
-             (keep the code to yourself: it's the key to your channel)", code, SITE, channel)
+    format!("your station key:\n\n{}\n\nopen {}, paste it, and press transmit. your outstation opens at {}{}\n\
+             (keep the key to yourself: it opens your outstation, nothing else)", code, crate::settings::NAME, SITE, channel)
 }
 
 /// The drawer's state: the list (read again every 10 s while it's open), what's being asked, and the last answer.
@@ -301,7 +301,7 @@ impl Keeper {
         let (note, rows) = (self.note.clone(), self.rows.clone());
         std::thread::spawn(move || {
             *note.lock().unwrap() = match take(&player) {
-                Ok(ch) => format!("{}: taken back · its key refused, its stream cut off (viewers stay, off air)", ch),
+                Ok(ch) => format!("{}: stood down · its key refused, its transmission cut off (observers stay, dark)", ch),
                 Err(e) => e,
             };
             if let Ok(l) = listing() { *rows.lock().unwrap() = Some(Ok(l)); }
@@ -364,11 +364,11 @@ mod tests {
 
     #[test]
     fn those_asking_are_counted_and_told_once() {
-        assert_eq!(portals_words(0, false), "portals ▸");
-        assert_eq!(portals_words(2, true), "portals · 2 asking ◂");
+        assert_eq!(portals_words(0, false), "outstations ▸");
+        assert_eq!(portals_words(2, true), "outstations · 2 requesting ◂");
         assert_eq!(asking_line(&[]), None);
-        assert_eq!(asking_line(&["Moss Fern".into()]).unwrap(), "Moss Fern is asking for a portal · open portals to hand one out or turn it down");
-        assert_eq!(asking_line(&["a".into(), "b".into()]).unwrap(), "2 are asking for a portal: a, b · open portals to answer them");
+        assert_eq!(asking_line(&["Moss Fern".into()]).unwrap(), "Moss Fern is requesting a key · open outstations to issue one or deny it");
+        assert_eq!(asking_line(&["a".into(), "b".into()]).unwrap(), "2 are requesting keys: a, b · open outstations to answer them");
         let mut k = Keeper::new();
         let row = |ch: &str, at: u64| AskRow { channel: ch.into(), player: ch.into(), note: String::new(), at_ms: at, given: false };
         *k.asks.lock().unwrap() = Some(Ok(vec![row("moss", 1), row("fern", 2)]));

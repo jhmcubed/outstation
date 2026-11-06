@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 // (its own title: ghillie's Python chat window is "the portal ✼ chat", and the two may be open at once)
-pub const TITLE: &str = "⊂λ,ｍ⊙ ✼ the portal";
+pub const TITLE: &str = crate::settings::NAME;
 // the colours, as the look has them now (theme.rs: jute's browns at the tint, or anyone's own)
 #[allow(non_snake_case)] fn ABYSS() -> Color32 { theme::pal().bg }
 #[allow(non_snake_case)] fn LIME() -> Color32 { theme::pal().lime }
@@ -39,9 +39,9 @@ const LABELS: &[(&str, &str)] = &[("off", "off"), ("game", "the game"), ("all", 
 const TITLE_H: f32 = 30.0;
 /// the pings' choice: (its place, its words, what it does)
 const PINGS: [(u8, &str, &str); 3] = [
-    (0, "off", "viewers' clicks on the picture go nowhere"),
-    (1, "the site", "a ring on every viewer's page where someone pointed"),
-    (2, "the site + my screen", "on viewers' pages, and a ring over your RuneLite too: only on this PC, never in the stream"),
+    (0, "off", "observers' clicks on the picture go nowhere"),
+    (1, "the site", "a ring on every observer's page where someone pointed"),
+    (2, "the site + my screen", "on observers' pages, and a ring over your RuneLite too: only on this PC, never in the transmission"),
 ];
 const EDGE: f32 = 6.0;
 const CURSOR_SWITCH: &str = "my cursor in the picture";
@@ -407,7 +407,7 @@ impl App {
                 Ok(mut st) => { st.refresh(true); (Some(st), None) }
                 Err(e) => (None, Some(format!("the field station's file wouldn't read: {}", e))),
             },
-            None => (None, Some("no launcher.json found up from here (--station <file>): the portal alone".to_string())),
+            None => (None, Some("no launcher.json found up from here (--station <file>): the outstation alone".to_string())),
         };
         #[cfg(feature = "station")]
         let (tray, tray_items, station_tray) = make_tray(&settings.get(), station.as_ref());
@@ -418,8 +418,8 @@ impl App {
         if settings.get().check_updates {
             let n = newer.clone();
             std::thread::spawn(move || {
-                let r = ureq::get("https://api.github.com/repos/jhmcubed/outside-portal/releases/latest")
-                    .header("User-Agent", "outside-portal").call();
+                let r = ureq::get("https://api.github.com/repos/jhmcubed/outstation/releases/latest")
+                    .header("User-Agent", "outstation").call();
                 if let Ok(mut r) = r {
                     if let Ok(v) = r.body_mut().read_to_string().map(|t| serde_json::from_str::<Value>(&t).unwrap_or(Value::Null)) {
                         if let Some(tag) = v.get("tag_name").and_then(|x| x.as_str()) {
@@ -469,12 +469,12 @@ impl App {
             std::thread::spawn(move || if let Err(e) = crate::shortcut::make(&p) { crate::transmit::log(&format!("the Start menu's shortcut: {}", e)); });
         }
         if let Some(what) = crate::crash::last_time() {
-            app.note(format!("the portal stopped unexpectedly last time ({}). settings ▸ more ▸ \"copy my log\" puts what happened on the clipboard, to send to the listening post", what));
+            app.note(format!("the outstation stopped unexpectedly last time ({}). settings ▸ more ▸ \"copy the station log\" puts what happened on the clipboard, to send to the listening post", what));
         }
         if !s.attached() {
-            if let Some(code) = win::paste_text().filter(|c| c.trim().starts_with("portal1:")) {
+            if let Some(code) = win::paste_text().filter(|c| crate::settings::is_key(c)) {
                 app.attach_code = code.trim().to_string();
-                app.attach_note = "an attach code was on the clipboard".into();
+                app.attach_note = "a station key was on the clipboard".into();
             }
         }
         if std::env::args().any(|a| a == "--show-settings") {
@@ -519,7 +519,7 @@ impl App {
             let friend = s2.friends.iter().any(|f| crate::ask::channel_of(f).ok().as_deref() == Some(from.as_str()));
             let t = self.thread(&from, &name);
             if t.lines.is_empty() && !friend {
-                t.lines.push(DmLine { mine: false, text: format!("{} isn't on your friends list (their portal's name: {})", t.name, from), when: String::new(), note: true });
+                t.lines.push(DmLine { mine: false, text: format!("{} isn't on your friends list (their outstation's name: {})", t.name, from), when: String::new(), note: true });
             }
             t.lines.push(DmLine { mine: false, text, when, note: false });
             if !open { t.unread += 1; }
@@ -531,7 +531,7 @@ impl App {
             let t = self.thread(&to, "");
             t.lines.push(DmLine { mine: true, text, when, note: false });
             if held {
-                t.lines.push(DmLine { mine: false, text: "their portal's closed: the relay holds it for them till it opens (a week at most)".into(), when: String::new(), note: true });
+                t.lines.push(DmLine { mine: false, text: "their outstation's closed: the relay holds it for them till it opens (a week at most)".into(), when: String::new(), note: true });
             }
         } else if let Some(d) = m.get("dm_failed") {
             let (to, text, why) = (s(d, "to"), s(d, "text"), s(d, "why"));
@@ -576,7 +576,7 @@ impl App {
             let (text, at) = (n.get("text").and_then(|x| x.as_str()).unwrap_or(""), n.get("at").and_then(|x| x.as_u64()).unwrap_or(0));
             if !text.is_empty() && at != self.settings.get().notice_seen {
                 let _ = self.settings.update(|s| s.notice_seen = at);
-                self.note(format!("from the listening post: {}", text));
+                self.note(format!("bulletin from the listening post: {}", text));
             }
             return;
         }
@@ -658,12 +658,12 @@ impl App {
         let s = self.settings.get();
         if s.on_air && self.up && self.live {
             let _ = self.settings.update(|s| s.on_air = false);
-            self.note("the stream's ended: Outside shows the portal off air");
+            self.note("the transmission's ended: Outside shows the outstation dark");
         } else {
             #[cfg(feature = "station")]
             self.station_relay();
             if let Err(e) = self.settings.update(|s| s.on_air = true) {
-                self.note(format!("couldn't go live: {}", e));
+                self.note(format!("couldn't transmit: {}", e));
             }
             self.started = Instant::now();
         }
@@ -676,19 +676,19 @@ impl App {
             return (format!("stopped: {}", why), PINK());
         }
         if !self.up {
-            return if self.started.elapsed().as_secs() < 8 { ("starting the portal…".into(), GREY()) }
+            return if self.started.elapsed().as_secs() < 8 { ("starting the outstation…".into(), GREY()) }
                    else { ("the relay isn't answering (it keeps trying)".into(), GREY()) };
         }
         if !s.on_air {
-            ("off air · the stream's ended".into(), GREY())
+            ("dark · the transmission's ended".into(), GREY())
         } else if self.live && self.open {
-            (format!("live · {} watching", self.viewers), PINK())
+            (format!("transmitting · {} observing", self.viewers), PINK())
         } else if self.live && self.static_on {
-            (format!("static · viewers see \"signal obscured\", the sound going on (the static key) · {} watching", self.viewers), TEAL())
+            (format!("static · observers see \"signal obscured\", the sound going on (the static key) · {} observing", self.viewers), TEAL())
         } else if self.live {
-            (format!("paused · RuneLite minimised or closed · {} watching", self.viewers), TEAL())
+            (format!("no signal · RuneLite minimised or closed · {} observing", self.viewers), TEAL())
         } else {
-            ("going live: looking for RuneLite…".into(), GREY())
+            ("starting to transmit: looking for RuneLite…".into(), GREY())
         }
     }
 
@@ -787,18 +787,18 @@ impl App {
         }
         let Some(items) = &self.tray_items else { return };
         let s = self.settings.get();
-        items.live.set_text(if s.on_air && self.up && self.live { "end stream" } else { "go live" });
+        items.live.set_text(if s.on_air && self.up && self.live { "go dark" } else { "transmit" });
         for (m, i) in &items.modes {
             i.set_checked(*m == sound::mode_of(&s.sound));
         }
         if let Some(t) = &self.tray {
             #[cfg(feature = "station")]
             let _ = t.set_tooltip(Some(match &self.station {
-                Some(st) => format!("⊂λ,ｍ⊙ field station\nthe portal · {}\n{}", self.status_line().0, st.tooltip()),
-                None => format!("the portal · {}", self.status_line().0),
+                Some(st) => format!("⊂λ,ｍ⊙ field station\nthe outstation · {}\n{}", self.status_line().0, st.tooltip()),
+                None => format!("the outstation · {}", self.status_line().0),
             }));
             #[cfg(not(feature = "station"))]
-            let _ = t.set_tooltip(Some(format!("the portal · {}", self.status_line().0)));
+            let _ = t.set_tooltip(Some(format!("the outstation · {}", self.status_line().0)));
         }
     }
 }
@@ -833,8 +833,8 @@ type SoundItems = Vec<(String, tray_icon::menu::CheckMenuItem)>;
 /// the portal's own part of the tray's menu: open it, go live, the sound
 fn tray_menu(_s: &Settings) -> (tray_icon::menu::Menu, tray_icon::menu::MenuItem, tray_icon::menu::MenuItem, SoundItems, &'static str) {
     use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
-    let open = MenuItem::new("open the portal", true, None);
-    let live = MenuItem::new("go live", true, None);
+    let open = MenuItem::new("open the outstation", true, None);
+    let live = MenuItem::new("transmit", true, None);
     let modes: Vec<(String, CheckMenuItem)> =
         LABELS.iter().map(|(m, l)| (m.to_string(), CheckMenuItem::new(*l, true, false, None))).collect();
     let snd = Submenu::new("sound", true);
@@ -850,7 +850,7 @@ fn tray_finish(menu: tray_icon::menu::Menu, open: tray_icon::menu::MenuItem, liv
                quit: tray_icon::menu::MenuItem) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) {
     let (rgba, w, h) = tray_frame(None);
     let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok();
-    let mut b = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("the portal");
+    let mut b = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("the outstation");
     if let Some(i) = icon {
         b = b.with_icon(i);
     }
@@ -929,7 +929,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let wake = move || ctx.request_repaint();
     app.keeper.read(false, wake.clone());
-    ui.label(rich("friends' portals", 16.0, LIME()));
+    ui.label(rich("friends' outstations", 16.0, LIME()));
     let relay = crate::keeper::load().get("relay").and_then(|x| x.as_str()).unwrap_or("").to_string();
     ui.label(rich(&if relay.is_empty() { "no relay set yet".to_string() } else { format!("on {}", crate::keeper::http_base(&relay)) }, 14.0, QUIET()));
     ui.add_space(4.0);
@@ -944,13 +944,13 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if button(ui, "save", true, None).clicked() {
                 match app.keeper.save_relay() {
-                    Ok(()) => { app.note("friends' portals: the relay's address saved"); app.keeper.read(true, wake.clone()); }
+                    Ok(()) => { app.note("friends' outstations: the relay's address saved"); app.keeper.read(true, wake.clone()); }
                     Err(e) => app.note(format!("couldn't save it: {}", e)),
                 }
             }
             let has = app.keeper.has_token();
             if button(ui, if has { "a new token" } else { "make a token" }, true, None)
-                .on_hover_text(tip("a new admin token, kept in Documents\\ghillie portal\\admin.json and copied: Cloudflare needs the same one (in outside-portal\\relay: npx wrangler secret put ADMIN_TOKEN, and paste it). A new one stops the old one working once Cloudflare has it.")).clicked() {
+                .on_hover_text(tip("a new admin token, kept in Documents\\ghillie portal\\admin.json and copied: Cloudflare needs the same one (in the outstation repository's relay folder: npx wrangler secret put ADMIN_TOKEN, and paste it). A new one stops the old one working once Cloudflare has it.")).clicked() {
                 match app.keeper.make_token() {
                     Ok(t) => { win::copy_text(&t); app.note("a new admin token is on the clipboard: give Cloudflare the same one (npx wrangler secret put ADMIN_TOKEN)"); }
                     Err(e) => app.note(e),
@@ -958,7 +958,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
             }
             ui.label(rich(if has { "a token is kept on this PC" } else { "no token yet" }, 14.0, GREY()));
         });
-        ui.label(wrapped("anyone with the token can hand out and take back every channel: it stays on this PC (Documents\\ghillie portal\\admin.json), never in a repository", 14.0, QUIET(), ui.available_width()));
+        ui.label(wrapped("anyone with the token can issue a key for any channel and stand any of them down: it stays on this PC (Documents\\ghillie portal\\admin.json), never in a repository", 14.0, QUIET(), ui.available_width()));
     }
     ui.add_space(10.0);
     // those asking for a portal (a friend's client, from its attach screen; ask.rs)
@@ -966,14 +966,14 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     if let Some(Ok(asks)) = asks {
         if !asks.is_empty() {
             let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-            ui.label(rich(&format!("asking ({})", asks.len()), 16.0, PINK()));
+            ui.label(rich(&format!("requesting ({})", asks.len()), 16.0, PINK()));
             for r in asks {
                 ui.horizontal(|ui| {
                     ui.label(rich(&format!("{} · {} ago", r.player, ago(Duration::from_millis(now_ms.saturating_sub(r.at_ms)))), 14.0, TEXT()));
-                    if r.given { ui.label(rich("has a portal already", 14.0, PINK())); }
+                    if r.given { ui.label(rich("has an outstation already", 14.0, PINK())); }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "turn down", true, None).clicked() { app.keeper.confirm_ask = Some((false, r.channel.clone())); }
-                        if button(ui, "hand out", true, None).clicked() {
+                        if button(ui, "deny", true, None).clicked() { app.keeper.confirm_ask = Some((false, r.channel.clone())); }
+                        if button(ui, "issue a key", true, None).clicked() {
                             if r.given { app.keeper.confirm_ask = Some((true, r.channel.clone())); }
                             else { app.keeper.answer(r.channel.clone(), true, wake.clone()); }
                         }
@@ -982,11 +982,11 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
                 if !r.note.is_empty() { ui.label(wrapped(&format!("“{}”", r.note), 14.0, GREY(), ui.available_width())); }
             }
             if let Some((yes, ch)) = app.keeper.confirm_ask.clone() {
-                let words = if yes { format!("{} has a portal already: handing it out makes a new key, and whoever has the old code is cut off. is this request theirs?", ch) }
-                            else { format!("turn down the request for {}? their portal says so (they can ask again)", ch) };
+                let words = if yes { format!("{} has an outstation already: issuing a key re-keys it, and whoever has the old key is cut off. is this request theirs?", ch) }
+                            else { format!("deny the request for {}? their outstation says so (they can request again)", ch) };
                 ui.label(wrapped(&words, 14.0, PINK(), ui.available_width()));
                 ui.horizontal(|ui| {
-                    if button(ui, if yes { "hand it out" } else { "turn it down" }, true, None).clicked() {
+                    if button(ui, if yes { "issue it" } else { "deny it" }, true, None).clicked() {
                         app.keeper.confirm_ask = None;
                         app.keeper.answer(ch.clone(), yes, wake.clone());
                     }
@@ -997,11 +997,11 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     // a notice to every portal (docs/protocol.md, "A notice from the keeper")
-    ui.label(rich("a notice to every portal", 16.0, LIME()));
+    ui.label(rich("a bulletin to every outstation", 16.0, LIME()));
     let now = app.keeper.notice_now.lock().unwrap().clone().unwrap_or_default();
     ui.label(wrapped(&if now.is_empty() { "none up now".to_string() } else { format!("up now: “{}”", now) }, 14.0, GREY(), ui.available_width()));
     ui.horizontal(|ui| {
-        let r = field(ui, &mut app.keeper.notice_text, 300.0, "one line every friend's portal shows in its chat", false);
+        let r = field(ui, &mut app.keeper.notice_text, 300.0, "one line every friend's outstation shows in its chat", false);
         let typed = app.keeper.notice_text.trim().to_string();
         if (button(ui, "send it", true, None).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && !typed.is_empty() {
             app.keeper.send_notice(typed, wake.clone());
@@ -1011,11 +1011,11 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.add_space(10.0);
     // hand one out
-    ui.label(rich("hand one out", 16.0, LIME()));
+    ui.label(rich("issue a key", 16.0, LIME()));
     ui.horizontal(|ui| {
         ui.label(rich("their player's name:", 14.0, GREY()));
         let r = field(ui, &mut app.keeper.name, 160.0, "", false);
-        let go = button(ui, "hand out", true, None).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+        let go = button(ui, "issue", true, None).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
         if go {
             match crate::keeper::channel_of(&app.keeper.name) {
                 Err(e) => app.note(e),
@@ -1027,16 +1027,16 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     let answer = app.keeper.answer.lock().unwrap().clone();
     match answer {
         Some(Ok((ch, code))) => {
-            ui.label(rich(&format!("{}'s attach code:", ch), 14.0, GREY()));
+            ui.label(rich(&format!("{}'s station key:", ch), 14.0, GREY()));
             ui.label(wrapped(&code, 13.0, TEAL(), ui.available_width()));
             ui.horizontal(|ui| {
-                if button(ui, "copy the code", true, None).clicked() { win::copy_text(&code); app.note("the attach code is on the clipboard"); }
+                if button(ui, "copy the key", true, None).clicked() { win::copy_text(&code); app.note("the station key is on the clipboard"); }
                 if button(ui, "copy a message for them", true, None).clicked() {
                     win::copy_text(&crate::keeper::message(&ch, &code));
-                    app.note("a message with the code is on the clipboard");
+                    app.note("a message with the key is on the clipboard");
                 }
             });
-            ui.label(rich(&format!("their portal: {}{}", crate::keeper::SITE.trim_start_matches("https://"), ch), 14.0, QUIET()));
+            ui.label(rich(&format!("their outstation: {}{}", crate::keeper::SITE.trim_start_matches("https://"), ch), 14.0, QUIET()));
         }
         Some(Err(e)) => { ui.label(rich(&e, 14.0, PINK())); }
         None => {}
@@ -1044,11 +1044,11 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     // asked first
     if let Some((taking, ch)) = app.keeper.confirm.clone() {
         ui.add_space(6.0);
-        let words = if taking { format!("take {} back? its key is refused and its stream cut off (viewers stay, off air)", ch) }
-                    else { format!("{} has one already: a new code makes a new key, and their old code stops working", ch) };
+        let words = if taking { format!("stand {} down? its key is refused and its transmission cut off (observers stay, dark)", ch) }
+                    else { format!("{} has a key already: re-keying makes a new one, and their old key stops working", ch) };
         ui.label(wrapped(&words, 14.0, PINK(), ui.available_width()));
         ui.horizontal(|ui| {
-            if button(ui, if taking { "take it back" } else { "a new code" }, true, None).clicked() {
+            if button(ui, if taking { "stand it down" } else { "re-key" }, true, None).clicked() {
                 app.keeper.confirm = None;
                 if taking { app.keeper.take(ch.clone(), wake.clone()); } else { app.keeper.give(ch.clone(), wake.clone()); }
             }
@@ -1060,7 +1060,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(10.0);
     // every channel handed out
     ui.horizontal(|ui| {
-        ui.label(rich("handed out", 16.0, LIME()));
+        ui.label(rich("issued", 16.0, LIME()));
         if button(ui, "read again", true, None).clicked() { app.keeper.read(true, wake.clone()); }
     });
     let rows = app.keeper.rows.lock().unwrap().clone();
@@ -1070,18 +1070,18 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
         Some(Ok(rows)) if rows.is_empty() => { ui.label(rich("none yet", 14.0, GREY())); }
         Some(Ok(rows)) => {
             let total: u64 = rows.iter().map(|r| r.live_s).sum();
-            ui.label(rich(&format!("this month: {} on air in all", hours(total)), 14.0, GREY()))
-                .on_hover_text(tip("every channel's time live since the 1st (UTC), as the relay counts it: Cloudflare's bill follows it (claude/the-portal.md, \"Hosting, checked again\")"));
+            ui.label(rich(&format!("this month: {} transmitting in all", hours(total)), 14.0, GREY()))
+                .on_hover_text(tip("every channel's time transmitting since the 1st (UTC), as the relay counts it: Cloudflare's bill follows it (claude/the-portal.md, \"Hosting, checked again\")"));
             for r in rows {
                 ui.horizontal(|ui| {
-                    let words = if r.live { format!("{} · live · {} watching", r.channel, r.viewers) } else { format!("{} · off air", r.channel) };
+                    let words = if r.live { format!("{} · transmitting · {} observing", r.channel, r.viewers) } else { format!("{} · dark", r.channel) };
                     ui.label(rich(&words, 14.0, if r.live { PINK() } else { TEXT() }));
                     if !r.title.is_empty() { ui.label(rich(&r.title, 14.0, GREY())); }
                     if !r.client.is_empty() { ui.label(rich(&format!("v{}", r.client), 13.0, QUIET())); }
                     if r.live_s > 0 { ui.label(rich(&format!("{} this month", hours(r.live_s)), 13.0, QUIET())); }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "take back", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
-                        if button(ui, "new code", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
+                        if button(ui, "stand down", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
+                        if button(ui, "re-key", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
                     });
                 });
             }
@@ -1351,23 +1351,23 @@ impl SettingsPanel {
                 Err(why) => self.status = (format!("no sample: {}. The numbers below wait for one (open RuneLite, then take a new sample).", why), QUIET()),
             }
         }
-        ui.label(rich("the stream's settings", 16.0, LIME()));
+        ui.label(rich("the transmission's settings", 16.0, LIME()));
         if self.values() != self.saved {
             ui.label(rich("not saved", 14.0, PINK()));
         } else {
-            ui.label(rich("what the portal sends, and what it costs", 16.0, QUIET()));
+            ui.label(rich("what the outstation sends, and what it costs", 16.0, QUIET()));
         }
         ui.add_space(8.0);
-        bar(ui, "frames a second", "a second", 1, 60, 1, &mut self.fps, "how many pictures a second viewers get: more is smoother, and each one costs upload (on your own relay, for every viewer)");
+        bar(ui, "frames a second", "a second", 1, 60, 1, &mut self.fps, "how many pictures a second observers get: more is smoother, and each one costs upload (on your own relay, for every observer)");
         bar(ui, "width", "px", 192, 1536, 16, &mut self.width, "the picture's width as it leaves this PC (never wider than the game itself): wider is sharper, and heavier");
         let mut q = self.quality as u32;
         if bar(ui, "quality", "", 10, 95, 1, &mut q, "each picture's JPEG quality: higher is cleaner and heavier; below about 50 the edges start to smear") { self.quality = q as u8; }
-        bar(ui, "viewers at once", "at most", 1, 20, 1, &mut self.viewers, "how many can watch at once; the rest wait in line for a spot (and can still chat)");
+        bar(ui, "observers at once", "at most", 1, 20, 1, &mut self.viewers, "how many can observe at once; the rest wait on standby (and can still chat)");
         // the picture as viewers get it, scaled to fit with hard pixels
         let boxsize = Vec2::new(ui.available_width().min(512.0), 300.0);
         let (rect, _) = ui.allocate_exact_size(boxsize, Sense::hover());
         ui.painter().rect_filled(rect, 0.0, FIELD());
-        let mut weight = format!("{} a second, {} px wide, quality {}, {} watching at most", self.fps, self.width, self.quality, self.viewers);
+        let mut weight = format!("{} a second, {} px wide, quality {}, {} observing at most", self.fps, self.width, self.quality, self.viewers);
         if let Some(img) = &self.sample {
             let key = (self.width.min(img.w), 0, self.quality);
             if self.shown.as_ref().map_or(true, |s| s.3 != (key.0, key.1, key.2)) {
@@ -1389,10 +1389,10 @@ impl SettingsPanel {
                 let mbit = kb * self.fps as f64 * 8.0 / 1024.0;
                 weight = if settings.get().relay.starts_with("wss://") {
                     // (on Cloudflare the relay sends each viewer their copy: this PC sends one, however many watch)
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many watch: the relay server sends each of your viewers their own copy",
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many observe: the relay server sends each of your observers their own copy",
                             w, h, kb, capped, self.fps, kb * self.fps as f64, mbit)
                 } else {
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each viewer: this portal is on a relay of its own ({}), which sends every copy from this PC's upload\n{} watching at most: about {:.1} Mbit/s up in all (on Cloudflare's relay it would be {:.1}, once)",
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each observer: this outstation is on a relay of its own ({}), which sends every copy from this PC's upload\n{} observing at most: about {:.1} Mbit/s up in all (on Cloudflare's relay it would be {:.1}, once)",
                             w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, settings.get().relay, self.viewers, mbit * self.viewers as f64, mbit)
                 };
             }
@@ -1413,7 +1413,7 @@ impl SettingsPanel {
                     match settings.update(|s| { s.fps = f; s.width = w; s.quality = q; s.max_viewers = v; }) {
                         Ok(()) => {
                             self.saved = self.values();
-                            self.status = ("saved: it all takes at once, the viewer cap too".into(), LIME());
+                            self.status = ("saved: it all takes at once, the observer cap too".into(), LIME());
                         }
                         Err(e) => self.status = (format!("couldn't save: {}", e), PINK()),
                     }
@@ -1432,26 +1432,27 @@ impl SettingsPanel {
         let s = settings.get();
         let mut replay = s.replay_seconds.min(30);
         let top = ui.cursor().top();
-        let changed = bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the portal sent, kept in memory only, so the clip key can save them. 0 keeps nothing.");
+        let changed = bar(ui, "the tape", "s kept", 0, 30, 1, &mut replay, "the last few seconds of what the outstation sent, always rolling, kept in memory only, so the clip key can save them. 0 keeps nothing.");
         if self.find_replay {
             self.find_replay = false;
             let r = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
             ui.scroll_to_rect(r, Some(egui::Align::Center));
-            self.status = ("the replay buffer: some seconds here, and clips can save themselves".into(), LIME());
+            self.status = ("the tape: some seconds here, and clips can save themselves".into(), LIME());
         }
         if changed {
             let _ = settings.update(|x| x.replay_seconds = replay);
-            self.status = (if replay == 0 { "the replay buffer: off".into() } else { format!("the replay buffer: the last {} s (the clip key, or \"clip\", saves them)", replay) }, LIME());
+            self.status = (if replay == 0 { "the tape: off".into() } else { format!("the tape: the last {} s, always rolling (the clip key, or \"clip\", saves them)", replay) }, LIME());
         }
-        ui.label(rich("hotkeys", 16.0, LIME())).on_hover_text(tip("keys that work wherever you are, RuneLite included. The portal is told of these keys only (Windows' RegisterHotKey), never anything else you type."));
-        const HOTKEYS: [(&str, &str); 4] = [("static key", "shows viewers static, the sound going on"),
+        ui.label(rich("hotkeys", 16.0, LIME())).on_hover_text(tip("keys that work wherever you are, RuneLite included. The outstation is told of these keys only (Windows' RegisterHotKey), never anything else you type."));
+        const HOTKEYS: [(&str, &str); 4] = [("static key", "shows observers static, the sound going on"),
                                             ("sound key", "the sound: off, the game, game + desktop"),
-                                            ("clip key", "saves the replay buffer as a clip"),
-                                            ("mask key", "your own masks off and on")];
+                                            ("clip key", "saves the tape as a clip"),
+                                            ("redaction key", "your own redactions off and on")];
         let current = [s.static_key.clone(), s.sound_key.clone(), s.clip_key.clone(), s.mask_key.clone()];
+        let names_w = HOTKEYS.iter().map(|(l, _)| text_w(ui, l, 16.0) + 6.0).fold(86.0, f32::max);
         for (i, (label, what)) in HOTKEYS.iter().enumerate() {
             ui.horizontal(|ui| {
-                ui.add_sized([86.0, 18.0], egui::Label::new(rich(label, 16.0, LIME())));
+                ui.add_sized([names_w, 18.0], egui::Label::new(rich(label, 16.0, LIME())));
                 let shown = if self.listening == Some(i) { ("press a key…".to_string(), PINK()) } else { (win::key_name(&current[i]), Color32::WHITE) };
                 ui.add_sized([110.0, 18.0], egui::Label::new(rich(&shown.0, 16.0, shown.1)));
                 if button(ui, if self.listening == Some(i) { "never mind" } else { "change" }, true, None).clicked() {
@@ -1627,30 +1628,30 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         };
         choice(ui, "what goes out:", &mut s.view, &[
             ("canvas", "the whole game", "everything in RuneLite's game area: the world, the minimap, the side panel and the chat"),
-            ("viewport", "fixed mode's 3D view", "only with RuneLite's Fixed layout (Classic, 765 × 503): just the 3D world in its frame, without the minimap, side panel and chat round it. In Resizable mode it changes nothing; use masks there.")]);
+            ("viewport", "fixed mode's 3D view", "only with RuneLite's Fixed layout (Classic, 765 × 503): just the 3D world in its frame, without the minimap, side panel and chat round it. In Resizable mode it changes nothing; use redactions there.")]);
         choice(ui, "taken by:", &mut s.method, &[
             ("auto", "the first that works", "Windows Graphics Capture, else PrintWindow, else the screen"),
             ("gpu", "Windows Graphics Capture", "the graphics card's own copy of RuneLite's window: the quickest, and it never needs the window in front"),
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
         ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
-        ui.checkbox(&mut s.auto_live, rich("go live by itself whenever RuneLite opens", 16.0, GREY()))
-            .on_hover_text(tip("when RuneLite opens (or is already open as the portal starts), the portal goes live by itself; ticked with RuneLite open, within a second. If you press end stream while RuneLite's open, the portal stays off air: it only goes live again the next time RuneLite opens."));
+        ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+            .on_hover_text(tip("when RuneLite opens (or is already open as the outstation starts), the outstation transmits by itself; ticked with RuneLite open, within a second. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
         ui.add_enabled_ui(s.auto_live, |ui| {
-            ui.checkbox(&mut s.auto_end, rich("…and end the stream when RuneLite closes", 16.0, GREY()))
-                .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) ends the stream, so a forgotten portal doesn't stay on air"));
+            ui.checkbox(&mut s.auto_end, rich("…and go dark when RuneLite closes", 16.0, GREY()))
+                .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) and the outstation goes dark, so a forgotten one doesn't keep transmitting"));
         });
-        if button(ui, "the first-time setup again", true, None).on_hover_text(tip("Dink and Discord, clips, the Start menu: the steps a new portal goes through, again")).clicked() {
+        if button(ui, "the first-time setup again", true, None).on_hover_text(tip("Dink and Discord, clips, the Start menu: the steps a new outstation goes through, again")).clicked() {
             s.setup_step = Some(0);
         }
-        ui.checkbox(&mut s.ready_check, rich("the ready check above the title, while off air", 16.0, GREY()))
+        ui.checkbox(&mut s.ready_check, rich("the station check above the title, while dark", 16.0, GREY()))
             .on_hover_text(tip("RuneLite open, logged in, the relay answering, Dink heard and the sound's mode, each ticked or not"));
-        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the stream goes on)", 16.0, GREY()))
+        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the transmission goes on)", 16.0, GREY()))
             .on_hover_text(tip("the window goes to the ✼ by the clock; a click on it brings the window back"));
         ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
-            .on_hover_text(tip("the picture stops at the login screen (your username never shows): RuneLite has to put it in its title for the portal to tell"));
+            .on_hover_text(tip("the picture stops at the login screen (your username never shows): RuneLite has to put it in its title for the outstation to tell"));
         ui.horizontal(|ui| {
-            ui.label(rich("clips go to:", 16.0, GREY())).on_hover_text(tip("the folder the clip key and \"clip\" save to (empty: Videos\\outside-portal)"));
+            ui.label(rich("clips go to:", 16.0, GREY())).on_hover_text(tip("the folder the clip key and \"clip\" save to (empty: Videos\\outstation)"));
             let hint = crate::clip::default_folder().display().to_string();
             field(ui, &mut s.clip_folder, 260.0, &hint, false);
         });
@@ -1665,7 +1666,7 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ui.add(egui::DragValue::new(&mut s.upload_mbit).range(1.0..=10000.0).suffix(" Mbit/s"));
         });
         ui.horizontal(|ui| {
-            ui.label(rich("RuneLite's title starts:", 16.0, GREY())).on_hover_text(tip("the portal finds RuneLite's window by its title: change it only if yours is renamed"));
+            ui.label(rich("RuneLite's title starts:", 16.0, GREY())).on_hover_text(tip("the outstation finds RuneLite's window by its title: change it only if yours is renamed"));
             field(ui, &mut s.title, 140.0, "RuneLite", false);
         });
         ui.add_space(6.0);
@@ -1675,11 +1676,11 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             field(ui, &mut s.chat_name, 160.0, &s.channel.clone(), false);
         });
         ui.horizontal(|ui| {
-            ui.label(rich("watch code (empty: anyone):", 16.0, GREY())).on_hover_text(tip("a code viewers need in their link to watch. Empty: anyone with your Outside page can."));
+            ui.label(rich("watch code (empty: anyone):", 16.0, GREY())).on_hover_text(tip("a code observers need in their link to watch. Empty: anyone with your Outside page can."));
             field(ui, &mut s.code, 140.0, "", false);
         });
         ui.label(rich(&format!("relay {} · channel {}", s.relay, s.channel), 14.0, QUIET()));
-        let detach = button(ui, "attach another code…", true, None).clicked();
+        let detach = button(ui, "attach another station key…", true, None).clicked();
         if detach {
             s.key.clear();
         }
@@ -1696,15 +1697,17 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         ui.add_space(8.0);
         ui.label(rich("if something goes wrong", 16.0, LIME()));
         ui.horizontal_wrapped(|ui| {
-            if button(ui, "copy my log", true, None)
-                .on_hover_text(tip("the log's last 400 lines and this version, on the clipboard, to paste to the listening post. Keys, watch codes, attach codes and Discord webhook addresses are taken out first.")).clicked() {
+            if button(ui, "copy the station log", true, None)
+                .on_hover_text(tip("the station log's last 400 lines and this version, on the clipboard, to paste to the listening post. Keys, watch codes, station keys and Discord webhook addresses are taken out first.")).clicked() {
                 win::copy_text(&crate::crash::log_for_sending());
                 *LOG_COPIED.lock().unwrap() = Some(Instant::now());
             }
             let copied = LOG_COPIED.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(5));
-            ui.label(rich(if copied { "on the clipboard (keys and codes taken out)" } else { "what the portal did, for a bug report" }, 14.0, if copied { TEAL() } else { QUIET() }));
+            ui.label(rich(if copied { "on the clipboard (keys and codes taken out)" } else { "what the outstation did, for a bug report" }, 14.0, if copied { TEAL() } else { QUIET() }));
         });
-        ui.label(wrapped(&format!("its log: {}", settings.path.with_file_name("portal.log").display()), 13.0, QUIET(), ui.available_width()));
+        ui.label(wrapped(&format!("the station log: {}", settings.path.with_file_name("portal.log").display()), 13.0, QUIET(), ui.available_width()));
+        ui.add_space(8.0);
+        ui.label(wrapped(JAGEX, 14.0, QUIET(), ui.available_width()));
         if serde_json::to_string(&s).unwrap_or_default() != before {
             let s2 = s.clone();
             let _ = settings.update(|x| *x = s2);
@@ -1730,7 +1733,7 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.add_space(6.0);
     if s.friends.is_empty() {
-        ui.label(wrapped("no friends yet. add friend puts a player here, and whether their portal is live.", 14.0, GREY(), ui.available_width()));
+        ui.label(wrapped("no friends yet. add friend puts a player here, and whether their outstation is transmitting.", 14.0, GREY(), ui.available_width()));
     }
     let mut delete: Option<String> = None;
     let mut message: Option<(String, String)> = None;
@@ -1752,12 +1755,12 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
         let st = app.friendlist.state(name);
         let (words, colour, about) = match &st {
             State::Live(x) => {
-                let w = if x.static_on { "Live · static".to_string() } else if !x.open { "Live · paused".to_string() } else { format!("Live · {}", x.viewers) };
+                let w = if x.static_on { "Transmitting · static".to_string() } else if !x.open { "Transmitting · no signal".to_string() } else { format!("Transmitting · {}", x.viewers) };
                 let t = if x.title.is_empty() { String::new() } else { format!("“{}”\n", x.title) };
-                (w, LIME(), format!("{}{} watching · click: their portal on their Outside page", t, x.viewers))
+                (w, LIME(), format!("{}{} observing · click: their outstation on their Outside page", t, x.viewers))
             }
-            State::OffAir => ("Off air".to_string(), PINK(), "their portal is off air · click: their Outside page".to_string()),
-            State::NoPortal => ("No portal".to_string(), GREY(), "no open portal: they haven't one yet, or theirs is friends-only (a watch code) · click: their Outside page".to_string()),
+            State::OffAir => ("Dark".to_string(), PINK(), "their outstation is dark · click: their Outside page".to_string()),
+            State::NoPortal => ("No outstation".to_string(), GREY(), "no open outstation: they haven't one yet, or theirs is friends-only (a watch code) · click: their Outside page".to_string()),
             State::Unknown => ("…".to_string(), GREY(), "reading the relay…".to_string()),
         };
         let url = crate::friendlist::page(&ch);
@@ -1777,13 +1780,13 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
                     ui.painter().image(id, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
                     ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, DIM()), egui::StrokeKind::Outside);
                 } else if live {
-                    ui.label(rich("opening their portal…", 14.0, GREY()));
+                    ui.label(rich("opening their outstation…", 14.0, GREY()));
                 }
                 ui.label(tip(&hover));
             });
             if r.clicked() && !win::open_page(&url) { app.note(format!("couldn't open {}", url)); }
             r.context_menu(|ui| {
-                if ui.button(format!("message {}", name)).on_hover_text(tip("a message to their portal's window (not their stream): it opens a tab of its own over your chat")).clicked() {
+                if ui.button(format!("message {}", name)).on_hover_text(tip("station to station: a message to their outstation's window (not their transmission): it opens a tab of its own over your chat")).clicked() {
                     message = Some((ch.clone(), name.clone()));
                     ui.close();
                 }
@@ -1844,22 +1847,22 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(10.0);
     let mut tell = s.friends_tell;
-    if ui.checkbox(&mut tell, rich("say in the chat when a friend goes live or off air", 14.0, GREY())).changed() {
+    if ui.checkbox(&mut tell, rich("say in the chat when a friend starts transmitting or goes dark", 14.0, GREY())).changed() {
         let _ = app.settings.update(|x| x.friends_tell = tell);
     }
     let mut toast = s.friends_toast;
     let can = crate::shortcut::exists();
-    if ui.checkbox(&mut toast, rich("and a Windows notification when one goes live", 14.0, GREY()))
-        .on_hover_text(tip("Windows' own, in the corner and then the notification centre; a click on it opens their portal")).changed() {
+    if ui.checkbox(&mut toast, rich("and a Windows notification when one starts transmitting", 14.0, GREY()))
+        .on_hover_text(tip("Windows' own, in the corner and then the notification centre; a click on it opens their outstation")).changed() {
         let _ = app.settings.update(|x| x.friends_toast = toast);
     }
     if toast && !can {
         ui.label(wrapped("(Windows shows a program's notifications only when it's in the Start menu: settings, then more, then \"put it in the Start menu\")", 13.0, QUIET(), ui.available_width()));
     }
-    let all = ui.add(egui::Label::new(rich("every open portal ↗", 14.0, TEAL())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(tip("ghillie.wiki/portals: everyone's open portals, live ones first"));
+    let all = ui.add(egui::Label::new(rich("every open outstation ↗", 14.0, TEAL())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tip("ghillie.wiki/portals: everyone's open outstations, transmitting ones first"));
     if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
-    ui.label(wrapped("a name's state comes from the relay's open portals, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
+    ui.label(wrapped("a name's state comes from the relay's open outstations, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
 }
 
 // ---- the dink drawer ----
@@ -1868,8 +1871,8 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     let st = app.dink.lock().unwrap().clone();
     let mut s = app.settings.get();
     let before = serde_json::to_string(&s).unwrap_or_default();
-    ui.label(rich("Dink: what goes into your broadcast", 16.0, LIME()));
-    ui.label(wrapped("Dink (a RuneLite plugin) tells the portal as things happen: levels, drops, pets, kill counts and the rest, for the lines under your portal. Three steps, Discord first, so it's kept as it is before Dink changes.", 14.0, GREY(), ui.available_width()));
+    ui.label(rich("Dink: what goes into your transmission", 16.0, LIME()));
+    ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts and the rest, for the field reports under your outstation. Three steps, Discord first, so it's kept as it is before Dink changes.", 14.0, GREY(), ui.available_width()));
     ui.add_space(8.0);
     // (11/06/2026, Jace: "put the 'on to your discord too' under 'Dink..' and above 'on your portal' and ... make it
     // more clear what its actually doing", and "should probably have someone set up their discord forwarding for dink
@@ -1877,11 +1880,11 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.label(rich("1. do you use Dink with Discord too?", 16.0, LIME()));
     discord_step(app, ui, &mut s, st.listening.clone());
     ui.add_space(12.0);
-    ui.label(rich("2. point Dink at the portal", 16.0, LIME()));
+    ui.label(rich("2. point Dink at the outstation", 16.0, LIME()));
     dink_address_ui(app, ui, &mut s, &st);
     ui.add_space(12.0);
     ui.horizontal(|ui| {
-        ui.label(rich("3. what shows on your portal", 16.0, LIME()));
+        ui.label(rich("3. which field reports go out", 16.0, LIME()));
         let plain = s.dink.kinds.values().all(|v| v.as_bool() != Some(false)) && s.dink.loot_min == 0 && s.dink.kc_every == 1;
         if button(ui, "default", true, Some(plain)).on_hover_text(tip("everything ticked, every drop (0 gp) and every kill count")).clicked() {
             s.dink.kinds.clear();
@@ -1914,14 +1917,14 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
         ui.checkbox(&mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
-            .on_hover_text(tip("Dink's post comes, and a few seconds later the replay buffer is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while live: the buffer holds what the portal sent."));
+            .on_hover_text(tip("Dink's post comes, and a few seconds later the tape is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while transmitting: the tape holds what the outstation sent."));
         ui.add(egui::DragValue::new(&mut s.dink.clip_gp).range(0..=2_147_483_647u64).speed(10000.0).suffix(" gp"));
         ui.label(rich("or more", 16.0, GREY()));
     });
     if s.dink.auto_clip && s.replay_seconds == 0 {
         ui.horizontal_wrapped(|ui| {
-            ui.label(rich("(the replay buffer is off, so there's nothing to clip: give it some seconds in the settings)", 14.0, PINK()));
-            if button(ui, "the replay buffer ▸", true, None).on_hover_text(tip("opens the settings at the replay buffer")).clicked() {
+            ui.label(rich("(the tape is off, so there's nothing to clip: give it some seconds in the settings)", 14.0, PINK()));
+            if button(ui, "the tape ▸", true, None).on_hover_text(tip("opens the settings at the tape")).clicked() {
                 app.go_replay = true;
             }
         });
@@ -1949,7 +1952,7 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
     ui.label(wrapped("a. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)", 14.0, TEXT(), w));
     ui.label(wrapped("b. press this:", 14.0, TEXT(), w));
     let Some(portal) = listening else {
-        ui.label(rich("(the portal isn't listening for Dink yet: its port, above)", 14.0, PINK()));
+        ui.label(rich("(the outstation isn't listening for Dink yet: its port, above)", 14.0, PINK()));
         return;
     };
     ui.horizontal(|ui| {
@@ -1969,7 +1972,7 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
         }
         let backup = app.settings.path.with_file_name("dink-before.json");
         if backup.exists() && button(ui, "undo", true, None)
-            .on_hover_text(tip("puts the Dink settings you had before on the clipboard: ::dinkimport brings them back (your Discord line too; then delete the portal's line if you like)")).clicked() {
+            .on_hover_text(tip("puts the Dink settings you had before on the clipboard: ::dinkimport brings them back (your Discord line too; then delete the outstation's line if you like)")).clicked() {
             let ok = std::fs::read_to_string(&backup).ok().is_some_and(|t| win::copy_text(&t));
             app.dink_setup = Some(if ok { Ok((Vec::new(), vec!["your old Dink settings are on the clipboard: type ::dinkimport in RuneLite's chat".into()])) }
                                   else { Err("couldn't read the settings kept from before".into()) });
@@ -1987,8 +1990,8 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
     // first)
     if let Some(Ok((lines, notes))) = &app.dink_setup {
         if read {
-            ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport (it adds the portal to Dink)", 14.0, TEXT(), w));
-            ui.label(wrapped("d. in Dink's settings, delete your Discord address from its webhook lists (the portal sends to it now; Dink's import can only add, never take away). It's in:", 14.0, TEXT(), w));
+            ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport (it adds the outstation to Dink)", 14.0, TEXT(), w));
+            ui.label(wrapped("d. in Dink's settings, delete your Discord address from its webhook lists (the outstation sends to it now; Dink's import can only add, never take away). It's in:", 14.0, TEXT(), w));
             for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
             for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
         }
@@ -2006,56 +2009,56 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
     let before = serde_json::to_string(&s).unwrap_or_default();
     let w = ui.available_width();
     ui.add_space(16.0);
-    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(24.0)).color(LIME()));
+    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the outstation").font(title_font(24.0)).color(LIME()));
     ui.label(rich(&format!("first-time setup · {} of {}", step + 1, STEPS), 14.0, QUIET()));
     ui.add_space(10.0);
     let mut next: Option<Option<u8>> = None; // (Some(None): finished)
     match step {
         0 => {
             ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
-            ui.label(wrapped(&format!("your portal opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+            ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
             ui.add_space(8.0);
-            ui.label(wrapped("a few things before your first stream: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸).", 16.0, GREY(), w));
+            ui.label(wrapped("a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸).", 16.0, GREY(), w));
         }
         1 => {
             ui.label(rich("Dink and Discord", 18.0, LIME()));
-            ui.label(wrapped("Dink (a RuneLite plugin) tells the portal as things happen: levels, drops, pets, kill counts, for the lines under your portal and for clips. If you don't use Dink, skip this and the next step.", 14.0, GREY(), w));
+            ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts, for the field reports under your outstation and for clips. If you don't use Dink, skip this and the next step.", 14.0, GREY(), w));
             ui.add_space(6.0);
             ui.label(rich("do you use Dink with Discord too?", 16.0, LIME()));
             discord_step(app, ui, &mut s, st.listening.clone());
         }
         2 => {
-            ui.label(rich("point Dink at the portal", 18.0, LIME()));
+            ui.label(rich("point Dink at the outstation", 18.0, LIME()));
             dink_address_ui(app, ui, &mut s, &st);
             ui.add_space(6.0);
-            ui.label(wrapped("everything Dink sends shows under your portal to begin with: dink ▸ ▸ \"what shows on your portal\" changes that.", 14.0, QUIET(), w));
+            ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸ ▸ \"which field reports go out\" changes that.", 14.0, QUIET(), w));
         }
         3 => {
             ui.label(rich("clips", 18.0, LIME()));
-            ui.label(wrapped("while you're live, the portal can hold on to the last few seconds of what it's sent, always rolling, like a replay. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
+            ui.label(wrapped("while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
             let mut replay = s.replay_seconds.min(30);
-            if bar(ui, "replay buffer", "s kept", 0, 30, 1, &mut replay, "how many of the last seconds are held, always rolling, for a clip of what just happened (in memory only). 0 holds nothing.") {
+            if bar(ui, "the tape", "s kept", 0, 30, 1, &mut replay, "how many of the last seconds the tape holds, always rolling, for a clip of what just happened (in memory only). 0 holds nothing.") {
                 s.replay_seconds = replay;
             }
             if s.replay_seconds > 0 {
                 ui.checkbox(&mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
                 if s.dink.auto_clip {
                     ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
-                        .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 kept for good."));
+                        .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
                 }
             }
         }
         _ => {
             ui.label(rich("done", 18.0, LIME()));
             // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
-            ui.checkbox(&mut s.auto_live, rich("go live by itself whenever RuneLite opens", 16.0, GREY()))
-                .on_hover_text(tip("from now on, opening RuneLite starts your stream. If you press end stream while RuneLite's open, the portal stays off air: it only goes live again the next time RuneLite opens."));
+            ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+                .on_hover_text(tip("from now on, opening RuneLite starts your transmission. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
             if s.auto_live {
-                ui.label(wrapped("RuneLite open now? Then finishing the setup goes live straight away.", 14.0, PINK(), w));
+                ui.label(wrapped("RuneLite open now? Then finishing the setup starts transmitting straight away.", 14.0, PINK(), w));
             }
             if s.start_menu.is_none() {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(rich("put the portal in your Start menu?", 16.0, GREY()));
+                    ui.label(rich("put the outstation in your Start menu?", 16.0, GREY()));
                     if button(ui, "yes", true, None).clicked() {
                         match crate::shortcut::make(&app.settings.path) {
                             Ok(()) => s.start_menu = Some(true),
@@ -2069,7 +2072,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             }
             ui.add_space(14.0);
             ui.label(rich("then", 16.0, LIME()));
-            ui.label(wrapped("in the main window, go live starts your stream and end stream stops it. Pause hides the picture (before a bank PIN). The settings have the rest.", 14.0, GREY(), w));
+            ui.label(wrapped("in the main window, transmit starts your transmission and go dark ends it. Pause hides the picture (before a bank PIN). The settings have the rest.", 14.0, GREY(), w));
         }
     }
     ui.add_space(14.0);
@@ -2077,7 +2080,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
         if step > 0 && button(ui, "◂ back", false, None).clicked() { next = Some(Some(step - 1)); }
         if step + 1 < STEPS {
             if button(ui, if step == 0 { "start" } else { "next ▸" }, false, None).clicked() { next = Some(Some(step + 1)); }
-            if button(ui, "skip the setup", true, None).on_hover_text(tip("straight to the portal: everything here is in dink ▸ and settings ▸, and settings ▸ more runs this again")).clicked() {
+            if button(ui, "skip the setup", true, None).on_hover_text(tip("straight to the outstation: everything here is in dink ▸ and settings ▸, and settings ▸ more runs this again")).clicked() {
                 next = Some(None);
             }
         } else if button(ui, "finish", false, None).clicked() {
@@ -2121,7 +2124,7 @@ fn dink_address_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Se
     if s.dink.discord == Some(true) && forward_has_hook(&s.forward) {
         // (11/06/2026, Jace: "make this line more obvious ... its important if someone doesnt want duplicates")
         ui.add_space(2.0);
-        ui.label(wrapped("⚠ delete any Discord address from that list: the portal passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
+        ui.label(wrapped("⚠ delete any Discord address from that list: the outstation passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
     }
 }
 
@@ -2156,19 +2159,19 @@ fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Setti
     let set_up = forward_has_hook(&s.forward);
     if set_up && s.dink.discord != Some(false) {
         s.dink.discord = Some(true);
-        ui.label(wrapped("yes: Dink tells the portal everything, and the portal passes your Discord what it got before, as Dink sent it (only while the portal's open):", 14.0, GREY(), w));
+        ui.label(wrapped("yes: Dink tells the outstation everything, and the outstation passes your Discord what it got before, as Dink sent it (only while the outstation's open):", 14.0, GREY(), w));
         ui.label(wrapped(&forward_summary(&s.forward), 14.0, LIME(), w));
     } else if s.dink.discord == Some(false) {
         ui.horizontal_wrapped(|ui| {
-            ui.label(rich("no: Dink tells only the portal.", 14.0, GREY()));
+            ui.label(rich("no: Dink tells only the outstation.", 14.0, GREY()));
             if button(ui, "I do, after all", true, None).clicked() { s.dink.discord = None; }
         });
         return;
     } else if s.dink.discord.is_none() {
-        ui.label(wrapped("if Dink posts to a Discord server of yours now, the portal can keep that going just as it is, and still show more under your portal than Discord gets.", 14.0, GREY(), w));
+        ui.label(wrapped("if Dink posts to a Discord server of yours now, the outstation can keep that going just as it is, and still send out more field reports under your outstation than Discord gets.", 14.0, GREY(), w));
         ui.horizontal(|ui| {
             if button(ui, "yes, i do", true, None).clicked() { s.dink.discord = Some(true); }
-            if button(ui, "no, only the portal", true, None).clicked() { s.dink.discord = Some(false); }
+            if button(ui, "no, only the outstation", true, None).clicked() { s.dink.discord = Some(false); }
         });
         return;
     }
@@ -2178,7 +2181,7 @@ fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Setti
         ui.horizontal(|ui| {
             if button(ui, if app.discord_change { "change ◂" } else { "change ▸" }, true, None).clicked() { app.discord_change = !app.discord_change; }
             if button(ui, "stop passing it on", true, None)
-                .on_hover_text(tip("the portal stops sending to Discord (put your Discord address back in Dink if Dink should post there itself)")).clicked() {
+                .on_hover_text(tip("the outstation stops sending to Discord (put your Discord address back in Dink if Dink should post there itself)")).clicked() {
                 s.forward = json!({"discord": [], "forward": {}});
                 s.dink.discord = None;
             }
@@ -2217,17 +2220,17 @@ fn page_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings
         Some(Ok(list)) => {
             let kept = list.iter().filter(|r| r.kept).count();
             let max = crate::clipsup::KEPT_MOST;
-            ui.label(rich(&format!("on your page ({} of 20, and {} of {} kept for good):", list.len() - kept, kept, max), 14.0, GREY()))
-                .on_hover_text(tip("the newest 20 stay 30 days, the oldest making room as new ones come. Up to 3 can be kept for good: never pushed out, never too old."));
+            ui.label(rich(&format!("on your page ({} of 20, and {} of {} filed for good):", list.len() - kept, kept, max), 14.0, GREY()))
+                .on_hover_text(tip("the newest 20 stay 30 days, the oldest making room as new ones come. Up to 3 can be filed for good: never pushed out, never too old."));
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             for r in &list {
                 ui.horizontal(|ui| {
-                    let mark = if r.kept { "kept · " } else { "" };
+                    let mark = if r.kept { "filed · " } else { "" };
                     ui.label(rich(&format!("{}{} · {:.0} s · {} ago", mark, r.what, r.dur, ago(Duration::from_secs(now.saturating_sub(r.at)))), 14.0, if r.kept { LIME() } else { TEXT() }));
                     if r.kept {
                         if button(ui, "let it go", true, None).on_hover_text(tip("back with the rest: it goes when it's the oldest of the 20, or after 30 days")).clicked() { keep = Some((r.id.clone(), false)); }
                     } else if kept < max {
-                        if button(ui, "keep", true, None).on_hover_text(tip("kept for good on your page: never pushed out, never too old (3 at most)")).clicked() { keep = Some((r.id.clone(), true)); }
+                        if button(ui, "file it", true, None).on_hover_text(tip("filed for good on your page: never pushed out, never too old (3 at most)")).clicked() { keep = Some((r.id.clone(), true)); }
                     }
                     if button(ui, "take it down", true, None).clicked() { down = Some(r.id.clone()); }
                 });
@@ -2341,6 +2344,9 @@ fn ago(d: Duration) -> String {
 
 // ---- the attach screen ----
 
+/// Jagex's Fan Content Policy line, as they word it (the attach screen's foot, and settings ▸ more)
+const JAGEX: &str = "Created using intellectual property belonging to Jagex Limited under the terms of Jagex's Fan Content Policy. This content is not endorsed by or affiliated with Jagex.";
+
 /// SAFETY.md's plain words, short (the attach screen's "is it safe for my account?")
 const SAFE: &[&str] = &[
     "it never touches RuneLite or the game: it isn't a plugin, and never opens RuneLite's process",
@@ -2348,18 +2354,18 @@ const SAFE: &[&str] = &[
     "it sees only what RuneLite's window draws, as OBS or Discord's screen share would (press Pause before a bank PIN)",
     "it never asks for your login, and never reads what RuneLite and Jagex say to each other",
     "it doesn't watch your keyboard: Windows tells it only when one of its own four keys is pressed (Pause, Scroll Lock, Insert and End, to begin with)",
-    "it sends only to the relay in your attach code, your Discord webhook if you set one, and GitHub to look for updates",
+    "it sends only to the relay in your station key, your Discord webhook if you set one, and GitHub to look for updates",
     "it needs no admin, installs nothing, and doesn't start with Windows",
     "the relay keeps your channel's name, a hash of its key, your title and the chat's last lines: your picture and sound pass through and are never written down",
 ];
 
 fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(24.0);
-    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the portal").font(title_font(26.0)).color(LIME()));
+    ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the outstation").font(title_font(26.0)).color(LIME()));
     let _ = rich;
     ui.add_space(10.0);
-    ui.label(rich("this receiver is not attached to a channel yet.", 16.0, GREY()));
-    ui.label(rich("paste the attach code you were given (it starts portal1:).", 16.0, GREY()));
+    ui.label(rich("this outstation is not attached to a channel yet.", 16.0, GREY()));
+    ui.label(rich(&format!("paste your station key (the code from the listening post: it starts {}).", settings::KEY_PREFIX), 16.0, GREY()));
     ui.add_space(8.0);
     ui.add(egui::TextEdit::multiline(&mut app.attach_code).desired_rows(3).desired_width(f32::INFINITY).font(body(14.0)));
     ui.add_space(6.0);
@@ -2408,7 +2414,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         for line in SAFE {
             ui.add(egui::Label::new(rich(line, 14.0, GREY())).wrap());
         }
-        let r = ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outside-portal, SAFETY.md ↗", 14.0, TEAL()))
+        let r = ui.add(egui::Label::new(rich("every line of it, and how to check it yourself: github.com/jhmcubed/outstation, SAFETY.md ↗", 14.0, TEAL()))
             .wrap().sense(Sense::click()))
             .on_hover_text(tip("opens SAFETY.md on GitHub in your browser (right-click: copy its address)"));
         let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -2420,6 +2426,8 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     start_menu_offer(app, ui);
+    ui.add_space(14.0);
+    ui.label(wrapped(JAGEX, 14.0, QUIET(), ui.available_width()));
 }
 
 /// The Start menu, offered once (shortcut.rs): yes makes the shortcut, either answer puts the question away.
@@ -2427,7 +2435,7 @@ fn start_menu_offer(app: &mut App, ui: &mut egui::Ui) {
     if app.settings.get().start_menu.is_some() { return; }
     ui.add_space(12.0);
     ui.horizontal_wrapped(|ui| {
-        ui.label(rich("put the portal in your Start menu?", 16.0, GREY()))
+        ui.label(rich("put the outstation in your Start menu?", 16.0, GREY()))
             .on_hover_text(tip("a shortcut in your own Start menu, with the ✼: nothing else. It still doesn't start with Windows, and settings ▸ more takes it out."));
         if button(ui, "yes", true, None).clicked() {
             match crate::shortcut::make(&app.settings.path) {
@@ -2448,18 +2456,18 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(12.0);
     if let Some(a) = app.settings.get().asked.clone() {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(a.at);
-        ui.label(wrapped(&format!("asked for {}'s portal {} ago · waiting for the listening post's answer", a.player,
+        ui.label(wrapped(&format!("requested: a station key for {}, {} ago · waiting on the listening post", a.player,
                                   ago(Duration::from_secs(now.saturating_sub(a.at)))), 16.0, TEXT(), w));
-        ui.label(wrapped("this screen attaches by itself when the answer comes: it looks every 20 s while the portal is open", 14.0, QUIET(), w));
+        ui.label(wrapped("this screen attaches by itself when the key is issued: it looks every 20 s while the outstation is open", 14.0, QUIET(), w));
         if button(ui, "never mind (take the request back)", true, None).clicked() { app.asker.cancel(&app.settings); }
     } else {
         let open = app.asker.open;
-        if button(ui, if open { "no code yet? ask for one ▾" } else { "no code yet? ask for one ▸" }, true, Some(open)).clicked() {
+        if button(ui, if open { "no key yet? request one ▾" } else { "no key yet? request one ▸" }, true, Some(open)).clicked() {
             app.asker.open = !open;
         }
         if app.asker.open {
             if crate::ask::HOME_RELAY.is_empty() {
-                ui.label(wrapped("asking opens with the first release, once the listening post's relay is up. until then, ask the listening post for an attach code.", 14.0, GREY(), w));
+                ui.label(wrapped("requests open with the first release, once the listening post's relay is up. until then, ask the listening post for a station key.", 14.0, GREY(), w));
             } else {
                 egui::Grid::new("ask").num_columns(2).show(ui, |ui| {
                     ui.label(rich("your player's name", 16.0, GREY()));
@@ -2471,13 +2479,13 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
                 });
                 let channel = crate::ask::channel_of(&app.asker.player);
                 match &channel {
-                    Ok(ch) => { ui.label(rich(&format!("your portal would open at ghillie.wiki/outside?player={}", ch), 14.0, QUIET())); }
+                    Ok(ch) => { ui.label(rich(&format!("your outstation would open at ghillie.wiki/outside?player={}", ch), 14.0, QUIET())); }
                     Err(e) if !app.asker.player.trim().is_empty() => { ui.label(rich(e, 14.0, PINK())); }
                     Err(_) => {}
                 }
                 let ready = channel.is_ok() && !app.asker.busy();
                 ui.horizontal(|ui| {
-                    if ui.add_enabled_ui(ready, |ui| button(ui, if app.asker.busy() { "asking…" } else { "ask" }, false, None)).inner.clicked() {
+                    if ui.add_enabled_ui(ready, |ui| button(ui, if app.asker.busy() { "requesting…" } else { "request" }, false, None)).inner.clicked() {
                         app.asker.ask(app.settings.clone(), wake.clone());
                     }
                 });
@@ -2568,14 +2576,14 @@ impl eframe::App for App {
                 if c.1 && s.friends_toast {
                     let ch = crate::ask::channel_of(&c.0).unwrap_or_default();
                     let title = match self.friendlist.state(&c.0) { crate::friendlist::State::Live(x) => x.title, _ => String::new() };
-                    let body = if title.is_empty() { "click: their portal".to_string() } else { format!("“{}” · click: their portal", title) };
+                    let body = if title.is_empty() { "click: their outstation".to_string() } else { format!("“{}” · click: their outstation", title) };
                     crate::notify::show(&crate::friendlist::line(&c), &body, Some(crate::friendlist::page(&ch)));
                 }
             }
         }
         let came = self.asked_attached.lock().unwrap().take();
         if let Some(ch) = came {
-            self.note(format!("the listening post said yes: attached to {} · your portal opens at ghillie.wiki/outside?player={}", ch, ch));
+            self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at ghillie.wiki/outside?player={}", ch, ch));
         }
         self.sync_tray(ctx);
         #[allow(unused_mut)]
@@ -2746,7 +2754,7 @@ impl App {
         let p = ui.painter();
         pixel_star(p, egui::pos2(rect.left() + 8.0, rect.center().y), LIME());
         let room = rect.width() - 24.0 - 3.0 * 32.0;
-        let words = if p.layout_no_wrap(TITLE.to_string(), title_font(20.0), LIME()).size().x <= room { TITLE } else { "the portal" };
+        let words = if p.layout_no_wrap(TITLE.to_string(), title_font(20.0), LIME()).size().x <= room { TITLE } else { "outstation" };
         let title = p.layout_no_wrap(words.to_string(), title_font(20.0), LIME());
         // (lime lettering over RuneScape's shadow, as jute's titles)
         let at = egui::pos2(rect.left() + 22.0, rect.center().y - title.size().y / 2.0);
@@ -2763,7 +2771,7 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maxed));
         }
         let tray = self.tray.is_some() && self.settings.get().minimize_to_tray;
-        let min = if tray { "into the tray (the stream goes on)" } else { "minimise" };
+        let min = if tray { "into the tray (the transmission goes on)" } else { "minimise" };
         if control(&mut child, 0, false).on_hover_text(rich(min, 14.0, GREY())).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
@@ -2857,10 +2865,10 @@ impl App {
         // (the drawers' buttons right-aligned beside "watching" when they fit; when they don't (a narrow or zoomed
         // window), on a row of their own under it, wrapping, so none runs off the edge)
         let open = self.show_viewers;
-        let watching = format!("watching: {} {}", self.viewers, if open { "▾" } else { "▸" });
+        let watching = format!("observers: {} {}", self.viewers, if open { "▾" } else { "▸" });
         let live = self.friendlist.live_count(&self.settings.get());
         let friends_words = match (live, self.drawer == Drawer::FriendList) { (0, true) => "friends ◂".to_string(), (0, false) => "friends ▸".to_string(),
-                                                                                (n, true) => format!("friends · {} live ◂", n), (n, false) => format!("friends · {} live ▸", n) };
+                                                                                (n, true) => format!("friends · {} transmitting ◂", n), (n, false) => format!("friends · {} transmitting ▸", n) };
         let gap = ui.spacing().item_spacing.x;
         let mut need = button_w(ui, &watching) + button_w(ui, "settings ▸") + button_w(ui, "dink ▸") + button_w(ui, &friends_words) + gap * 5.0;
         #[cfg(feature = "station")]
@@ -2872,7 +2880,7 @@ impl App {
         let fits = need <= ui.available_width();
         let row = |ui: &mut egui::Ui, this: &mut App| {
             let open = this.show_viewers;
-            if button(ui, &watching, true, Some(open)).on_hover_text(tip("who's watching now, and who's in line for a spot (names as they gave them in the chat)")).clicked() {
+            if button(ui, &watching, true, Some(open)).on_hover_text(tip("who's observing now, and who's on standby (names as they gave them in the chat)")).clicked() {
                 this.show_viewers = !open;
             }
         };
@@ -2889,16 +2897,16 @@ impl App {
             if right_to_left { order.reverse(); }
             for which in order {
                 match which {
-                    0 => { ui.label(rich(&format!("✼ {}", this.signals), 14.0, PINK())).on_hover_text(tip("viewers' signals since this opened")); }
+                    0 => { ui.label(rich(&format!("✼ {}", this.signals), 14.0, PINK())).on_hover_text(tip("observers' signals since this opened")); }
                     1 => {
                         if button(ui, &portals_words, true, None)
-                            .on_hover_text(tip("friends' portals: hand one out (its attach code, to send them), answer those asking (counted here, looked at every minute), a notice to every portal, or take one back")).clicked() {
+                            .on_hover_text(tip("friends' outstations: issue a key (to send them), answer those requesting one (counted here, looked at every minute), a bulletin to every outstation, or stand one down")).clicked() {
                             this.open_drawer(&ctx, Drawer::Friends);
                         }
                     }
                     2 => {
                         if button(ui, &friends_words, true, None)
-                            .on_hover_text(tip("your friends list: who's live, and a click on a name opens their Outside page")).clicked() {
+                            .on_hover_text(tip("your friends list: who's transmitting, and a click on a name opens their Outside page")).clicked() {
                             this.open_drawer(&ctx, Drawer::FriendList);
                         }
                     }
@@ -2942,7 +2950,7 @@ impl App {
             }
             let (text, colour) = self.status_line();
             let ending = on && self.up && self.live;
-            let go = if ending { "end stream" } else { "go live" };
+            let go = if ending { "go dark" } else { "transmit" };
             let bw = ui.painter().layout_no_wrap(go.to_string(), body(16.0), LIME()).size().x + 14.0 + 10.0;
             let w = (ui.available_width() - bw).max(40.0);
             ui.allocate_ui_with_layout(Vec2::new(w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -2973,7 +2981,7 @@ impl App {
             let mbit = |b: Option<u64>| b.map(|b| format!("{:.1}", b as f64 / 1e6)).unwrap_or_else(|| "…".into());
             let mut parts = Vec::new();
             if self.up && self.portal_bps.is_some() {
-                let who = if s.relay.starts_with("wss://") { "the relay sends" } else { "the portal" };
+                let who = if s.relay.starts_with("wss://") { "the relay sends" } else { "the outstation" };
                 parts.push(format!("{} {}", who, mbit(self.portal_bps)));
             }
             parts.push(format!("this PC {} of {} Mbit/s", mbit(pc), cap));
@@ -2981,7 +2989,7 @@ impl App {
             let text = format!("upload: {}", parts.join(" · "));
             if text_w(ui, &text, 14.0) > ui.available_width() { ui.end_row(); }
             ui.add(egui::Label::new(wrapped(&text, 14.0, if share > 0.8 { PINK() } else { GREY() }, ui.available_width())))
-                .on_hover_text(tip("lime: what the portal sends; teal: the rest of this PC's upload; pink: past 80% of your upload (its speed is set in settings ▸ more)"));
+                .on_hover_text(tip("lime: what the outstation sends; teal: the rest of this PC's upload; pink: past 80% of your upload (its speed is set in settings ▸ more)"));
         });
         self.live_view(ui);
         ui.add_space(6.0);
@@ -2990,7 +2998,7 @@ impl App {
             ui.label(rich("sound:", 14.0, GREY()));
             const TIPS: [&str; 3] = ["no sound goes out",
                                      "RuneLite's own sound only",
-                                     "RuneLite's sound, and as a second bus viewers can turn down on their own, the rest of what this PC plays (music, videos, the voice chat you hear). Never a microphone."];
+                                     "RuneLite's sound, and as a second bus observers can turn down on their own, the rest of what this PC plays (music, videos, the voice chat you hear). Never a microphone."];
             for (i, (m, l)) in LABELS.iter().enumerate() {
                 if button(ui, l, true, Some(sound::mode_of(&s.sound) == *m)).on_hover_text(tip(TIPS[i])).clicked() {
                     let m = m.to_string();
@@ -3002,16 +3010,16 @@ impl App {
         // stream), and your masks
         ui.add_space(4.0);
         let s = self.settings.get();
-        let masks = if s.masks.is_empty() { "masks".to_string() } else { format!("masks ({})", s.masks.len()) };
+        let masks = if s.masks.is_empty() { "redactions".to_string() } else { format!("redactions ({})", s.masks.len()) };
         let gap = ui.spacing().item_spacing.x;
         let small = 4.0; // (the gap inside a piece)
         let widths = [
-            check_w(ui, "viewers may chat"),
+            check_w(ui, "observers may chat"),
             text_w(ui, "pings:", 14.0) + PINGS.iter().map(|(_, l, _)| small + button_w(ui, l)).sum::<f32>(),
             0.0,
             check_w(ui, "✼ on my screen"),
             check_w(ui, "chat over the game") + gap + button_w(ui, if self.moving_chat { "done" } else { "move it" }),
-            check_w(ui, &masks) + gap + button_w(ui, if self.editing_masks { "done" } else { "edit masks" }),
+            check_w(ui, &masks) + gap + button_w(ui, if self.editing_masks { "done" } else { "redact" }),
             check_w(ui, CURSOR_SWITCH),
         ];
         let _ = small;
@@ -3041,7 +3049,7 @@ impl App {
         let mut items: Vec<(String, Option<bool>, String)> = Vec::new();
         items.push(match &title {
             Some(t) => ("RuneLite".into(), Some(true), format!("found: {}", t)),
-            None => ("RuneLite".into(), Some(false), format!("no RuneLite window: open RuneLite (the portal looks for a window whose title starts \"{}\": settings ▸ more)", s.title)),
+            None => ("RuneLite".into(), Some(false), format!("no RuneLite window: open RuneLite (the outstation looks for a window whose title starts \"{}\": settings ▸ more)", s.title)),
         });
         if s.only_logged_in {
             let ok = title.as_deref().is_some_and(|t| win::logged_in(t, &s.title));
@@ -3049,24 +3057,24 @@ impl App {
                         else { "RuneLite's title doesn't say who's logged in: log in, or turn on RuneLite's \"username in title\" (settings ▸ more: \"nothing while logged out\" needs it)".into() }));
         }
         items.push(if self.up { ("the relay".into(), Some(true), format!("answering: {}", s.relay)) }
-                   else { ("the relay".into(), Some(false), "the relay isn't answering: check the internet here, or the attach code".into()) });
+                   else { ("the relay".into(), Some(false), "the relay isn't answering: check the internet here, or the station key".into()) });
         items.push(match (&dink.last, &dink.listening, &dink.error) {
             (Some((kind, at, _)), _, _) => ("Dink".into(), Some(true), format!("heard from Dink {} ago ({})", ago(at.elapsed()), kind)),
-            (None, _, Some(e)) => ("Dink".into(), Some(false), format!("Dink can't reach the portal: {}", e)),
-            _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (only for drops and level-ups under your portal)".into()),
+            (None, _, Some(e)) => ("Dink".into(), Some(false), format!("Dink can't reach the outstation: {}", e)),
+            _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (only for drops and level-ups under your outstation)".into()),
         });
         let sound = match s.sound.as_str() { "game" => "the game", "all" => "game + desktop", _ => "off" };
         items.push((format!("sound: {}", sound), None, "the sound row below: off, the game, or game + desktop (never a microphone)".into()));
         ui.horizontal_wrapped(|ui| {
-            ui.label(rich("ready?", 14.0, GREY()));
+            ui.label(rich("station check", 14.0, GREY()));
             for (words, ok, why) in &items {
                 let (mark, colour) = match ok { Some(true) => ("✓", LIME()), Some(false) => ("✗", PINK()), None => ("·", GREY()) };
                 ui.label(rich(&format!("{} {}", mark, words), 14.0, colour)).on_hover_text(tip(why));
             }
-            if button(ui, "hide", true, None).on_hover_text(tip("puts the ready check away (settings ▸ more brings it back)")).clicked() {
+            if button(ui, "hide", true, None).on_hover_text(tip("puts the station check away (settings ▸ more brings it back)")).clicked() {
                 let _ = self.settings.update(|x| x.ready_check = false);
                 // (said where it went: 11/06/2026, Jace couldn't find his way back to it)
-                self.note("the ready check is put away: settings ▸ more ▸ \"the ready check above the title\" brings it back");
+                self.note("the station check is put away: settings ▸ more ▸ \"the station check above the title\" brings it back");
             }
         });
         ui.add_space(2.0);
@@ -3079,17 +3087,17 @@ impl App {
         let saved = self.settings.get().stream_title;
         ui.horizontal(|ui| {
             ui.label(rich("title:", 14.0, GREY()))
-                .on_hover_text(tip("the broadcast's title, beside ✼ portal on your Outside page (and on the open portals): it scrolls slowly when it's too long to fit. Enter sends it; empty: none."));
+                .on_hover_text(tip("the transmission's title, beside ✼ outstation on your Outside page (and on the outstations page): it scrolls slowly when it's too long to fit. Enter sends it; empty: none."));
             let w = ui.available_width();
             let r = ui.add(egui::TextEdit::singleline(&mut self.title_edit).desired_width(w).char_limit(100)
-                .hint_text(rich("untitled · a title for this broadcast (Enter sends it)", 14.0, WHEN()))
+                .hint_text(rich("untitled · a title for this transmission (Enter sends it)", 14.0, WHEN()))
                 .font(body(14.0)).text_color(Color32::from_rgb(0xee, 0xee, 0xee)));
             let typed = self.title_edit.trim().to_string();
             if r.lost_focus() || (r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
                 if typed != saved.trim() {
                     match self.settings.update(|s| s.stream_title = typed.clone()) {
-                        Ok(()) => self.note(if typed.is_empty() { "the broadcast's title taken down".to_string() }
-                                            else { format!("the broadcast's title: {}", typed) }),
+                        Ok(()) => self.note(if typed.is_empty() { "the transmission's title taken down".to_string() }
+                                            else { format!("the transmission's title: {}", typed) }),
                         Err(e) => self.note(format!("couldn't save the title: {}", e)),
                     }
                 }
@@ -3107,8 +3115,8 @@ impl App {
         match i {
             0 => {
                 let mut talk = s.chat_allowed;
-                if ui.checkbox(&mut talk, rich("viewers may chat", 14.0, GREY()))
-                    .on_hover_text(tip("off: viewers' lines go nowhere, and their pages say the chat is off. Your own lines still go out.")).changed() {
+                if ui.checkbox(&mut talk, rich("observers may chat", 14.0, GREY()))
+                    .on_hover_text(tip("off: observers' lines go nowhere, and their pages say the chat is off. Your own lines still go out.")).changed() {
                     let _ = self.settings.update(|s| s.chat_allowed = talk);
                 }
             }
@@ -3117,7 +3125,7 @@ impl App {
                 // Off: viewers' pings go nowhere; the site: on viewers' pages only; and my screen: a ring over RuneLite
                 // too, on this PC only, never in the stream.)
                 ui.spacing_mut().item_spacing.x = 4.0;
-                ui.label(rich("pings:", 14.0, GREY())).on_hover_text(tip("a viewer's click on the picture: a ring where they pointed"));
+                ui.label(rich("pings:", 14.0, GREY())).on_hover_text(tip("an observer's click on the picture: a ring where they pointed"));
                 let now = if !s.pings_allowed { 0 } else if !s.pings { 1 } else { 2 };
                 for (k, (_, l, t)) in PINGS.iter().enumerate() {
                     if button(ui, l, true, Some(now == k)).on_hover_text(tip(t)).clicked() {
@@ -3132,14 +3140,14 @@ impl App {
                 // into the frames itself, so the portal never reads where it is
                 let mut on = s.show_cursor;
                 if ui.checkbox(&mut on, rich(CURSOR_SWITCH, 14.0, GREY()))
-                    .on_hover_text(tip("your mouse pointer in the picture viewers see, where it's over RuneLite. Off: it never shows. Windows draws it into each frame (Windows Graphics Capture, the usual way); PrintWindow, the fallback, can't, so there it stays hidden.")).changed() {
+                    .on_hover_text(tip("your mouse pointer in the picture observers see, where it's over RuneLite. Off: it never shows. Windows draws it into each frame (Windows Graphics Capture, the usual way); PrintWindow, the fallback, can't, so there it stays hidden.")).changed() {
                     let _ = self.settings.update(|s| s.show_cursor = on);
                 }
             }
             3 => {
                 let mut st = s.signals;
                 if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY()))
-                    .on_hover_text(tip("each viewer's ✼ rising over RuneLite. Only on this PC.")).changed() {
+                    .on_hover_text(tip("each observer's ✼ rising over RuneLite. Only on this PC.")).changed() {
                     let _ = self.settings.update(|s| s.signals = st);
                 }
             }
@@ -3147,7 +3155,7 @@ impl App {
                 let mut over = s.game_chat;
                 ui.spacing_mut().item_spacing.x = gap;
                 if ui.checkbox(&mut over, rich("chat over the game", 14.0, GREY()))
-                    .on_hover_text(tip("the newest lines over RuneLite, fading after 20 s. Only on this PC: it's never in the stream.")).changed() {
+                    .on_hover_text(tip("the newest lines over RuneLite, fading after 20 s. Only on this PC: it's never in the transmission.")).changed() {
                     let _ = self.settings.update(|s| s.game_chat = over);
                 }
                 if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat))
@@ -3168,10 +3176,10 @@ impl App {
                     .on_hover_text(tip(&format!("boxes blacked out of every frame before it leaves this PC, so what's under them is never sent. The {} key turns them off and on.", win::key_name(&s.mask_key)))).changed() {
                     let _ = self.settings.update(|x| x.masks_on = on);
                 }
-                if button(ui, if self.editing_masks { "done" } else { "edit masks" }, true, Some(self.editing_masks))
+                if button(ui, if self.editing_masks { "done" } else { "redact" }, true, Some(self.editing_masks))
                     .on_hover_text(tip("draw boxes over RuneLite (drag), move them, right-click one to take it away")).clicked() {
                     if !self.editing_masks && frame_rect(s).is_none() {
-                        self.note("RuneLite isn't open (or it's minimised): open it, then draw the masks over it");
+                        self.note("RuneLite isn't open (or it's minimised): open it, then draw the redactions over it");
                     } else {
                         self.editing_masks = !self.editing_masks;
                         self.mask_drag = None;
@@ -3207,18 +3215,18 @@ impl App {
             let text = if !connected {
                 "reaching the relay…".to_string()
             } else if fresh {
-                let had = match self.acked { Some(b) if b > 0 => format!(" · viewers' pages have had {:.1} Mbit/s", b as f64 / 1e6), _ => if self.viewers > 0 { " · viewers: not heard from yet".into() } else { " · nobody watching".into() } };
+                let had = match self.acked { Some(b) if b > 0 => format!(" · observers' pages have had {:.1} Mbit/s", b as f64 / 1e6), _ => if self.viewers > 0 { " · observers: not heard from yet".into() } else { " · nobody observing".into() } };
                 format!("the site's view: {:.1} a second through the relay{}", rate, had)
             } else {
-                "the site's view: nothing coming through (off air, static, or paused)".to_string()
+                "the site's view: nothing coming through (dark, static, or no signal)".to_string()
             };
             words = Some((text, if fresh { LIME() } else { GREY() }));
         }
         let gap = ui.spacing().item_spacing.x;
-        let beside = words.as_ref().is_some_and(|(t, _)| check_w(ui, "the live view") + gap + text_w(ui, t, 14.0) <= ui.available_width());
+        let beside = words.as_ref().is_some_and(|(t, _)| check_w(ui, "the monitor") + gap + text_w(ui, t, 14.0) <= ui.available_width());
         let toggle = |ui: &mut egui::Ui, feed_tex: &mut Option<(egui::TextureHandle, Instant)>| {
             let mut on = s.live_view;
-            if ui.checkbox(&mut on, rich("the live view", 14.0, GREY())).on_hover_text(tip("the portal as the site gets it, through the relay as a viewer's page would (off: not connected at all, so it costs nothing)")).changed() {
+            if ui.checkbox(&mut on, rich("the monitor", 14.0, GREY())).on_hover_text(tip("the outstation as the site gets it, through the relay as an observer's page would (off: not connected at all, so it costs nothing)")).changed() {
                 let _ = self.settings.update(|x| x.live_view = on);
                 if !on { *feed_tex = None; }
             }
@@ -3250,14 +3258,14 @@ impl App {
         if self.threads.is_empty() { self.tab = None; return; }
         let mut close: Option<String> = None;
         ui.horizontal_wrapped(|ui| {
-            if button(ui, "stream chat", true, Some(self.tab.is_none())).on_hover_text(tip("your stream's chat: what viewers say, and your lines to them")).clicked() {
+            if button(ui, "transmission chat", true, Some(self.tab.is_none())).on_hover_text(tip("your transmission's chat: what observers say, and your lines to them")).clicked() {
                 self.tab = None;
             }
             for t in &mut self.threads {
                 let on = self.tab.as_deref() == Some(t.channel.as_str());
                 let words = if t.unread > 0 && !on { format!("{} ({})", t.name, t.unread) } else { t.name.clone() };
                 let r = button(ui, &words, true, Some(on))
-                    .on_hover_text(tip(&format!("messages with {}'s portal, only between your portals (never on either stream). Right-click to close.", t.name)));
+                    .on_hover_text(tip(&format!("station to station: messages with {}'s outstation, only between your outstations (never on either transmission). Right-click to close.", t.name)));
                 if r.clicked() { self.tab = Some(t.channel.clone()); t.unread = 0; }
                 r.context_menu(|ui| {
                     if ui.button(format!("close {}", t.name)).clicked() { close = Some(t.channel.clone()); ui.close(); }
@@ -3283,7 +3291,7 @@ impl App {
                 egui::ScrollArea::vertical().id_salt(("dm", ch.clone())).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
                     if let Some(t) = self.threads.iter().find(|t| t.channel == ch) {
                         if t.lines.is_empty() {
-                            ui.label(wrapped(&format!("✼ a message to {}'s portal shows in their portal's window, not on their stream", t.name), size, GREY(), ui.available_width()));
+                            ui.label(wrapped(&format!("✼ station to station: a message to {}'s outstation shows in their outstation's window, not on their transmission", t.name), size, GREY(), ui.available_width()));
                         }
                         for l in &t.lines {
                             let mut job = egui::text::LayoutJob::default();
@@ -3321,7 +3329,7 @@ impl App {
                         append(&mut job, &format!("✼ {}", l.text), size, if l.ping { CYAN() } else { GREY() }, false);
                     } else {
                         append(&mut job, &l.name, size, c(if l.host { LIME() } else { CYAN() }), l.hidden);
-                        if l.queued { append(&mut job, " (in line)", size, c(Color32::from_rgb(0x77, 0x77, 0x77)), l.hidden); }
+                        if l.queued { append(&mut job, " (on standby)", size, c(Color32::from_rgb(0x77, 0x77, 0x77)), l.hidden); }
                         append(&mut job, &format!("  {}", l.text), size, c(TEXT()), l.hidden);
                         append(&mut job, &format!("  {}", l.when), size * 0.85, c(WHEN()), l.hidden);
                     }
@@ -3331,7 +3339,7 @@ impl App {
                     if let Some(id) = l.id {
                         let (who, host, name) = (l.who, l.host, l.name.clone());
                         if !l.hidden {
-                            r = r.on_hover_text(tip("right-click: take it back, or ban this viewer"));
+                            r = r.on_hover_text(tip("right-click: take it back, or ban this observer"));
                         }
                         r.context_menu(|ui| {
                             if ui.button("take this line back off everyone's page").clicked() { act = Some(json!({"hide": id})); ui.close(); }
@@ -3385,7 +3393,7 @@ impl App {
             if button(ui, "a guess…", false, None).clicked() {
                 self.guess_form = Some((String::new(), String::new()));
             }
-            if button(ui, "clip", false, None).on_hover_text("the replay buffer saved as a clip (the clip key does the same)").clicked() {
+            if button(ui, "clip", false, None).on_hover_text("the tape saved as a clip (the clip key does the same)").clicked() {
                 crate::clip::save(&self.settings.get().clip_folder);
             }
         });
@@ -3471,10 +3479,10 @@ impl App {
             let watching: Vec<&Value> = self.viewer_list.iter().filter(|v| !v.get("waiting").and_then(|x| x.as_bool()).unwrap_or(false)).collect();
             let waiting: Vec<&Value> = self.viewer_list.iter().filter(|v| v.get("waiting").and_then(|x| x.as_bool()).unwrap_or(false)).collect();
             if self.viewer_list.is_empty() {
-                ui.label(rich(if self.up { "nobody's watching" } else { "the relay isn't answering" }, 14.0, GREY()));
+                ui.label(rich(if self.up { "nobody's observing" } else { "the relay isn't answering" }, 14.0, GREY()));
             }
             egui::ScrollArea::vertical().id_salt("viewers").max_height(150.0).auto_shrink([false, true]).show(ui, |ui| {
-                for (group, list) in [("watching", &watching), ("in line for a spot", &waiting)] {
+                for (group, list) in [("observing", &watching), ("on standby", &waiting)] {
                     if list.is_empty() { continue; }
                     ui.label(rich(&format!("{} ({})", group, list.len()), 14.0, LIME()));
                     ui.horizontal_wrapped(|ui| {
@@ -3483,7 +3491,7 @@ impl App {
                             let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("visitor").to_string();
                             let r = ui.add(egui::Label::new(rich(&name, 14.0, CYAN())).sense(Sense::click()))
                                 .on_hover_cursor(egui::CursorIcon::Default)
-                                .on_hover_text(tip(&format!("viewer {} · right-click to ban them", who)));
+                                .on_hover_text(tip(&format!("observer {} · right-click to ban them", who)));
                             r.context_menu(|ui| {
                                 if banned.contains(&who) {
                                     if ui.button(format!("unban {}", name)).clicked() { act = Some((json!({"unban": who}), format!("unbanned {}", name))); ui.close(); }
@@ -3599,10 +3607,10 @@ impl App {
     fn close_modal(&mut self, ctx: &egui::Context) {
         egui::Modal::new(egui::Id::unique("closing")).frame(egui::Frame::new().fill(ABYSS()).stroke(Stroke::new(1.0, LIME()))
             .inner_margin(egui::Margin::same(16))).show(ctx, |ui| {
-            ui.label(rich("the portal is live.", 16.0, LIME()));
+            ui.label(rich("the outstation is transmitting.", 16.0, LIME()));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if button(ui, "end the stream and close", false, None).clicked() {
+                if button(ui, "go dark and close", false, None).clicked() {
                     let _ = self.settings.update(|s| s.on_air = false);
                     self.asking_close = false;
                     self.quitting = true;
@@ -3639,7 +3647,7 @@ impl App {
         let x = gx.min((r as f32 - wide * ppp).max(l as f32));
         let y = gy.min((b as f32 - tall * ppp).max(t as f32));
         let moving = self.moving_chat;
-        let mut builder = egui::ViewportBuilder::default().with_title("the portal ✼ chat over the game").with_decorations(false)
+        let mut builder = egui::ViewportBuilder::default().with_title("outstation ✼ chat over the game").with_decorations(false)
             .with_transparent(true).with_always_on_top().with_mouse_passthrough(!moving).with_taskbar(false)
             .with_resizable(false).with_inner_size(Vec2::new(wide, tall));
         if !moving {
@@ -3657,7 +3665,7 @@ impl App {
                 p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
                 p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
                 p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
-                p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the portal's window, to keep it there", body(14.0), GREY());
+                p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the outstation's window, to keep it there", body(14.0), GREY());
                 let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
                 if resp.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -3713,7 +3721,7 @@ impl App {
         let Some((l, t, r, b)) = frame_rect(&s) else { self.editing_masks = false; return };
         let ppp = ctx.pixels_per_point();
         let (w, h) = ((r - l) as f32 / ppp, (b - t) as f32 / ppp);
-        let builder = egui::ViewportBuilder::default().with_title("the portal ✼ masks").with_decorations(false)
+        let builder = egui::ViewportBuilder::default().with_title("outstation ✼ redactions").with_decorations(false)
             .with_transparent(true).with_always_on_top().with_taskbar(false).with_resizable(false)
             .with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp)).with_inner_size(Vec2::new(w, h));
         let mut masks = s.masks.clone();
@@ -3805,7 +3813,7 @@ impl App {
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
         let ppp = ctx.pixels_per_point();
         let (w, h) = ((r - l) as f32 / ppp, (b - t) as f32 / ppp);
-        let builder = egui::ViewportBuilder::default().with_title("the portal ✼ signals").with_decorations(false)
+        let builder = egui::ViewportBuilder::default().with_title("outstation ✼ signals").with_decorations(false)
             .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
             .with_resizable(false).with_active(false).with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp))
             .with_inner_size(Vec2::new(w, h));
@@ -3844,7 +3852,7 @@ impl App {
             let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
             let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
             let pos = egui::pos2(p.x / ppp - WIDE / 2.0, p.y / ppp - TALL / 2.0);
-            let builder = egui::ViewportBuilder::default().with_title("the portal ✼ ping").with_decorations(false)
+            let builder = egui::ViewportBuilder::default().with_title("outstation ✼ ping").with_decorations(false)
                 .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
                 .with_resizable(false).with_active(false).with_position(pos).with_inner_size(Vec2::new(WIDE, TALL));
             let name = p.name.clone();

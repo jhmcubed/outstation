@@ -304,7 +304,7 @@ pub fn paste_text() -> Option<String> {
 pub fn first_copy(tag: &str, title: &str) -> bool {
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
-    let name = wide(&format!("Local\\outside-portal-{}", tag));
+    let name = wide(&format!("Local\\outstation-{}", tag));
     unsafe {
         let _m = CreateMutexW(None, false, PCWSTR(name.as_ptr()));
         if GetLastError() == ERROR_ALREADY_EXISTS {
@@ -317,7 +317,7 @@ pub fn first_copy(tag: &str, title: &str) -> bool {
 }
 
 /// The portal's own window: the largest top-level window with exactly this title belonging to this program (one of
-/// its own processes, outside-portal.exe), never another program's window that happens to share a title
+/// its own processes, outstation.exe), never another program's window that happens to share a title
 pub fn find_main(title: &str) -> Option<HWND> {
     struct Found<'a> { title: &'a str, best: Option<(i64, HWND)>, procs: std::collections::HashMap<u32, (u32, String)>, me: String }
     unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
@@ -335,7 +335,7 @@ pub fn find_main(title: &str) -> Option<HWND> {
         BOOL(1)
     }
     let me = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
-        .unwrap_or_else(|| "outside-portal.exe".into());
+        .unwrap_or_else(|| "outstation.exe".into());
     let mut f = Found { title, best: None, procs: processes(), me };
     unsafe {
         let _ = EnumWindows(Some(each), LPARAM(&mut f as *mut Found as isize));

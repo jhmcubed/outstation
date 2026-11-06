@@ -1345,8 +1345,8 @@ class Channels(Base):
     async def test_the_attach_code_carries_the_relay_channel_and_key(self):
         status, got = admin("POST", "/admin/channels/" + self.ch)
         self.assertEqual(status, 200)
-        self.assertTrue(got["code"].startswith("portal1:"))
-        raw = got["code"][len("portal1:"):]
+        self.assertTrue(got["code"].startswith("outstation1:"))
+        raw = got["code"][len("outstation1:"):]
         info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
         self.assertEqual((info["relay"], info["channel"], info["key"]), (RELAY, self.ch, got["key"]))
 
@@ -1454,7 +1454,7 @@ class Requests(unittest.IsolatedAsyncioTestCase):
         status, got = self.check()
         self.assertEqual((status, got["state"], got["code"]), (200, "given", minted["code"]))
         self.assertEqual(self.check()[0], 404)                                   # collected: gone
-        raw = got["code"][len("portal1:"):]
+        raw = got["code"][len("outstation1:"):]
         info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
         tx = await Client().open("%s/transmit/%s?key=%s" % (RELAY, self.name, info["key"]))
         try:

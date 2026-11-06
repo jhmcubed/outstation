@@ -48,13 +48,13 @@ jobs:
       - name: unit tests
         run: cargo test --release --locked
       - name: the safety check
-        run: python tests/safety_check.py --needs-icon target/release/outside-portal.exe
+        run: python tests/safety_check.py --needs-icon target/release/outstation.exe
       # the Outside page's copy of a clip through Windows' own encoder (clip.rs, page_copy), and what it weighs: a
       # report, not a check (a runner without Media Foundation's H.264 encoder can't make one)
       - name: the page's copy of a clip (report)
         continue-on-error: true
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath target/release/outside-portal.exe -ArgumentList "--page-selftest", "$env:RUNNER_TEMP\page" -NoNewWindow -Wait -PassThru -RedirectStandardOutput page.txt -RedirectStandardError page-err.txt
+          $p = Start-Process -FilePath target/release/outstation.exe -ArgumentList "--page-selftest", "$env:RUNNER_TEMP\page" -NoNewWindow -Wait -PassThru -RedirectStandardOutput page.txt -RedirectStandardError page-err.txt
           Get-Content page.txt, page-err.txt
           exit $p.ExitCode
