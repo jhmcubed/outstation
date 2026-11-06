@@ -1969,19 +1969,15 @@ fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
         Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
         None => {}
     }
-    // c and d: there from the start, dimmed (and said why) till b has worked
-    let (c, d) = if read { (TEXT(), TEXT()) } else { (QUIET(), QUIET()) };
-    ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport (it adds the portal to Dink)", 14.0, c, w));
-    ui.label(wrapped("d. in Dink's settings, delete your Discord address from its webhook lists (the portal sends to it now; Dink's import can only add, never take away)", 14.0, d, w));
+    // c and d once b has worked, not before (11/06/2026, Jace: shown dimmed from the start, they read as things to do
+    // first)
     if let Some(Ok((lines, notes))) = &app.dink_setup {
         if read {
-            ui.label(rich("   your Discord address is in:", 14.0, GREY()));
+            ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport (it adds the portal to Dink)", 14.0, TEXT(), w));
+            ui.label(wrapped("d. in Dink's settings, delete your Discord address from its webhook lists (the portal sends to it now; Dink's import can only add, never take away). It's in:", 14.0, TEXT(), w));
             for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
             for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
         }
-    }
-    if !read {
-        ui.label(wrapped("(c and d once b has read your settings)", 13.0, QUIET(), w));
     }
 }
 
