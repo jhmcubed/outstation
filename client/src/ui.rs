@@ -254,6 +254,8 @@ pub struct App {
     /// when the last ping and ✼ came: their windows stay a few seconds after (LINGER), so a burst makes one window
     /// something came that flashes the taskbar button (once, after what came is read: drain)
     flash_wanted: bool,
+    /// the aether: one room for every outstation and visitor (aether.rs), joined when its tab's first opened
+    aether: crate::aether::Aether,
     /// the Outside plugin (RuneLite) connected to this channel, as the relay last said (None: not said yet)
     plugin_on: Option<bool>,
     pings_last: Option<Instant>,
@@ -491,7 +493,7 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -2927,6 +2929,7 @@ impl eframe::App for App {
         self.settings.refresh();
         crate::stuck::at("the frame: what came from the relay");
         self.drain(ctx);
+        self.aether.drain(self.tab.as_deref() == Some(crate::aether::TAB));
         crate::stuck::at("the frame: requests, notes, the station's inbox");
         // a request for a portal, looked at again while it waits; answered yes, it attaches by itself
         let c = ctx.clone();
@@ -3769,13 +3772,54 @@ impl App {
         }
     }
 
+    /// The aether's room (11/07/2026): who's there, and its lines, each name lit (lime an outstation, cyan a visitor)
+    /// with its time, and its rows in a fixed-width font so ASCII art keeps its shape.
+    fn aether_ui(&mut self, ui: &mut egui::Ui) {
+        let size = self.settings.get().chat_size.clamp(10.0, 40.0);
+        let mono = FontId::new(size * 0.9, egui::FontFamily::Monospace);
+        let head = if !self.aether.up() { "the aether: reaching the relay…".to_string() }
+                   else { format!("the aether · {} here", self.aether.here) };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich(&head, 14.0, GREY()));
+            if let Some(n) = self.aether.note.clone().filter(|n| !n.is_empty()) {
+                ui.label(rich(&n, 14.0, PINK()));
+            }
+        });
+        egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            egui::ScrollArea::both().id_salt("aether").stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                if self.aether.lines.is_empty() {
+                    ui.label(wrapped("✼ the aether: everyone's room, every outstation's and everyone on Outside. Say something, or draw something: a line can be several rows (Shift+Enter), and keeps its shape.", size, GREY(), ui.available_width()));
+                }
+                for l in &self.aether.lines {
+                    let mut head = egui::text::LayoutJob::default();
+                    append(&mut head, &l.name, size, if l.outstation { LIME() } else { CYAN() }, false);
+                    append(&mut head, &format!("  {}", local_hhmm(l.at)), size * 0.8, WHEN(), false);
+                    ui.label(head);
+                    ui.add(egui::Label::new(egui::RichText::new(&l.text).font(mono.clone()).color(TEXT())).extend());
+                    ui.add_space(4.0);
+                }
+            });
+        });
+    }
+
     /// The chat box's tabs: the stream's chat, and a conversation with each portal that's messaged (or been messaged).
     fn chat_tabs(&mut self, ui: &mut egui::Ui) {
-        if self.threads.is_empty() { self.tab = None; return; }
         let mut close: Option<String> = None;
+        let ctx = ui.ctx().clone();
         ui.horizontal_wrapped(|ui| {
             if button(ui, "transmission chat", true, Some(self.tab.is_none())).on_hover_text(tip("your transmission's chat: what observers say, and your lines to them")).clicked() {
                 self.tab = None;
+            }
+            // the aether (11/07/2026): everyone's room, joined when it's first opened
+            let on = self.tab.as_deref() == Some(crate::aether::TAB);
+            let words = if self.aether.unread > 0 && !on { format!("the aether ({})", self.aether.unread) } else { "the aether".to_string() };
+            if button(ui, &words, true, Some(on))
+                .on_hover_text(tip("the aether: one room for every outstation and everyone on Outside. Lines of several rows keep their shape (ASCII art): Shift+Enter starts a new row. Nothing here reaches your transmission's chat.")).clicked() {
+                self.tab = Some(crate::aether::TAB.to_string());
+                self.aether.unread = 0;
+                let c = ctx.clone();
+                self.aether.start(self.settings.clone(), move || c.request_repaint());
             }
             for t in &mut self.threads {
                 let on = self.tab.as_deref() == Some(t.channel.as_str());
@@ -3799,6 +3843,10 @@ impl App {
         let mut act: Option<Value> = None;
         let mut notes = Vec::new();
         self.chat_tabs(ui);
+        if self.tab.as_deref() == Some(crate::aether::TAB) {
+            self.aether_ui(ui);
+            return;
+        }
         if let Some(ch) = self.tab.clone() {
             let size = self.settings.get().chat_size.clamp(10.0, 40.0);
             let me = self.settings.get().host_name();
@@ -3880,6 +3928,33 @@ impl App {
     fn answer(&mut self, ui: &mut egui::Ui) {
         if self.settings.get().clips_mode() {
             return self.foot(ui);
+        }
+        // (the aether's tab open: a line of several rows, Enter sends it, Shift+Enter starts a new row)
+        if self.tab.as_deref() == Some(crate::aether::TAB) {
+            let size = self.settings.get().chat_size.clamp(10.0, 40.0);
+            let mut send = false;
+            ui.horizontal(|ui| {
+                let w = ui.available_width() - 70.0;
+                let r = ui.add(egui::TextEdit::multiline(&mut self.entry).desired_width(w.max(80.0)).desired_rows(1)
+                    .font(FontId::new(size * 0.9, egui::FontFamily::Monospace))
+                    .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter)))
+                    .hint_text(rich("into the aether (Shift+Enter: a new row)", 14.0, WHEN())));
+                if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift) { send = true; }
+                if button(ui, "send", false, None).clicked() { send = true; }
+                if send { r.request_focus(); }
+            });
+            if send {
+                let text = crate::aether::tidy(&self.entry);
+                if !text.is_empty() {
+                    if self.aether.say(&text) { self.entry.clear(); }
+                    else if self.aether.slow_until.is_some_and(|t| Instant::now() < t) { self.note("the aether: too soon, a line every 2 seconds"); }
+                    else { self.note("not sent: the aether isn't answering"); }
+                } else {
+                    self.entry = self.entry.trim().to_string();
+                }
+            }
+            self.foot(ui);
+            return;
         }
         // (narrow: the line across the window, the buttons under it)
         let narrow = ui.available_width() < 470.0;
