@@ -3,3 +3,4 @@ node_modules/
 .dev.vars
 /target/
 __pycache__/
+/client/target/
