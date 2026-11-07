@@ -3814,11 +3814,15 @@ impl App {
                 p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
                 p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
                 p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
-                p.text(rect.center() + Vec2::new(0.0, 14.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\" in the outstation's window, to keep it there", body(14.0), GREY());
+                p.text(rect.center() + Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
                 let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
                 if resp.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
+                // its own "done" (11/07/2026: over RuneLite and above everything, it could cover the window's own)
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.center().y + 40.0), Vec2::new(90.0, 28.0)))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)));
+                if button(&mut child, "done", false, Some(true)).clicked() { done = true; }
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) { done = true; }
                 if let Some(outer) = ui.input(|i| i.viewport().outer_rect) {
                     put = Some((outer.min.x * ppp, outer.min.y * ppp));
@@ -3940,7 +3944,16 @@ impl App {
             let at = egui::pos2(rect.center().x, rect.top() + 18.0);
             let g = p.layout_no_wrap(hint.into(), body(16.0), LIME());
             p.rect_filled(egui::Rect::from_center_size(at, g.size() + Vec2::new(16.0, 8.0)), 0.0, Color32::from_black_alpha(220));
+            let below = at.y + g.size().y / 2.0 + 22.0;
             p.galley(at - g.size() / 2.0, g, LIME());
+            // its own "done", under the hint (11/07/2026, Jace: "unable to click done after clicking redact": this window
+            // sits over RuneLite, above everything, so where the outstation's window overlaps the game it covered the
+            // window's own "done")
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, below), Vec2::new(90.0, 28.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)));
+            if button(&mut child, "done", false, Some(true)).on_hover_text(tip("the redactions are right: back to the outstation (Enter does the same)")).clicked() {
+                done = true;
+            }
             crate::cursor::follow(ui.ctx(), crate::cursor::still());
         });
         self.mask_drag = drag;

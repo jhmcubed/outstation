@@ -164,9 +164,33 @@ unsafe extern "system" fn each(hwnd: HWND, _l: LPARAM) -> windows::core::BOOL {
         if pid == std::process::id() {
             // (the same id again only updates it: a window already taken in is left as it is)
             let _ = SetWindowSubclass(hwnd, Some(proc), SUBCLASS_ID, 0);
+            see_through(hwnd);
         }
     }
     true.into()
+}
+
+/// The see-through windows over RuneLite (their titles "outstation ✼ …": pings, ✼, the chat over the game, the
+/// redactions) with nothing of Windows' own round them: no shadow, no border, no rounded corners (11/07/2026, Jace:
+/// "the invisible/transparent chatbox also has a shadow around it"). Once a window; the main window keeps its own.
+fn see_through(hwnd: HWND) {
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
+    static DONE: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+    let key = hwnd.0 as isize;
+    if DONE.lock().unwrap().contains(&key) { return; }
+    let mut buf = [0u16; 128];
+    let n = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
+    let title = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+    if !title.starts_with("outstation ✼ ") { return; }
+    DONE.lock().unwrap().push(key);
+    let set = |what, value: u32| unsafe {
+        // (Windows 10 knows no border colour or corners: it says so and draws neither anyway)
+        let _ = DwmSetWindowAttribute(hwnd, what, &value as *const u32 as *const _, 4);
+    };
+    set(DWMWA_NCRENDERING_POLICY, 1); // DWMNCRP_DISABLED: no frame drawn by Windows, so no shadow
+    set(DWMWA_WINDOW_CORNER_PREFERENCE, 1); // DWMWCP_DONOTROUND
+    set(DWMWA_BORDER_COLOR, 0xFFFF_FFFE); // DWMWA_COLOR_NONE
 }
 
 /// Every window of the portal's own (the main one, and the chat-over-the-game and masks windows as they come)
