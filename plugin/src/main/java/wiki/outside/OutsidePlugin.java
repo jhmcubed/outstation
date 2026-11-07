@@ -23,12 +23,15 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
 import net.runelite.api.Skill;
+import net.runelite.api.WorldType;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -84,9 +87,16 @@ public class OutsidePlugin extends Plugin
 	private ChatMessageManager chat;
 
 	@Inject
+	private ClientThread clientThread;
+
+	@Inject
 	private ScheduledExecutorService executor;
 
+	/** only on the client's thread (the ticks); a new connection asks for everything again through `resend` */
 	private final Kit kit = new Kit();
+	private volatile boolean resend;
+	/** sending held while somewhere dangerous (the Wilderness, a PvP world), and said so once */
+	private boolean paused;
 	private volatile WebSocket socket;
 	private volatile boolean open;
 	/** stopped for good until the key changes (a wrong key, or another RuneLite took over) */
@@ -130,7 +140,7 @@ public class OutsidePlugin extends Plugin
 			toldConnected = false;
 			connect();
 		}
-		kit.forget();
+		resend = true;
 	}
 
 	@Subscribe
@@ -141,11 +151,11 @@ public class OutsidePlugin extends Plugin
 			JsonObject off = new JsonObject();
 			off.addProperty("off", true);
 			send(off);
-			kit.forget();
+			resend = true;
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
-			kit.forget();
+			resend = true;
 		}
 	}
 
@@ -155,6 +165,29 @@ public class OutsidePlugin extends Plugin
 		if (!open || client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
+		}
+		if (resend)
+		{
+			resend = false;
+			kit.forget();
+		}
+		// (somewhere dangerous: nothing more goes till they're out, unless they've said otherwise, so nobody
+		// watching their page sees what they risk)
+		if (!config.wilderness() && dangerous())
+		{
+			if (!paused)
+			{
+				paused = true;
+				JsonObject p = new JsonObject();
+				p.addProperty("paused", "wilderness");
+				send(p);
+			}
+			return;
+		}
+		if (paused)
+		{
+			paused = false;
+			kit.forget();
 		}
 		Map<String, JsonElement> now = read();
 		JsonObject changes = kit.changes(now);
@@ -185,6 +218,7 @@ public class OutsidePlugin extends Plugin
 			changes.add("items", items);
 		}
 		changes.addProperty("off", false);
+		changes.addProperty("paused", false);
 		if (send(changes))
 		{
 			kit.took(changes);
@@ -306,6 +340,28 @@ public class OutsidePlugin extends Plugin
 		return Kit.items(ids, qs);
 	}
 
+	/** In the Wilderness, a PvP area, or on a PvP or Deadman world (read here, never sent). */
+	private boolean dangerous()
+	{
+		if (WorldType.isPvpWorld(client.getWorldType()) || client.getWorldType().contains(WorldType.DEADMAN))
+		{
+			return true;
+		}
+		if (client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1)
+		{
+			return true;
+		}
+		Player me = client.getLocalPlayer();
+		WorldPoint at = me == null ? null : me.getWorldLocation();
+		return at != null && inWilderness(at.getX(), at.getY());
+	}
+
+	/** The Wilderness's bounds, above ground and below (its levels count from y 3520 up, and 9920 under). */
+	static boolean inWilderness(int x, int y)
+	{
+		return x >= 2944 && x < 3392 && ((y >= 3520 && y < 3968) || (y >= 9920 && y < 10368));
+	}
+
 	static String accountType(int v)
 	{
 		switch (v)
@@ -340,7 +396,7 @@ public class OutsidePlugin extends Plugin
 		{
 			return;
 		}
-		attach = Attach.parse(config.stationKey());
+		attach = Attach.parse(config.stationKey(), gson);
 		if (attach == null)
 		{
 			return;
@@ -353,7 +409,7 @@ public class OutsidePlugin extends Plugin
 			{
 				open = true;
 				retryIn = 5;
-				kit.forget();
+				resend = true;
 				if (!toldConnected)
 				{
 					toldConnected = true;
@@ -432,6 +488,7 @@ public class OutsidePlugin extends Plugin
 
 	private void say(String words)
 	{
-		chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE).runeLiteFormattedMessage("Outside: " + words).build());
+		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
+			.runeLiteFormattedMessage("Outside: " + words).build()));
 	}
 }

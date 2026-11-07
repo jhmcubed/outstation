@@ -1,7 +1,7 @@
 package wiki.outside;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -38,8 +38,8 @@ public final class Attach
 		return key;
 	}
 
-	/** The key read, or null when it isn't one. */
-	public static Attach parse(String code)
+	/** The key read (with RuneLite's own Gson), or null when it isn't one. */
+	public static Attach parse(String code, Gson gson)
 	{
 		if (code == null)
 		{
@@ -59,7 +59,7 @@ public final class Attach
 		try
 		{
 			String json = new String(Base64.getUrlDecoder().decode(c.substring(colon + 1)), StandardCharsets.UTF_8);
-			JsonObject o = new JsonParser().parse(json).getAsJsonObject();
+			JsonObject o = gson.fromJson(json, JsonObject.class);
 			String relay = o.get("relay").getAsString();
 			String channel = o.get("channel").getAsString();
 			String key = o.get("key").getAsString();
@@ -102,13 +102,6 @@ public final class Attach
 
 	private static String enc(String s)
 	{
-		try
-		{
-			return URLEncoder.encode(s, "UTF-8").replace("+", "%20");
-		}
-		catch (java.io.UnsupportedEncodingException e)
-		{
-			throw new IllegalStateException(e);
-		}
+		return URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20");
 	}
 }

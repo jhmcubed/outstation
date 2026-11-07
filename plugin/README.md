@@ -19,7 +19,7 @@ To your relay (Jace's, on Cloudflare, unless your key says another), over one co
 - **hitpoints, prayer, run and special** (one switch), and which prayers are on
 - that you've logged out
 
-Only what changed goes, at most once a game tick (hitpoints and the like alone, at most every 3 seconds). Never: your screen, your chat, where you are, your bank, other players, anything you type. Your page shows what was sent to anyone who opens it, as your transmission is.
+Only what changed goes, at most once a game tick (hitpoints and the like alone, at most every 3 seconds). In the Wilderness, a PvP area, or on a PvP or Deadman world, nothing more goes till you're out ("In the Wilderness too" turns that off, behind a warning), so nobody watching your page sees what you risk; your page says it's paused. Never: your screen, your chat, where you are, your bank, other players, anything you type. Your page shows what was sent to anyone who opens it, as your transmission is.
 
 ## Trying it before the Hub
 
@@ -40,3 +40,27 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
   - `Attach.java`: the station key read back into the relay, the channel and the key
   - `OutsideConfig.java`: the settings
 - The relay's side: `docs/protocol.md`, "The game".
+
+## For the Hub's review
+
+Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py plugin/hub_check.py` checks the source for every forbidden feature and API before each submission or update.
+
+- **No forbidden features:** no reflection, JNI or JNA, other programs, code downloaded at runtime, `Desktop`/`LinkBrowser.open`, `Thread.sleep`/`interrupt`, `menuAction`, `java.io` files, `KeyboardFocusManager`, or network clients other than OkHttp. RuneLite's own Gson, OkHttp, executor and client thread are injected, never made. The package isn't `net.runelite`.
+- **No new dependencies:** `build=standard`, nothing outside runelite-client.
+- **Network IO** (a sensitive API, allowed): one WebSocket to the relay named in the station key the player pastes in, through RuneLite's OkHttp. It sends only the player's own game, as listed above; it reads nothing back.
+- **The third-party warning:** on the "Send to my outstation" setting (`@ConfigItem(warning = …)`), and for the Hub's manifest (below).
+- **Jagex's rules and the rejected list:**
+  - It changes nothing in the game or RuneLite: no overlays, no menu entries, no input, no chat typed.
+  - It reads only the player's own character: nothing about other players ("crowdsourcing" is on the rejected list), no location sent.
+  - It runs no server and exposes nothing over HTTP from the PC ("plugins which expose player information over HTTP" are rejected): it sends to the player's own outstation's relay, as RuneProfile and Wise Old Man's plugins send to theirs.
+  - It's free, with nothing behind a paid service.
+  - In the Wilderness, a PvP area, or on a PvP or Deadman world, it stops sending (unless the player turns "In the Wilderness too" on, behind its own warning), so nobody watching can see what a player risks.
+
+The manifest, `plugins/outside` in runelite/plugin-hub, once the plugin has a repository of its own (the Hub builds a repository's root):
+
+```
+repository=https://github.com/jhmcubed/outside-plugin.git
+commit=<the full commit hash>
+warning=This plugin submits your equipment, inventory, looting bag, rune pouch, skills and vitals, and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page shows them publicly.
+```
+

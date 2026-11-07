@@ -25,7 +25,11 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "send",
 		name = "Send to my outstation",
-		description = "Off: nothing is sent anywhere.",
+		description = "What's switched on below goes to your outstation's relay (Jace's, on Cloudflare, unless your key"
+			+ " names another), and your Outside page shows it to anyone. Off: nothing is sent anywhere.",
+		warning = "This sends what you wear and carry, your looting bag, rune pouch, skills and vitals, and your IP"
+			+ " address, to your outstation's relay, a server not controlled or verified by the RuneLite developers."
+			+ " Your Outside page shows them to anyone who opens it.",
 		position = 1
 	)
 	default boolean send()
@@ -53,6 +57,20 @@ public interface OutsideConfig extends Config
 	default boolean skills()
 	{
 		return true;
+	}
+
+	@ConfigItem(
+		keyName = "wilderness",
+		name = "In the Wilderness too",
+		description = "Off (to begin with): in the Wilderness, a PvP area or on a PvP or Deadman world, nothing more is"
+			+ " sent till you're out, so nobody watching your page can see what you risk.",
+		warning = "On, anyone who opens your Outside page can see what you carry while you're in the Wilderness or on a"
+			+ " PvP world, and what's in your looting bag.",
+		position = 5
+	)
+	default boolean wilderness()
+	{
+		return false;
 	}
 
 	@ConfigItem(

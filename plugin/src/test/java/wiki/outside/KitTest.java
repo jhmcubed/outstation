@@ -1,5 +1,6 @@
 package wiki.outside;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
@@ -61,13 +62,23 @@ public class KitTest
 	{
 		String json = "{\"relay\": \"wss://relay.ghillie.workers.dev\", \"channel\": \"sburb\", \"key\": \"abcdefgh+/=ij\"}";
 		String code = "outstation1:" + Base64.getUrlEncoder().withoutPadding().encodeToString(json.getBytes(StandardCharsets.UTF_8));
-		Attach a = Attach.parse("  " + code + " ");
+		Gson gson = new Gson(); // (a test's own; the plugin uses RuneLite's)
+		Attach a = Attach.parse("  " + code + " ", gson);
 		assertEquals("sburb", a.getChannel());
 		assertEquals("wss://relay.ghillie.workers.dev/game/sburb?key=abcdefgh%2B%2F%3Dij&v=0.1.0", a.gameUrl("0.1.0"));
 		assertEquals("ws://127.0.0.1:8790/game/sburb?key=k&v=1",
 			new Attach("http://127.0.0.1:8790/", "sburb", "k").gameUrl("1"));
-		assertNull(Attach.parse("hello"));
-		assertNull(Attach.parse("outstation1:!!!"));
+		assertNull(Attach.parse("hello", gson));
+		assertNull(Attach.parse("outstation1:!!!", gson));
+	}
+
+	@Test
+	public void theWildernessByItsBounds()
+	{
+		assertTrue(OutsidePlugin.inWilderness(3100, 3530));
+		assertTrue(OutsidePlugin.inWilderness(3050, 10000));
+		assertTrue(!OutsidePlugin.inWilderness(3222, 3218));
+		assertTrue(!OutsidePlugin.inWilderness(3100, 3519));
 	}
 
 	@Test
