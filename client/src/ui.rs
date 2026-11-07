@@ -1992,7 +1992,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     if s.dink.auto_clip {
         let colour = if s.dink.clips_up { TEXT() } else { GREY() };
         ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
-            .on_hover_text(tip("a copy of each goes to the relay too: the 17 s round the moment, at most 768 px wide, with a still and a few moving frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days; take any down below."));
+            .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days; take any down below."));
         if s.dink.clips_up {
             page_clips_ui(app, ui, &s);
         }
@@ -2089,7 +2089,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             ui.label(rich("point Dink at the outstation", 18.0, LIME()));
             dink_address_ui(app, ui, &mut s, &st);
             ui.add_space(6.0);
-            ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸ ▸ \"which field reports go out\" changes that.", 14.0, QUIET(), w));
+            ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸, \"3. which field reports go out\", changes that.", 14.0, QUIET(), w));
         }
         3 => {
             ui.label(rich("clips", 18.0, LIME()));
@@ -2409,12 +2409,12 @@ const JAGEX: &str = "Created using intellectual property belonging to Jagex Limi
 const SAFE: &[&str] = &[
     "it never touches RuneLite or the game: it isn't a plugin, and never opens RuneLite's process",
     "it can't press a key or click for you",
-    "it sees only what RuneLite's window draws, as OBS or Discord's screen share would (press Pause before a bank PIN)",
+    "it sees only what RuneLite's window draws (nearly always its game area alone), as OBS or Discord's screen share would (press Pause before a bank PIN, and log in before you transmit)",
     "it never asks for your login, and never reads what RuneLite and Jagex say to each other",
     "it doesn't watch your keyboard: Windows tells it only when one of its own four keys is pressed (Pause, Scroll Lock, Insert and End, to begin with)",
-    "it sends only to the relay in your station key, your Discord webhook if you set one, and GitHub to look for updates",
+    "it sends only to the listening post's relay (or your own, if you run one), to your Discord webhook if you set one, and to GitHub to look for a newer version: a key request or an anomaly report only when you press its button",
     "it needs no admin, installs nothing, and doesn't start with Windows",
-    "the relay keeps your channel's name, a hash of its key, your title and the chat's last lines: your picture and sound pass through and are never written down",
+    "the relay keeps what your page needs, among it: your channel's name, a hash of its key, your title, the chat's last 50 lines, your last drops and level-ups (never a screenshot), and your clips if you switch them on (SAFETY.md lists every item and how long). your picture and sound pass through and are never written down",
 ];
 
 fn attach_screen(app: &mut App, ui: &mut egui::Ui) {

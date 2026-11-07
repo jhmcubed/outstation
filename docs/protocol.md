@@ -11,7 +11,7 @@ Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Pytho
 | sound | `/sound/<channel>?key=<key>` | the sound |
 | desk | `/desk/<channel>?key=<key>&name=<your name in the chat>` | the chat window (several may be open) |
 | watch | `/watch/<channel>?code=<watch code>` | a viewer (Outside) |
-| look | `/watch/<channel>?look=1&code=<watch code>` | a looker: the listening post's receiver, the portals page's tiles, the client's live view and a friend's peek (below, "Lookers") |
+| look | `/watch/<channel>?look=1&code=<watch code>` | a looker: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek (below, "Lookers") |
 
 `ws://` on this PC, `wss://` on Cloudflare. A channel is 1 to 64 characters: letters, digits and `_ . ~ -`.
 
@@ -26,7 +26,7 @@ Closing codes:
 
 ## The client's version
 
-The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, and on its live view's watch socket.
+The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, and on its monitor's and a friend's peek's watch sockets.
 - A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
 - Versions are compared by number (`0.10.0` is newer than `0.9.0`), and a pre-release's suffix is left out (`0.5.0-rc.1` counts as `0.5.0`).
 - A socket that says no version is let in: ghillie's Python portal predates it.
@@ -39,7 +39,7 @@ The client says its version (`client/Cargo.toml`'s, which a release's tag must m
 - **A small frame:** the same 4 bytes, then `TH`, then a small JPEG (192 px wide), about twice a second. Lookers only: never sent to a viewer, never kept as the last frame. While small frames are coming (one in the last 3 s), lookers get them instead of the full ones.
 - **Text:** the game data, passed to viewers untouched. The last line is kept for whoever joins next.
   - `{"state": "open" | "static" | "shut"}`: the picture's gate. `static` is the static key: viewers see static, and the sound still passes. Sound passes only while it's `open` or `static`.
-  - `{"report": {"type", "text", "at"}}`: a field report (from Dink), as ghillie's Python portal sends them. The outside-portal client posts to the Dink route instead (below, "Dink"). The last 8 are kept for late joiners.
+  - `{"report": {"type", "text", "at"}}`: a field report (from Dink), as ghillie's Python portal sends them. The outstation client posts to the Dink route instead (below, "Dink"). The last 8 are kept for late joiners.
 - **It hears:** the status line (below).
 
 The first transmitter sets the channel's watch code. Viewers whose code no longer matches are let go.
@@ -72,7 +72,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers"}}` each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -89,7 +89,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## Lookers
 
-A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the portals page's tiles, the client's live view and a friend's peek in its friends list. It needs the watch code, as a viewer does.
+A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek in its friends list. It needs the watch code, as a viewer does.
 - It hears the status lines, the summary and the clips' lines.
 - It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
 - Anything else it sends is thrown away.
@@ -133,7 +133,7 @@ The relay holds sound half a second (as the capture holds frames back). It lets 
 
 Each report reaches viewers as `{"report": {"type", "text", "at", "data"}}`: `text` its line (at most 200 characters, Discord's markdown taken out), `data` the numbers the page's readings use (`relay/src/text.ts`'s `reportData`, relay-py's `report_data`: the boss and its count, the levels, the loot's items and value, the collection log's count).
 
-The outside-portal client takes Dink's posts on its own PC (`127.0.0.1`) and posts only what the relay keeps of each to this route (`client/src/dink.rs`, `for_relay`): its `type`, the line as `content`, and the `extra` fields `reportData` reads. The rest of Dink's post never leaves the PC. ghillie's Python portal sent reports over its transmit socket instead.
+The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts only what the relay keeps of each to this route (`client/src/dink.rs`, `for_relay`): its `type`, the line as `content`, and the `extra` fields `reportData` reads. The rest of Dink's post never leaves the PC. ghillie's Python portal sent reports over its transmit socket instead.
 
 ## Handing out channels (Cloudflare)
 
@@ -170,7 +170,7 @@ A request nobody answers goes after 14 days, and an answer nobody collects after
 
 ## Clips (11/06/2026)
 
-A portal with "put them on my Outside page" on (client/src/clipsup.rs) uploads the clips that saved themselves; the
+An outstation with "put them on my Outside page" on (client/src/clipsup.rs) uploads the clips that saved themselves; the
 player's Outside page shows them (ghillie's public/outside-portal.js, "recovered footage"). Both relays: the Worker
 keeps the files in its R2 bucket `CLIPS` (relay/src/clips.ts; `npx wrangler r2 bucket create outside-clips` once),
 relay-py in a folder (`--clips`, ~/Documents/ghillie portal/clips; "" takes none).
@@ -212,7 +212,7 @@ desk next connects. Both outstations must be on the same relay.
 ## Anomalies and requisitions (Cloudflare)
 
 A friend's outstation reports something gone wrong (an anomaly) or asks for something (a requisition), only when they press "send to the listening post" (client/src/report.rs); the keeper reads them in his station's drawer.
-- `POST /reports` with `{"kind": "anomaly" | "requisition", "name", "note", "log", "version", "windows", "channel", "key"}`: 201 `{"id"}`.
+- `POST /reports` with `{"kind": "anomaly" | "requisition", "name", "note", "log", "version", "channel", "key"}` (and `"windows"`, which the relay keeps if it's given; the client sends none): 201 `{"id"}`.
   - `log` is the station log with its keys, codes and webhook addresses already taken out by the client (`crash.rs`, `scrub`); a requisition sends none.
   - `channel` and `key` only from an outstation attached to this relay: when the key checks out, the report names the channel; otherwise its `channel` is `""` and only the typed `name` says who.
   - Refused: 400 with no note and no log, 413 past 64 KB, 429 past 5 an hour from one address.

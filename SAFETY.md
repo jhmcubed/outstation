@@ -29,7 +29,7 @@ The window's own words, where this page quotes them: your **station key** is the
 | let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. Nothing they send can press a key, click, open a page, change a setting or reach RuneLite. The ring, the ✼ and the chat over the game are drawn in see-through windows of the outstation's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off ("pings: the site" keeps the ring off your screen, "✼ on my screen" and "chat over the game" the others), and "pings: off" and "observers may chat" switch pings and the chat off altogether. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. If you say yes on its first screen, it puts one shortcut in your own Start menu (settings ▸ more takes it out). |
 | need anything else installed? | **No.** Everything it needs comes with Windows 10 and 11: the safety check below fails a release that would need anything more. |
-| update itself, or download anything? | **No.** Once on opening it asks GitHub whether there's a newer version, and says so if there is. Getting it is up to you. "more ▸" in the settings turns the asking off. |
+| update itself, or download anything? | **No.** Once on opening it asks GitHub whether there's a newer version, and says so if there is. Getting it is up to you. Settings ▸ more turns the asking off. |
 
 ## What's in the picture
 
@@ -43,10 +43,10 @@ Everything drawn in RuneLite's game area goes out while you're live. The outstat
 
 ## What leaves your PC
 
-This is everything the outstation sends. Before it's attached to a channel (a station key from Jace, or requesting one), it sends only the version check, a request for a station key when you press **request**, and your friends list's look at the open outstations.
+This is everything the outstation sends. Before it's attached to a channel (a station key from Jace, or requesting one), it sends only the version check, a request for a station key when you press **request**, an anomaly report when you press its send, and your friends list's look at the open outstations.
 
 **To the relay in your station key, while you're transmitting** (Jace's, on Cloudflare, unless your code names another), and from there to whoever opens your Outside page (anyone with the link, or only those with your watch code if you set one):
-- **The picture:** RuneLite's game area, shrunk (to begin with 384 px wide and 8 frames a second, which measured about half a megabit a second), as JPEG pictures, with your redactions already blacked out. Twice a second, a smaller copy too (192 px wide), for the little live pictures: the portals page, a friend's peek, your own monitor.
+- **The picture:** RuneLite's game area, shrunk (to begin with 384 px wide and 8 frames a second, which measured about half a megabit a second), as JPEG pictures, with your redactions already blacked out. Twice a second, a smaller copy too (192 px wide), for the little live pictures: the outstations page, a friend's peek, your own monitor.
   - No picture goes out while you're paused, minimised, or logged out with "nothing while logged out" on.
   - Each frame waits half a second before it goes, and is dropped if you pause meanwhile, so the moment before a press of Pause never goes out.
 - **Whether the picture's live, on static (Pause) or stopped,** so viewers' pages can say so.
@@ -59,7 +59,7 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 **To the relay, whenever the outstation's open and attached,** live or not:
 - **The chat window's side:**
   - the lines you write, under your chat name, and the lines you take back
-  - who you block or ban
+  - who you ban
   - your polls and drop guesses
   - your broadcast's title and your cap on viewers
   - whether viewers may chat and ping
@@ -72,11 +72,11 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 
 **Clips, to the relay and onto your Outside page,** only with "and put them on my Outside page" on (dink ▸, off to begin with):
 - Only the clips that saved themselves, from what Dink told of: a pet, a new collection log slot, a 99, a drop worth a million or more.
-- Each one is the 17 seconds round the moment, at most 768 px wide, with its sound, a still, and a dozen small frames for the hover.
+- Each one is up to 17 seconds round the moment (12 before, 5 after, as much as the tape holds), at most 768 px wide, with its sound, a still, and up to 20 small frames for the hover.
 - A clip is made from what had already gone out: the same frames, redactions and all, and the same sound. It shows nothing your viewers didn't.
 - Never the clips you save with the clip key: those stay on your PC. So do all clips while the switch is off.
 
-**To Jace's relay, when you report an anomaly or file a requisition** (the pink **report an anomaly** and **file a requisition** at the foot of the window), only when you press **send to the listening post**:
+**To Jace's relay, when you report an anomaly or file a requisition** (the pink **report an anomaly** and the **file a requisition** beside it, at the foot of the window), only when you press **send to the listening post**:
 - your words, this version, and the name you chat under
 - for an anomaly, the station log, as "copy the station log" makes it: its last 400 lines, with your keys, codes and webhook addresses taken out first. A requisition carries no log.
 - your channel and its key, only if the outstation's attached to Jace's relay, so the report says whose it is
@@ -89,7 +89,7 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 
 **For your friends list** (friends ▸), while anyone's on it, to your relay (Jace's, before you're attached):
 - a request for the relay's list of open outstations, every minute (every 20 seconds while the list is open). Nothing about you or your list goes with it: the names are matched on your PC.
-- With the hand over a live friend's name, it watches their outstation through the relay for a small picture of it, the way the portals page does: not counted as watching, and stopped when the hand moves away.
+- With the hand over a live friend's name, it watches their outstation through the relay for a small picture of it, the way the outstations page does: not counted as watching, and stopped when the hand moves away.
 
 **To your Discord,** only if you set the outstation to pass Dink's posts on (dink ▸, "do you use Dink with Discord too?"):
 - each post just as Dink made it, its embed and screenshot included
@@ -130,7 +130,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - press a key or click
 - reach into RuneLite or the game
 - change what the outstation captures or sends
-- open a web page: the outstation opens only ghillie.wiki's pages and this one, and only when you click
+- open a web page: the outstation opens only ghillie.wiki's pages, this one, and this repository's GitHub forms for a report, and only when you click
 - start a program, or read your files
 
 **What Jace can and can't do,** as the relay's keeper:
@@ -151,7 +151,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - **Your PC's upload counter,** for the upload line.
 - **The clipboard,** only:
   - when you paste (Ctrl+V, or a paste button)
-  - once on opening, while it isn't attached yet, to see whether an station key is waiting there (anything else on the clipboard is left alone)
+  - once on opening, while it isn't attached yet, to see whether a station key is waiting there (anything else on the clipboard is left alone)
   - when you press "read my Dink settings" (Dink's own export)
 - **What you type into its own window,** as any program does. While you're changing one of its keys in the settings, it reads the next key pressed in its window.
 
@@ -159,7 +159,8 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - `%APPDATA%\outstation`:
   - `settings.json`, its settings. **This file holds your channel's key and your Discord webhook addresses:** anyone with it could stream on your channel or post to your Discord, so keep it to yourself.
   - `portal.log`, the station log: what it did (started again past 2 MB). "copy the station log" (settings ▸ more) copies its last lines with the key, codes and webhook addresses taken out.
-  - `crash.txt` after a crash, and `outstation.ico`, its icon.
+  - `crash.txt` after a crash (and `crash.txt.seen` once it's been mentioned), `portal.log.old` (the log before it started again), and `outstation.ico`, its icon.
+  - `dink-before.json`, only when you press "read my Dink settings": Dink's own export as it was, so "undo" can put it back. **Like the settings, it holds your Discord webhook addresses:** keep it to yourself.
 - `Videos\outstation` (or the folder you pick): your clips. A clip's copy for your Outside page passes through a file in your temporary folder, deleted once read.
 - The Start menu: one shortcut, only if you say yes.
 - The clipboard: only when you copy (Ctrl+C, or a copy button), and Dink's import when you press "read my Dink settings" ("undo" puts your old Dink settings back on it).
@@ -172,7 +173,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - the ✼ by the clock (the tray). Minimising the window puts it there, and the stream goes on.
 - Windows' own notification when a friend goes live, only with the Start menu shortcut
 
-**It starts nothing** but your browser, on a ghillie.wiki page or this one, when you click a link. It doesn't start with Windows, installs nothing, needs no admin, and closing it ends it.
+**It starts nothing** but your browser, on a ghillie.wiki page, this one, or this repository's GitHub form for a report, when you click a link. It doesn't start with Windows, installs nothing, needs no admin, and closing it ends it.
 
 **Its four keys are its own while it's open.** Windows hands Pause, Scroll Lock, Insert and End (or the keys you pick) to the outstation wherever you press them, so RuneLite doesn't get them while the outstation's open. If RuneLite or one of its plugins uses one of them, give the outstation another (settings ▸ hotkeys). A key another program already holds says so there.
 
@@ -199,7 +200,7 @@ Your picture and sound are passed on as they come and never written down. Only t
 **What's public:** while your channel has no watch code, the relay's list of open outstations (on the outstations page) shows that it's there, whether it's live, how many watch, its title, and the boss and kill count it's on while it's live. A watch code takes it off the list.
 
 **Messages between outstations** (your friends list's "message"):
-- A message waiting for an outstation that's closed is kept until that portal next opens: who it's from (their channel and chat name), their words and when. At most 20, each for a week.
+- A message waiting for an outstation that's closed is kept until that outstation next opens: who it's from (their channel and chat name), their words and when. At most 20, each for a week.
 - One delivered isn't written down anywhere. Your outstation keeps a conversation only while it's open.
 
 **Your clips on your Outside page,** only if you switched it on:
@@ -228,7 +229,7 @@ All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own 
 The [Rules of RuneScape](https://legal.jagex.com/docs/rules/rules-of-runescape) forbid software that plays for you, changes the game, or "tries to look at or change the communications" between your device and the game worlds. The outstation does none of those. Jagex's [Fan Content Policy](https://legal.jagex.com/docs/policies/fan-content-policy) allows streaming your gameplay (it names YouTube and Twitch).
 
 Two things to know, said plainly:
-- **The chat.** The same rules list software that "has its own chat feature separate from our game chat that does not follow our rules". The outstation's chat is outside the game, as a stream's chat is, and it's yours to keep within Jagex's rules: right-click a line to take it off everyone's page, or to block a viewer.
+- **The chat.** The same rules list software that "has its own chat feature separate from our game chat that does not follow our rules". The outstation's chat is outside the game, as a stream's chat is, and it's yours to keep within Jagex's rules: right-click a line to take it off everyone's page, or to ban whoever wrote it.
 - **Pings over the game.** Jagex's [client guidelines](https://oldschool.runescape.wiki/w/Update:Third_Party_Client_Guidelines) don't allow extra indicators for boss mechanics, "except in cases where this is a manually triggered external helper". A ping is a person pointing, in a window that isn't RuneLite's. If you'd rather not have even that during bossing, choose "pings: the site": viewers' pings then show only in the chat and on their own pages.
 
 Nobody but Jagex can promise what Jagex will decide; their rules say they "may choose to mute or ban an account for any reason". What the outstation can do is stay well inside what streaming software does, and let you check that it does.
@@ -239,14 +240,21 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
 
 > **The only official download is this repository's [Releases](https://github.com/jhmcubed/outstation/releases) page** (github.com/jhmcubed/outstation). ⊂λ,ｍ⊙ never sends the outstation any other way: a copy passed round in Discord, a DM, a forum or another website isn't ours, whatever it's called and however it looks. Never run an .exe you don't trust. RuneScape players are a favourite target of programs that pretend to be game tools and steal accounts, so before you run any copy, check its SHA-256 against the release's ([SAFETY.md](SAFETY.md), "Checking it yourself"). If someone offers you an outstation from anywhere else, don't open it, and tell the listening post (research@ghillie.wiki).
 
-1. **The code is all here**, under the MIT licence. The client is `client/src`, 26 files. Each one says at its top what it does.
+1. **The code is all here**, under the MIT licence. The client is `client/src`, 27 files. Each one says at its top what it does.
 2. **Releases are built by GitHub, from this code.** Each release lists the commit it was built from and the program's SHA-256. Once the repository is public, each also carries GitHub's build attestation: [GitHub CLI](https://cli.github.com) can confirm the file came from this repository's own build, unchanged:
 
    ```bash
    gh attestation verify outstation.exe --repo jhmcubed/outstation
    ```
 
-3. **The safety check runs on every release's own program.** Any Windows program lists, inside itself, every Windows function it can call, the libraries' included. `tests/safety_check.py` reads that list out of the file and fails the release if anything that could reach into another program, play for you or watch the keyboard is in it. It also lists every library the program loads, and fails if any of them doesn't come with Windows. It then checks the client's own code the same way, and checks that the only addresses written into it are the ones on this page. Run it on your own copy (Python, nothing to install):
+3. **The safety check runs on every release's own program.** Any Windows program lists, inside itself, every Windows function it can call, the libraries' included. `tests/safety_check.py` reads that list out of the file and fails the release if anything that could reach into another program, play for you or watch the keyboard is in it. It also lists every library the program loads, and fails if any of them doesn't come with Windows. It then checks the client's own code the same way, and checks that the only addresses written into it are these:
+   - `relay.ghillie.workers.dev`, the listening post's relay
+   - `api.github.com/repos/jhmcubed/outstation/releases/latest`, the check for a newer version
+   - `github.com/jhmcubed/outstation`: SAFETY.md and the report forms, opened in your browser
+   - `ghillie.wiki`, the Outside pages it opens in your browser
+   - `127.0.0.1`, this PC, for Dink and for a relay of your own
+
+    Run it on your own copy (Python, nothing to install):
 
    ```bash
    py tests/safety_check.py outstation.exe
@@ -286,7 +294,7 @@ Everything it touches in Windows and on the network, by file:
   - finding RuneLite's window and its process (window titles, the process list)
   - your network's byte counter (`GetIfTable2`)
   - the clipboard (when you copy or paste with Ctrl+C, X and V or the copy buttons; for the station key, and once on opening while not attached; and Dink's own export, read only when you press "read my Dink settings", with an import for Dink put back in its place)
-  - opening a page in your browser (`ShellExecuteW`), refused for anything but ghillie.wiki's pages and this one
+  - opening a page in your browser (`ShellExecuteW`), refused for anything but ghillie.wiki's pages, this one and the repository's report forms
   - blinking the outstation's own taskbar button (`FlashWindowEx`)
 - `hotkeys.rs`: `RegisterHotKey` for its four keys (and, while you're changing one in the settings, a press of one of them handed to the window instead of acting).
 - `autolive.rs`: going live by itself when RuneLite's window appears, and ending the stream 30 s after it's gone (both only if you switch them on).

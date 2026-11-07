@@ -510,14 +510,14 @@ export class Channel extends DurableObject<Env> {
     this.dmsSent = this.dmsSent.filter((t) => now - t < 60_000);
     const fail = (why: string) => this.send(ws, pyjson({ dm_failed: { to, text, why } }));
     if (!text || !/^[A-Za-z0-9_.~-]{1,64}$/.test(to)) return fail("a message needs a channel and some words");
-    if (to === this.name) return fail("that's your own portal");
+    if (to === this.name) return fail("that's your own outstation");
     if (this.dmsSent.length >= DMS_A_MINUTE) return fail(`${DMS_A_MINUTE} messages a minute at most: wait a moment`);
     this.dmsSent.push(now);
     const d: Dm = { from: this.name, name: host, text, at: now };
     try {
       const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(to)).fetch(new Request("https://channel/_dm", {
         method: "POST", headers: { "x-channel": to, "content-type": "application/json" }, body: JSON.stringify(d) }));
-      if (r.status === 404) return fail(`no portal called ${to} on this relay`);
+      if (r.status === 404) return fail(`no outstation called ${to} on this relay`);
       if (!r.ok) return fail("the relay couldn't pass it on");
       const got = (await r.json()) as { held: boolean };
       this.send(ws, pyjson({ dm_sent: { to, text, at: now, held: got.held } }));

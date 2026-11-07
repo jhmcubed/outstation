@@ -1,6 +1,6 @@
 //! The client's settings: one JSON file, read by every part and written by the window and the hotkeys.
 //!
-//! %APPDATA%\outside-portal\settings.json (or --settings <file>). Anything in the file this version doesn't know is
+//! %APPDATA%\outstation\settings.json (or --settings <file>). Anything in the file this version doesn't know is
 //! kept as it was. The fields are those of ghillie's start.py settings, as the parity list asks
 //! (claude/the-portal.md, "Parity"), with the capture's options as fields of their own instead of a "capture" list.
 
@@ -162,7 +162,7 @@ pub struct Settings {
     /// the replay buffer: the last 0 to 30 seconds kept here, for a clip (0 keeps nothing)
     #[serde(default)]
     pub replay_seconds: u32,
-    /// where clips go (empty: Videos\outside-portal)
+    /// where clips go (empty: Videos\outstation)
     #[serde(default)]
     pub clip_folder: String,
     #[serde(default)]

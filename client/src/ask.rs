@@ -1,10 +1,10 @@
-//! Asking for a portal (11/06/2026): from the attach screen, so nobody has to email the keeper for an attach code.
+//! Requesting a station key (11/06/2026): from the attach screen, so nobody has to email the keeper for an attach code.
 //!
 //! The client asks the keeper's relay for its player's channel with a secret of its own (the pickup: 32 random bytes,
 //! only its SHA-256 kept by the relay), then looks every 20 s whether the keeper has answered. Handed out, the attach
 //! code comes back once and the client attaches itself, as if it had been pasted; turned down, it says so. Nothing is
-//! sent until "ask" is pressed: the player's name as typed, the note, and the pickup (SAFETY.md, "Where things go").
-//! docs/protocol.md, "Asking for a portal", has the relay's side.
+//! sent until "ask" is pressed: the player's name as typed, the note, and the pickup (SAFETY.md, "What leaves your PC").
+//! docs/protocol.md, "Asking for a station key", has the relay's side.
 
 use crate::settings::{Asked, Shared};
 use serde_json::{json, Value};

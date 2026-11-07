@@ -1258,7 +1258,7 @@ class Messages(Base):
         theirs = await self.desk_of(ch, key, "Birch")
         self.assertEqual((await next_of(theirs, "dm"))["text"], "for later")
         await mine.send(json.dumps({"dm": {"to": "nobody" + secrets.token_hex(3), "text": "hello?"}}))
-        self.assertIn("no portal", (await next_of(mine, "dm_failed"))["why"])
+        self.assertIn("no outstation", (await next_of(mine, "dm_failed"))["why"])
         await mine.send(json.dumps({"dm": {"to": self.ch, "text": "me"}}))
         self.assertIn("your own", (await next_of(mine, "dm_failed"))["why"])
         # (a viewer can't send one: only a portal's desk)

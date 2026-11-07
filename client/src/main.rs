@@ -1,15 +1,15 @@
-//! outside-portal: the portal's broadcaster. RuneLite's window, its sound and the chat, to the relay
+//! ⊂λ,ｍ⊙ outstation (outside-portal until 11/06/2026). RuneLite's window, its sound and the chat, to the relay
 //! (docs/protocol.md), for your Outside page on ghillie.wiki.
 //!
-//!     outside-portal.exe                      the window (and the tray)
-//!     outside-portal.exe --once frame.png     one frame to a file, nothing sent
-//!     outside-portal.exe --bench 60           what a frame costs, stage by stage, nothing sent
-//!     outside-portal.exe --clip-selftest DIR  a two-second clip from made-up frames and a tone, into DIR
-//!     outside-portal.exe --page-selftest DIR  the Outside page's copy of a clip (clipsup.rs) from made-up frames, its sizes
-//!     outside-portal.exe --settings <file>    another settings file (one window per file)
-//!     outside-portal.exe --show-settings      open with the settings drawer out
+//!     outstation.exe                      the window (and the tray)
+//!     outstation.exe --once frame.png     one frame to a file, nothing sent
+//!     outstation.exe --bench 60           what a frame costs, stage by stage, nothing sent
+//!     outstation.exe --clip-selftest DIR  a two-second clip from made-up frames and a tone, into DIR
+//!     outstation.exe --page-selftest DIR  the Outside page's copy of a clip (clipsup.rs) from made-up frames, its sizes
+//!     outstation.exe --settings <file>    another settings file (one window per file)
+//!     outstation.exe --show-settings      open with the settings drawer out
 //!
-//! The settings are %APPDATA%\outside-portal\settings.json, and the log is portal.log beside it.
+//! The settings are %APPDATA%\outstation\settings.json, and the log is portal.log beside it.
 //!
 //! Built with `--features station` it's the field station too (station.rs): `--station <launcher.json>`, and `--tray`
 //! to open in the tray. It opens off air: going live is asked for (go live, or a mode with the portal in it).

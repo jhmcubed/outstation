@@ -9,7 +9,7 @@ body:
     id: version
     attributes:
       label: The outstation's version
-      description: The log's first line says it (for example, outstation 0.1.0).
+      description: Filled in when the outstation opens this form; otherwise the station log's first line says it (for example, outstation 0.1.0).
   - type: input
     id: windows
     attributes:

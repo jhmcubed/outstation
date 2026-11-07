@@ -941,12 +941,12 @@ class Relay:
         if not text or not re.match(r"^[A-Za-z0-9_.~-]{1,64}$", to):
             return fail("a message needs a channel and some words")
         if to == ch.name:
-            return fail("that's your own portal")
+            return fail("that's your own outstation")
         if len(ch.dms_sent) >= DMS_A_MINUTE:
             return fail("%d messages a minute at most: wait a moment" % DMS_A_MINUTE)
         other = self.channels.get(to)
         if other is None or other.key is None:
-            return fail("no portal called %s on this relay" % to)
+            return fail("no outstation called %s on this relay" % to)
         ch.dms_sent.append(now)
         d = {"from": ch.name, "name": host_name, "text": text, "at": int(now * 1000)}
         if other.desks:
@@ -1679,7 +1679,7 @@ async def serve(host, port, delay, ready=None, log=print, forward=None, public_p
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="the portal's local relay")
+    ap = argparse.ArgumentParser(description="the outstation's local relay")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8786)
     ap.add_argument("--public-port", type=int, default=None,
