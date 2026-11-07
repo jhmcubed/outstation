@@ -169,7 +169,7 @@ struct Line {
 
 struct PollForm { question: String, options: String, seconds: u32 }
 
-struct Ping { at: Instant, x: f32, y: f32, name: String, n: u64 }
+struct Ping { at: Instant, x: f32, y: f32, name: String }
 
 /// a viewer's ✼ rising over RuneLite (the signal button: as many as they like)
 struct Star { at: Instant, x: f32, name: String }
@@ -223,7 +223,6 @@ pub struct App {
     by_hand: bool,
     hand: (String, String, String, String),
     pings: Vec<Ping>,
-    ping_n: u64,
     asking_close: bool,
     quitting: bool,
     hidden: bool,
@@ -251,7 +250,10 @@ pub struct App {
     feed: Arc<Mutex<crate::feed::Feed>>,
     feed_tex: Option<(egui::TextureHandle, Instant)>,
     acked: Option<u64>,
-    tray_live: Option<Option<usize>>, // (the tray's ✼ as last set: None lime, Some(step) the pulse)
+    tray_live: Option<(Option<usize>, bool)>, // (the tray's ✼ as last set: None lime, Some(step) the pulse; and its inbox mark)
+    /// something new in the station's inbox (a key requested, an anomaly reported, a requisition filed) not yet looked
+    /// at: the outstations button glows and pulses, the tray's ✼ wears a mark, the taskbar button flashes (11/07/2026)
+    inbox_new: bool,
     tray_click: std::sync::mpsc::Receiver<()>,
     editing_masks: bool,
     mask_drag: Option<MaskDrag>,
@@ -329,14 +331,30 @@ pub fn tinted(colour: Color32, alpha: f32) -> (Vec<u8>, u32, u32) {
 
 /// the tray's pulse while live: a step every 100 ms, 1.2 s round, its brightness eased from full to 30% and back
 const TRAY_STEPS: usize = 12;
-fn tray_frame(step: Option<usize>) -> (Vec<u8>, u32, u32) {
-    match step {
+fn tray_frame(step: Option<usize>, mark: bool) -> (Vec<u8>, u32, u32) {
+    let (mut px, w, h) = match step {
         None => tinted(LIME(), 1.0),
         Some(i) => {
             let a = 0.65 + 0.35 * (i as f32 / TRAY_STEPS as f32 * std::f32::consts::TAU).cos();
             tinted(PINK(), a)
         }
+    };
+    if mark {
+        // the inbox's mark: a round dot in the top right corner, dark-rimmed so it reads on any taskbar; hotpink on
+        // the lime ✼, lime on the pulsing hotpink one
+        let dot = if step.is_some() { LIME() } else { PINK() };
+        let (cx, cy, r) = (w as f32 * 0.76, h as f32 * 0.24, w as f32 * 0.22);
+        for y in 0..h {
+            for x in 0..w {
+                let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+                if d > r { continue; }
+                let i = ((y * w + x) * 4) as usize;
+                let c = if d > r - w as f32 * 0.05 { Color32::from_rgb(10, 10, 10) } else { dot };
+                px[i] = c.r(); px[i + 1] = c.g(); px[i + 2] = c.b(); px[i + 3] = 255;
+            }
+        }
     }
+    (px, w, h)
 }
 
 pub fn icon_rgba() -> (Vec<u8>, u32, u32) {
@@ -451,11 +469,11 @@ impl App {
             started: Instant::now(), drawer: Drawer::None, panel: None,
             attach_code: String::new(), attach_note: String::new(), by_hand: false,
             hand: (s.relay.clone(), s.channel.clone(), String::new(), s.code.clone()),
-            pings: Vec::new(), ping_n: 0, asking_close: false, quitting: false, hidden: false, shown_at: None,
+            pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
-            feed, feed_tex: None, acked: None, tray_live: None, tray_click, editing_masks: false, mask_drag: None,
+            feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
@@ -657,9 +675,8 @@ impl App {
             if self.settings.get().pings {
                 if let Some((l, t, r, b)) = frame_rect(&self.settings.get()) {
                     let (x, y) = (p.get("x").and_then(|x| x.as_f64()).unwrap_or(0.5), p.get("y").and_then(|x| x.as_f64()).unwrap_or(0.5));
-                    self.ping_n += 1;
                     self.pings.push(Ping { at: Instant::now(), x: (l as f64 + (r - l) as f64 * x) as f32,
-                                           y: (t as f64 + (b - t) as f64 * y) as f32, name, n: self.ping_n });
+                                           y: (t as f64 + (b - t) as f64 * y) as f32, name });
                 }
             }
         }
@@ -782,10 +799,10 @@ impl App {
             (self.born.elapsed().as_millis() / 100) as usize % TRAY_STEPS
         });
         if live { ctx.request_repaint_after(Duration::from_millis(100)); }
-        if self.tray_live != Some(step) {
-            self.tray_live = Some(step);
+        if self.tray_live != Some((step, self.inbox_new)) {
+            self.tray_live = Some((step, self.inbox_new));
             if let Some(t) = &self.tray {
-                let (rgba, w, h) = tray_frame(step);
+                let (rgba, w, h) = tray_frame(step, self.inbox_new);
                 if let Ok(i) = tray_icon::Icon::from_rgba(rgba, w, h) {
                     let _ = t.set_icon(Some(i));
                 }
@@ -862,7 +879,7 @@ fn tray_menu(_s: &Settings) -> (tray_icon::menu::Menu, tray_icon::menu::MenuItem
 
 fn tray_finish(menu: tray_icon::menu::Menu, open: tray_icon::menu::MenuItem, live: tray_icon::menu::MenuItem, modes: SoundItems,
                quit: tray_icon::menu::MenuItem) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) {
-    let (rgba, w, h) = tray_frame(None);
+    let (rgba, w, h) = tray_frame(None, false);
     let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok();
     let mut b = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("the outstation");
     if let Some(i) = icon {
@@ -937,7 +954,7 @@ impl App {
 }
 
 /// The friends' portals drawer: hand one out (its attach code, to send them), every channel handed out (live ones lit,
-/// read again every 10 s), a new code or taking one back (each asked about first), and setting up the relay and token.
+/// read again every 30 s), a new code or taking one back (each asked about first), and setting up the relay and token.
 #[cfg(feature = "station")]
 fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
@@ -1197,6 +1214,33 @@ fn button(ui: &mut egui::Ui, text: &str, small: bool, lit: Option<bool>) -> egui
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A button with something new behind it (the station's inbox, 11/07/2026, Jace: "flash/glow/be more noticeable"):
+/// hotpink, in a glow that swells and fades about once a second (held still with Windows' animations off), its fill
+/// breathing with it.
+fn alert_button(ui: &mut egui::Ui, text: &str, seen: bool) -> egui::Response {
+    let g = ui.painter().layout_job(job(text, 14.0, PINK()));
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 14.0, 21.0), Sense::click());
+    let hover = resp.hovered();
+    let still = crate::cursor::still();
+    let a = if still { 1.0 } else { (0.5 + 0.5 * (ui.input(|i| i.time) * std::f64::consts::TAU / 1.1).cos()) as f32 };
+    let pal = theme::pal();
+    let p = ui.painter();
+    // the glow: rings outward, fainter as they go, all of them with the beat
+    for (grow, k) in [(7.0, 0.06), (5.0, 0.1), (3.0, 0.18), (1.5, 0.3)] {
+        p.rect_stroke(rect.expand(grow), 2.0 + grow, Stroke::new(2.0, PINK().gamma_multiply(k * (0.35 + 0.65 * a))), egui::StrokeKind::Middle);
+    }
+    let fill = if hover { theme::mix(pal.well, pal.teal, 0.3) } else { theme::mix(pal.well, pal.pink, 0.15 + 0.3 * a) };
+    p.rect_filled(rect, 2.0, fill);
+    p.rect_stroke(rect, 2.0, Stroke::new(1.0, if hover { TEAL() } else { PINK() }), egui::StrokeKind::Inside);
+    let g = ui.painter().layout_job(job(text, 14.0, if hover { Color32::WHITE } else { theme::mix(pal.pink, Color32::WHITE, 0.35 * a) }));
+    ui.painter().galley(rect.center() - g.size() / 2.0, g, PINK());
+    // (beating only while the window can be seen: hidden or minimised, the tray's mark and the taskbar say it)
+    if !still && seen {
+        ui.ctx().request_repaint_after(Duration::from_millis(40));
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 fn pink_button(ui: &mut egui::Ui, text: &str, pink: bool) -> egui::Response {
     let (colour, edge) = if pink { (PINK(), PINK()) } else { (GREY(), DIM()) };
     // (its words as job() lays them out, so a symbol RuneScape's font lacks (▸ ◂) comes from the symbol font, as on
@@ -1433,8 +1477,13 @@ impl SettingsPanel {
                 let mbit = kb * self.fps as f64 * 8.0 / 1024.0;
                 weight = if settings.get().relay.starts_with("wss://") {
                     // (on Cloudflare the relay sends each viewer their copy: this PC sends one, however many watch)
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many observe: the relay server sends each of your observers their own copy",
-                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit)
+                    let ceiling = capture::SHARED_CEILING_MBIT;
+                    let over = if mbit > ceiling {
+                        format!("\npast the shared relay's ceiling of {:.0} Mbit/s for one transmission: about {:.0} a second would go. a lower width or quality keeps them all",
+                                ceiling, (self.fps as f64 * ceiling / mbit).floor().max(1.0))
+                    } else { String::new() };
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many observe: the relay server sends each of your observers their own copy{}",
+                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, over)
                 } else {
                     format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each observer: this outstation is on a relay of its own ({}), which sends every copy from this PC's upload\n{} observing at most: about {:.1} Mbit/s up in all (on Cloudflare's relay it would be {:.1}, once)",
                             w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, settings.get().relay, self.viewers, mbit * self.viewers as f64, mbit)
@@ -2697,8 +2746,18 @@ impl eframe::App for App {
             let c = ctx.clone();
             if self.drawer != Drawer::Friends { self.keeper.watch_asks(move || c.request_repaint()); }
             let new = self.keeper.new_asks();
+            let mut arrived = !new.is_empty();
             if let Some(line) = crate::keeper::asking_line(&new.iter().map(|r| r.player.clone()).collect::<Vec<_>>()) { self.note(line); }
             let new = self.keeper.new_reports();
+            arrived |= !new.is_empty();
+            // (the inbox lit till it's opened: the button, the tray's mark, the taskbar flashing)
+            if arrived && self.drawer != Drawer::Friends {
+                self.inbox_new = true;
+                win::flash(TITLE);
+            }
+            if self.drawer == Drawer::Friends {
+                self.inbox_new = false;
+            }
             for req in [false, true] {
                 let who: Vec<String> = new.iter().filter(|r| r.requisition == req)
                     .map(|r| if r.channel.is_empty() { if r.name.is_empty() { "someone".into() } else { r.name.clone() } } else { r.channel.clone() }).collect();
@@ -2785,7 +2844,10 @@ impl eframe::App for App {
         self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
         self.over.retain(|l| l.at.elapsed() < Duration::from_millis(21_500));
         let busy = !self.pings.is_empty() || !self.stars.is_empty();
-        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else { 110 }));
+        // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
+        // in wakes the window at once; 11/07/2026)
+        let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
+        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else if resting { 500 } else { 110 }));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -3049,7 +3111,8 @@ impl App {
                 match which {
                     0 => { ui.label(rich(&format!("✼ {}", this.signals), 14.0, PINK())).on_hover_text(tip("observers' signals since this opened")); }
                     1 => {
-                        if button(ui, &portals_words, true, None)
+                        let b = if this.inbox_new { alert_button(ui, &portals_words, !this.hidden && !ctx.input(|i| i.viewport().minimized.unwrap_or(false))) } else { button(ui, &portals_words, true, None) };
+                        if b
                             .on_hover_text(tip("friends' outstations: issue a key (to send them), answer those requesting one (counted here, looked at every minute), a bulletin to every outstation, or stand one down")).clicked() {
                             this.open_drawer(&ctx, Drawer::Friends);
                         }
@@ -3092,7 +3155,10 @@ impl App {
                     (0.575 + 0.425 * (ui.input(|i| i.time) * std::f64::consts::TAU / 0.5).cos()) as f32
                 };
                 glow(ui.painter(), c, PINK(), a);
-                if !crate::cursor::still() { ui.ctx().request_repaint_after(Duration::from_millis(33)); }
+                // (only while the window can be seen: hidden in the tray or minimised, nothing needs the pulse's 30
+                // redraws a second, and RuneLite gets the room; 11/07/2026)
+                let seen = !self.hidden && !ui.ctx().input(|i| i.viewport().minimized.unwrap_or(false));
+                if !crate::cursor::still() && seen { ui.ctx().request_repaint_after(Duration::from_millis(33)); }
             } else if self.up && self.live && on {
                 glow(ui.painter(), c, TEAL(), 1.0);
             } else {
@@ -3825,7 +3891,7 @@ impl App {
         let mut done = false;
         let mut put: Option<(f32, f32)> = None;
         let id = egui::ViewportId::from_hash_of("over the game");
-        ctx.show_viewport_immediate(id, builder, |ui, _| {
+        overlay(ctx, id, builder, |ui, _| {
             let rect = ui.max_rect();
             let p = ui.painter();
             if moving {
@@ -3899,7 +3965,7 @@ impl App {
         let mut drag = self.mask_drag;
         let mut changed = false;
         let mut done = false;
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("masks"), builder, |ui, _| {
+        overlay(ctx, egui::ViewportId::from_hash_of("masks"), builder, |ui, _| {
             let rect = ui.max_rect();
             let share = |p: egui::Pos2| (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0));
             let to_rect = |m: &[f64; 4]| egui::Rect::from_min_size(
@@ -3998,7 +4064,7 @@ impl App {
             .with_resizable(false).with_active(false).with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp))
             .with_inner_size(Vec2::new(w, h));
         let stars: Vec<(f32, f32, String)> = self.stars.iter().map(|s| (s.at.elapsed().as_secs_f32(), s.x, s.name.clone())).collect();
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("signals"), builder, |ui, _| {
+        overlay(ctx, egui::ViewportId::from_hash_of("signals"), builder, |ui, _| {
             let rect = ui.max_rect();
             let p = ui.painter();
             for (age, x, name) in &stars {
@@ -4022,23 +4088,33 @@ impl App {
         self.over_ui(ctx);
         self.stars_ui(ctx);
         self.masks_ui(ctx);
+        // (11/07/2026: all of them in one window over the game, as the ✼s are; a window for each ping had Windows
+        // making and dropping windows several a second, and one it wouldn't give stopped the outstation)
+        if self.pings.is_empty() {
+            return;
+        }
+        let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
         const WIDE: f32 = 520.0;
         const TALL: f32 = 160.0;
         let ppp = ctx.pixels_per_point();
-        for p in &self.pings {
-            let k = (p.at.elapsed().as_secs_f32() / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
-            let step = (k * 6.0).floor();
-            let kk = step / 6.0;
-            let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
-            let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
-            let pos = egui::pos2(p.x / ppp - WIDE / 2.0, p.y / ppp - TALL / 2.0);
-            let builder = egui::ViewportBuilder::default().with_title("outstation ✼ ping").with_decorations(false)
-                .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
-                .with_resizable(false).with_active(false).with_position(pos).with_inner_size(Vec2::new(WIDE, TALL));
-            let name = p.name.clone();
-            ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("ping", p.n)), builder, move |ui, _| {
-                let c = egui::pos2(WIDE / 2.0, TALL / 2.0);
-                let painter = ui.painter();
+        // (the game's area, with room round it for a ring and its name at the edge)
+        let origin = egui::pos2(l as f32 / ppp - WIDE / 2.0, t as f32 / ppp - TALL / 2.0);
+        let size = Vec2::new((r - l) as f32 / ppp + WIDE, (b - t) as f32 / ppp + TALL);
+        let builder = egui::ViewportBuilder::default().with_title("outstation ✼ pings").with_decorations(false)
+            .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
+            .with_resizable(false).with_active(false).with_position(origin).with_inner_size(size);
+        let pings: Vec<(f32, egui::Pos2, String)> = self.pings.iter()
+            .map(|p| (p.at.elapsed().as_secs_f32(), egui::pos2(p.x / ppp - origin.x, p.y / ppp - origin.y), p.name.clone()))
+            .collect();
+        overlay(ctx, egui::ViewportId::from_hash_of("pings"), builder, move |ui, _| {
+            let painter = ui.painter();
+            for (age, c, name) in &pings {
+                let k = (age / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
+                let step = (k * 6.0).floor();
+                let kk = step / 6.0;
+                let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
+                let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
+                let c = *c;
                 let r = 14.0 + 28.0 * kk;
                 painter.circle_stroke(c, r, Stroke::new(3.0, colour));
                 painter.circle_filled(c, 2.0, colour);
@@ -4046,11 +4122,30 @@ impl App {
                     // the name: a dark rim round it first, then the name itself
                     let at = egui::pos2(c.x + 22.0, c.y - 26.0);
                     for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
-                        painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, &name, body(32.0), Color32::from_rgb(10, 10, 10));
+                        painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10));
                     }
-                    painter.text(at, egui::Align2::LEFT_CENTER, &name, body(32.0), name_colour);
+                    painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), name_colour);
                 }
-            });
-        }
+            }
+        });
+    }
+}
+
+/// One of the see-through windows over RuneLite, drawn now (egui's immediate viewport). If Windows won't give it its
+/// window this frame (egui then stops with "the user callback was never called"), that's caught and written down,
+/// and the window is left a few seconds before it's tried again: the rest of the outstation carries on (11/07/2026).
+fn overlay(ctx: &egui::Context, id: egui::ViewportId, builder: egui::ViewportBuilder,
+           f: impl FnMut(&mut egui::Ui, egui::ViewportClass)) {
+    thread_local! {
+        static RESTING: std::cell::RefCell<std::collections::HashMap<egui::ViewportId, Instant>> = Default::default();
+    }
+    if RESTING.with(|r| r.borrow().get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(3))) {
+        return;
+    }
+    crate::crash::quiet(true);
+    let went = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.show_viewport_immediate(id, builder, f)));
+    crate::crash::quiet(false);
+    if went.is_err() {
+        RESTING.with(|r| { r.borrow_mut().insert(id, Instant::now()); });
     }
 }

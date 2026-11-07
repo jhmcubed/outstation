@@ -73,6 +73,15 @@ impl Socket {
         self.ws.send(Message::binary(b)).map_err(|e| e.to_string())
     }
 
+    /// the next message if one's already here, else Nothing at once: never waits (11/07/2026: the frames' loop looked
+    /// with the 2 ms read timeout, which Windows can round up to its 15.6 ms timer tick, holding every frame that long)
+    pub fn try_recv(&mut self) -> Result<Got, String> {
+        let _ = self.tcp().set_nonblocking(true);
+        let got = self.recv();
+        let _ = self.tcp().set_nonblocking(false);
+        got
+    }
+
     /// the next message, or Nothing once the read timeout passes
     pub fn recv(&mut self) -> Result<Got, String> {
         match self.ws.read() {

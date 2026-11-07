@@ -148,6 +148,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id
     if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && LISTEN_KEYS.load(Ordering::Relaxed) {
         LAST_VK.store(wp.0 as u32, Ordering::Relaxed);
     }
+    // a see-through window over RuneLite: all of it its own, no frame (winit leaves a 1 px strip at the top of a
+    // window without decorations to get Windows' drop shadow: the "shadow or something on top", 11/07/2026)
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCCALCSIZE && wp.0 != 0 && is_see_through(hwnd) {
+        return LRESULT(0);
+    }
     if msg == WM_SETCURSOR && (lp.0 & 0xffff) as u32 == 1 {
         if let Some(c) = current() {
             unsafe { SetCursor(Some(c)); }
@@ -176,6 +181,12 @@ unsafe extern "system" fn each(hwnd: HWND, _l: LPARAM) -> windows::core::BOOL {
 /// The see-through windows over RuneLite (their titles "outstation ✼ …": pings, ✼, the chat over the game, the
 /// redactions) with nothing of Windows' own round them: no shadow, no border, no rounded corners (11/07/2026, Jace:
 /// "the invisible/transparent chatbox also has a shadow around it"). Once a window; the main window keeps its own.
+static SEE_THROUGH: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+
+fn is_see_through(hwnd: HWND) -> bool {
+    SEE_THROUGH.lock().unwrap().contains(&(hwnd.0 as isize))
+}
+
 fn see_through(hwnd: HWND) {
     use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE};
     use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
@@ -194,6 +205,17 @@ fn see_through(hwnd: HWND) {
     set(DWMWA_NCRENDERING_POLICY, 1); // DWMNCRP_DISABLED: no frame drawn by Windows, so no shadow
     set(DWMWA_WINDOW_CORNER_PREFERENCE, 1); // DWMWCP_DONOTROUND
     set(DWMWA_BORDER_COLOR, 0xFFFF_FFFE); // DWMWA_COLOR_NONE
+    // its frame worked out again, now that proc answers WM_NCCALCSIZE for it (the strip gone)
+    {
+        let mut s = SEE_THROUGH.lock().unwrap();
+        s.retain(|h| unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(HWND(*h as _))) }.as_bool());
+        s.push(key);
+    }
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+                                                      SWP_NOSIZE, SWP_NOZORDER};
+        let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 /// Every window of the portal's own (the main one, and the chat-over-the-game and masks windows as they come)

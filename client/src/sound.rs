@@ -2,7 +2,7 @@
 //! parity lines 14-18).
 //!
 //! Windows' process loopback hands over one program's sound (RuneLite's tree), or everything but it, at 48 kHz stereo,
-//! taken before the mix. Each bus is cut into 20 ms Opus packets (libopus), three to a message, stamped with when it
+//! taken before the mix. Each bus is cut into 20 ms Opus packets (libopus), five to a message, stamped with when it
 //! was heard on the frames' own clock, and sent to the relay's sound lane. The relay holds them as long as the capture
 //! holds frames, and lets them through only while the picture is open. The bus numbers are permanent (the page knows
 //! them): 1 the game, 2 everything else.
@@ -22,7 +22,9 @@ const BUS_GAME: u8 = 1;
 const BUS_REST: u8 = 2;
 const RATE: usize = 48000;
 const FRAME: usize = 960; // 20 ms
-const PER_MESSAGE: usize = 3; // 60 ms a message
+// 100 ms a message (11/07/2026, from 3: every message counts against the relay's requests, and a bus at 3 was
+// about 17 a second; the page reads any number, and 100 ms still leaves the picture's 200 ms sound lead room)
+const PER_MESSAGE: usize = 5;
 const REANCHOR: f64 = 0.08; // the sound's own timing and the clock this far apart: start the reckoning over
 const QUEUE: usize = 200; // ~6 s a bus: behind further than that, the oldest go
 

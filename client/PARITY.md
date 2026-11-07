@@ -34,7 +34,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 6. ✓ **A frame** is 4 bytes, the ms it was taken on the portal's clock, then the JPEG.
 7. ✓ **The gate:** no window, minimised, paused, or (if asked) logged out. The pause key is now `RegisterHotKey` (`hotkeys.rs`), not a look at the keyboard every 20 ms (SAFETY.md). The press itself is ◐: not tried by hand yet.
 8. ✓ **The half-second hold-back,** dropped when the gate shuts.
-9. ✓ **`{"state"}`** on every change and once a second. `client_live.py` saw "open".
+9. ✓ **`{"state"}`** on every change and every 5 s (once a second until 11/07/2026: each line counts against the relay's requests). `client_live.py` saw "open".
 10. ✓ **on_air:** off lets go of the relay altogether.
 11. ✓ **Reconnecting** after 2, 5, 10, 30 s. It stops on 4000, 4001, 4003 and 4029 until the settings change.
 12. ✓ **`--once FILE` and `--bench N`.**
@@ -47,7 +47,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
     - everything but it on bus 2
     - `client_live.py` with "all": `{"sound": {"mode": "all", "buses": [1, 2]}}`, and 448 messages in 14 s
 15. ✓ **Process loopback** at 48 kHz stereo, then libopus 1.6.1 (`sound.rs`):
-    - 20 ms frames, VBR, application "audio", three to a message
+    - 20 ms frames, VBR, application "audio", five to a message (three until 11/07/2026)
     - begun again after a gap or 80 ms of drift
     - at most 200 waiting
     - One difference: PyAV's encoder handed packets out a frame late, and `sound.py` made up for it; libopus called directly hands each frame's packet back at once.
@@ -126,7 +126,7 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 - ✓ **Your own masks:** "edit masks" draws them over the game. They're blacked out before a frame is made: `client_live.py` checks a masked half arrives black. The mask key turns them off and on.
 - ✓ **The live view:** the portal as the site gets it, through the relay as a looker, and what viewers' pages say they've had (the relays' new `acked`). "the live view" off connects nothing.
 - ✓ **The tray:** minimising sends the window there, a click on the ✼ brings it back, and the ✼ is pink while live.
-- ✓ **Small frames for lookers:** a 192 px copy twice a second (`TH`), which the relays give lookers instead of full frames: 9 KB/s a looker where it was about 81.
+- ✓ **Small frames for lookers:** a 192 px copy once a second (`TH`; twice until 11/07/2026), which the relays give lookers instead of full frames: 9 KB/s a looker where it was about 81.
 - ✓ **The chat switch:** "viewers may chat" (the desk's `{"chat_on"}`): viewers' lines go nowhere while it's off, the host's still go out, and pages say so.
 - ✓ **The viewer list:** "watching: n ▸", from the relays' `{"viewers"}` (names as given, never a device); right-click to ban.
 - ✓ **A window of its own:** its own title bar, edges and border, and ghillie.wiki's cursor (`cursor.rs`), on the portal's own windows only.
@@ -152,3 +152,11 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 - Everything marked ◐, by hand on Jace's PC with his real RuneLite and real viewers. (Since 11/06/2026 the unit tests and the window also run under Wine in a cloud session, with a stand-in for coremessaging.dll, which Wine lacks: the window can be pictured and clicked there, but not the capture, the sound or the hotkeys.) Including: pressing each hotkey, the chat over the game moved, a mask drawn, a clip of a real stream, the tray minimise and the pink ✼.
 - The client on a Windows account without Python or Rust.
 - The field station starting the client in place of `start.py`: built (the station feature, ghillie's `tools/launcher/build_station.py`); to try on Jace's PC.
+
+- ✓ **v0.1.2, lighter at 60 a second** (11/07/2026, Jace: "optimize to the furthest extent ... without losing any visual or audio fidelity"):
+  - the frames' loop wakes the moment a kept frame lands (a condition variable, not a look every 4 ms) and never waits on the relay's lines (`net::try_recv`: the 2 ms read timeout could round up to Windows' 15.6 ms tick); his log had shown 50 a second where 60 was asked
+  - each kept frame handed to the sending side, not copied; the canvas read back through one kept copy texture (`capture::Handler::read_shrunk`) and shrunk straight from the graphics card's padded rows, the same pixels byte for byte (checked against the old path on four sizes); the library's own way stays as the fallback
+  - fewer messages to the relay: sound five packets a message, the small copy once a second, `{"state"}` on a change and every 5 s; on a wss:// relay one transmission's pictures go up to 20 Mbit/s (`capture::SHARED_CEILING_MBIT`), a frame past it waiting for the next
+  - the hotkeys' thread asleep till Windows has something; the live light's 30 redraws a second only while the window can be seen; hidden in the tray with nothing over the game, a look twice a second
+  - the see-through windows over RuneLite without winit's 1 px strip and shadow (their `WM_NCCALCSIZE` answered in `cursor.rs`), pings in one window over the game, and an overlay window Windows won't give skipped a moment instead of stopping the outstation
+  - the station: the inbox lit when a key's requested, an anomaly reported or a requisition filed (the outstations button glowing and pulsing hotpink, a mark on the tray's ✼, the taskbar flashing) till its drawer's opened; the drawer reads the channels every 30 s

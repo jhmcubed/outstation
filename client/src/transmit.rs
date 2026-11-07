@@ -1,6 +1,6 @@
 //! The capture's own loop: frames to the relay's transmit socket (capture.py's run(); parity lines 5-11, 13).
 
-use crate::capture::{self, Gpu, Grabber, Options, HOLD_BACK, MAX_FPS};
+use crate::capture::{self, Gpu, Grabber, Options, HOLD_BACK, MAX_FPS, SHARED_CEILING_MBIT};
 use crate::net::{Got, Socket, WAITS};
 use crate::settings::Shared;
 use crate::win::WindowCache;
@@ -178,10 +178,16 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
     let mut last_thumb = Instant::now() - Duration::from_secs(5);
     let mut last_seq: Option<u64> = None;
     let mut last_refresh = Instant::now();
+    // the shared relay's ceiling (capture.rs, SHARED_CEILING_MBIT): bytes allowed, refilled as time passes, at most a
+    // second's worth saved up; a frame that would overdraw it waits for the next one
+    let shared = first.relay.starts_with("wss://");
+    let ceiling = SHARED_CEILING_MBIT * 1e6 / 8.0;
+    let (mut allowance, mut allowance_at) = (ceiling, Instant::now());
+    let mut over_ceiling = 0u32;
     loop {
-        // the relay's lines: how many watch, or a close
+        // the relay's lines: how many watch, or a close (only those already here: the frames never wait on them)
         loop {
-            match ws.recv() {
+            match ws.try_recv() {
                 Ok(Got::Text(t)) => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                         if let Some(n) = v.pointer("/relay/viewers").and_then(|x| x.as_u64()) {
@@ -233,7 +239,15 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                     if why.is_none() && (img.seq.is_none() || img.seq != last_seq) {
                         // the frame's number is the moment it was taken, so the page plays frames back as evenly
                         // as they were taken
-                        held.push_back((Instant::now(), img.jpeg(capture::number(&img), s.quality)));
+                        let jpeg = img.jpeg(capture::number(&img), s.quality);
+                        allowance = (allowance + allowance_at.elapsed().as_secs_f64() * ceiling).min(ceiling);
+                        allowance_at = Instant::now();
+                        if shared && (jpeg.len() as f64) > allowance {
+                            over_ceiling += 1;
+                        } else {
+                            allowance -= jpeg.len() as f64;
+                            held.push_back((Instant::now(), jpeg));
+                        }
                         // a small copy now and then, for lookers only (held back and gated like the rest)
                         if last_thumb.elapsed().as_secs_f64() >= capture::THUMB_EVERY {
                             held.push_back((Instant::now(), img.thumb(capture::number(&img))));
@@ -262,7 +276,8 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         }
         // (static: the static key, which viewers see as static, the sound still going; shut: anything else)
         let state = match &why { None => "open", Some(w) if w == capture::STATIC_WHY => "static", _ => "shut" };
-        if state != last_state || last_state_at.elapsed().as_secs_f64() > 1.0 {
+        // (on a change at once; else every 5 s as a reminder: each line counts against the relay's requests)
+        if state != last_state || last_state_at.elapsed().as_secs_f64() > 5.0 {
             if let Err(e) = ws.text(&format!("{{\"state\": \"{}\"}}", state)) {
                 return e;
             }
@@ -276,7 +291,10 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             let note = if sent > 0 {
                 let (f, k) = (sent as f64 / span, bytes_sent as f64 / sent as f64 / 1024.0);
                 say(status, |st| { st.fps = f; st.kb = k; });
-                format!("live: {:.1} frames a second, {:.0} KB a frame, {} watching", f, k, viewers)
+                let over = if over_ceiling > 0 {
+                    format!(" ({} skipped for the shared relay's {:.0} Mbit/s ceiling: a lower width or quality keeps them)", over_ceiling, SHARED_CEILING_MBIT)
+                } else { String::new() };
+                format!("live: {:.1} frames a second, {:.0} KB a frame, {} watching{}", f, k, viewers, over)
             } else if let Some(w) = &why {
                 say(status, |st| { st.fps = 0.0; });
                 format!("shut: {}; {} watching", w, viewers)
@@ -288,9 +306,11 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             last_print = Instant::now();
             sent = 0;
             bytes_sent = 0;
+            over_ceiling = 0;
         }
         if gpu_on && why.is_none() {
-            std::thread::sleep(Duration::from_millis(4)); // watching for the GPU's next frame
+            // back the moment the GPU's next kept frame lands (at most 20 ms, for the relay's lines meanwhile)
+            gpu.wait_newer(last_seq, Duration::from_millis(20));
             continue;
         }
         // paced to fixed deadlines: a short sleep rounds up, and sleeping "what's left of this frame" each time

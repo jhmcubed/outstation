@@ -33,9 +33,14 @@ const RESIZABLE_SIDE: (f64, f64) = (250.0, 410.0);
 /// every frame waits this long before it goes, and is dropped if the gate shuts meanwhile
 pub const HOLD_BACK: f64 = 0.5;
 pub const MAX_FPS: u32 = 60;
+/// The most one transmission's pictures may take on the shared relay (a wss:// one, Cloudflare's), in Mbit/s: the
+/// relay sends every observer a copy, and about 500 Mbit/s out of one channel (30 observers) was measured to keep up
+/// (11/06/2026), so 20 observers at this stay under it. Frames past it wait for the next (fewer a second), never a
+/// worse picture. A relay of one's own has no ceiling here: its own upload is the limit.
+pub const SHARED_CEILING_MBIT: f64 = 20.0;
 /// small frames for lookers: this wide, this often
 pub const THUMB_WIDTH: u32 = 192;
-pub const THUMB_EVERY: f64 = 0.5;
+pub const THUMB_EVERY: f64 = 1.0; // (11/07/2026, from 0.5: one less message a second; the relay counts one fresh for 3 s)
 
 /// A frame: BGRA pixels, when it was taken, and how.
 pub struct Image {
@@ -227,6 +232,10 @@ pub struct GpuShared {
     every: Mutex<f64>,
     target: Mutex<Option<Instant>>,
     latest: Mutex<Option<Arc<Image>>>,
+    /// rung as each kept frame lands in `latest`, so the sending side wakes for it at once (11/07/2026: it looked
+    /// every 4 ms, after the jpeg, so at 60 a second a frame that came while it slept or encoded was often replaced
+    /// before it was sent: 50 a second where 60 was asked)
+    fresh: std::sync::Condvar,
     seq: Mutex<u64>,
     pub cost: Mutex<(f64, u64)>,
 }
@@ -235,6 +244,64 @@ pub struct Handler {
     shared: Arc<GpuShared>,
     scratch: Vec<u8>,
     resizer: fr::Resizer,
+    /// the copy texture the canvas is read back through, kept while its size holds (11/07/2026: the capture library
+    /// makes a new one, the whole canvas's size, for every frame)
+    staging: Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, u32)>,
+}
+
+impl Handler {
+    /// The canvas (x0, y0 to x1, y1 of the frame) read back through the kept copy texture and shrunk to ow x oh in the
+    /// same step: the same pixels as the library's own buffer_crop and the shrink after it. None: anything unusual (a
+    /// format other than BGRA, a call refused), and the library's way is used instead.
+    fn read_shrunk(&mut self, frame: &GpuFrame, x0: u32, y0: u32, x1: u32, y1: u32, ow: u32, oh: u32) -> Option<Vec<u8>> {
+        use windows::Win32::Graphics::Direct3D11::{D3D11_BOX, D3D11_CPU_ACCESS_READ, D3D11_MAPPED_SUBRESOURCE,
+                                                    D3D11_MAP_READ, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING};
+        use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+        let (w, h) = (x1 - x0, y1 - y0);
+        if frame.desc().Format != DXGI_FORMAT_B8G8R8A8_UNORM || w == 0 || h == 0 {
+            return None;
+        }
+        if self.staging.as_ref().map_or(true, |s| (s.1, s.2) != (w, h)) {
+            self.staging = None;
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_STAGING, BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32, MiscFlags: 0,
+            };
+            let mut tex = None;
+            unsafe { frame.device().CreateTexture2D(&desc, None, Some(&mut tex)) }.ok()?;
+            self.staging = Some((tex?, w, h));
+        }
+        let tex = self.staging.as_ref()?.0.clone();
+        let ctx = frame.device_context();
+        let bx = D3D11_BOX { left: x0, top: y0, front: 0, right: x1, bottom: y1, back: 1 };
+        let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe {
+            ctx.CopySubresourceRegion(&tex, 0, 0, 0, 0, frame.as_raw_texture(), 0, Some(&bx));
+            if ctx.Map(&tex, 0, D3D11_MAP_READ, 0, Some(&mut m)).is_err() {
+                self.staging = None;
+                return None;
+            }
+        }
+        let pitch = m.RowPitch;
+        let out = if pitch % 4 == 0 && pitch >= w * 4 && !m.pData.is_null() {
+            // (rows pitch bytes apart, as the library reads them too: its as_slice)
+            let raw = unsafe { std::slice::from_raw_parts(m.pData as *const u8, pitch as usize * h as usize) };
+            if (w, h) == (ow, oh) {
+                let mut v = Vec::with_capacity((w * h * 4) as usize);
+                for y in 0..h as usize { v.extend_from_slice(&raw[y * pitch as usize..y * pitch as usize + w as usize * 4]); }
+                Some(v)
+            } else {
+                fr::images::ImageRef::new(pitch / 4, h, raw, fr::PixelType::U8x4).ok().and_then(|from| {
+                    let mut to = fr::images::Image::new(ow, oh, fr::PixelType::U8x4);
+                    self.resizer.resize(&from, &mut to, &resize_options().crop(0.0, 0.0, w as f64, h as f64)).ok()
+                        .map(|_| to.into_vec())
+                })
+            }
+        } else { None };
+        unsafe { ctx.Unmap(&tex, 0); }
+        out
+    }
 }
 
 fn shrink_with(resizer: &mut fr::Resizer, src: &[u8], w: u32, h: u32, ow: u32, oh: u32) -> Vec<u8> {
@@ -252,7 +319,7 @@ impl GraphicsCaptureApiHandler for Handler {
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        Ok(Handler { shared: ctx.flags, scratch: Vec::new(), resizer: fr::Resizer::new() })
+        Ok(Handler { shared: ctx.flags, scratch: Vec::new(), resizer: fr::Resizer::new(), staging: None })
     }
 
     fn on_frame_arrived(&mut self, frame: &mut GpuFrame, _c: InternalCaptureControl) -> Result<(), Self::Error> {
@@ -292,24 +359,58 @@ impl GraphicsCaptureApiHandler for Handler {
             return Ok(());
         }
         let ta = Instant::now();
-        let buf = frame.buffer_crop(x0 as u32, y0 as u32, x1 as u32, y1 as u32)?;
-        let (cw, ch) = (buf.width(), buf.height());
+        if let Some(small) = self.read_shrunk(frame, x0 as u32, y0 as u32, x1 as u32, y1 as u32, ow, oh) {
+            if std::env::var_os("PORTAL_STAGES").is_some() {
+                eprintln!("stages: read back and shrink {:.2} ms (the kept copy texture)", ta.elapsed().as_secs_f64() * 1e3);
+            }
+            self.keep(small, ow, oh, arrived, t0);
+            return Ok(());
+        }
+        let mut buf = frame.buffer_crop(x0 as u32, y0 as u32, x1 as u32, y1 as u32)?;
+        let (cw, ch, pitch) = (buf.width(), buf.height(), buf.row_pitch());
         let tb = Instant::now();
-        let px = buf.as_nopadding_buffer(&mut self.scratch);
+        // (11/07/2026) the copy as the graphics card laid it out, rows padded, shrunk straight from there with the
+        // padding cropped off in the resizer: the same pixels out, byte for byte (checked on four sizes), without
+        // first copying the whole canvas (about 14 MB a frame at 1440p) to take the padding out
+        let direct = if buf.has_padding() && pitch % 4 == 0 && (cw, ch) != (ow, oh) {
+            let raw = buf.as_raw_buffer();
+            match fr::images::ImageRef::new(pitch / 4, ch, raw, fr::PixelType::U8x4) {
+                Ok(from) => {
+                    let mut to = fr::images::Image::new(ow, oh, fr::PixelType::U8x4);
+                    self.resizer.resize(&from, &mut to, &resize_options().crop(0.0, 0.0, cw as f64, ch as f64))
+                        .ok().map(|_| to.into_vec())
+                }
+                Err(_) => None,
+            }
+        } else { None };
         let tc = Instant::now();
-        let small = shrink_with(&mut self.resizer, px, cw, ch, ow, oh);
+        let small = match direct {
+            Some(s) => s,
+            None => {
+                let px = buf.as_nopadding_buffer(&mut self.scratch);
+                shrink_with(&mut self.resizer, px, cw, ch, ow, oh)
+            }
+        };
         if std::env::var_os("PORTAL_STAGES").is_some() {
             eprintln!("stages: crop {:.2} ms, copy {:.2} ms, shrink {:.2} ms", (tb - ta).as_secs_f64() * 1e3,
                       (tc - tb).as_secs_f64() * 1e3, tc.elapsed().as_secs_f64() * 1e3);
         }
+        self.keep(small, ow, oh, arrived, t0);
+        Ok(())
+    }
+}
+
+impl Handler {
+    /// A kept frame into `latest`, the sending side woken for it, its cost counted.
+    fn keep(&mut self, small: Vec<u8>, ow: u32, oh: u32, arrived: Instant, t0: Instant) {
         let mut seq = self.shared.seq.lock().unwrap();
         *seq += 1;
         *self.shared.latest.lock().unwrap() =
             Some(Arc::new(Image { bgra: small, w: ow, h: oh, taken: arrived, seq: Some(*seq) }));
+        self.shared.fresh.notify_all();
         let mut c = self.shared.cost.lock().unwrap();
         c.0 += t0.elapsed().as_secs_f64() * 1000.0;
         c.1 += 1;
-        Ok(())
     }
 }
 
@@ -326,7 +427,7 @@ impl Gpu {
     pub fn new() -> Self {
         Gpu { control: None, hwnd: None, cursor: false, failed: None, shared: Arc::new(GpuShared {
             geom: Mutex::new(None), every: Mutex::new(0.125), target: Mutex::new(None), latest: Mutex::new(None),
-            seq: Mutex::new(0), cost: Mutex::new((0.0, 0)) }) }
+            fresh: std::sync::Condvar::new(), seq: Mutex::new(0), cost: Mutex::new((0.0, 0)) }) }
     }
 
     pub fn running(&self, hwnd: HWND) -> bool {
@@ -380,6 +481,32 @@ impl Gpu {
 
     pub fn set_geom(&self, g: Geom) {
         *self.shared.geom.lock().unwrap() = Some(g);
+    }
+
+    /// Wait (at most `most`) for a frame newer than `seen`: back as soon as one lands.
+    pub fn wait_newer(&self, seen: Option<u64>, most: Duration) {
+        let end = Instant::now() + most;
+        let mut g = self.shared.latest.lock().unwrap();
+        loop {
+            if g.as_ref().is_some_and(|i| i.seq != seen) {
+                return;
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            g = self.shared.fresh.wait_timeout(g, left).unwrap().0;
+        }
+    }
+
+    /// The newest frame, taken out (the next look waits for a new one): handed over whole when nothing else holds
+    /// it, so a 60-a-second transmission isn't copying every picture (11/07/2026: about 1.3 MB a frame at 768 px).
+    pub fn take_newest(&self, max_age: f64) -> Option<Image> {
+        let got = self.shared.latest.lock().unwrap().take()?;
+        if got.taken.elapsed().as_secs_f64() > max_age {
+            return None;
+        }
+        Some(Arc::try_unwrap(got).unwrap_or_else(|a| Image { bgra: a.bgra.clone(), w: a.w, h: a.h, taken: a.taken, seq: a.seq }))
     }
 
     pub fn newest(&self, max_age: f64) -> Option<Arc<Image>> {
@@ -459,13 +586,18 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
         let fb = crate::win::frame_bounds(hwnd);
         gpu.set_geom(((fb.0, fb.1, fb.2 - fb.0, fb.3 - fb.1), (l + sx, t + sy, sw, sh), (ow, oh)));
         let end = Instant::now() + Duration::from_secs_f64(wait);
-        let mut got = gpu.newest(1.0);
+        // (the transmission, which never waits, takes each frame; a sample or the bench, which wait, look at a copy and
+        // leave it for the transmission)
+        let look = |gpu: &Gpu| if wait == 0.0 { gpu.take_newest(1.0) } else {
+            gpu.newest(1.0).map(|a| Image { bgra: a.bgra.clone(), w: a.w, h: a.h, taken: a.taken, seq: a.seq })
+        };
+        let mut got = look(gpu);
         while got.is_none() && Instant::now() < end {
-            std::thread::sleep(Duration::from_millis(10));
-            got = gpu.newest(1.0);
+            gpu.wait_newer(None, Duration::from_millis(10));
+            got = look(gpu);
         }
         if let Some(g) = got.filter(|g| g.w == ow && g.h == oh) {
-            img = Some(Image { bgra: g.bgra.clone(), w: g.w, h: g.h, taken: g.taken, seq: g.seq });
+            img = Some(g);
             source = "Windows Graphics Capture".into();
         }
     }

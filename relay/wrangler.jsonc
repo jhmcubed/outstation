@@ -25,5 +25,7 @@
     // clients can't follow; they're told to get a newer one (4026) instead of trying again
     "MIN_CLIENT": ""
   },
-  "observability": { "enabled": true }
+  // (11/07/2026: every message a transmitting outstation sends is an invocation, and each was logged: an hour or two
+  // at 60 a second used the free plan's whole day of logs. One in a hundred is plenty to look into a fault.)
+  "observability": { "enabled": true, "head_sampling_rate": 0.01 }
 }

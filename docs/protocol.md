@@ -36,7 +36,7 @@ The client says its version (`client/Cargo.toml`'s, which a release's tag must m
 ## The transmitter
 
 - **Binary:** a frame, a 4-byte big-endian number (the moment it was taken, in ms, wrapping), then a JPEG.
-- **A small frame:** the same 4 bytes, then `TH`, then a small JPEG (192 px wide), about twice a second. Lookers only: never sent to a viewer, never kept as the last frame. While small frames are coming (one in the last 3 s), lookers get them instead of the full ones.
+- **A small frame:** the same 4 bytes, then `TH`, then a small JPEG (192 px wide), about once a second. Lookers only: never sent to a viewer, never kept as the last frame. While small frames are coming (one in the last 3 s), lookers get them instead of the full ones.
 - **Text:** the game data, passed to viewers untouched. The last line is kept for whoever joins next.
   - `{"state": "open" | "static" | "shut"}`: the picture's gate. `static` is the static key: viewers see static, and the sound still passes. Sound passes only while it's `open` or `static`.
   - `{"report": {"type", "text", "at"}}`: a field report (from Dink), as ghillie's Python portal sends them. The outstation client posts to the Dink route instead (below, "Dink"). The last 8 are kept for late joiners.
@@ -66,7 +66,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 - `{"ping": {"x", "y"}}`: a spot on the frame, 0–1 each. One every half second, and only with a seat.
 - `{"signal": true}`: the ✼ button, as often as a hand can press (one every 80 ms at most).
 - `{"guess": {"id", "kc"}}`: a kill count still to come, for the drop guess going on, while it's open. One a device, which they can change.
-- `{"got": bytes}` (Cloudflare): every binary byte received so far, about once a second. Past 4 MB sent and not yet acknowledged, a viewer gets no more frames or sound until it catches up. A viewer that never says it gets the first 4 MB and then text only. The Python relay ignores it: it reads its own send buffer.
+- `{"got": bytes}` (Cloudflare): every binary byte received so far: the first at once, then every 3 s or once 2 MB more has come, never more than once a second (about once a second until 11/07/2026; each is a request the relay counts). The desk's `acked` is the rate over about the last 5 s. Past 4 MB sent and not yet acknowledged, a viewer gets no more frames or sound until it catches up. A viewer that never says it gets the first 4 MB and then text only. The Python relay ignores it: it reads its own send buffer.
 
 **The waiting line:** past the cap, a viewer waits in line, with status lines and the chat but no frames. The first in line takes the first seat that frees.
 
@@ -92,6 +92,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek in its friends list. It needs the watch code, as a viewer does.
 - It hears the status lines, the summary and the clips' lines.
 - It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
+- It never says `{"got"}`, so the Worker takes it to read 128 KB a second (since 11/07/2026: before, a looker's frames stopped for good after its first 4 MB).
 - Anything else it sends is thrown away.
 
 ## The open outstations
