@@ -12,6 +12,8 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 
 The Directory (one object for the whole relay) keeps the channels handed out, the requests for station keys, the keeper's notice, and the anomalies and requisitions sent to the listening post.
 
+It also answers `GET /channels`, the open portals' list, from what each channel has told it (in memory only). A channel tells the Directory its row whenever the row changes: live, the picture, viewers, title, what it's doing. A row the Directory hasn't heard (after it slept), or hasn't heard for 5 minutes, it asks that channel for. So a read costs one request, however many channels there are. Before 11/07/2026, every read asked every channel and woke each one.
+
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
 
 ## On this PC

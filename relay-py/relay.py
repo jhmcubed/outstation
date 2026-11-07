@@ -123,6 +123,7 @@ POLL_KEPT = 90.0                  # a closed poll's result stays this long, then
 DINK_SAME = 10.0                  # the same Dink post again within this long is dropped (a webhook listed twice in Dink)
 CLIENT_ROLES = ("transmit", "desk", "sound")   # the roles that say the client's version (v=)
 SOUND_HOLD = 0.5                  # the capture's HOLD_BACK: a pause takes the last moment's sound back too
+HELD_LOOK = 0.25                  # the longest the holder sleeps (release_held): what isn't woken for is seen this soon
 CONTROL = re.compile(r"[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]")
 # Dink's notification kinds that pass to viewers (none of them name another player,
 # except a death in PvP, whose text is dropped)
@@ -145,6 +146,41 @@ PAGE_FILES = {
 
 class Closed(Exception):
     pass
+
+
+def unmask(data, mask):
+    """A client's frame unmasked (RFC 6455, 5.3), as one big number XORed with the mask repeated: byte by byte in
+    Python, a 35 KB frame took about 2 ms (now 0.1), most of what each frame cost the relay (11/07/2026)."""
+    n = len(data)
+    if not n:
+        return data
+    words = (n + 3) // 4
+    return (int.from_bytes(data, "little") ^ int.from_bytes(mask * words, "little")).to_bytes(4 * words, "little")[:n]
+
+
+_framed = (None, None)
+
+
+def framed(msg):
+    """(binary, its header, its payload) as a server sends it. A message going to every viewer is framed once, not
+    once a viewer: the last one framed is kept (held by reference, so `is` can't mistake another for it; never a
+    bytearray, which could change), 11/07/2026."""
+    global _framed
+    if _framed[0] is msg:
+        return _framed[1]
+    binary = isinstance(msg, (bytes, bytearray))
+    data = bytes(msg) if binary else msg.encode("utf-8")
+    op, n = (2 if binary else 1), len(data)
+    if n < 126:
+        head = struct.pack(">BB", 0x80 | op, n)
+    elif n < 65536:
+        head = struct.pack(">BBH", 0x80 | op, 126, n)
+    else:
+        head = struct.pack(">BBQ", 0x80 | op, 127, n)
+    if type(msg) is bytearray:
+        return binary, head, data
+    _framed = (msg, (binary, head, data))
+    return _framed[1]
 
 
 class Socket:
@@ -170,7 +206,7 @@ class Socket:
             mask = await self.reader.readexactly(4) if masked else None
             data = await self.reader.readexactly(n)
             if mask:
-                data = bytes(b ^ mask[i & 3] for i, b in enumerate(data))
+                data = unmask(data, mask)
             if op == 8:
                 raise Closed("closed")
             if op == 9:
@@ -208,19 +244,13 @@ class Socket:
         """Queue a message without waiting (fan-out); False if dropped."""
         if self.closed:
             return False
-        binary = isinstance(msg, (bytes, bytearray))
+        binary, head, data = framed(msg)
         if binary and self.writer.transport.get_write_buffer_size() > VIEWER_BUFFER:
             return False
-        data = bytes(msg) if binary else msg.encode("utf-8")
-        op, n = (2 if binary else 1), len(data)
-        if n < 126:
-            head = struct.pack(">BB", 0x80 | op, n)
-        elif n < 65536:
-            head = struct.pack(">BBH", 0x80 | op, 126, n)
-        else:
-            head = struct.pack(">BBQ", 0x80 | op, 127, n)
         try:
-            self.writer.write(head + data)
+            # (header and payload as they are, not joined into a copy for each viewer: one sendmsg on Python 3.12 and
+            # later; a join, as before, where the event loop has no writelines of its own, e.g. Windows' proactor)
+            self.writer.writelines((head, data))
         except (ConnectionError, RuntimeError):
             self.closed = True
             return False
@@ -620,6 +650,8 @@ class Relay:
         self.clipping = False
         self.log = log
         self.forward = forward       # forward.Forward: Dink's posts on to Discord, by rules
+        self.wake = None             # the holder woken early (due); made in its own loop (release_held)
+        self.next_wake = 0.0         # when the holder means to look next
 
     def cap_for(self, ch):
         """How many may watch this channel: its own cap (the desk's {\"cap\"}) or the relay's."""
@@ -735,6 +767,7 @@ class Relay:
                     ch.keep(msg, self.replay_seconds)      # (the replay buffer: full frames, never the small ones)
                 if self.delay > 0:
                     ch.held.append((time.monotonic() + self.delay, msg))
+                    self.due(ch.held[-1][0])
                 else:
                     ch.deliver(msg)
         finally:
@@ -995,6 +1028,7 @@ class Relay:
             ch.poll_id += 1
             ch.poll = {"id": ch.poll_id, "question": question, "options": options, "votes": {},
                        "ends": time.monotonic() + seconds, "open": True}
+            self.due(ch.poll["ends"])
             self.log("poll      %s  %d options, %d s" % (ch.name, len(options), seconds))
             ch.tell_poll()
         elif m.get("poll_close") and ch.poll and ch.poll["open"]:
@@ -1071,6 +1105,7 @@ class Relay:
                 if isinstance(msg, bytes):
                     if len(msg) > 8 and msg[4:6] == b"AU":
                         ch.sound_held.append((time.monotonic() + self.delay + SOUND_HOLD, msg))
+                        self.due(ch.sound_held[-1][0])
                         ch.keep(msg, self.replay_seconds)
                 elif msg.startswith('{"sound"') and len(msg) <= VIEWER_TEXT:
                     ch.sound_info = msg
@@ -1340,6 +1375,7 @@ class Relay:
             self.log("report    %s  %s" % (name, report["type"]))
             if self.delay > 0:
                 ch.held.append((time.monotonic() + self.delay, line))
+                self.due(ch.held[-1][0])
             else:
                 ch.deliver(line)
         await answer("204 No Content")
@@ -1462,9 +1498,20 @@ class Relay:
                     for d in list(ch.desks):
                         d.send_nowait(line)
 
+    def due(self, t):
+        """Something held till t (a frame or report with a delay, sound): the holder woken if that's sooner than it meant
+        to look."""
+        if t < self.next_wake and self.wake is not None:
+            self.wake.set()
+
     async def release_held(self):
+        """What's held let go when it's due, and polls and drop guesses ended and taken down. (11/07/2026: it looked every
+        10 ms whatever was held, a hundred wake-ups a second with nobody on; now it sleeps till the next thing's due,
+        HELD_LOOK at most, and is woken sooner by due().)"""
+        self.wake = asyncio.Event()
         while True:
             now = time.monotonic()
+            soonest = now + HELD_LOOK
             for ch in list(self.channels.values()):
                 while ch.held and ch.held[0][0] <= now:
                     ch.deliver(ch.held.popleft()[1])
@@ -1479,7 +1526,17 @@ class Relay:
                     # a closed poll's result stays a little, then goes for everyone (late joiners too)
                     gone, ch.poll = ch.poll["id"], None
                     ch.broadcast(json.dumps({"poll_gone": gone}))
-            await asyncio.sleep(0.01)
+                for q in (ch.held, ch.sound_held):
+                    if q:
+                        soonest = min(soonest, q[0][0])
+                if ch.poll:
+                    soonest = min(soonest, ch.poll["ends"] if ch.poll["open"] else ch.poll["closed"] + POLL_KEPT)
+            self.next_wake = soonest
+            self.wake.clear()
+            try:
+                await asyncio.wait_for(self.wake.wait(), max(0.0, soonest - time.monotonic()))
+            except asyncio.TimeoutError:
+                pass
 
 
 async def read_chunked(reader):

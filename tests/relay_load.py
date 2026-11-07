@@ -5,7 +5,7 @@
         [--seconds 20] [--fps 60] [--kb 35] [--viewers 20] [--lookers 2]
 
 One transmitter (frames at --fps, a small "TH" copy once a second, {"state"} every 5 s, as the client sends them since
-v0.1.2), one sound socket (both busses, five 20 ms packets a message: 20 messages a second), --viewers viewers that
+v0.1.2), one sound socket (both busses, five 20 ms packets a message: 20 messages a second, and {"sound"} every 5 s), --viewers viewers that
 acknowledge what they got about once a second as the page does ({"got"}), --lookers lookers asking for frames, and a
 desk. It prints the CPU the relay's processes used (user + system, from /proc: Linux only) per second and per message
 that came in, and what each viewer got. The load itself runs in this process, so a busy machine slows it, not the
@@ -155,9 +155,10 @@ async def run(a):
             await tx.send(struct.pack(">I", int(now * 1000) & 0xffffffff) + thumb)
             sent["thumbs"] += 1
             next_thumb += 1.0
-        if now >= next_state:
+        if now >= next_state:                    # (the state line and the sound's line: on a change and every 5 s)
             await tx.send('{"state": "open"}')
-            sent["state"] += 1
+            await snd.send('{"sound": {"mode": "all", "buses": [1, 2]}}')
+            sent["state"] += 2
             next_state += 5.0
         if now >= due:
             await tx.send(struct.pack(">I", int(now * 1000) & 0xffffffff) + body)
@@ -174,7 +175,7 @@ async def run(a):
     incoming = sum(sent.values()) + int(a.viewers * took)          # (and each viewer's {"got"} about once a second)
     used = {p: after[p][1] - before[p][1] for p in after if p in before}
     user = {p: after[p][2] - before[p][2] for p in after if p in before}
-    print("%s, %.1f s: %d frames (%d KB) at %d a second, %d small, %d sound messages, %d state lines; %d viewers, %d lookers"
+    print("%s, %.1f s: %d frames (%d KB) at %d a second, %d small, %d sound messages, %d state and sound lines; %d viewers, %d lookers"
           % (pt.MODE, took, sent["frames"], a.kb, a.fps, sent["thumbs"], sent["sound"], sent["state"], a.viewers, a.lookers))
     for p, s in sorted(used.items(), key=lambda x: -x[1]):
         if s > 0.005:

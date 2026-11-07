@@ -15,6 +15,7 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -84,13 +85,14 @@ def setUpModule():
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR)],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            shell=sys.platform == "win32")
+            shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
     else:
         STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                start_new_session=sys.platform != "win32")
         up = wait_up(15)
     if not up:
         tearDownModule()
@@ -102,7 +104,12 @@ def tearDownModule():
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(PROC.pid)], capture_output=True)
         else:
-            PROC.kill()
+            # (the whole group: npx, wrangler and its two workerd, which outlived a kill of npx alone and kept watching
+            # relay/src, 11/07/2026)
+            try:
+                os.killpg(PROC.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         PROC.wait()
     if STATE:
         shutil.rmtree(STATE, ignore_errors=True)
@@ -364,6 +371,29 @@ class Listed(Base):
         await self.pause(2)
         self.assertNotIn(self.ch, await asyncio.to_thread(listed))
 
+    async def test_the_list_follows_viewers_the_picture_and_going_off_air(self):
+        # (11/07/2026: on the Worker the Directory keeps the list, each channel telling it as its row changes, where each
+        # read had asked every channel)
+        def row():
+            with urllib.request.urlopen(http_url() + "/channels", timeout=10) as r:
+                return {c["channel"]: c for c in json.load(r)["channels"]}[self.ch]
+        tx = await self.tx("")
+        await self.pause()
+        got = await asyncio.to_thread(row)
+        self.assertEqual((got["live"], got["open"], got["viewers"]), (True, True, 0))
+        await self.watch()
+        await self.watch()
+        await self.pause(2)
+        self.assertEqual((await asyncio.to_thread(row))["viewers"], 2)
+        await tx.send('{"state": "static"}')
+        await self.pause(2)
+        got = await asyncio.to_thread(row)
+        self.assertEqual((got["open"], got["static"]), (False, True))
+        tx.close()
+        await self.pause(2)
+        got = await asyncio.to_thread(row)
+        self.assertEqual((got["live"], got["static"], got["doing"]), (False, False, None))
+
 
 class Keys(Base):
     async def test_the_wrong_key_cant_take_a_channel(self):
@@ -574,6 +604,29 @@ class Full(Base):
         a.close()
         self.assertEqual(await second.recv_data(), ("binary", b"\x00\x00\x00\x02frame two"))
         self.assertEqual((await last_status(third))["place"], 1)
+
+    async def test_the_line_moves_up_as_people_in_it_and_ahead_of_it_go(self):
+        # (11/07/2026: the Worker keeps who's here between messages; the places must still follow each coming and going)
+        await self.tx()
+        d = await self.desk()
+        await d.send(json.dumps({"cap": 1}))
+        await self.pause()
+        seated = await self.watch()
+        await self.pause()
+        line = []
+        for _ in range(4):
+            line.append(await self.watch())
+            await self.pause()
+        self.assertEqual([(await last_status(c))["place"] for c in line], [1, 2, 3, 4])
+        line[1].close()
+        await self.pause()
+        self.assertEqual([(await last_status(c))["place"] for c in (line[0], line[2], line[3])], [1, 2, 3])
+        seated.close()
+        await self.pause()
+        st = await last_status(line[0])
+        self.assertNotIn("seat", st)
+        self.assertEqual((st["viewers"], st["waiting"]), (1, 2))
+        self.assertEqual([(await last_status(c))["place"] for c in (line[2], line[3])], [1, 2])
 
     async def test_a_raised_cap_seats_those_waiting(self):
         await self.tx()
@@ -918,6 +971,27 @@ class RoundTwo(Base):
             await look.recv_data(timeout=0.4)
         late = await self.watch()
         self.assertEqual(await late.recv_data(), ("binary", full))    # a newcomer's last frame is never a small one
+
+    async def test_a_looker_keeps_getting_small_frames_past_its_first_4_mb(self):
+        # (11/07/2026: a looker never says {"got"}, and on the Worker its frames stopped for good after the first 4 MB:
+        # the outstations page's tiles, the listening post and the client's live view froze after a quarter of an hour)
+        tx = await self.tx()
+        look = await self.connect("watch", "look=1")
+        await self.pause()
+        await look.send(json.dumps({"look": {"frames": True}}))
+        await self.pause()
+        thumb = struct.pack(">I", 9) + b"TH\xff\xd8" + b"s" * (300 * 1024)
+        got = 0
+        for _ in range(16):                          # 4.8 MB, each one a looker may have (LOOK_EVERY apart)
+            await tx.send(thumb)
+            end = time.monotonic() + 0.6
+            while True:
+                try:
+                    k, _ = await look.recv_data(timeout=max(0.01, end - time.monotonic()))
+                except asyncio.TimeoutError:
+                    break
+                got += k == "binary"
+        self.assertEqual(got, 16)
 
     async def test_a_signal_reaches_everyone_as_often_as_a_hand_presses_but_no_flood(self):
         tx, desk, a, b = await self.room()

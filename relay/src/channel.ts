@@ -54,8 +54,24 @@ const OPEN = 1; // WebSocket.OPEN
 // sent and not yet acknowledged it's sent no more frames or sound until it catches up. (Cloudflare's server side
 // shows no send buffer to read, and a viewer that stops reading would otherwise pile up in the object's memory.)
 const WINDOW = 4 * 1024 * 1024;
+// A looker never says {"got"} (the page's lookers and the client's don't), so it's taken to have read this much a
+// second (11/07/2026: with nothing ever acknowledged, a looker's frames stopped for good after its first 4 MB, about a
+// quarter of an hour of small frames). Small frames come far slower than this, so they never wait; one that's stopped
+// reading piles up no faster than its frames come (LOOK_EVERY).
+const LOOK_READS = 128 * 1024;
+// this channel's row in the open portals' list (GET /channels), told to the Directory this long after it changes, so a
+// few changes at once (a desk's settings, viewers arriving together) are told once
+const LISTING_WAIT = 50;
 
 type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "refused";
+
+interface Flow { sent: number; got: number; at: number }
+
+/** A channel's row in the open portals' list (GET /channels): only what's listed (no code, handed out) carries more. */
+export interface Listing {
+  channel: string; set: boolean; code: boolean; at: number;
+  live?: boolean; open?: boolean; static?: boolean; viewers?: number; title?: string; doing?: { boss: string; kc: number } | null;
+}
 
 interface Att {
   role: Role;
@@ -177,7 +193,18 @@ export class Channel extends DurableObject<Env> {
   ackedSeen: [number, number] = [0, Date.now()];
   outSeen: [number, number] = [0, Date.now()];
   wrong = new Map<string, number[]>();
-  flow = new WeakMap<WebSocket, { sent: number; got: number }>();
+  flow = new WeakMap<WebSocket, Flow>();
+  // Who's here, kept between messages (11/07/2026): every frame, every status line and every sound release had asked
+  // for the sockets again and read each one's attachment again, and a status line to each viewer in line did it once
+  // more for each (150 viewers coming and going past a cap of 10 took 27 ms of CPU each, over the free plan's 10 ms).
+  // Worked out again only when someone comes, goes or takes a seat (moved()); a sleep starts them empty.
+  atts = new WeakMap<WebSocket, Att>();
+  here = new Map<Role, WebSocket[]>();
+  seatedNow: WebSocket[] | null = null;
+  waitingNow: WebSocket[] | null = null;
+  listingRow = ""; // the row last told to the Directory (tellListing)
+  listingTimer: ReturnType<typeof setTimeout> | null = null;
+  directory: DurableObjectStub | null = null; // (one stub, so what's told arrives in the order it was told)
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -204,14 +231,33 @@ export class Channel extends DurableObject<Env> {
 
   // who's here
 
+  // (the lists handed out are kept: never changed in place, only dropped by moved())
   sockets(role: Role): WebSocket[] {
-    return this.ctx.getWebSockets(role).filter((ws) => ws.readyState === OPEN);
+    let got = this.here.get(role);
+    if (!got) this.here.set(role, (got = this.ctx.getWebSockets(role).filter((ws) => ws.readyState === OPEN)));
+    return got;
   }
-  att(ws: WebSocket): Att { return ws.deserializeAttachment() as Att; }
-  seated(): WebSocket[] { return this.sockets("watch").filter((ws) => this.att(ws).seated); }
+  /** Someone came, went or took a seat: who's here is worked out again when next asked. */
+  moved() {
+    this.here.clear();
+    this.seatedNow = this.waitingNow = null;
+  }
+  att(ws: WebSocket): Att {
+    let a = this.atts.get(ws);
+    if (!a) this.atts.set(ws, (a = ws.deserializeAttachment() as Att));
+    return a;
+  }
+  /** A socket's attachment written (what must outlive a sleep), and kept in memory as it is. */
+  keep(ws: WebSocket, a: Att) {
+    ws.serializeAttachment(a);
+    this.atts.set(ws, a);
+  }
+  seated(): WebSocket[] {
+    return (this.seatedNow ??= this.sockets("watch").filter((ws) => this.att(ws).seated));
+  }
   waiting(): WebSocket[] {
-    return this.sockets("watch").filter((ws) => !this.att(ws).seated)
-      .sort((a, b) => (this.att(a).seq || 0) - (this.att(b).seq || 0));
+    return (this.waitingNow ??= this.sockets("watch").filter((ws) => !this.att(ws).seated)
+      .sort((a, b) => (this.att(a).seq || 0) - (this.att(b).seq || 0)));
   }
   live(): boolean { return this.sockets("transmit").length > 0; }
   cap(): number {
@@ -227,10 +273,20 @@ export class Channel extends DurableObject<Env> {
       return false;
     }
   }
-  // frames and sound: only as fast as the viewer takes them (WINDOW)
-  sendBinary(ws: WebSocket, msg: ArrayBuffer): boolean {
+  flowOf(ws: WebSocket): Flow {
     let f = this.flow.get(ws);
-    if (!f) this.flow.set(ws, (f = { sent: 0, got: 0 }));
+    if (!f) this.flow.set(ws, (f = { sent: 0, got: 0, at: Date.now() }));
+    return f;
+  }
+
+  // frames and sound: only as fast as the viewer takes them (WINDOW); a looker, as fast as it's taken to read (LOOK_READS)
+  sendBinary(ws: WebSocket, msg: ArrayBuffer, looker = false): boolean {
+    const f = this.flowOf(ws);
+    if (looker) {
+      const now = Date.now();
+      f.got = Math.min(f.sent, f.got + ((now - f.at) * LOOK_READS) / 1000);
+      f.at = now;
+    }
     if (f.sent - f.got > WINDOW) return false;
     if (!this.send(ws, msg)) return false;
     f.sent += msg.byteLength;
@@ -239,6 +295,7 @@ export class Channel extends DurableObject<Env> {
 
   close(ws: WebSocket, code: number, reason: string) {
     try { ws.close(code, reason); } catch { /* gone already */ }
+    this.moved();
   }
 
   status(place = 0, you?: number): string {
@@ -260,19 +317,54 @@ export class Channel extends DurableObject<Env> {
   tellViewers() {
     const line = this.status();
     for (const ws of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look"), ...this.sockets("transmit")]) this.send(ws, line);
-    this.waiting().forEach((ws, i) => this.send(ws, this.status(i + 1, this.att(ws).who)));
+    // those in line: the same line with their place and number on the end (status(place, you), put together from it
+    // rather than written out again for each)
+    const head = line.slice(0, -2);
+    this.waiting().forEach((ws, i) => {
+      const who = this.att(ws).who;
+      this.send(ws, head + ', "seat": false, "place": ' + (i + 1) + (who !== undefined ? ', "you": ' + pyjson(who) : "") + "}}");
+    });
     this.tellWatching();
+    this.tellListing();
+  }
+
+  /** This channel's row in the open portals' list (GET /channels): the same as it was read from /_status before. */
+  listing(): Listing {
+    const set = this.meta.keyHash !== null, code = !!this.meta.code, at = Date.now();
+    if (!set || code) return { channel: this.name, set, code, at }; // (not listed: nothing more to tell)
+    const live = this.live();
+    return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
+             static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
+             doing: this.doing() };
+  }
+
+  /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
+   *  its status, waking each, every time it was read (the outstations page every 20 s while open, each friend's
+   *  client every minute); now it's answered from what each channel last told. */
+  tellListing() {
+    if (this.listingTimer || !this.name) return;
+    this.listingTimer = setTimeout(() => {
+      this.listingTimer = null;
+      const row = this.listing(), line = JSON.stringify({ ...row, at: 0 });
+      if (line === this.listingRow) return;
+      this.listingRow = line;
+      this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+      this.ctx.waitUntil(this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) })
+        .then((r) => { if (!r.ok) this.listingRow = ""; }, () => { this.listingRow = ""; })); // (told again at the next change)
+    }, LISTING_WAIT);
   }
 
   /** Who's watching, for the desk (11/05/2026, Jace: "add viewer list"): each viewer's number, the name it gave in
    *  the chat ("visitor" until it gives one), and whether it's in line. Never a device or address. */
   viewerList(): string {
+    // (written out here, the same as pyjson writes it, 11/07/2026: it goes to the desk each time anyone comes, goes or
+    // says hello, and the whole list through pyjson was most of what a viewer's coming cost with a long line)
     const one = (ws: WebSocket, waiting: boolean) => {
       const a = this.att(ws);
-      return { who: a.who || 0, name: a.name || "visitor", waiting };
+      return '{"who": ' + pyjson(a.who || 0) + ', "name": ' + pyjson(a.name || "visitor") + ', "waiting": ' + waiting + "}";
     };
-    const seated = this.seated().map((ws) => one(ws, false)).sort((x, y) => x.who - y.who);
-    return pyjson({ viewers: [...seated, ...this.waiting().map((ws) => one(ws, true))] });
+    const seated = [...this.seated()].sort((x, y) => (this.att(x).who || 0) - (this.att(y).who || 0));
+    return '{"viewers": [' + [...seated.map((ws) => one(ws, false)), ...this.waiting().map((ws) => one(ws, true))].join(", ") + "]}";
   }
 
   tellWatching() {
@@ -289,7 +381,8 @@ export class Channel extends DurableObject<Env> {
   seat(ws: WebSocket) {
     const a = this.att(ws);
     a.seated = true;
-    ws.serializeAttachment(a);
+    this.keep(ws, a);
+    this.seatedNow = this.waitingNow = null;
     this.send(ws, this.status(0, a.who));
     if (this.lastData) this.send(ws, this.lastData);
     if (this.lastFrame && this.live()) this.sendBinary(ws, this.lastFrame); // (off air, no old frame)
@@ -374,6 +467,7 @@ export class Channel extends DurableObject<Env> {
                              viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "",
                              live_s: this.secondsThisMonth(), doing: this.doing() });
     }
+    if (role === "_listing") return Response.json(this.listing()); // (the Directory, for a row it hasn't been told)
     if (role === "_revoke") return this.revoke();
     if (role === "_notice") {
       // the keeper's notice, set or taken down: to every desk here now
@@ -398,7 +492,8 @@ export class Channel extends DurableObject<Env> {
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
     const a: Att = { role: (no ? "refused" : role) as Role };
-    ws.serializeAttachment(a);
+    this.keep(ws, a);
+    this.moved();
 
     if (no) {
       this.close(ws, no[0], no[1]);
@@ -461,7 +556,8 @@ export class Channel extends DurableObject<Env> {
     Object.assign(a, { code, who: this.meta.nextWho, seq: this.meta.seq, seated: false, device: "",
                        name: "visitor", says: [], lastPing: 0 });
     this.saveMeta();
-    ws.serializeAttachment(a);
+    this.keep(ws, a);
+    this.moved();
     const cap = this.cap();
     if (cap && (this.seated().length >= cap || this.waiting().length > 1)) {
       this.lateJoiner(ws, "watch"); // in line for a seat: the chat so far all the same
@@ -480,14 +576,14 @@ export class Channel extends DurableObject<Env> {
     }
     a.lookFrames = false;
     a.lookAt = 0;
-    ws.serializeAttachment(a);
+    this.keep(ws, a);
     this.send(ws, this.status());
   }
 
   openDesk(ws: WebSocket, a: Att, hostName: string) {
     const host = oneLine(hostName, NAME_MAX) || this.name;
     a.host = host;
-    ws.serializeAttachment(a);
+    this.keep(ws, a);
     if (!this.meta.hostNames.includes(host.toLowerCase())) {
       this.meta.hostNames.push(host.toLowerCase());
       this.saveMeta();
@@ -582,7 +678,8 @@ export class Channel extends DurableObject<Env> {
 
   // messages
 
-  async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
+  // (not async: nothing here waits, and a frame needn't make a promise)
+  webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
     const size = typeof msg === "string" ? msg.length : msg.byteLength;
     if (size > MAX_MESSAGE) return;
     const a = this.att(ws);
@@ -603,10 +700,10 @@ export class Channel extends DurableObject<Env> {
         a.lookFrames = m.look.frames === true;
         const fresh = this.lastThumb && Date.now() - this.thumbAt <= THUMB_FRESH ? this.lastThumb : null;
         if (a.lookFrames && (fresh || this.lastFrame) && this.live()) {
-          this.sendBinary(ws, (fresh || this.lastFrame)!);
+          this.sendBinary(ws, (fresh || this.lastFrame)!, true);
           a.lookAt = Date.now();
         }
-        ws.serializeAttachment(a);
+        this.keep(ws, a);
       }
     }
   }
@@ -617,6 +714,7 @@ export class Channel extends DurableObject<Env> {
   }
 
   async webSocketError(ws: WebSocket) {
+    this.moved();
     this.gone(ws);
   }
 
@@ -721,6 +819,7 @@ export class Channel extends DurableObject<Env> {
     if (!this.meta.summary) return;
     const line = this.summaryLine();
     for (const v of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look")]) this.send(v, line);
+    this.tellListing(); // (what it's doing: the boss and its count)
   }
 
   /** What the stream's at now, for the open portals: the boss of the last kill count and its count (live only). */
@@ -734,9 +833,8 @@ export class Channel extends DurableObject<Env> {
     const now = Date.now();
     for (const v of this.sockets("look")) {
       const va = this.att(v);
-      if (va.lookFrames && now - (va.lookAt || 0) >= LOOK_EVERY && this.sendBinary(v, msg)) {
-        va.lookAt = now;
-        v.serializeAttachment(va);
+      if (va.lookFrames && now - (va.lookAt || 0) >= LOOK_EVERY && this.sendBinary(v, msg, true)) {
+        va.lookAt = now; // (in memory only: frames come only while live, and live keeps the object awake)
         this.out += msg.byteLength;
       }
     }
@@ -750,8 +848,12 @@ export class Channel extends DurableObject<Env> {
         if (!this.soundTimer) this.soundTimer = setTimeout(() => this.releaseSound(), SOUND_HOLD);
       }
     } else if (msg.startsWith('{"sound"') && msg.length <= VIEWER_TEXT) {
-      this.meta.soundInfo = msg;
-      this.saveMeta();
+      // (kept only when it's changed, 11/07/2026: the client says it every 5 s, and each had been a row written, about
+      // 700 an hour while the sound was on; viewers still hear each one)
+      if (msg !== this.meta.soundInfo) {
+        this.meta.soundInfo = msg;
+        this.saveMeta();
+      }
       for (const v of this.seated()) this.send(v, msg);
     }
   }
@@ -816,8 +918,7 @@ export class Channel extends DurableObject<Env> {
     if (!m || typeof m !== "object" || Array.isArray(m)) return;
     const now = Date.now();
     if (typeof m.got === "number" && Number.isFinite(m.got)) {
-      let f = this.flow.get(ws);
-      if (!f) this.flow.set(ws, (f = { sent: 0, got: 0 }));
+      const f = this.flowOf(ws);
       if (m.got > f.got) this.acked += m.got - f.got;
       f.got = m.got;
       if (f.got > f.sent) f.sent = f.got; // (the object slept and woke since: start the count again from theirs)
@@ -828,7 +929,7 @@ export class Channel extends DurableObject<Env> {
       if (typeof dev === "string" && dev.length >= 8 && dev.length <= 64 && !a.device) a.device = dev;
       const name = oneLine(m.hello.name, NAME_MAX);
       a.name = name && !this.meta.hostNames.includes(name.toLowerCase()) ? name : "visitor";
-      ws.serializeAttachment(a);
+      this.keep(ws, a);
       this.tellWatching();
       return;
     }
@@ -840,12 +941,12 @@ export class Channel extends DurableObject<Env> {
       const says = (a.says || []).filter((t) => now - t <= SAY_WINDOW);
       if (!text || blocked || this.meta.chatOff || says.length >= SAY_BURST) {
         a.says = says;
-        ws.serializeAttachment(a);
+        this.keep(ws, a);
         return;
       }
       says.push(now);
       a.says = says;
-      ws.serializeAttachment(a);
+      this.keep(ws, a);
       this.say(a.name || "visitor", text, false, a.who, !a.seated);
     } else if (m.vote && typeof m.vote === "object") {
       const p = this.poll, pick = m.vote.pick;
@@ -858,7 +959,7 @@ export class Channel extends DurableObject<Env> {
       // the signal button: a ✼ over everyone's frame (and a count in the client), once a second at most
       if (blocked || now - (a.lastSignal || 0) < SIGNAL_EVERY) return;
       a.lastSignal = now;
-      ws.serializeAttachment(a);
+      this.keep(ws, a);
       this.broadcast(pyjson({ signal: { name: a.name || "visitor", who: a.who } }));
     } else if (m.guess && typeof m.guess === "object") {
       const g = this.guess, kc = m.guess.kc;
@@ -873,7 +974,7 @@ export class Channel extends DurableObject<Env> {
       const ok = (c: unknown) => typeof c === "number" && c >= 0 && c <= 1;
       if (blocked || this.meta.pingsOff || now - (a.lastPing || 0) < PING_EVERY || !ok(x) || !ok(y)) return;
       a.lastPing = now;
-      ws.serializeAttachment(a);
+      this.keep(ws, a);
       this.broadcast(pyjson({ ping: { x: Math.round(x * 1e4) / 1e4, y: Math.round(y * 1e4) / 1e4,
                                       name: a.name || "visitor", who: a.who, at: now } }));
     }

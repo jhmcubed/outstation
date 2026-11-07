@@ -40,7 +40,7 @@
 //   DELETE /admin/notice              taken down
 
 import { DurableObject } from "cloudflare:workers";
-import { Channel, type Env } from "./channel";
+import { Channel, type Env, type Listing } from "./channel";
 import { fileKey, serveFile, ID } from "./clips";
 import { oneLine } from "./text";
 
@@ -56,6 +56,9 @@ const WAITING_MOST = 50; // requests waiting at once, everyone's
 const WAIT_DAYS = 14, PICKUP_DAYS = 7; // a request not answered in this long goes; an answer not collected, too
 const DAY = 86_400_000;
 const REPORTS_KEPT = 50, REPORT_DAYS = 30, REPORTS_AN_HOUR = 5, REPORT_LOG = 64 * 1024, REPORT_NOTE = 1000;
+// a channel's row in the open portals' list is asked for again when it's older than this, though each channel tells
+// its own as it changes (in case a telling was lost, or a channel went without saying)
+const LISTING_CHECK = 5 * 60_000;
 
 interface Report {
   id: string;
@@ -89,9 +92,22 @@ async function sha256(text: string): Promise<string> {
 export class Directory extends DurableObject<Env> {
   asks = new Map<string, number[]>(); // an address -> when it asked (in memory: a sleep forgets, which only loosens it)
   reportsFrom = new Map<string, number[]>(); // an address -> when it sent a report (the same)
+  // the open portals (GET /channels, 11/07/2026): each channel's row as it last told it (Channel.tellListing), or as it
+  // answered when asked; in memory, so a sleep only means asking each channel once more. A read used to ask every
+  // channel handed out for its status, waking each: a request to every channel each time the outstations page (every
+  // 20 s while open) or any friend's client (every minute) read the list.
+  names: string[] | null = null; // the channels handed out (their "c:" keys), till one's handed out or taken back
+  listed = new Map<string, { row: Listing; seen: number }>();
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
+    if (url.pathname === "/channels") return this.openPortals();
+    if (url.pathname === "/listed" && request.method === "PUT") {
+      const row = (await request.json()) as Listing;
+      const had = this.listed.get(row.channel);
+      if (!had || had.row.at <= row.at) this.listed.set(row.channel, { row, seen: Date.now() });
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === "/requests") return this.requests(request, url);
     if (url.pathname === "/reports") return this.reports(request, url);
     if (url.pathname === "/notice") {
@@ -105,8 +121,34 @@ export class Directory extends DurableObject<Env> {
     }
     if (request.method === "PUT") await this.ctx.storage.put("c:" + name, { since: Date.now() });
     else if (request.method === "DELETE") await this.ctx.storage.delete("c:" + name);
+    if (request.method === "PUT" || request.method === "DELETE") {
+      this.names = null;
+      this.listed.delete(name); // (a new key: whatever it said before, it's asked again)
+    }
     const all = await this.ctx.storage.list({ prefix: "c:" });
     return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), ...(v as object) })));
+  }
+
+  /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
+   *  missing (or LISTING_CHECK old) is asked. */
+  async openPortals(): Promise<Response> {
+    if (!this.names) this.names = [...(await this.ctx.storage.list({ prefix: "c:" })).keys()].map((k) => k.slice(2));
+    const names = this.names, now = Date.now(); // (a channel handed out meanwhile is in the next read)
+    const ask = names.filter((n) => { const l = this.listed.get(n); return !l || now - l.seen > LISTING_CHECK; });
+    await Promise.all(ask.map(async (n) => {
+      try {
+        const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(n))
+          .fetch(new Request("https://channel/_listing", { headers: { "x-channel": n } }));
+        const row = (await r.json()) as Listing;
+        const had = this.listed.get(n);
+        if (!had || had.row.at <= row.at) this.listed.set(n, { row, seen: Date.now() });
+      } catch { /* (left out this time) */ }
+    }));
+    const open = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set && !r.code)
+      .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
+                     title: r.title || "", doing: r.doing || null }));
+    open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
+    return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
   }
 
   // anomaly reports: "add" (a friend's outstation, its channel already checked by the Worker), "list" and "delete" (the
@@ -394,18 +436,9 @@ export default {
     }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)
+    // (the Directory answers it from what each channel has told it: one request, whatever the number of channels)
     if (request.method === "GET" && url.pathname === "/channels") {
-      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
-      const names = ((await (await dir.fetch("https://dir/")).json()) as { channel: string }[]).map((c) => c.channel);
-      const rows = await Promise.all(names.map(async (n) => {
-        try {
-          const r = await channelStub(env, n).fetch(toChannel(new Request(url.toString()), n, "/_status"));
-          return (await r.json()) as { channel: string; set: boolean; code: boolean; live: boolean; open: boolean; static: boolean; viewers: number; title?: string; doing?: unknown };
-        } catch { return null; }
-      }));
-      const open = rows.filter((r) => r && r.set && !r.code).map((r) => ({ channel: r!.channel, live: r!.live, open: r!.open, static: r!.static, viewers: r!.viewers, title: r!.title || "", doing: r!.doing || null }));
-      open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
-      return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/channels");
     }
 
     if (request.method === "POST" && parts.length === 2 && parts[0] === "dink" && NAME.test(parts[1])) {
