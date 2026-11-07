@@ -92,6 +92,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek in its friends list. It needs the watch code, as a viewer does.
 - It hears the status lines, the summary and the clips' lines.
 - It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
+- It never says `{"got"}`, so the Worker takes it to read 128 KB a second (since 11/07/2026: before, a looker's frames stopped for good after its first 4 MB).
 - Anything else it sends is thrown away.
 
 ## The open outstations
