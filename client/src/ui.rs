@@ -954,7 +954,7 @@ impl App {
 }
 
 /// The friends' portals drawer: hand one out (its attach code, to send them), every channel handed out (live ones lit,
-/// read again every 10 s), a new code or taking one back (each asked about first), and setting up the relay and token.
+/// read again every 30 s), a new code or taking one back (each asked about first), and setting up the relay and token.
 #[cfg(feature = "station")]
 fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();

@@ -227,7 +227,8 @@ pub fn message(channel: &str, code: &str) -> String {
              (keep the key to yourself: it opens your outstation, nothing else)", code, crate::settings::NAME, SITE, channel)
 }
 
-/// The drawer's state: the list (read again every 10 s while it's open), what's being asked, and the last answer.
+/// The drawer's state: the list (read again every 30 s while it's open; 10 s until 11/07/2026, and each read wakes every
+/// channel on the relay), what's being asked, and the last answer.
 pub struct Keeper {
     pub rows: Arc<Mutex<Option<Result<Vec<Row>, String>>>>,
     /// those asking for a portal (read with the list)
@@ -268,7 +269,7 @@ impl Keeper {
     /// the list read again (now, or when 10 s have gone), off the window's thread
     pub fn read(&mut self, now: bool, wake: impl Fn() + Send + 'static) {
         if *self.busy.lock().unwrap() { return; }
-        if !now && self.read_at.is_some_and(|t| t.elapsed() < Duration::from_secs(10)) { return; }
+        if !now && self.read_at.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) { return; }
         self.read_at = Some(Instant::now());
         let (rows, asks, busy, notice_now, reports) = (self.rows.clone(), self.asks.clone(), self.busy.clone(), self.notice_now.clone(), self.reports.clone());
         *busy.lock().unwrap() = true;
