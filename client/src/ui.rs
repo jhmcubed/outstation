@@ -1431,8 +1431,13 @@ impl SettingsPanel {
                 let mbit = kb * self.fps as f64 * 8.0 / 1024.0;
                 weight = if settings.get().relay.starts_with("wss://") {
                     // (on Cloudflare the relay sends each viewer their copy: this PC sends one, however many watch)
-                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many observe: the relay server sends each of your observers their own copy",
-                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit)
+                    let ceiling = capture::SHARED_CEILING_MBIT;
+                    let over = if mbit > ceiling {
+                        format!("\npast the shared relay's ceiling of {:.0} Mbit/s for one transmission: about {:.0} a second would go. a lower width or quality keeps them all",
+                                ceiling, (self.fps as f64 * ceiling / mbit).floor().max(1.0))
+                    } else { String::new() };
+                    format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up from this PC, once, however many observe: the relay server sends each of your observers their own copy{}",
+                            w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, over)
                 } else {
                     format!("{} × {}, about {:.1} KB a frame{}\n{} a second: about {:.0} KB/s, {:.1} Mbit/s up for each observer: this outstation is on a relay of its own ({}), which sends every copy from this PC's upload\n{} observing at most: about {:.1} Mbit/s up in all (on Cloudflare's relay it would be {:.1}, once)",
                             w, h, kb, capped, self.fps, kb * self.fps as f64, mbit, settings.get().relay, self.viewers, mbit * self.viewers as f64, mbit)

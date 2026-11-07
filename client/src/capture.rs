@@ -33,9 +33,14 @@ const RESIZABLE_SIDE: (f64, f64) = (250.0, 410.0);
 /// every frame waits this long before it goes, and is dropped if the gate shuts meanwhile
 pub const HOLD_BACK: f64 = 0.5;
 pub const MAX_FPS: u32 = 60;
+/// The most one transmission's pictures may take on the shared relay (a wss:// one, Cloudflare's), in Mbit/s: the
+/// relay sends every observer a copy, and about 500 Mbit/s out of one channel (30 observers) was measured to keep up
+/// (11/06/2026), so 20 observers at this stay under it. Frames past it wait for the next (fewer a second), never a
+/// worse picture. A relay of one's own has no ceiling here: its own upload is the limit.
+pub const SHARED_CEILING_MBIT: f64 = 20.0;
 /// small frames for lookers: this wide, this often
 pub const THUMB_WIDTH: u32 = 192;
-pub const THUMB_EVERY: f64 = 0.5;
+pub const THUMB_EVERY: f64 = 1.0; // (11/07/2026, from 0.5: one less message a second; the relay counts one fresh for 3 s)
 
 /// A frame: BGRA pixels, when it was taken, and how.
 pub struct Image {
@@ -227,6 +232,10 @@ pub struct GpuShared {
     every: Mutex<f64>,
     target: Mutex<Option<Instant>>,
     latest: Mutex<Option<Arc<Image>>>,
+    /// rung as each kept frame lands in `latest`, so the sending side wakes for it at once (11/07/2026: it looked
+    /// every 4 ms, after the jpeg, so at 60 a second a frame that came while it slept or encoded was often replaced
+    /// before it was sent: 50 a second where 60 was asked)
+    fresh: std::sync::Condvar,
     seq: Mutex<u64>,
     pub cost: Mutex<(f64, u64)>,
 }
@@ -306,6 +315,7 @@ impl GraphicsCaptureApiHandler for Handler {
         *seq += 1;
         *self.shared.latest.lock().unwrap() =
             Some(Arc::new(Image { bgra: small, w: ow, h: oh, taken: arrived, seq: Some(*seq) }));
+        self.shared.fresh.notify_all();
         let mut c = self.shared.cost.lock().unwrap();
         c.0 += t0.elapsed().as_secs_f64() * 1000.0;
         c.1 += 1;
@@ -326,7 +336,7 @@ impl Gpu {
     pub fn new() -> Self {
         Gpu { control: None, hwnd: None, cursor: false, failed: None, shared: Arc::new(GpuShared {
             geom: Mutex::new(None), every: Mutex::new(0.125), target: Mutex::new(None), latest: Mutex::new(None),
-            seq: Mutex::new(0), cost: Mutex::new((0.0, 0)) }) }
+            fresh: std::sync::Condvar::new(), seq: Mutex::new(0), cost: Mutex::new((0.0, 0)) }) }
     }
 
     pub fn running(&self, hwnd: HWND) -> bool {
@@ -380,6 +390,22 @@ impl Gpu {
 
     pub fn set_geom(&self, g: Geom) {
         *self.shared.geom.lock().unwrap() = Some(g);
+    }
+
+    /// Wait (at most `most`) for a frame newer than `seen`: back as soon as one lands.
+    pub fn wait_newer(&self, seen: Option<u64>, most: Duration) {
+        let end = Instant::now() + most;
+        let mut g = self.shared.latest.lock().unwrap();
+        loop {
+            if g.as_ref().is_some_and(|i| i.seq != seen) {
+                return;
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            g = self.shared.fresh.wait_timeout(g, left).unwrap().0;
+        }
     }
 
     pub fn newest(&self, max_age: f64) -> Option<Arc<Image>> {
