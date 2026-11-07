@@ -58,6 +58,12 @@ fn main() {
     let path = arg_after(&args, "--settings").map(PathBuf::from).unwrap_or_else(settings::default_path);
     transmit::set_log(path.with_file_name("portal.log"));
     crash::install(path.with_file_name("portal.log"));
+    // the program's id (notify.rs, AUMID), so the taskbar groups its window with its Start menu shortcut and calls it by
+    // the shortcut's name and icon (11/07/2026, Jace: it had shown an old name and a blank icon)
+    unsafe {
+        let id: Vec<u16> = notify::AUMID.encode_utf16().chain(std::iter::once(0)).collect();
+        let _ = windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(windows::core::PCWSTR(id.as_ptr()));
+    }
     let shared = settings::Shared::open(path.clone());
 
     if let Some(file) = arg_after(&args, "--once") {

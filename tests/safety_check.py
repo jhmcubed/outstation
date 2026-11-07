@@ -281,8 +281,8 @@ def main(argv):
         failed |= bool(extra)
         kinds = resource_kinds(p)
         has = {3, 14, 16} <= kinds
-        print("  its icon and name in Windows: %s" % ("yes (its icon, and ⊂λ,ｍ⊙ outstation in its details)" if has else
-                                                       "no (build.rs adds them in an MSVC build only)"))
+        print("  its icon and name in Windows: %s" % ("yes (its icon, and its name in its details)" if has else
+                                                       "no (build.rs adds them where the toolchain can: MSVC, or a resource compiler beside a GNU or LLVM linker)"))
         failed |= needs_icon and not has
     src = check_source()
     print("the client's source: %s" % ("; ".join(src) if src else "none of them, and nothing loaded by hand"))

@@ -1,7 +1,11 @@
 name: tests
+# (11/07/2026, his Actions minutes nearly spent for the month: not on every push to a working branch, where a session
+# runs the same checks itself; on a pull request, on main, and by hand. A public repository's runs cost nothing.)
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   relay:

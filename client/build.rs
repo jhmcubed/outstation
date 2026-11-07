@@ -1,22 +1,37 @@
 //! The exe's own icon and its name in Windows (11/06/2026, Jace: "the exe's own icon"): the ✼ (assets/icon.png) and
-//! a version block (what Explorer's details, Task Manager and Windows' prompts call it), as a compiled resource file
-//! written here, byte by byte, and handed to the linker. MSVC's linker takes a .res file as it is, so releases
-//! (built with MSVC on GitHub) carry both; other toolchains (gnullvm on the keeper's PC, gnu in a test build) go
-//! without, as before, so nothing else is needed to build. Nothing here runs at run time.
+//! a version block (what Explorer's details, the taskbar, Task Manager and Windows' prompts call it), as a compiled
+//! resource file written here, byte by byte. MSVC's linker (the releases, built on GitHub) takes the .res file as it
+//! is. The GNU-style toolchains (gnullvm on the keeper's PC, linked by llvm-mingw; gnu in a test build) need it as an
+//! object: the toolchain's own resource compiler (windres, llvm-mingw's or binutils') converts it (11/07/2026, Jace:
+//! his own build had a blank icon and an old name in the taskbar). Without one, the build goes without, and says so.
+//! Nothing here runs at run time.
 
 use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.png");
     println!("cargo:rerun-if-changed=build.rs");
-    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        return;
-    }
     let png = std::fs::read("assets/icon.png").expect("assets/icon.png");
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
-    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("outside-portal.res");
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("outstation.res");
     std::fs::write(&out, res(&png, &version)).expect("the resource file");
-    println!("cargo:rustc-link-arg-bins={}", out.display());
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins={}", out.display());
+        return;
+    }
+    // (a GNU-style linker: the .res as a COFF object, by whichever resource compiler is on the PATH)
+    let obj = out.with_extension("o");
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let tools = [format!("{}-w64-mingw32-windres", arch), "llvm-windres".to_string(), "windres".to_string()];
+    for tool in &tools {
+        let ok = std::process::Command::new(tool).args(["--input-format=res", "--output-format=coff", "-i"]).arg(&out).arg("-o").arg(&obj)
+            .status().is_ok_and(|s| s.success());
+        if ok {
+            println!("cargo:rustc-link-arg-bins={}", obj.display());
+            return;
+        }
+    }
+    println!("cargo:warning=no resource compiler (windres) found: this build goes without its icon and its name in Windows");
 }
 
 /// a resource file: an empty entry first (the format's mark), then the icon, its group, and the version block
