@@ -2,6 +2,8 @@
 
 The short answer: the outstation does what streaming software does (OBS, Discord's screen share) and nothing more. It never touches RuneLite or the game, and it can't press a key or click for you. Everything below can be checked: the code is all here, and every release is built by GitHub from it, not on anyone's computer.
 
+**Only download it from this repository's [Releases](https://github.com/jhmcubed/outstation/releases) page.** A copy from anywhere else isn't ours: never run an .exe you don't trust ([Checking it yourself](#checking-it-yourself)).
+
 On this page:
 - [In plain words](#in-plain-words): the questions people ask first.
 - [What's in the picture](#whats-in-the-picture): what viewers can see, your login screen included.
@@ -234,6 +236,8 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
 **Not Jagex's.** Created using intellectual property belonging to Jagex Limited under the terms of Jagex's Fan Content Policy. This content is not endorsed by or affiliated with Jagex. It isn't made by or affiliated with RuneLite either.
 
 ## Checking it yourself
+
+> **The only official download is this repository's [Releases](https://github.com/jhmcubed/outstation/releases) page** (github.com/jhmcubed/outstation). ⊂λ,ｍ⊙ never sends the outstation any other way: a copy passed round in Discord, a DM, a forum or another website isn't ours, whatever it's called and however it looks. Never run an .exe you don't trust. RuneScape players are a favourite target of programs that pretend to be game tools and steal accounts, so before you run any copy, check its SHA-256 against the release's ([SAFETY.md](SAFETY.md), "Checking it yourself"). If someone offers you an outstation from anywhere else, don't open it, and tell the listening post (research@ghillie.wiki).
 
 1. **The code is all here**, under the MIT licence. The client is `client/src`, 26 files. Each one says at its top what it does.
 2. **Releases are built by GitHub, from this code.** Each release lists the commit it was built from and the program's SHA-256. Once the repository is public, each also carries GitHub's build attestation: [GitHub CLI](https://cli.github.com) can confirm the file came from this repository's own build, unchanged:

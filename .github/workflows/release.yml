@@ -59,6 +59,8 @@ jobs:
         run: |
           sum=$(cut -d' ' -f1 out/SHA256SUMS.txt)
           {
+            echo "**This page is the only official place to download ⊂λ,ｍ⊙ outstation.** A copy from anywhere else (Discord, a DM, another site) isn't ours: never run an .exe you don't trust, and check this one's SHA-256 below before you run it."
+            echo
             echo "Built by GitHub from commit $GITHUB_SHA, from this repository's code alone."
             echo
             echo "- SHA-256 of outstation.exe: \`$sum\`"
