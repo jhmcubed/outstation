@@ -28,6 +28,7 @@ fn d_static_key() -> String { "pause".into() }
 fn d_clip_key() -> String { "insert".into() }
 fn d_chat_size() -> f32 { 16.0 }
 fn d_game_chat_size() -> f32 { 20.0 }
+fn d_game_chat_fade() -> u32 { 20 }
 fn d_guess_min() -> u64 { 1_000_000 }
 fn d_scale() -> f32 { 1.0 }
 fn d_mask_key() -> String { "end".into() }
@@ -263,6 +264,15 @@ pub struct Settings {
     pub chat_size: f32,
     #[serde(default = "d_game_chat_size")]
     pub game_chat_size: f32,
+    /// how long a line over the game stays before it fades out, in seconds (0: it stays till newer ones push it off;
+    /// 11/07/2026, Jace: "make the chat on screen fade out after a certain amount of time")
+    #[serde(default = "d_game_chat_fade")]
+    pub game_chat_fade: u32,
+    /// the chat over the game drawn into the picture too, where it sits over the game and as big (11/07/2026, Jace:
+    /// "add a toggle to capture chat on the broadcast screen"): drawn on this PC into each frame (chatpic.rs), so
+    /// observers, the clips and the tape all have it. Off to begin with.
+    #[serde(default)]
+    pub chat_in_picture: bool,
     /// a drop from the guessed boss worth this much decides a guess round
     #[serde(default = "d_guess_min")]
     pub guess_min_value: u64,
@@ -457,6 +467,8 @@ mod tests {
     fn unknown_fields_are_kept_and_defaults_fill_in() {
         let s: Settings = serde_json::from_str(r#"{"channel": "ja", "later": 5, "dink": {"port": 9000, "soon": true}}"#).unwrap();
         assert_eq!((s.fps, s.width, s.quality, s.dink.port), (8, 384, 60, 9000));
+        // (11/07/2026: the chat over the game fades after 20 s, and isn't in the picture, to begin with)
+        assert_eq!((s.game_chat_fade, s.chat_in_picture), (20, false));
         let back = serde_json::to_value(&s).unwrap();
         assert_eq!(back["later"], 5);
         assert_eq!(back["dink"]["soon"], true);

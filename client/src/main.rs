@@ -19,6 +19,7 @@
 mod ask;
 mod autolive;
 mod capture;
+mod chatpic;
 mod clip;
 mod clipsup;
 mod clock;
@@ -41,6 +42,7 @@ mod shortcut;
 mod sound;
 #[cfg(feature = "station")]
 mod station;
+mod stuck;
 mod theme;
 mod transmit;
 mod ui;
@@ -121,6 +123,8 @@ fn main() {
     let snd = sound::start(shared.clone());
     let dk = dink::start(shared.clone());
     autolive::start(shared.clone());
+    stuck::watch();
+    stuck::begin("opening the window");
     let (rgba, w, h) = ui::icon_rgba();
     let opts = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

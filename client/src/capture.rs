@@ -533,6 +533,10 @@ pub struct Options {
     pub boxes: Vec<[f64; 4]>,
     /// the mouse pointer in the picture (Windows Graphics Capture only: PrintWindow and the screen never have it)
     pub cursor: bool,
+    /// the chat over the game drawn into the picture (chatpic.rs; 11/07/2026), and whether it's over the game on
+    /// this PC too (then a frame taken off the screen has it already)
+    pub chat: bool,
+    pub chat_over: bool,
 }
 
 impl Options {
@@ -541,7 +545,8 @@ impl Options {
         // own masks do it. An old settings file's "mask" is kept as it was but no longer used.)
         Options { view: s.view.clone(), mask: "none".into(), width: s.width.max(16),
                   method: s.method.clone(), interval_ms: 1000.0 / s.fps.clamp(1, MAX_FPS) as f64,
-                  boxes: if s.masks_on { s.masks.clone() } else { Vec::new() }, cursor: s.show_cursor }
+                  boxes: if s.masks_on { s.masks.clone() } else { Vec::new() }, cursor: s.show_cursor,
+                  chat: s.chat_in_picture, chat_over: s.game_chat }
     }
 }
 
@@ -643,6 +648,11 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
     }
     if !o.boxes.is_empty() {
         layout += &format!(", {} of your own masks", o.boxes.len());
+    }
+    // the chat over the game, into the picture (over the redactions), unless a frame off the screen has it already
+    if o.chat && !(o.chat_over && source.starts_with("the screen")) {
+        crate::chatpic::onto(&mut img);
+        layout += ", the chat in it";
     }
     layout += &format!(", {}x{} canvas, {}", cw, ch,
                        if o.mask == "none" { "nothing blacked out".to_string() } else { format!("{} blacked out", o.mask) });

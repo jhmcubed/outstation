@@ -187,8 +187,19 @@ fn is_see_through(hwnd: HWND) -> bool {
     SEE_THROUGH.lock().unwrap().contains(&(hwnd.0 as isize))
 }
 
-fn see_through(hwnd: HWND) {
+/// Windows' own frame off a see-through window: no shadow, no border, no rounded corners.
+fn frame_off(hwnd: HWND) {
     use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE};
+    let set = |what, value: u32| unsafe {
+        // (Windows 10 knows no border colour or corners: it says so and draws neither anyway)
+        let _ = DwmSetWindowAttribute(hwnd, what, &value as *const u32 as *const _, 4);
+    };
+    set(DWMWA_NCRENDERING_POLICY, 1); // DWMNCRP_DISABLED: no frame drawn by Windows, so no shadow
+    set(DWMWA_WINDOW_CORNER_PREFERENCE, 1); // DWMWCP_DONOTROUND
+    set(DWMWA_BORDER_COLOR, 0xFFFF_FFFE); // DWMWA_COLOR_NONE
+}
+
+fn see_through(hwnd: HWND) {
     use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
     static DONE: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
     let key = hwnd.0 as isize;
@@ -198,13 +209,7 @@ fn see_through(hwnd: HWND) {
     let title = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
     if !title.starts_with("outstation ✼ ") { return; }
     DONE.lock().unwrap().push(key);
-    let set = |what, value: u32| unsafe {
-        // (Windows 10 knows no border colour or corners: it says so and draws neither anyway)
-        let _ = DwmSetWindowAttribute(hwnd, what, &value as *const u32 as *const _, 4);
-    };
-    set(DWMWA_NCRENDERING_POLICY, 1); // DWMNCRP_DISABLED: no frame drawn by Windows, so no shadow
-    set(DWMWA_WINDOW_CORNER_PREFERENCE, 1); // DWMWCP_DONOTROUND
-    set(DWMWA_BORDER_COLOR, 0xFFFF_FFFE); // DWMWA_COLOR_NONE
+    frame_off(hwnd);
     // its frame worked out again, now that proc answers WM_NCCALCSIZE for it (the strip gone)
     {
         let mut s = SEE_THROUGH.lock().unwrap();

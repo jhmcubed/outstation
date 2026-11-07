@@ -45,6 +45,7 @@ const PINGS: [(u8, &str, &str); 3] = [
 ];
 const EDGE: f32 = 6.0;
 const CURSOR_SWITCH: &str = "my cursor in the picture";
+const CHAT_SWITCH: &str = "chat in the picture";
 
 fn body(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Proportional) }
 fn title_font(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Name("title".into())) }
@@ -197,6 +198,8 @@ struct SettingsPanel {
     status: (String, Color32),
     /// scroll to the replay buffer as it's next drawn (the Dink drawer's "the replay buffer ▸")
     find_replay: bool,
+    /// when the chat over the game's size or fade last changed here: sample lines over the game for a few seconds
+    sample_chat: Option<Instant>,
     listening: Option<usize>,
 }
 
@@ -248,6 +251,11 @@ pub struct App {
     guess_form: Option<(String, String)>,
     banned: Vec<(i64, String)>,
     over: Vec<OverLine>,
+    /// when the last ping and ✼ came: their windows stay a few seconds after (LINGER), so a burst makes one window
+    pings_last: Option<Instant>,
+    /// the moving box put where the chat sits, once as moving starts (it's dragged from there)
+    moving_placed: bool,
+    stars_last: Option<Instant>,
     history_until: Instant,
     moving_chat: bool,
     zoom: f32,
@@ -479,7 +487,7 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -659,6 +667,7 @@ impl App {
             if self.settings.get().signals && self.stars.len() < 60 {
                 let who = sg.get("who").and_then(|x| x.as_u64()).unwrap_or(0) as f32;
                 let x = 0.25 + ((who * 0.618 + self.signals as f32 * 0.137) % 1.0) * 0.5;
+                self.stars_last = Some(Instant::now());
                 self.stars.push(Star { at: Instant::now(), x, name: sg.get("name").and_then(|x| x.as_str()).unwrap_or("").into() });
             }
         } else if let Some(g) = m.get("guess") {
@@ -682,6 +691,7 @@ impl App {
             if self.settings.get().pings {
                 if let Some((l, t, r, b)) = frame_rect(&self.settings.get()) {
                     let (x, y) = (p.get("x").and_then(|x| x.as_f64()).unwrap_or(0.5), p.get("y").and_then(|x| x.as_f64()).unwrap_or(0.5));
+                    self.pings_last = Some(Instant::now());
                     self.pings.push(Ping { at: Instant::now(), x: (l as f64 + (r - l) as f64 * x) as f32,
                                            y: (t as f64 + (b - t) as f64 * y) as f32, name });
                 }
@@ -1422,7 +1432,7 @@ impl SettingsPanel {
         let saved = (s.fps.clamp(1, 60), s.width.clamp(192, 1536), s.quality.clamp(10, 95), s.max_viewers.clamp(1, 20));
         let mut p = SettingsPanel { fps: saved.0, width: saved.1, quality: saved.2, viewers: saved.3, saved,
                                     sample: None, sample_note: String::new(), taking: Arc::new(Mutex::new(None)),
-                                    shown: None, status: (String::new(), QUIET()), listening: None, find_replay: false };
+                                    shown: None, status: (String::new(), QUIET()), listening: None, find_replay: false, sample_chat: None };
         p.take_sample(s);
         p
     }
@@ -1612,7 +1622,40 @@ impl SettingsPanel {
         let mut chat = s.chat_size.round() as u32;
         if bar(ui, "the chat's text", "px", 10, 40, 1, &mut chat, "the size of the chat's words in this window") { let _ = settings.update(|x| x.chat_size = chat as f32); }
         let mut over = s.game_chat_size.round() as u32;
-        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over, "the size of the words over RuneLite") { let _ = settings.update(|x| x.game_chat_size = over as f32); }
+        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over, "the size of the words over RuneLite (and in the picture, with \"chat in the picture\")") {
+            let _ = settings.update(|x| x.game_chat_size = over as f32);
+            self.sample_chat = Some(Instant::now());
+        }
+        // (how big that is: a line as it'll be over the game, here, and for a few seconds over the game itself;
+        // 11/07/2026, Jace: "give some sample text to show big the text will actually be")
+        {
+            let size = s.game_chat_size.clamp(10.0, 48.0);
+            let (name, words, host) = sample_lines(&s).remove(1);
+            let mut j = egui::text::LayoutJob::default();
+            append(&mut j, &name, size, if host { LIME() } else { CYAN() }, false);
+            append(&mut j, &format!("  {}", words), size, Color32::from_rgb(0xf0, 0xf0, 0xf0), false);
+            j.wrap.max_width = ui.available_width() - 16.0;
+            let g = ui.painter().layout_job(j);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), g.size().y + 12.0), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(0x2a, 0x30, 0x22));
+            let at = rect.left_top() + Vec2::new(8.0, 6.0);
+            let mut shadow = egui::text::LayoutJob::default();
+            append(&mut shadow, &format!("{}  {}", name, words), size, Color32::from_rgb(10, 10, 10), false);
+            shadow.wrap.max_width = ui.available_width() - 16.0;
+            let gs = ui.painter().layout_job(shadow);
+            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
+                ui.painter().galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
+            }
+            ui.painter().galley(at, g, Color32::WHITE);
+        }
+        let mut fade = s.game_chat_fade.min(120);
+        if bar(ui, "the chat over the game fades after", "s", 0, 120, 5, &mut fade,
+               "how long a line stays lit over the game before it fades out (and in the picture). 0: it stays until newer lines push it off.") {
+            let _ = settings.update(|x| x.game_chat_fade = fade);
+        }
+        if fade == 0 {
+            ui.label(rich("(0: lines never fade; the newest 7 stay)", 14.0, QUIET()));
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(rich("this window's size:", 16.0, LIME())).on_hover_text(tip("everything in this window, bigger or smaller: its words, buttons and boxes"));
             let now = (s.ui_scale * 100.0).round() as u32;
@@ -2119,7 +2162,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     if s.dink.auto_clip {
         let colour = if s.dink.clips_up { TEXT() } else { GREY() };
         tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
-            .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days; take any down below."));
+            .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days, and up to 3 can be filed for good (never pushed out, never too old); file them or take any down below."));
         if s.dink.clips_up {
             page_clips_ui(app, ui, &s);
         }
@@ -2852,8 +2895,11 @@ impl eframe::App for App {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        crate::stuck::begin("the frame: the settings read again");
         self.settings.refresh();
+        crate::stuck::at("the frame: what came from the relay");
         self.drain(ctx);
+        crate::stuck::at("the frame: requests, notes, the station's inbox");
         // a request for a portal, looked at again while it waits; answered yes, it attaches by itself
         let c = ctx.clone();
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
@@ -2888,6 +2934,7 @@ impl eframe::App for App {
                 if let Some(line) = crate::keeper::anomaly_line(&who, req) { self.note(line); }
             }
         }
+        crate::stuck::at("the frame: transmitting by itself (the station's relay)");
         if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
             #[cfg(feature = "station")]
             self.station_relay();
@@ -2912,6 +2959,7 @@ impl eframe::App for App {
         if let Some(ch) = came {
             self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at ghillie.wiki/outside?player={}", ch, ch));
         }
+        crate::stuck::at("the frame: the tray");
         self.sync_tray(ctx);
         #[allow(unused_mut)]
         let mut into_tray = false;
@@ -2949,6 +2997,7 @@ impl eframe::App for App {
             self.hidden = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+        crate::stuck::at("the frame: the look and the size");
         // the look (the tint, anyone's own colours), whenever they change
         {
             let st = self.settings.get();
@@ -2963,11 +3012,17 @@ impl eframe::App for App {
             self.zoom = scale;
             ctx.set_zoom_factor(scale);
         }
-        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game 20 s, then dim, then gone
+        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
         self.pings.retain(|p| p.at.elapsed() < Duration::from_millis(640));
         self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
-        self.over.retain(|l| l.at.elapsed() < Duration::from_millis(21_500));
-        let busy = !self.pings.is_empty() || !self.stars.is_empty();
+        let fade = self.settings.get().game_chat_fade;
+        if fade > 0 {
+            self.over.retain(|l| over_alpha(l.at.elapsed().as_secs_f32(), fade) > 0.0);
+        }
+        let fading = fade > 0 && self.over.iter().any(|l| l.at.elapsed().as_secs_f32() >= fade as f32);
+        crate::stuck::at("the frame: the chat in the picture (RuneLite's window looked for)");
+        self.chat_in_picture(&ctx);
+        let busy = !self.pings.is_empty() || !self.stars.is_empty() || fading;
         // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
         // in wakes the window at once; 11/07/2026)
         let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
@@ -2988,6 +3043,7 @@ impl eframe::App for App {
             && !self.asking_close && !listening && !self.moving_chat && !self.editing_masks && self.friendlist.prompt.is_none() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        crate::stuck::at("the window: the title bar");
         let frame = egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(12, 10));
         // the window's own frame (11/05/2026, Jace: "a complete custom gui"): its title bar, its edges, its border.
         // Its whole area filled first, so no corner or margin is ever see-through to what's behind.
@@ -3008,6 +3064,7 @@ impl eframe::App for App {
             self.frame_done(&ctx);
             return;
         }
+        crate::stuck::at("the window: the first-time setup");
         if let Some(step) = self.settings.get().setup_step {
             egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
                 egui::ScrollArea::vertical().id_salt("setup_scroll").auto_shrink([false, false]).show(ui, |ui| setup_screen(self, ui, step));
@@ -3016,13 +3073,14 @@ impl eframe::App for App {
             self.frame_done(&ctx);
             return;
         }
+        crate::stuck::at("the window: the drawer");
         if self.drawer != Drawer::None {
             // (a plate of its own, as jute's sections are)
             let pal = theme::pal();
             // (the panel itself filled to its edges, the plate drawn inside it: 11/05/2026, a plate as the panel's own
             // frame had left its margin and its rounded corners unpainted, and the window is see-through there)
             let _ = pal;
-            egui::Panel::right("drawer").exact_size(DRAWER_W).show_separator_line(false)
+            egui::Panel::right("drawer").exact_size(DRAWER_W).resizable(false).show_separator_line(false)
                 .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 0, right: 8, top: 2, bottom: 10 })).show(ui, |ui| {
                 let at = ui.painter().add(egui::Shape::Noop);
                 let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
@@ -3050,11 +3108,14 @@ impl eframe::App for App {
             self.open_drawer(&ctx, Drawer::Settings);
             if let Some(p) = &mut self.panel { p.find_replay = true; }
         }
+        crate::stuck::at("the window: the controls (the station check, the monitor)");
         egui::Panel::top("top").show_separator_line(false)
             // (its top 2 in, the answer row's bottom 10 in: the drawer's plate keeps the same lines, 11/05/2026)
             .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 8, right: 8, top: 2, bottom: 6 })).show(ui, |ui| self.top(ui));
+        crate::stuck::at("the window: the chat's answer box");
         egui::Panel::bottom("answer").show_separator_line(false)
             .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 10 })).show(ui, |ui| self.answer(ui));
+        crate::stuck::at("the window: the chat");
         egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(10, 0))).show(ui, |ui| {
             self.viewers_ui(ui);
             self.poll_ui(ui);
@@ -3152,6 +3213,7 @@ impl App {
 
     /// After everything's drawn: the edges' resize (the hand pressed on one), the border, and the cursor.
     fn frame_done(&mut self, ctx: &egui::Context) {
+        crate::stuck::at("the window: its edges, and the cursor");
         use egui::viewport::ResizeDirection as D;
         if let Some(d) = self.edge {
             ctx.set_cursor_icon(match d {
@@ -3170,6 +3232,7 @@ impl App {
         }
         crate::cursor::adopt();
         crate::cursor::follow(ctx, crate::cursor::still());
+        crate::stuck::end();
     }
 
     /// The stream's plate: who's watching, the drawers, the live light and going live, the upload, the live view,
@@ -3364,6 +3427,7 @@ impl App {
             check_w(ui, "chat over the game") + gap + button_w(ui, if self.moving_chat { "done" } else { "move it" }),
             check_w(ui, &masks) + gap + button_w(ui, if self.editing_masks { "done" } else { "redact" }),
             check_w(ui, CURSOR_SWITCH),
+            check_w(ui, CHAT_SWITCH),
         ];
         let _ = small;
         let pieces: Vec<usize> = (0..widths.len()).filter(|i| *i != 2).collect();
@@ -3565,7 +3629,7 @@ impl App {
                 let mut over = s.game_chat;
                 ui.spacing_mut().item_spacing.x = gap;
                 if tick(ui, &mut over, rich("chat over the game", 14.0, GREY()))
-                    .on_hover_text(tip("the newest lines over RuneLite, fading after 20 s. Only on this PC: it's never in the transmission.")).changed() {
+                    .on_hover_text(tip("the newest lines over RuneLite, fading out after a time (settings, \"text and size\"). Only on this PC, unless \"chat in the picture\" is on.")).changed() {
                     let _ = self.settings.update(|s| s.game_chat = over);
                 }
                 if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat))
@@ -3577,6 +3641,14 @@ impl App {
                     }
                 }
                 ui.spacing_mut().item_spacing.x = gap + 4.0;
+            }
+            7 => {
+                // the chat in the picture (11/07/2026, Jace: "add a toggle to capture chat on the broadcast screen")
+                let mut on = s.chat_in_picture;
+                if tick(ui, &mut on, rich(CHAT_SWITCH, 14.0, GREY()))
+                    .on_hover_text(tip("the chat over the game drawn into the picture observers see (and your clips), where it sits over the game, as big, fading the same: \"move it\" and the settings' size place it. Drawn on this PC into each frame. Off: the chat stays beside the picture on Outside, as now.")).changed() {
+                    let _ = self.settings.update(|s| s.chat_in_picture = on);
+                }
             }
             _ => {
                 // your own masks: boxes blacked out of every frame before it leaves this PC
@@ -4066,31 +4138,37 @@ impl App {
     /// see-through window clicks pass through; "move it" makes it a box to drag, "done" or Enter keeps it there.
     fn over_ui(&mut self, ctx: &egui::Context) {
         let s = self.settings.get();
-        if !s.game_chat && !self.moving_chat {
+        // (a size just changed in the settings: two lines to show how big, for a few seconds; 11/07/2026, Jace:
+        // "there is no indicator of the size of the actual text")
+        let sample = self.panel.as_ref().and_then(|p| p.sample_chat).is_some_and(|at| at.elapsed() < Duration::from_secs(4));
+        if !s.game_chat && !self.moving_chat && !sample {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&s) else { return };
-        if self.over.is_empty() && !self.moving_chat {
+        if self.over.is_empty() && !self.moving_chat && !sample {
             return;
         }
         let ppp = ctx.pixels_per_point();
-        let (wide, tall) = (560.0 / ppp * (s.game_chat_size / 20.0).max(0.6), 210.0 / ppp * (s.game_chat_size / 20.0).max(0.6));
-        let (gx, gy) = match s.game_chat_at {
-            Some([fx, fy]) => (l as f32 + fx as f32 * (r - l) as f32, t as f32 + fy as f32 * (b - t) as f32),
-            None => (l as f32 + 12.0, t as f32 + 40.0),
-        };
-        // (kept on the game: never off its right or bottom edge)
-        let x = gx.min((r as f32 - wide * ppp).max(l as f32));
-        let y = gy.min((b as f32 - tall * ppp).max(t as f32));
+        let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
         let moving = self.moving_chat;
         let mut builder = egui::ViewportBuilder::default().with_title("outstation ✼ chat over the game").with_decorations(false)
             .with_transparent(true).with_always_on_top().with_mouse_passthrough(!moving).with_taskbar(false)
             .with_resizable(false).with_inner_size(Vec2::new(wide, tall));
         if !moving {
             builder = builder.with_position(egui::pos2(x / ppp, y / ppp)).with_active(false);
+            self.moving_placed = false;
+        } else if !self.moving_placed {
+            // (where the chat sits, as moving starts: made new, the box had come up at the screen's corner)
+            builder = builder.with_position(egui::pos2(x / ppp, y / ppp));
+            self.moving_placed = true;
         }
         let size = s.game_chat_size.clamp(10.0, 48.0);
-        let lines: Vec<(f32, String, String, bool)> = self.over.iter().map(|o| (o.at.elapsed().as_secs_f32(), o.name.clone(), o.text.clone(), o.host)).collect();
+        let lines: Vec<(f32, String, String, bool)> = if self.over.is_empty() && (sample || moving) {
+            sample_lines(&s).into_iter().map(|(n, w, h)| (0.0, n, w, h)).collect()
+        } else {
+            self.over.iter().map(|o| (o.at.elapsed().as_secs_f32(), o.name.clone(), o.text.clone(), o.host)).collect()
+        };
+        let fade = s.game_chat_fade;
         let mut done = false;
         let mut put: Option<(f32, f32)> = None;
         let id = egui::ViewportId::from_hash_of("over the game");
@@ -4100,14 +4178,16 @@ impl App {
             if moving {
                 p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
                 p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
-                p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
-                p.text(rect.center() + Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
+                // (the words at the top, and the lines at the bottom as they'll be, at their size)
+                p.text(egui::pos2(rect.center().x, rect.top() + 18.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
+                p.text(egui::pos2(rect.center().x, rect.top() + 38.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
+                draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 84.0);
                 let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
                 if resp.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 // its own "done" (11/07/2026: over RuneLite and above everything, it could cover the window's own)
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.center().y + 40.0), Vec2::new(90.0, 28.0)))
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 62.0), Vec2::new(90.0, 28.0)))
                     .layout(egui::Layout::left_to_right(egui::Align::Center)));
                 if button(&mut child, "done", false, Some(true)).clicked() { done = true; }
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) { done = true; }
@@ -4116,26 +4196,7 @@ impl App {
                 }
                 return;
             }
-            // newest at the bottom, each with a dark rim; lit, then dim after 20 s, then gone
-            let mut yy = rect.bottom() - 6.0;
-            for (age, name, text, host) in lines.iter().rev() {
-                let (cn, ct) = if *age < 20.0 { (if *host { LIME() } else { CYAN() }, Color32::from_rgb(0xf0, 0xf0, 0xf0)) } else { (theme::pal().lime_dim, Color32::from_rgb(0x6a, 0x6a, 0x6a)) };
-                let mut j = egui::text::LayoutJob::default();
-                append(&mut j, name, size, cn, false);
-                append(&mut j, &format!("  {}", text), size, ct, false);
-                j.wrap.max_width = rect.width() - 16.0;
-                let mut shadow = j.clone();
-                for sec in shadow.sections.iter_mut() { sec.format.color = Color32::from_rgb(10, 10, 10); }
-                let g = ui.painter().layout_job(j);
-                let gs = ui.painter().layout_job(shadow);
-                let at = egui::pos2(rect.left() + 8.0, yy - g.size().y);
-                for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
-                    p.galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
-                }
-                yy -= g.size().y + 4.0;
-                p.galley(at, g, ct);
-                if yy < rect.top() + 10.0 { break; }
-            }
+            draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 10.0);
             crate::cursor::follow(ui.ctx(), crate::cursor::still());
         });
         if moving {
@@ -4256,7 +4317,7 @@ impl App {
     /// Each ✼ a viewer sends, rising over RuneLite with their name (as many as they like), in one see-through window
     /// over the game that clicks pass through.
     fn stars_ui(&mut self, ctx: &egui::Context) {
-        if self.stars.is_empty() {
+        if self.stars.is_empty() && !self.stars_last.is_some_and(|t| t.elapsed() < LINGER) {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
@@ -4286,14 +4347,38 @@ impl App {
         });
     }
 
+    /// The chat in the picture (11/07/2026): what's over the game, told to the capture to draw into each frame
+    /// (chatpic.rs), where it sits and as big; nothing while it's off or there's no chat.
+    fn chat_in_picture(&self, ctx: &egui::Context) {
+        let s = self.settings.get();
+        if !s.chat_in_picture || self.over.is_empty() {
+            crate::chatpic::set(None);
+            return;
+        }
+        let Some((l, t, r, b)) = frame_rect(&s) else { crate::chatpic::set(None); return };
+        let ppp = ctx.pixels_per_point();
+        let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
+        let (gw, gh) = ((r - l).max(1) as f32, (b - t).max(1) as f32);
+        let lines = self.over.iter().map(|o| {
+            let c = if o.host { LIME() } else { CYAN() };
+            crate::chatpic::Line { name: o.name.clone(), text: o.text.clone(), name_rgb: [c.r(), c.g(), c.b()],
+                                   alpha: over_alpha(o.at.elapsed().as_secs_f32(), s.game_chat_fade) }
+        }).collect();
+        crate::chatpic::set(Some(crate::chatpic::Plan {
+            fx: (x - l as f32) / gw, fy: (y - t as f32) / gh, w_pt: wide, h_pt: tall,
+            size_pt: s.game_chat_size.clamp(10.0, 48.0), pt: ppp / gw, lines,
+        }));
+    }
+
     /// A ring that grows over the spot, with the viewer's name, in a see-through window that clicks pass through.
     fn pings_ui(&mut self, ctx: &egui::Context) {
+        crate::stuck::at("the windows over RuneLite (pings, ✼, the chat over the game, redactions)");
         self.over_ui(ctx);
         self.stars_ui(ctx);
         self.masks_ui(ctx);
         // (11/07/2026: all of them in one window over the game, as the ✼s are; a window for each ping had Windows
         // making and dropping windows several a second, and one it wouldn't give stopped the outstation)
-        if self.pings.is_empty() {
+        if self.pings.is_empty() && !self.pings_last.is_some_and(|t| t.elapsed() < LINGER) {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
@@ -4334,6 +4419,72 @@ impl App {
     }
 }
 
+/// How long the pings' and the ✼s' window stays, empty, after the last one: a burst of them is one window, made once
+/// (each new window is a moment of Windows making it; 11/07/2026).
+const LINGER: Duration = Duration::from_secs(3);
+
+/// How long a line over the game takes to fade out, once its time's up (in 6 steps, the dither's way).
+const OVER_FADE_S: f32 = 1.2;
+
+/// How lit a line over the game is at this age (1 lit, 0 gone), with the settings' "fades after" (0: never).
+fn over_alpha(age: f32, fade: u32) -> f32 {
+    let fade = fade as f32;
+    if fade <= 0.0 || age < fade {
+        1.0
+    } else if crate::cursor::still() {
+        0.0
+    } else {
+        let k = ((age - fade) / OVER_FADE_S).min(1.0);
+        1.0 - (k * 6.0).floor() / 6.0
+    }
+}
+
+/// Where the chat over the game sits: its top-left on the screen (in Windows' pixels) and its size (in points), kept
+/// on the game, never off its right or bottom edge. The same for the chat in the picture (chatpic.rs).
+fn over_place(s: &Settings, (l, t, r, b): (i32, i32, i32, i32), ppp: f32) -> (f32, f32, f32, f32) {
+    let k = (s.game_chat_size / 20.0).max(0.6);
+    let (wide, tall) = (560.0 / ppp * k, 210.0 / ppp * k);
+    let (gx, gy) = match s.game_chat_at {
+        Some([fx, fy]) => (l as f32 + fx as f32 * (r - l) as f32, t as f32 + fy as f32 * (b - t) as f32),
+        None => (l as f32 + 12.0, t as f32 + 40.0),
+    };
+    (gx.min((r as f32 - wide * ppp).max(l as f32)), gy.min((b as f32 - tall * ppp).max(t as f32)), wide, tall)
+}
+
+/// Two lines to show the chat's size by (one of yours, one an observer's), when there's no chat yet.
+fn sample_lines(s: &Settings) -> Vec<(String, String, bool)> {
+    let me = if s.chat_name.trim().is_empty() { s.channel.clone() } else { s.chat_name.trim().to_string() };
+    vec![("observer".into(), "the chat over the game, this big".into(), false),
+         (if me.is_empty() { "you".into() } else { me }, "and a line of yours".into(), true)]
+}
+
+/// The lines over the game: newest at the bottom, each with a dark rim, lit, then fading out after the settings'
+/// time; none above `ceiling`.
+fn draw_over_lines(ui: &egui::Ui, rect: egui::Rect, lines: &[(f32, String, String, bool)], size: f32, fade: u32, ceiling: f32) {
+    let p = ui.painter();
+    let mut yy = rect.bottom() - 6.0;
+    for (age, name, text, host) in lines.iter().rev() {
+        let a = over_alpha(*age, fade);
+        if a <= 0.0 { continue; }
+        let (cn, ct) = ((if *host { LIME() } else { CYAN() }).gamma_multiply(a), Color32::from_rgb(0xf0, 0xf0, 0xf0).gamma_multiply(a));
+        let mut j = egui::text::LayoutJob::default();
+        append(&mut j, name, size, cn, false);
+        append(&mut j, &format!("  {}", text), size, ct, false);
+        j.wrap.max_width = rect.width() - 16.0;
+        let mut shadow = j.clone();
+        for sec in shadow.sections.iter_mut() { sec.format.color = Color32::from_rgb(10, 10, 10).gamma_multiply(a); }
+        let g = ui.painter().layout_job(j);
+        let gs = ui.painter().layout_job(shadow);
+        let at = egui::pos2(rect.left() + 8.0, yy - g.size().y);
+        if at.y < ceiling { break; }
+        for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
+            p.galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
+        }
+        yy -= g.size().y + 4.0;
+        p.galley(at, g, ct);
+    }
+}
+
 /// One of the see-through windows over RuneLite, drawn now (egui's immediate viewport). If Windows won't give it its
 /// window this frame (egui then stops with "the user callback was never called"), that's caught and written down,
 /// and the window is left a few seconds before it's tried again: the rest of the outstation carries on (11/07/2026).
@@ -4345,10 +4496,38 @@ fn overlay(ctx: &egui::Context, id: egui::ViewportId, builder: egui::ViewportBui
     if RESTING.with(|r| r.borrow().get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(3))) {
         return;
     }
+    // (Windows' frame off it at the very start of its first frame, before it's drawn and shown on the screen's next
+    // refresh: taken off after, at the end of the window's frame, a new one's border and shadow had shown for that
+    // moment; 11/07/2026, Jace: "when clicks appear on my screen i can sometimes see their border for a split second")
+    let mut f = f;
+    let f = move |ui: &mut egui::Ui, class: egui::ViewportClass| {
+        crate::cursor::adopt();
+        f(ui, class)
+    };
     crate::crash::quiet(true);
     let went = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.show_viewport_immediate(id, builder, f)));
     crate::crash::quiet(false);
     if went.is_err() {
         RESTING.with(|r| { r.borrow_mut().insert(id, Instant::now()); });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_over_the_game_stays_lit_then_fades_in_steps() {
+        assert_eq!(over_alpha(0.0, 20), 1.0);
+        assert_eq!(over_alpha(19.9, 20), 1.0);
+        // (0: never fades)
+        assert_eq!(over_alpha(500.0, 0), 1.0);
+        if !crate::cursor::still() {
+            let a = over_alpha(20.5, 20);
+            assert!(a > 0.0 && a < 1.0, "{}", a);
+            // (in sixths: the dither's way)
+            assert!(((a * 6.0).round() - a * 6.0).abs() < 1e-4);
+        }
+        assert_eq!(over_alpha(20.0 + OVER_FADE_S, 20), 0.0);
     }
 }

@@ -38,6 +38,7 @@ Everything drawn in RuneLite's game area goes out while you're live. The outstat
 - **The game's chat:** other players' names, private messages, your clan's chat. Black out the chat box (**redact**) if you'd rather not show it.
 - **RuneLite's overlays** on the game area (a plugin's boxes, timers, names over players) are part of the picture. RuneLite's side panel and title bar aren't.
 - **Your bank PIN:** press Pause first.
+- **The chat, if you put it there** ("chat in the picture", off to begin with; 11/07/2026): the chat over the game drawn into each frame on your PC, as it sits over the game, so observers and your clips see it. It's your viewers' names and lines, which are in the chat on Outside anyway.
 
 **Windows over RuneLite** (a browser, Discord, the outstation's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The monitor in the outstation's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more. And if the outstation can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
 
@@ -115,7 +116,7 @@ Nothing else leaves your PC. Your settings, your log, your clips folder and your
 Here's everything the outstation hears back, and what it does with each. All of it is words and numbers the outstation shows, or pictures it draws in its own windows. None of it is run, opened, or passed to RuneLite.
 
 **From your viewers,** through the relay, which limits each line: one line at most 300 characters, its control characters taken out, 20 lines in 10 seconds:
-- **Chat lines:** shown in the chat as text, and over the game if "chat over the game" is on. A web address in a line is only text: the outstation never opens it. The outstation's taskbar button blinks when a viewer writes while it's behind other windows.
+- **Chat lines:** shown in the chat as text, and over the game if "chat over the game" is on (fading out after the settings' time), and drawn into the picture if "chat in the picture" is. A web address in a line is only text: the outstation never opens it. The outstation's taskbar button blinks when a viewer writes while it's behind other windows.
 - **Pings** (a viewer pointing at a spot, one every half second at most): a line in the chat, and, with "pings: the site + my screen", a ring over RuneLite in the outstation's own see-through window.
 - **✼ signals:** counted, and a ✼ floats over the game, with "✼ on my screen" on.
 - **Votes and drop guesses:** the counts.
