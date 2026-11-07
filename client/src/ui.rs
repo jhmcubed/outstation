@@ -2844,7 +2844,10 @@ impl eframe::App for App {
         self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
         self.over.retain(|l| l.at.elapsed() < Duration::from_millis(21_500));
         let busy = !self.pings.is_empty() || !self.stars.is_empty();
-        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else { 110 }));
+        // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
+        // in wakes the window at once; 11/07/2026)
+        let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
+        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else if resting { 500 } else { 110 }));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
