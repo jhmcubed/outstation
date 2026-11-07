@@ -13,13 +13,13 @@ An outstation on your PC, transmitting your RuneLite to your Outside page on [gh
 <p>
   <img src="docs/pictures/first.png" width="32%" alt="the first screen: paste a station key, request one, or report an anomaly">
   <img src="docs/pictures/ready.png" width="32%" alt="attached and dark, the station check ticking RuneLite, the relay and Dink">
-  <img src="docs/pictures/live.png" width="32%" alt="transmitting, with two observers chatting and the monitor showing what went out">
+  <img src="docs/pictures/live.png" width="32%" alt="transmitting to two observers, one of them chatting, and the monitor showing what went out">
 </p>
 <p>
-  <img src="docs/pictures/viewer.png" width="60%" alt="the viewer on the player's Outside page: the picture, a field report, and the two observers' chat">
+  <img src="docs/pictures/viewer.png" width="60%" alt="the viewer on the player's Outside page: the picture, the kill count, a field report and the chat">
 </p>
 
-The first screen; attached and dark, ready to transmit; transmitting, with two observers chatting; and what they see on the player's Outside page. (Pictured under Wine, with a drawn stand-in in RuneLite's place.)
+The first screen; attached and dark, ready to transmit; transmitting to two observers; and what they see on the player's Outside page. (Pictured under Wine, with a screenshot of sburb's RuneLite standing in for the game.)
 
 **Its words.** The window speaks ⊂λ,ｍ⊙'s language. Your **station key** is the code that attaches it to your channel; **transmitting** is live and **dark** is off air; **observers** are your viewers, and **on standby** the ones waiting for a seat; **the tape** is the replay buffer (the last seconds, always rolling); **redactions** are masks; **the monitor** is the small live view of what went out; **field reports** are Dink's posts; **the station check** is the ready check. The keeper **issues** keys, **denies** a request, **re-keys** a channel (a new key; the old one stops working) and **stands one down** (takes it back).
 
