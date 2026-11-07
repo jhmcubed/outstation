@@ -11,6 +11,17 @@ use std::sync::OnceLock;
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 static SHOWN: AtomicBool = AtomicBool::new(false);
 
+thread_local! {
+    /// While one of the see-through windows over RuneLite is being drawn (ui.rs, overlay): a fault there is caught,
+    /// written down and that window skipped a moment, not the whole outstation stopped (11/07/2026: egui's "the user
+    /// callback was never called", when Windows wouldn't give it its window).
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn quiet(on: bool) {
+    QUIET.with(|q| q.set(on));
+}
+
 fn crash_file() -> Option<PathBuf> {
     LOG_PATH.get().map(|p| p.with_file_name("crash.txt"))
 }
@@ -23,6 +34,10 @@ pub fn install(log_path: PathBuf) {
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "something went wrong".into());
         let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        if QUIET.with(|q| q.get()) {
+            crate::transmit::log(&format!("a window over the game couldn't be drawn, skipped for a moment: {} at {}", what, at));
+            return;
+        }
         let thread = std::thread::current().name().unwrap_or("a helper").to_string();
         // (where it happened is the line in the portal's own code: a release has no symbols for a backtrace)
         crate::transmit::log(&format!("CRASH ({} thread, version {}): {} at {}", thread, crate::settings::VERSION, what, at));

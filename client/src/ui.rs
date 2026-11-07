@@ -169,7 +169,7 @@ struct Line {
 
 struct PollForm { question: String, options: String, seconds: u32 }
 
-struct Ping { at: Instant, x: f32, y: f32, name: String, n: u64 }
+struct Ping { at: Instant, x: f32, y: f32, name: String }
 
 /// a viewer's ✼ rising over RuneLite (the signal button: as many as they like)
 struct Star { at: Instant, x: f32, name: String }
@@ -223,7 +223,6 @@ pub struct App {
     by_hand: bool,
     hand: (String, String, String, String),
     pings: Vec<Ping>,
-    ping_n: u64,
     asking_close: bool,
     quitting: bool,
     hidden: bool,
@@ -451,7 +450,7 @@ impl App {
             started: Instant::now(), drawer: Drawer::None, panel: None,
             attach_code: String::new(), attach_note: String::new(), by_hand: false,
             hand: (s.relay.clone(), s.channel.clone(), String::new(), s.code.clone()),
-            pings: Vec::new(), ping_n: 0, asking_close: false, quitting: false, hidden: false, shown_at: None,
+            pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
@@ -657,9 +656,8 @@ impl App {
             if self.settings.get().pings {
                 if let Some((l, t, r, b)) = frame_rect(&self.settings.get()) {
                     let (x, y) = (p.get("x").and_then(|x| x.as_f64()).unwrap_or(0.5), p.get("y").and_then(|x| x.as_f64()).unwrap_or(0.5));
-                    self.ping_n += 1;
                     self.pings.push(Ping { at: Instant::now(), x: (l as f64 + (r - l) as f64 * x) as f32,
-                                           y: (t as f64 + (b - t) as f64 * y) as f32, name, n: self.ping_n });
+                                           y: (t as f64 + (b - t) as f64 * y) as f32, name });
                 }
             }
         }
@@ -3825,7 +3823,7 @@ impl App {
         let mut done = false;
         let mut put: Option<(f32, f32)> = None;
         let id = egui::ViewportId::from_hash_of("over the game");
-        ctx.show_viewport_immediate(id, builder, |ui, _| {
+        overlay(ctx, id, builder, |ui, _| {
             let rect = ui.max_rect();
             let p = ui.painter();
             if moving {
@@ -3899,7 +3897,7 @@ impl App {
         let mut drag = self.mask_drag;
         let mut changed = false;
         let mut done = false;
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("masks"), builder, |ui, _| {
+        overlay(ctx, egui::ViewportId::from_hash_of("masks"), builder, |ui, _| {
             let rect = ui.max_rect();
             let share = |p: egui::Pos2| (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0));
             let to_rect = |m: &[f64; 4]| egui::Rect::from_min_size(
@@ -3998,7 +3996,7 @@ impl App {
             .with_resizable(false).with_active(false).with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp))
             .with_inner_size(Vec2::new(w, h));
         let stars: Vec<(f32, f32, String)> = self.stars.iter().map(|s| (s.at.elapsed().as_secs_f32(), s.x, s.name.clone())).collect();
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("signals"), builder, |ui, _| {
+        overlay(ctx, egui::ViewportId::from_hash_of("signals"), builder, |ui, _| {
             let rect = ui.max_rect();
             let p = ui.painter();
             for (age, x, name) in &stars {
@@ -4022,23 +4020,33 @@ impl App {
         self.over_ui(ctx);
         self.stars_ui(ctx);
         self.masks_ui(ctx);
+        // (11/07/2026: all of them in one window over the game, as the ✼s are; a window for each ping had Windows
+        // making and dropping windows several a second, and one it wouldn't give stopped the outstation)
+        if self.pings.is_empty() {
+            return;
+        }
+        let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
         const WIDE: f32 = 520.0;
         const TALL: f32 = 160.0;
         let ppp = ctx.pixels_per_point();
-        for p in &self.pings {
-            let k = (p.at.elapsed().as_secs_f32() / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
-            let step = (k * 6.0).floor();
-            let kk = step / 6.0;
-            let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
-            let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
-            let pos = egui::pos2(p.x / ppp - WIDE / 2.0, p.y / ppp - TALL / 2.0);
-            let builder = egui::ViewportBuilder::default().with_title("outstation ✼ ping").with_decorations(false)
-                .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
-                .with_resizable(false).with_active(false).with_position(pos).with_inner_size(Vec2::new(WIDE, TALL));
-            let name = p.name.clone();
-            ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("ping", p.n)), builder, move |ui, _| {
-                let c = egui::pos2(WIDE / 2.0, TALL / 2.0);
-                let painter = ui.painter();
+        // (the game's area, with room round it for a ring and its name at the edge)
+        let origin = egui::pos2(l as f32 / ppp - WIDE / 2.0, t as f32 / ppp - TALL / 2.0);
+        let size = Vec2::new((r - l) as f32 / ppp + WIDE, (b - t) as f32 / ppp + TALL);
+        let builder = egui::ViewportBuilder::default().with_title("outstation ✼ pings").with_decorations(false)
+            .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
+            .with_resizable(false).with_active(false).with_position(origin).with_inner_size(size);
+        let pings: Vec<(f32, egui::Pos2, String)> = self.pings.iter()
+            .map(|p| (p.at.elapsed().as_secs_f32(), egui::pos2(p.x / ppp - origin.x, p.y / ppp - origin.y), p.name.clone()))
+            .collect();
+        overlay(ctx, egui::ViewportId::from_hash_of("pings"), builder, move |ui, _| {
+            let painter = ui.painter();
+            for (age, c, name) in &pings {
+                let k = (age / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
+                let step = (k * 6.0).floor();
+                let kk = step / 6.0;
+                let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
+                let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
+                let c = *c;
                 let r = 14.0 + 28.0 * kk;
                 painter.circle_stroke(c, r, Stroke::new(3.0, colour));
                 painter.circle_filled(c, 2.0, colour);
@@ -4046,11 +4054,30 @@ impl App {
                     // the name: a dark rim round it first, then the name itself
                     let at = egui::pos2(c.x + 22.0, c.y - 26.0);
                     for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
-                        painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, &name, body(32.0), Color32::from_rgb(10, 10, 10));
+                        painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10));
                     }
-                    painter.text(at, egui::Align2::LEFT_CENTER, &name, body(32.0), name_colour);
+                    painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), name_colour);
                 }
-            });
-        }
+            }
+        });
+    }
+}
+
+/// One of the see-through windows over RuneLite, drawn now (egui's immediate viewport). If Windows won't give it its
+/// window this frame (egui then stops with "the user callback was never called"), that's caught and written down,
+/// and the window is left a few seconds before it's tried again: the rest of the outstation carries on (11/07/2026).
+fn overlay(ctx: &egui::Context, id: egui::ViewportId, builder: egui::ViewportBuilder,
+           f: impl FnMut(&mut egui::Ui, egui::ViewportClass)) {
+    thread_local! {
+        static RESTING: std::cell::RefCell<std::collections::HashMap<egui::ViewportId, Instant>> = Default::default();
+    }
+    if RESTING.with(|r| r.borrow().get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(3))) {
+        return;
+    }
+    crate::crash::quiet(true);
+    let went = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.show_viewport_immediate(id, builder, f)));
+    crate::crash::quiet(false);
+    if went.is_err() {
+        RESTING.with(|r| { r.borrow_mut().insert(id, Instant::now()); });
     }
 }
