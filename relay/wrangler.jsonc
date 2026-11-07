@@ -2,7 +2,7 @@
 // and the owner's admin token is a secret (`wrangler secret put ADMIN_TOKEN`; locally, .dev.vars).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "outside-portal",
+  "name": "relay", // (relay.ghillie.workers.dev: Jace's subdomain, ghillie; 11/06/2026)
   "main": "src/index.ts",
   "compatibility_date": "2026-10-15",
   "workers_dev": true,
@@ -12,11 +12,18 @@
       { "name": "DIRECTORY", "class_name": "Directory" }
     ]
   },
+  // the clips on players' Outside pages (src/clips.ts): made once with `npx wrangler r2 bucket create outside-clips`
+  "r2_buckets": [
+    { "binding": "CLIPS", "bucket_name": "outside-clips" }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] }
   ],
   "vars": {
-    "MAX_VIEWERS": "0"
+    "MAX_VIEWERS": "0",
+    // the oldest client let in ("" lets every version in): raise it when the protocol changes in a way older
+    // clients can't follow; they're told to get a newer one (4026) instead of trying again
+    "MIN_CLIENT": ""
   },
   "observability": { "enabled": true }
 }

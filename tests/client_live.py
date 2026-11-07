@@ -4,7 +4,7 @@ sound and Dink, seen as a viewer sees them.
     py tests/client_live.py                    # relay-py on a spare port
     PORTAL_RELAY=worker py tests/client_live.py    # the Worker under wrangler dev
 
-Needs RuneLite open (it's what the client captures), and the client built (target/release/outside-portal.exe). It
+Needs RuneLite open (it's what the client captures), and the client built (target/release/outstation.exe). It
 runs the client on a settings file of its own in a temporary folder, so your own portal's settings are never
 touched. The client's window opens while it runs; a picture of it is saved as client_live.png beside the settings.
 """
@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "relay-py"))
 import protocol_test as pt  # noqa: E402
 from wsmini import Client  # noqa: E402
 
-EXE = os.path.join(ROOT, "target", "release", "outside-portal.exe")
+EXE = os.path.join(ROOT, "target", "release", "outstation.exe")
 
 
 TITLE = "⊂λ,ｍ⊙ ✼ the portal"

@@ -33,6 +33,10 @@ from wsmini import Client  # noqa: E402
 MODE = os.environ.get("PORTAL_RELAY", "python")
 WORKER = MODE == "worker" or (MODE.startswith("ws") and bool(os.environ.get("ADMIN_TOKEN")))
 ADMIN = os.environ.get("ADMIN_TOKEN") or "test-admin-" + secrets.token_hex(12)
+# the oldest client the relays under test let in (a relay already running: whatever it was started with, given here)
+ASKS_AN_HOUR = 12    # (the Worker's own is 3: the tests all ask from one address)
+REPORTS_AN_HOUR = 8  # (the Worker's own is 5)
+MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.0")
 SAY_BURST = 20
 SOUND_HOLD = 0.5
 RELAY = None          # ws://127.0.0.1:port
@@ -78,13 +82,15 @@ def setUpModule():
         PROC = subprocess.Popen(
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
-             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1"],
+             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR)],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32")
         up = wait_up(90)
     else:
+        STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         up = wait_up(15)
     if not up:
         tearDownModule()
@@ -111,6 +117,35 @@ def admin(method, path):
             return r.status, json.loads(body) if body else None
     except urllib.error.HTTPError as e:
         return e.code, None
+
+
+def admin_json(method, path, body):
+    """(status, JSON or None) from the admin route, with a JSON body."""
+    req = urllib.request.Request(http_url() + path, method=method, data=json.dumps(body).encode(),
+                                 headers={"Authorization": "Bearer " + ADMIN, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            return r.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        return e.code, None
+
+
+def http(method, path, body=None):
+    """(status, JSON or None) from a public route, as a friend's client calls it."""
+    data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    req = urllib.request.Request(http_url() + path, method=method, data=data,
+                                 headers={"Content-Type": "application/json"} if body is not None else {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            return r.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw) if raw else None
+        except ValueError:
+            return e.code, None
 
 
 CRLF = "\r\n"
@@ -277,6 +312,29 @@ class Fanout(Base):
         v = await self.watch()
         self.assertTrue((await next_of(v, "relay"))["set"])
 
+    async def test_the_desks_title_reaches_every_viewer_and_newcomers(self):
+        # the broadcast's title (11/06/2026): one line, at most 100 characters, in every status line
+        await self.tx()
+        desk = await self.desk()
+        v = await self.watch()
+        self.assertEqual((await next_of(v, "relay"))["title"], "")
+        await desk.send(json.dumps({"title": "  zulrah\nuntil the pet  "}))
+        st = await next_of(v, "relay")
+        while st["title"] == "":
+            st = await next_of(v, "relay")
+        self.assertEqual(st["title"], "zulrah until the pet")
+        late = await self.watch()
+        self.assertEqual((await next_of(late, "relay"))["title"], "zulrah until the pet")
+        await desk.send(json.dumps({"title": "x" * 300}))
+        while len(st["title"]) < 100:
+            st = await next_of(v, "relay")
+        self.assertEqual(st["title"], "x" * 100)
+        await desk.send(json.dumps({"title": 5}))      # (not words: thrown away)
+        await desk.send(json.dumps({"title": ""}))
+        while st["title"]:
+            st = await next_of(v, "relay")
+        self.assertEqual(st["title"], "")
+
     async def test_the_transmitter_hears_how_many_watch(self):
         tx = await self.tx()
         self.assertEqual((await next_of(tx, "relay"))["viewers"], 0)
@@ -296,6 +354,11 @@ class Listed(Base):
         got = await asyncio.to_thread(listed)
         self.assertIn(self.ch, got)
         self.assertTrue(got[self.ch]["live"])
+        self.assertEqual(got[self.ch]["title"], "")
+        desk = await self.desk()
+        await desk.send(json.dumps({"title": "barrows"}))
+        await self.pause(2)
+        self.assertEqual((await asyncio.to_thread(listed))[self.ch]["title"], "barrows")
         tx.close()
         await self.tx("a-code")
         await self.pause(2)
@@ -348,6 +411,75 @@ class Keys(Base):
             self.assertTrue((await next_of(v, "relay"))["live"])
 
 
+@unittest.skipUnless(MIN_CLIENT, "the relay under test lets every version in (MIN_CLIENT not given)")
+class Versions(Base):
+    """The client says its version (v=) on its transmit, desk and sound sockets; one older than the relay's
+    MIN_CLIENT is turned away with 4026 and the version needed, so it can say where to get a newer one."""
+
+    def older(self):
+        major, minor, patch = (int(x) for x in MIN_CLIENT.split("."))
+        return "%d.%d.%d" % ((major, minor - 1, 9) if minor else (major - 1, 99, 0)) if (major or minor) else "0.0.0"
+
+    async def test_an_older_client_is_turned_away_on_every_socket_it_opens(self):
+        for role, query in (("transmit", "key=%s&code=" % self.key), ("desk", "key=%s&name=x" % self.key),
+                            ("sound", "key=%s" % self.key)):
+            c = await self.connect(role, query + "&v=" + self.older())
+            self.assertEqual(await c.recv_close(), ("close", 4026), role)
+            self.assertIn(MIN_CLIENT, c.reason)
+
+    async def test_the_oldest_allowed_and_newer_ones_are_let_in_by_number_not_by_letter(self):
+        major, minor, _ = (int(x) for x in MIN_CLIENT.split("."))
+        for v in (MIN_CLIENT, "%d.%d.10" % (major, minor), "%d.%d.0" % (major, minor + 10), MIN_CLIENT + "-rc.1"):
+            tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, v))
+            self.assertTrue((await next_of(tx, "relay"))["live"], v)
+            tx.close()
+            await self.pause(2)
+
+    async def test_a_client_that_says_no_version_is_let_in(self):
+        tx = await self.tx()          # (ghillie's Python portal says none)
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+
+    async def test_viewers_need_no_version(self):
+        await self.tx()
+        v = await self.connect("watch", "code=&v=" + self.older())
+        self.assertIn("live", await next_of(v, "relay"))
+
+    @unittest.skipUnless(WORKER, "the wrong-key limit: the Worker only")
+    async def test_turned_away_for_its_version_isnt_a_wrong_key(self):
+        for _ in range(12):
+            c = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, self.older()))
+            self.assertEqual(await c.recv_close(), ("close", 4026))
+        tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+
+    @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
+    async def test_the_keepers_list_counts_hours_on_air_this_month(self):
+        def seconds():
+            return {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]["live_s"]
+        self.assertEqual(seconds(), 0)
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        await asyncio.sleep(1.6)
+        tx.close()
+        await asyncio.sleep(0.6)
+        after_one = seconds()
+        self.assertGreaterEqual(after_one, 1)
+        await asyncio.sleep(1.2)
+        self.assertEqual(seconds(), after_one)                    # off air: nothing more
+        again = await self.tx()                                   # a second stretch adds to the first, while it goes on
+        await next_of(again, "relay")
+        await asyncio.sleep(1.6)
+        self.assertGreaterEqual(seconds(), after_one + 1)
+
+    @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
+    async def test_the_keepers_list_says_which_version_last_transmitted(self):
+        tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
+        await next_of(tx, "relay")
+        rows = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}
+        self.assertEqual(rows[self.ch]["client"], MIN_CLIENT)
+        self.assertTrue(rows[self.ch]["live"])
+
+
 class Dink(Base):
     async def test_a_level_up_reaches_viewers_as_a_report_and_a_late_one_gets_the_last(self):
         await self.tx()
@@ -357,14 +489,14 @@ class Dink(Base):
                               "embeds": [{"description": "**x** has levelled **Attack** to **70** [wiki](https://x)"}]},
                              screenshot=b"\x89PNG fake")
         self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct), 204)
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual((r["type"], r["text"]), ("LEVEL", "x has levelled Attack to 70 wiki"))
         for i in range(2):
             await post("/dink/%s?key=%s" % (self.ch, self.key),
                        json.dumps({"type": "LOOT", "content": "loot %d" % i}).encode(), "application/json")
         await self.pause()
         late = await self.watch()
-        got = [json.loads((await late.recv_data())[1])["report"]["text"] for _ in range(3)]
+        got = [(await next_of(late, "report"))["text"] for _ in range(3)]
         self.assertEqual(got, ["x has levelled Attack to 70 wiki", "loot 0", "loot 1"])
 
     async def test_the_wrong_key_is_refused_and_other_players_never_pass(self):
@@ -378,7 +510,7 @@ class Dink(Base):
             self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct), 204)
         body, ct = multipart({"type": "DEATH", "content": "killed by someone", "extra": {"isPvp": True}})
         await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct)
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual((r["type"], r["text"]), ("DEATH", ""))
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.4)
@@ -391,7 +523,7 @@ class Dink(Base):
         body = json.dumps({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Cooking": 71}}}).encode()
         for _ in range(2):
             self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, "application/json"), 204)
-        self.assertEqual(json.loads((await v.recv_data())[1])["report"]["type"], "LEVEL")
+        self.assertEqual((await next_of(v, "report"))["type"], "LEVEL")
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.5)
 
@@ -854,7 +986,7 @@ class ReportData(Base):
         await self.pause()
         await self.dink({"type": "KILL_COUNT", "content": "kc", "extra": {"boss": "Vorkath", "count": 1240,
                          "isPersonalBest": False, "party": ["someone else"]}})
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual(r["data"], {"boss": "Vorkath", "count": 1240, "pb": False})
 
     async def test_levels_the_log_and_loot(self):
@@ -863,14 +995,14 @@ class ReportData(Base):
         await self.pause()
         await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Cooking": 70},
                          "allSkills": {"Cooking": 70, "Attack": 99}, "combatLevel": {"value": 90, "increased": False}}})
-        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage",
+        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage", "itemId": 11286,
                          "completedEntries": 812, "totalEntries": 1568, "dropperName": "someone"}})
         await self.dink({"type": "LOOT", "content": "loot", "extra": {"source": "Vorkath", "category": "NPC",
-                         "items": [{"name": "Dragon bones", "quantity": 2, "priceEach": 3000}]}})
-        got = [json.loads((await v.recv_data())[1])["report"]["data"] for _ in range(3)]
+                         "items": [{"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000}]}})
+        got = [(await next_of(v, "report"))["data"] for _ in range(3)]
         self.assertEqual(got[0], {"skills": {"Cooking": 70}, "total": 169, "combat": 90})
-        self.assertEqual(got[1], {"item": "Draconic visage", "done": 812, "total": 1568})
-        self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000}], "value": 6000,
+        self.assertEqual(got[1], {"item": "Draconic visage", "id": 11286, "done": 812, "total": 1568})
+        self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000, "id": 536}], "value": 6000,
                                   "source": "Vorkath"})
 
     async def test_a_player_kills_loot_names_nobody(self):
@@ -879,10 +1011,261 @@ class ReportData(Base):
         await self.pause()
         await self.dink({"type": "LOOT", "content": "x has looted from SomePlayer", "extra": {"source": "SomePlayer",
                          "category": "PLAYER", "items": [{"name": "Coins", "quantity": 5000, "priceEach": 1}]}})
-        r = json.loads((await v.recv_data())[1])["report"]
+        r = (await next_of(v, "report"))
         self.assertEqual(r["text"], "")
         self.assertNotIn("source", r["data"])
         self.assertEqual(r["data"]["value"], 5000)
+
+
+class Summary(ReportData):
+    """One summary per stream (11/06/2026): what the stream's done, from Dink's numbers, the same for every viewer
+    and late joiner; kept off air as the recap (ended), carried on by a quick return; the open portals say what
+    each live one is at (doing)."""
+
+    async def last_summary(self, v, wait=1.5):
+        got, end = None, time.monotonic() + wait
+        while time.monotonic() < end:
+            try:
+                k, line = await v.recv(timeout=max(0.05, end - time.monotonic()))
+            except asyncio.TimeoutError:
+                break
+            if k == "text" and line.startswith('{"summary"'):
+                got = json.loads(line)["summary"]
+        return got
+
+    async def test_a_stream_sums_up_its_kills_loot_levels_and_log_for_everyone(self):
+        tx = await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412}})
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 414}})
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC",
+                         "items": [{"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000},
+                                   {"id": 21907, "name": "Vorkath's head", "quantity": 1, "priceEach": 90000}]}})
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Ranged": 92}}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        sm = await self.last_summary(v)
+        self.assertEqual(sm["kc"]["vorkath"], {"name": "Vorkath", "first": 411, "last": 414})
+        self.assertEqual((sm["boss"], sm["loot"], sm["levels"], sm["pets"]), ("Vorkath", 96000, {"Ranged": 92}, ["Vorki"]))
+        self.assertEqual(sm["best"], {"name": "Vorkath's head", "value": 90000, "id": 21907})
+        self.assertNotIn("ended", sm)
+        late = await self.watch()
+        self.assertEqual((await self.last_summary(late))["loot"], 96000)     # (a late joiner: the same numbers)
+        rows = {c["channel"]: c for c in json.loads(urllib.request.urlopen(http_url() + "/channels", timeout=10).read())["channels"]}
+        if self.ch in rows:
+            self.assertEqual(rows[self.ch]["doing"], {"boss": "Vorkath", "kc": 414})
+
+    async def test_off_air_it_stays_as_the_recap_and_a_quick_return_carries_on(self):
+        tx = await self.tx()
+        v = await self.watch()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Zulrah", "count": 90}})
+        since = (await self.last_summary(v))["since"]
+        tx.close()
+        ended = await self.last_summary(v)
+        self.assertEqual((ended["since"], ended["kc"]["zulrah"]["last"]), (since, 90))
+        self.assertIn("ended", ended)
+        again = await self.tx()
+        back = await self.last_summary(v)
+        self.assertEqual(back["since"], since)                              # (back within 15 minutes: the same stream)
+        self.assertNotIn("ended", back)
+
+
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64       # (only its first bytes are looked at)
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+
+def clip_upload(meta, clip=MP4, strip=JPEG):
+    b = "clipboundary"
+    out = b""
+    for name, kind, data in (("meta", "application/json", json.dumps(meta).encode()), ("strip", "image/jpeg", strip),
+                             ("clip", "video/mp4", clip)):
+        fn = '' if name == "meta" else '; filename="%s"' % name
+        out += CRLF.join(["--" + b, 'Content-Disposition: form-data; name="%s"%s' % (name, fn), "Content-Type: " + kind, "", ""]).encode()
+        out += data + CRLF.encode()
+    return out + ("--%s--" % b + CRLF).encode(), "multipart/form-data; boundary=" + b
+
+
+def fetch(method, path, headers=None):
+    """(status, headers, body) from any route."""
+    req = urllib.request.Request(http_url() + path, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+class Clips(Base):
+    """Clips on a player's Outside page (docs/protocol.md, "Clips"): uploaded with the channel's key, listed for
+    anyone (with the watch code, if it has one), the files served whole or in ranges, told to viewers as they come,
+    at most 20 a channel, and taken down by the channel's own portal."""
+
+    def meta(self, what="pet vorki", at=None):
+        return {"what": what, "kind": "PET", "at": at or int(time.time()), "dur": 17, "w": 768, "h": 432, "still": "AAAA"}
+
+    async def up(self, meta=None, key=None, clip=MP4, strip=JPEG):
+        body, ct = clip_upload(meta or self.meta(), clip, strip)
+        return await post("/clips/%s?key=%s" % (self.ch, key or self.key), body, ct)
+
+    async def test_an_upload_is_listed_told_and_served_in_ranges(self):
+        await self.tx()
+        v = await self.watch()
+        await self.pause()
+        self.assertEqual(await self.up(), 201)
+        told = await next_of(v, "clip")
+        self.assertEqual((told["what"], told["kind"], told["dur"], told["still"]), ("pet vorki", "PET", 17, "AAAA"))
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(status, 200)
+        self.assertEqual([c["id"] for c in got["clips"]], [told["id"]])
+        st, h, body = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.mp4" % (self.ch, told["id"]))
+        self.assertEqual((st, body, h.get("content-type")), (200, MP4, "video/mp4"))
+        st, h, body = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.mp4" % (self.ch, told["id"]), {"Range": "bytes=4-11"})
+        self.assertEqual((st, body, h.get("content-range")), (206, b"ftypmp42", "bytes 4-11/%d" % len(MP4)))
+        st, h, body = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.jpg" % (self.ch, told["id"]))
+        self.assertEqual((st, body), (200, JPEG))
+        self.assertEqual(h.get("access-control-allow-origin"), "*")
+
+    async def test_the_wrong_key_and_what_isnt_a_clip_are_refused(self):
+        await self.tx()
+        self.assertEqual(await self.up(key="wrong-key-123456"), 403)
+        self.assertEqual(await self.up(clip=b"not a video at all, no"), 415)
+        self.assertEqual(await self.up(strip=b"\x89PNG not a jpeg"), 415)
+        self.assertEqual(await self.up(clip=b"\x00\x00\x00\x18ftyp" + b"\x00" * (8 * 1024 * 1024)), 413)
+        self.assertEqual(await self.up(meta=dict(self.meta(), still="x" * 20000)), 413)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(got["clips"], [])
+
+    async def test_twenty_at_most_the_oldest_going_and_its_own_portal_takes_one_down(self):
+        await self.tx()
+        now = int(time.time())
+        for i in range(21):
+            self.assertEqual(await self.up(meta=self.meta("drop %d" % i, at=now - 600 + i * 10)), 201)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        whats = [c["what"] for c in got["clips"]]
+        self.assertEqual(len(whats), 20)
+        self.assertEqual((whats[0], whats[-1]), ("drop 20", "drop 1"))   # (newest first; "drop 0" gone)
+        one = got["clips"][0]["id"]
+        st, _, _ = await asyncio.to_thread(fetch, "DELETE", "/clips/%s/%s?key=%s" % (self.ch, one, "wrong-key-123456"))
+        self.assertEqual(st, 403)
+        v = await self.watch()
+        await self.pause()
+        st, _, _ = await asyncio.to_thread(fetch, "DELETE", "/clips/%s/%s?key=%s" % (self.ch, one, self.key))
+        self.assertEqual(st, 204)
+        self.assertEqual(await next_of(v, "clip_gone"), one)
+        st, _, _ = await asyncio.to_thread(fetch, "GET", "/clips/%s/%s.mp4" % (self.ch, one))
+        self.assertEqual(st, 404)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(len(got["clips"]), 19)
+
+    async def test_three_kept_for_good_outlast_the_twenty_and_a_fourth_is_refused(self):
+        await self.tx()
+        now = int(time.time())
+        ids = []
+        for i in range(4):
+            self.assertEqual(await self.up(meta=self.meta("pet %d" % i, at=now - 900 + i)), 201)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        ids = [c["id"] for c in got["clips"]]                   # (newest first: pet 3, 2, 1, 0)
+        v = await self.watch()
+        await self.pause()
+        keep = lambda i, k="1", key=None: asyncio.to_thread(fetch, "POST", "/clips/%s/%s?key=%s&keep=%s" % (self.ch, i, key or self.key, k))
+        self.assertEqual((await keep(ids[3], key="wrong-key-123456"))[0], 403)
+        for i in ids[1:]:
+            self.assertEqual((await keep(i))[0], 200)
+        self.assertEqual(await next_of(v, "clip_kept"), {"id": ids[1], "kept": True})
+        self.assertEqual((await keep(ids[0]))[0], 409)          # (a fourth)
+        for i in range(21):
+            self.assertEqual(await self.up(meta=self.meta("drop %d" % i, at=now - 600 + i * 10)), 201)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        whats = [c["what"] for c in got["clips"]]
+        self.assertEqual(len(whats), 23)                         # (the three kept, and the newest 20)
+        self.assertEqual(sorted(w for w, c in zip(whats, got["clips"]) if c.get("kept")), ["pet 0", "pet 1", "pet 2"])
+        self.assertNotIn("pet 3", whats)
+        self.assertEqual((await keep(ids[1], "0"))[0], 200)      # (let go: now the oldest of the rest, so it goes)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(len(got["clips"]), 22)
+        self.assertNotIn(ids[1], [c["id"] for c in got["clips"]])
+
+    @unittest.skipUnless(WORKER, "the keeper's routes are the Worker's")
+    async def test_the_keeper_sees_and_takes_down_any_channels_clips(self):
+        await self.tx(code="moss")
+        await self.pause()
+        self.assertEqual(await self.up(), 201)
+        status, got = await asyncio.to_thread(admin, "GET", "/admin/clips/" + self.ch)    # (whatever its code)
+        self.assertEqual((status, len(got["clips"])), (200, 1))
+        one = got["clips"][0]["id"]
+        status, _ = await asyncio.to_thread(admin, "DELETE", "/admin/clips/%s/%s" % (self.ch, one))
+        self.assertEqual(status, 204)
+        status, got = await asyncio.to_thread(admin, "GET", "/admin/clips/" + self.ch)
+        self.assertEqual(got["clips"], [])
+        req = urllib.request.Request(http_url() + "/admin/clips/" + self.ch, headers={"Authorization": "Bearer not-the-token-at-all"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            await asyncio.to_thread(urllib.request.urlopen, req)
+        self.assertEqual(e.exception.code, 403)
+
+    async def test_a_friends_only_portals_clips_need_its_code(self):
+        await self.tx(code="moss")
+        await self.pause()
+        self.assertEqual(await self.up(), 201)
+        status, _ = await asyncio.to_thread(http, "GET", "/clips/" + self.ch)
+        self.assertEqual(status, 403)
+        status, got = await asyncio.to_thread(http, "GET", "/clips/%s?code=moss" % self.ch)
+        self.assertEqual((status, len(got["clips"])), (200, 1))
+
+
+class Messages(Base):
+    """Messages between portals (docs/protocol.md, "Messages between portals"): one portal's desk sends {"dm"} to
+    another channel; that channel's desk gets {"dm"} at once, or as it next connects; the sender is told
+    {"dm_sent"} or {"dm_failed"}."""
+
+    async def other(self):
+        """A second channel, handed out (the Worker) or claimed (relay-py), and its key."""
+        ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+            return ch, got["key"]
+        key = "other-key-" + secrets.token_hex(4)
+        c = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, ch, key))
+        self.clients.append(c)
+        return ch, key
+
+    async def desk_of(self, ch, key, name):
+        c = await Client().open("%s/desk/%s?key=%s&name=%s" % (RELAY, ch, key, name))
+        self.clients.append(c)
+        return c
+
+    async def test_a_message_reaches_the_other_portal_and_its_sender_hears_it_went(self):
+        await self.tx()
+        mine = await self.desk("Moss%20Fern")
+        ch, key = await self.other()
+        theirs = await self.desk_of(ch, key, "Birch")
+        await self.pause()
+        await mine.send(json.dumps({"dm": {"to": ch, "text": "nice drop!"}}))
+        got = await next_of(theirs, "dm")
+        self.assertEqual((got["from"], got["name"], got["text"]), (self.ch, "Moss Fern", "nice drop!"))
+        sent = await next_of(mine, "dm_sent")
+        self.assertEqual((sent["to"], sent["text"], sent["held"]), (ch, "nice drop!", False))
+        await theirs.send(json.dumps({"dm": {"to": self.ch, "text": "ty"}}))
+        self.assertEqual((await next_of(mine, "dm"))["text"], "ty")
+
+    async def test_held_till_the_portal_opens_and_refused_for_no_such_portal(self):
+        await self.tx()
+        mine = await self.desk("Moss%20Fern")
+        ch, key = await self.other()
+        await self.pause()
+        await mine.send(json.dumps({"dm": {"to": ch, "text": "for later"}}))
+        self.assertTrue((await next_of(mine, "dm_sent"))["held"])
+        theirs = await self.desk_of(ch, key, "Birch")
+        self.assertEqual((await next_of(theirs, "dm"))["text"], "for later")
+        await mine.send(json.dumps({"dm": {"to": "nobody" + secrets.token_hex(3), "text": "hello?"}}))
+        self.assertIn("no outstation", (await next_of(mine, "dm_failed"))["why"])
+        await mine.send(json.dumps({"dm": {"to": self.ch, "text": "me"}}))
+        self.assertIn("your own", (await next_of(mine, "dm_failed"))["why"])
+        # (a viewer can't send one: only a portal's desk)
+        v = await self.watch()
+        await v.send(json.dumps({"dm": {"to": ch, "text": "from a page"}}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(theirs, "dm", timeout=0.5)
 
 
 class Sound(Base):
@@ -963,8 +1346,8 @@ class Channels(Base):
     async def test_the_attach_code_carries_the_relay_channel_and_key(self):
         status, got = admin("POST", "/admin/channels/" + self.ch)
         self.assertEqual(status, 200)
-        self.assertTrue(got["code"].startswith("portal1:"))
-        raw = got["code"][len("portal1:"):]
+        self.assertTrue(got["code"].startswith("outstation1:"))
+        raw = got["code"][len("outstation1:"):]
         info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
         self.assertEqual((info["relay"], info["channel"], info["key"]), (RELAY, self.ch, got["key"]))
 
@@ -1004,6 +1387,176 @@ class Channels(Base):
             codes.append((await c.recv_close())[1])
         self.assertEqual(codes[:10], [4003] * 10)
         self.assertEqual(codes[10], 4029)
+
+
+
+@unittest.skipUnless(WORKER, "the keeper's notice: the Worker only (the keeper's relay)")
+class Notices(Base):
+    """One line from the keeper to every portal: every desk connected hears it at once, each that connects later
+    hears it on connecting, and taking it down says so. Viewers never get it."""
+
+    async def asyncTearDown(self):
+        admin("DELETE", "/admin/notice")
+        await super().asyncTearDown()
+
+    async def test_a_notice_reaches_every_desk_now_and_later_and_comes_down(self):
+        d = await self.desk()
+        v = await self.watch()
+        await self.pause(2)
+        status, got = admin_json("PUT", "/admin/notice", {"text": "the relay moves on sunday"})
+        self.assertEqual((status, got["notice"]["text"]), (200, "the relay moves on sunday"))
+        self.assertEqual((await next_of(d, "notice", timeout=5))["text"], "the relay moves on sunday")
+        late = await self.desk(name="late")
+        self.assertEqual((await next_of(late, "notice"))["text"], "the relay moves on sunday")
+        self.assertEqual(admin("GET", "/admin/notice")[1]["notice"]["text"], "the relay moves on sunday")
+        self.assertEqual(admin("DELETE", "/admin/notice")[0], 200)
+        self.assertIsNone(await next_of(d, "notice", timeout=5))
+        self.assertIsNone(admin("GET", "/admin/notice")[1]["notice"])
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "notice", timeout=0.6)
+
+    async def test_a_notice_needs_the_token_and_words(self):
+        self.assertEqual(admin_json("PUT", "/admin/notice", {"text": "  "})[0], 400)
+        req = urllib.request.Request(http_url() + "/admin/notice", method="PUT", data=b'{"text": "hi"}',
+                                     headers={"Authorization": "Bearer not-the-token-at-all", "Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
+
+
+@unittest.skipUnless(WORKER, "asking for a portal: the Worker only (the keeper's relay)")
+class Requests(unittest.IsolatedAsyncioTestCase):
+    """A friend's client asks for its player's channel with a secret of its own (the pickup); the keeper hands it
+    out or turns it down from his list; the client collects the answer once."""
+
+    def setUp(self):
+        self.name = "p" + secrets.token_hex(4)                   # (a player's name: 1-12 letters or numbers)
+        self.pickup = secrets.token_urlsafe(32)
+
+    def ask(self, name=None, pickup=None, note="moss from the clan"):
+        return http("POST", "/requests/" + (name or self.name),
+                    {"player": (name or self.name).title(), "note": note, "pickup": pickup or self.pickup})
+
+    def check(self, pickup=None):
+        return http("GET", "/requests/%s?pickup=%s" % (self.name, pickup or self.pickup))
+
+    def waiting(self):
+        return {r["channel"]: r for r in admin("GET", "/admin/requests")[1]}
+
+    async def test_asked_handed_out_and_collected_once_and_the_code_transmits(self):
+        status, got = self.ask()
+        self.assertEqual((status, got["state"], got["given"]), (201, "waiting", False))
+        row = self.waiting()[self.name]
+        self.assertEqual((row["player"], row["note"], row["given"]), (self.name.title(), "moss from the clan", False))
+        self.assertEqual(self.check(), (200, {"state": "waiting"}))
+        status, minted = admin("POST", "/admin/requests/" + self.name)
+        self.assertEqual(status, 200)
+        self.assertNotIn(self.name, self.waiting())
+        status, got = self.check()
+        self.assertEqual((status, got["state"], got["code"]), (200, "given", minted["code"]))
+        self.assertEqual(self.check()[0], 404)                                   # collected: gone
+        raw = got["code"][len("outstation1:"):]
+        info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        tx = await Client().open("%s/transmit/%s?key=%s" % (RELAY, self.name, info["key"]))
+        try:
+            self.assertTrue((await next_of(tx, "relay"))["live"])
+        finally:
+            tx.close()
+        self.assertIn(self.name, [c["channel"] for c in admin("GET", "/admin/channels")[1]])
+
+    async def test_turned_down_is_said_once(self):
+        self.ask()
+        self.assertEqual(admin("DELETE", "/admin/requests/" + self.name)[0], 204)
+        self.assertEqual(self.check(), (200, {"state": "turned down"}))
+        self.assertEqual(self.check()[0], 404)
+        self.assertNotIn(self.name, [c["channel"] for c in admin("GET", "/admin/channels")[1]])
+
+    async def test_only_the_asker_can_see_or_take_back_the_answer(self):
+        self.ask()
+        self.assertEqual(self.check(pickup=secrets.token_urlsafe(32)), (404, {"state": "none"}))
+        self.assertEqual(http("DELETE", "/requests/%s?pickup=%s" % (self.name, secrets.token_urlsafe(32)))[0], 404)
+        self.assertEqual(http("DELETE", "/requests/%s?pickup=%s" % (self.name, self.pickup))[0], 204)
+        self.assertNotIn(self.name, self.waiting())
+
+    async def test_a_name_already_asked_for_isnt_taken_over_and_asking_again_changes_nothing_else(self):
+        self.ask()
+        status, got = self.ask(pickup=secrets.token_urlsafe(32))
+        self.assertEqual(status, 409)
+        self.assertIn("already asked", got["error"])
+        self.assertEqual(self.ask(note="a new note")[0], 201)                    # the asker again: the note only
+        self.assertEqual(self.waiting()[self.name]["note"], "a new note")
+
+    async def test_the_keeper_sees_a_name_already_handed_out(self):
+        admin("POST", "/admin/channels/" + self.name)
+        status, got = self.ask()
+        self.assertTrue(got["given"])
+        self.assertTrue(self.waiting()[self.name]["given"])
+
+    async def test_bad_names_short_pickups_and_nobody_waiting_are_refused(self):
+        self.assertEqual(self.ask(name="Not%20A%20Channel")[0], 400)
+        self.assertEqual(self.ask(name="thirteenchars")[0], 400)
+        self.assertEqual(self.ask(pickup="short")[0], 400)
+        self.assertEqual(admin("POST", "/admin/requests/" + self.name)[0], 404)
+        self.assertEqual(admin("GET", "/admin/requests")[0], 200)
+        req = urllib.request.Request(http_url() + "/admin/requests", headers={"Authorization": "Bearer nope-nope-nope-nope"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
+
+    async def test_yet_more_asks_from_one_place_wait_an_hour(self):
+        # (last of these, by name: after it this address can't ask for an hour)
+        codes = [self.ask(name="q%s" % secrets.token_hex(3), pickup=secrets.token_urlsafe(32))[0] for _ in range(ASKS_AN_HOUR + 1)]
+        self.assertIn(429, codes)
+        self.assertEqual(codes[codes.index(429):], [429] * (len(codes) - codes.index(429)))
+
+
+@unittest.skipUnless(WORKER, "anomaly reports: the Worker only (the keeper's relay)")
+class Reports(unittest.IsolatedAsyncioTestCase):
+    """A friend's outstation sends a report (their words and the station log); its channel is named only when its key
+    checks out; the keeper lists them, newest first, and deletes each when read."""
+
+    def mine(self, report_id):
+        status, got = admin("GET", "/admin/reports")
+        self.assertEqual(status, 200)
+        return next((r for r in got if r["id"] == report_id), None)
+
+    async def test_a_report_with_its_key_names_its_channel_and_one_without_doesnt(self):
+        ch = "r" + secrets.token_hex(4)
+        status, minted = admin("POST", "/admin/channels/" + ch)
+        self.assertEqual(status, 200)
+        status, got = http("POST", "/reports", {"channel": ch, "key": minted["key"], "name": "Moss Fern", "note": "the tape stopped",
+                                                 "log": "outstation 0.1.0 · its station log\nline", "version": "0.1.0", "windows": "Windows 11"})
+        self.assertEqual(status, 201)
+        r = self.mine(got["id"])
+        self.assertEqual((r["channel"], r["name"], r["note"], r["version"], r["windows"]), (ch, "Moss Fern", "the tape stopped", "0.1.0", "Windows 11"))
+        self.assertIn("its station log", r["log"])
+        status, got2 = http("POST", "/reports", {"channel": ch, "key": "not-its-key-at-all", "name": "Bog", "note": "hm", "log": ""})
+        self.assertEqual(status, 201)
+        self.assertEqual(self.mine(got2["id"])["channel"], "")
+        status, got3 = http("POST", "/reports", {"name": "nobody yet", "note": "can't attach"})
+        self.assertEqual(self.mine(got3["id"])["channel"], "")
+        self.assertEqual(self.mine(got3["id"])["kind"], "anomaly")
+        status, got4 = http("POST", "/reports", {"kind": "requisition", "name": "Moss Fern", "note": "a guess on raids"})
+        self.assertEqual(status, 201)
+        self.assertEqual(self.mine(got4["id"])["kind"], "requisition")
+        self.assertEqual(admin("DELETE", "/admin/reports/" + got4["id"])[0], 204)
+        for i in (got["id"], got2["id"], got3["id"]):
+            self.assertEqual(admin("DELETE", "/admin/reports/" + i)[0], 204)
+            self.assertIsNone(self.mine(i))
+
+    async def test_empty_or_too_big_reports_are_refused_and_the_list_is_the_keepers(self):
+        self.assertEqual(http("POST", "/reports", {"name": "x", "note": "", "log": ""})[0], 400)
+        self.assertEqual(http("POST", "/reports", {"name": "x", "note": "big", "log": "x" * (90 * 1024)})[0], 413)
+        req = urllib.request.Request(http_url() + "/admin/reports", headers={"Authorization": "Bearer nope-nope-nope-nope"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
+
+    async def test_z_more_reports_from_one_place_wait_an_hour(self):
+        codes = [http("POST", "/reports", {"name": "x", "note": "n%d" % i})[0] for i in range(REPORTS_AN_HOUR + 1)]
+        self.assertIn(429, codes)
+        for r in admin("GET", "/admin/reports")[1]:
+            admin("DELETE", "/admin/reports/" + r["id"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+# Releases are built with MSVC (.github/workflows). Its C runtime is built into the exe here, so a PC without
+# Microsoft's Visual C++ runtime installed can still run it (without this: "VCRUNTIME140.dll was not found", and
+# nothing else). libopus follows (opusic-sys sets OPUS_STATIC_RUNTIME, and cc passes /MT, when crt-static is on).
+# tests/safety_check.py fails a build whose exe needs any library that isn't part of Windows.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

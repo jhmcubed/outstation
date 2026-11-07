@@ -242,6 +242,25 @@ pub fn bytes_sent() -> Option<u64> {
 
 // ---- the clipboard ----
 
+/// Open one of ghillie.wiki's pages in the browser (the friends list's names), or the portal's own SAFETY.md on GitHub
+/// (the attach screen's link), or its own "Something went wrong" form (report.rs, an anomaly reported on GitHub): Windows
+/// opens it with whatever opens web pages. Nothing else is opened this way.
+pub fn open_page(url: &str) -> bool {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if !opens(url) { return false; }
+    let (verb, what) = (wide("open"), wide(url));
+    let r = unsafe { ShellExecuteW(None, windows::core::PCWSTR(verb.as_ptr()), windows::core::PCWSTR(what.as_ptr()), None, None, SW_SHOWNORMAL) };
+    r.0 as usize > 32
+}
+
+/// Whether open_page opens this: ghillie.wiki's pages, SAFETY.md, and the repository's form for a report.
+pub fn opens(url: &str) -> bool {
+    let ours = url.starts_with("https://ghillie.wiki/") || url == crate::settings::SAFETY_PAGE
+        || url.starts_with(&format!("{}?", crate::report::ISSUE_PAGE));
+    ours && !url.chars().any(|c| c.is_whitespace() || c == '"')
+}
+
 pub fn copy_text(s: &str) -> bool {
     use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
@@ -276,7 +295,7 @@ pub fn paste_text() -> Option<String> {
             let p = GlobalLock(g) as *const u16;
             if p.is_null() { return None; }
             let mut n = 0;
-            while *p.add(n) != 0 && n < 65536 { n += 1; }
+            while *p.add(n) != 0 && n < 1 << 20 { n += 1; }  // (Dink's whole export, a few tens of KB)
             let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
             let _ = GlobalUnlock(g);
             Some(s)
@@ -292,7 +311,7 @@ pub fn paste_text() -> Option<String> {
 pub fn first_copy(tag: &str, title: &str) -> bool {
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
-    let name = wide(&format!("Local\\outside-portal-{}", tag));
+    let name = wide(&format!("Local\\outstation-{}", tag));
     unsafe {
         let _m = CreateMutexW(None, false, PCWSTR(name.as_ptr()));
         if GetLastError() == ERROR_ALREADY_EXISTS {
@@ -305,7 +324,7 @@ pub fn first_copy(tag: &str, title: &str) -> bool {
 }
 
 /// The portal's own window: the largest top-level window with exactly this title belonging to this program (one of
-/// its own processes, outside-portal.exe), never another program's window that happens to share a title
+/// its own processes, outstation.exe), never another program's window that happens to share a title
 pub fn find_main(title: &str) -> Option<HWND> {
     struct Found<'a> { title: &'a str, best: Option<(i64, HWND)>, procs: std::collections::HashMap<u32, (u32, String)>, me: String }
     unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
@@ -323,7 +342,7 @@ pub fn find_main(title: &str) -> Option<HWND> {
         BOOL(1)
     }
     let me = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
-        .unwrap_or_else(|| "outside-portal.exe".into());
+        .unwrap_or_else(|| "outstation.exe".into());
     let mut f = Found { title, best: None, procs: processes(), me };
     unsafe {
         let _ = EnumWindows(Some(each), LPARAM(&mut f as *mut Found as isize));

@@ -316,13 +316,15 @@ impl GraphicsCaptureApiHandler for Handler {
 pub struct Gpu {
     control: Option<CaptureControl<Handler, Box<dyn std::error::Error + Send + Sync>>>,
     hwnd: Option<isize>,
+    /// whether the running capture draws the cursor (show_cursor): a change starts it again
+    cursor: bool,
     pub failed: Option<String>,
     pub shared: Arc<GpuShared>,
 }
 
 impl Gpu {
     pub fn new() -> Self {
-        Gpu { control: None, hwnd: None, failed: None, shared: Arc::new(GpuShared {
+        Gpu { control: None, hwnd: None, cursor: false, failed: None, shared: Arc::new(GpuShared {
             geom: Mutex::new(None), every: Mutex::new(0.125), target: Mutex::new(None), latest: Mutex::new(None),
             seq: Mutex::new(0), cost: Mutex::new((0.0, 0)) }) }
     }
@@ -331,20 +333,22 @@ impl Gpu {
         self.failed.is_none() && self.hwnd == Some(hwnd.0 as isize) && self.control.as_ref().is_some_and(|c| !c.is_finished())
     }
 
-    /// interval_ms: the time between the frames kept (the portal's frame rate)
-    pub fn ensure(&mut self, hwnd: HWND, interval_ms: f64) -> bool {
+    /// interval_ms: the time between the frames kept (the portal's frame rate); cursor: whether Windows draws the
+    /// mouse pointer into the frames (11/06/2026, Jace: "a toggle to show or hide cursor"). Windows Graphics Capture
+    /// draws it itself, where it is over RuneLite: the portal never reads where the pointer is.
+    pub fn ensure(&mut self, hwnd: HWND, interval_ms: f64, cursor: bool) -> bool {
         if self.failed.is_some() {
             return false;
         }
         *self.shared.every.lock().unwrap() = (interval_ms / 1000.0).max(0.004);
-        if self.running(hwnd) {
+        if self.running(hwnd) && self.cursor == cursor {
             return true;
         }
         self.stop();
         // every frame Windows draws, so the one kept for each moment of the schedule is within a refresh of it
         let settings = GpuSettings::new(
             GpuWindow::from_raw_hwnd(hwnd.0),
-            CursorCaptureSettings::WithoutCursor,
+            if cursor { CursorCaptureSettings::WithCursor } else { CursorCaptureSettings::WithoutCursor },
             DrawBorderSettings::WithoutBorder,
             SecondaryWindowSettings::Default,
             MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1)),
@@ -356,6 +360,7 @@ impl Gpu {
             Ok(c) => {
                 self.control = Some(c);
                 self.hwnd = Some(hwnd.0 as isize);
+                self.cursor = cursor;
                 *self.shared.latest.lock().unwrap() = None;
                 true
             }
@@ -399,6 +404,8 @@ pub struct Options {
     pub interval_ms: f64,
     /// your own masks, while they're on: [x, y, w, h] as shares of the frame
     pub boxes: Vec<[f64; 4]>,
+    /// the mouse pointer in the picture (Windows Graphics Capture only: PrintWindow and the screen never have it)
+    pub cursor: bool,
 }
 
 impl Options {
@@ -407,7 +414,7 @@ impl Options {
         // own masks do it. An old settings file's "mask" is kept as it was but no longer used.)
         Options { view: s.view.clone(), mask: "none".into(), width: s.width.max(16),
                   method: s.method.clone(), interval_ms: 1000.0 / s.fps.clamp(1, MAX_FPS) as f64,
-                  boxes: if s.masks_on { s.masks.clone() } else { Vec::new() } }
+                  boxes: if s.masks_on { s.masks.clone() } else { Vec::new() }, cursor: s.show_cursor }
     }
 }
 
@@ -448,7 +455,7 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
     let oh = ((sh as f64 * ow as f64 / sw as f64).round() as u32).max(1);
     let mut img: Option<Image> = None;
     let mut source = String::new();
-    if o.method != "gdi" && gpu.ensure(hwnd, o.interval_ms) {
+    if o.method != "gdi" && gpu.ensure(hwnd, o.interval_ms, o.cursor) {
         let fb = crate::win::frame_bounds(hwnd);
         gpu.set_geom(((fb.0, fb.1, fb.2 - fb.0, fb.3 - fb.1), (l + sx, t + sy, sw, sh), (ow, oh)));
         let end = Instant::now() + Duration::from_secs_f64(wait);

@@ -3,7 +3,9 @@
 //!
 //! - A small pixel ✼, white with a dark rim; over anything that can be clicked it turns lime and twinkles (its arms
 //!   and its diagonals taking turns reaching out, a frame every 160 ms), as on the site.
-//! - Over text you can type in, an I-beam in the same pixels; at the window's edges, double arrows to resize.
+//! - Over text you can type in, an I-beam in the same pixels. At the window's edges, Windows' own double arrows
+//!   (11/06/2026, Jace: "two different cursors ... 1px location difference"): once an edge is pressed, Windows' own
+//!   resizing shows its arrow whatever this says, so drawn in pixels here the two had taken turns, a pixel apart.
 //! - Each of the portal's windows is subclassed (comctl32's `SetWindowSubclass`) so its `WM_SETCURSOR` is answered
 //!   here, ahead of winit's. Only the portal's own windows: it never touches another program's (RuneLite's least of
 //!   all), and the cursor goes back to Windows' own the moment the hand leaves them.
@@ -26,6 +28,22 @@ const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
 const SUBCLASS_ID: usize = 0x6768_696c; // ("ghil")
 
 static WANT: AtomicU8 = AtomicU8::new(0);
+/// While the settings wait for a new hotkey (11/06/2026: egui can't hear Pause or Scroll Lock): the next key pressed
+/// in the portal's own windows, from their own key messages (never a hook, never another program's).
+pub static LISTEN_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LAST_VK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// One of the portal's own hotkeys pressed while LISTEN_KEYS is set (hotkeys.rs hands it here instead of acting on it:
+/// Windows gives such a key to the hotkey, never to the window).
+pub fn put_key(vk: u32) {
+    LAST_VK.store(vk, Ordering::Relaxed);
+}
+
+/// The key pressed in the portal's windows since this was last asked, while LISTEN_KEYS is set.
+pub fn take_key() -> Option<u32> {
+    let vk = LAST_VK.swap(0, Ordering::Relaxed);
+    (vk != 0).then_some(vk)
+}
 static FRAME: AtomicU8 = AtomicU8::new(0);
 // the cursors, made once: the star, the four frames of the hot star, the I-beam, the four double arrows
 static MADE: OnceLock<Vec<isize>> = OnceLock::new();
@@ -46,17 +64,7 @@ fn beam() -> Vec<(i32, i32)> {
     s
 }
 
-fn east_west() -> Vec<(i32, i32)> {
-    let mut s: Vec<(i32, i32)> = (-4..=4).map(|x| (x, 0)).collect();
-    s.extend([(-3, -1), (-3, 1), (-2, -2), (-2, 2), (3, -1), (3, 1), (2, -2), (2, 2)]);
-    s
-}
 
-fn nw_se() -> Vec<(i32, i32)> {
-    let mut s: Vec<(i32, i32)> = (-4..=4).map(|a| (a, a)).collect();
-    s.extend([(-3, -4), (-2, -4), (-4, -3), (-4, -2), (3, 4), (2, 4), (4, 3), (4, 2)]);
-    s
-}
 
 /// One cursor: each of the shape's pixels `px` screen pixels wide, a dark rim round it (85% black), the hot spot its
 /// middle. 32-bit with alpha, so its edges are its own.
@@ -109,17 +117,16 @@ fn made() -> &'static Vec<isize> {
         // the site's 2 px grid at 100%, larger with the screen's scale
         let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() } as f32;
         let px = ((2.0 * dpi / 96.0).round() as i32).max(2);
-        let flip = |s: Vec<(i32, i32)>| s.into_iter().map(|(x, y)| (-x, y)).collect::<Vec<_>>();
-        let swap = |s: Vec<(i32, i32)>| s.into_iter().map(|(x, y)| (y, x)).collect::<Vec<_>>();
         let mut v = vec![make(&star(3, 2), WHITE, px)];
         for (l1, l2) in [(3, 2), (2, 2), (2, 3), (2, 2)] {
             v.push(make(&star(l1, l2), LIME, px));
         }
         v.push(make(&beam(), WHITE, px));
-        v.push(make(&east_west(), WHITE, px));
-        v.push(make(&swap(east_west()), WHITE, px));
-        v.push(make(&nw_se(), WHITE, px));
-        v.push(make(&flip(nw_se()), WHITE, px));
+        // (the edges: Windows' own, the arrows its resizing shows: see the header)
+        use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE};
+        for id in [IDC_SIZEWE, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZENESW] {
+            v.push(unsafe { LoadCursorW(None, id) }.map(|h| h.0 as isize).unwrap_or(0));
+        }
         v
     })
 }
@@ -137,6 +144,10 @@ fn current() -> Option<HCURSOR> {
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
     // (the hand over the window's own area: the portal's windows have no other, being drawn whole by the portal)
+    use windows::Win32::UI::WindowsAndMessaging::{WM_KEYDOWN, WM_SYSKEYDOWN};
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && LISTEN_KEYS.load(Ordering::Relaxed) {
+        LAST_VK.store(wp.0 as u32, Ordering::Relaxed);
+    }
     if msg == WM_SETCURSOR && (lp.0 & 0xffff) as u32 == 1 {
         if let Some(c) = current() {
             unsafe { SetCursor(Some(c)); }
@@ -153,9 +164,33 @@ unsafe extern "system" fn each(hwnd: HWND, _l: LPARAM) -> windows::core::BOOL {
         if pid == std::process::id() {
             // (the same id again only updates it: a window already taken in is left as it is)
             let _ = SetWindowSubclass(hwnd, Some(proc), SUBCLASS_ID, 0);
+            see_through(hwnd);
         }
     }
     true.into()
+}
+
+/// The see-through windows over RuneLite (their titles "outstation ✼ …": pings, ✼, the chat over the game, the
+/// redactions) with nothing of Windows' own round them: no shadow, no border, no rounded corners (11/07/2026, Jace:
+/// "the invisible/transparent chatbox also has a shadow around it"). Once a window; the main window keeps its own.
+fn see_through(hwnd: HWND) {
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
+    static DONE: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+    let key = hwnd.0 as isize;
+    if DONE.lock().unwrap().contains(&key) { return; }
+    let mut buf = [0u16; 128];
+    let n = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
+    let title = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+    if !title.starts_with("outstation ✼ ") { return; }
+    DONE.lock().unwrap().push(key);
+    let set = |what, value: u32| unsafe {
+        // (Windows 10 knows no border colour or corners: it says so and draws neither anyway)
+        let _ = DwmSetWindowAttribute(hwnd, what, &value as *const u32 as *const _, 4);
+    };
+    set(DWMWA_NCRENDERING_POLICY, 1); // DWMNCRP_DISABLED: no frame drawn by Windows, so no shadow
+    set(DWMWA_WINDOW_CORNER_PREFERENCE, 1); // DWMWCP_DONOTROUND
+    set(DWMWA_BORDER_COLOR, 0xFFFF_FFFE); // DWMWA_COLOR_NONE
 }
 
 /// Every window of the portal's own (the main one, and the chat-over-the-game and masks windows as they come)

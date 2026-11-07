@@ -9,6 +9,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { dinkReport, oneLine, pyjson } from "./text";
+import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
@@ -16,8 +17,15 @@ export interface Env {
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
+  MIN_CLIENT?: string; // the oldest outstation client let in (its v=); older ones are told to update (4026)
+  ASKS_AN_HOUR?: string; // (tests) requests for a portal from one address in an hour (index.ts's ASKS_AN_HOUR)
+  REPORTS_AN_HOUR?: string; // (tests) anomaly reports from one address in an hour (index.ts's REPORTS_AN_HOUR)
   POLL_MIN_SECONDS?: string; // (tests: a poll that ends quickly)
   POLL_KEPT_SECONDS?: string;
+  CLIPS?: R2Bucket; // the clips on players' Outside pages (clips.ts); unbound, the relay takes none
+  CLIPS_MOST?: string; // a channel's clips at most (20)
+  CLIPS_DAYS?: string; // and for how long (30 days)
+  CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -25,6 +33,7 @@ const VIEWER_TEXT = 2048; // anything longer from a viewer is thrown away unread
 const CHAT_KEPT = 50;
 const SAY_MAX = 300, SAY_BURST = 20, SAY_WINDOW = 10_000;
 const NAME_MAX = 20;
+const TITLE_MAX = 100; // the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
 const PING_EVERY = 500;
 const POLL_OPTIONS = [2, 6], POLL_SECONDS = [10, 900];
 const POLL_KEPT = 90_000;
@@ -36,6 +45,10 @@ const SIGNAL_EVERY = 80; // a viewer's ✼: as often as a hand can press, a doze
 const GUESS_MIN_VALUE = 1_000_000; // a drop from the guessed boss this big ends a guess round by itself
 const GUESS_KEPT = 120_000; // a decided round's result stays this long
 const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused for a minute
+// messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
+// for it till its portal next opens (relay.py's DMS_KEPT, DMS_DAYS, DMS_A_MINUTE)
+const DMS_KEPT = 20, DMS_DAYS = 7, DMS_A_MINUTE = 20;
+interface Dm { from: string; name: string; text: string; at: number }
 const OPEN = 1; // WebSocket.OPEN
 // Flow control: a viewer says {"got": <binary bytes received so far>} about once a second, and past this much
 // sent and not yet acknowledged it's sent no more frames or sound until it catches up. (Cloudflare's server side
@@ -94,9 +107,55 @@ interface Meta {
   bans?: { who: number; name: string; tags: string[] }[]; // banned from the desk: blocked, their lines taken back
   pingsOff?: boolean; // the desk's {"pings": false}: viewers' pings go nowhere
   chatOff?: boolean; // the desk's {"chat_on": false}: viewers' lines go nowhere (the host's still go out)
+  title?: string; // the desk's {"title"}: the broadcast's title, in every status line
+  client?: string; // the version the last transmitter said (v=), for the keeper's list ("" none said)
+  liveSince?: number; // when this stretch on air began (ms), while it lasts
+  liveSeen?: number; // the last moment it was seen on air (saved about once a minute), for a stretch that ended unseen
+  liveMs?: Record<string, number>; // time on air by month ("2026-11"), the last few months, for the keeper's bill
+  summary?: Summary | null; // this stream's summary (fold): the readings the same for everyone, and the recap off air
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
+}
+
+// One field report into a stream's summary (relay-py's fold, the same): what the stream's done so far, from Dink's numbers.
+const SUMMARY_GAP = 15 * 60_000, SUMMARY_PETS = 5;
+interface Summary {
+  since: number; ended?: number; boss?: string;
+  kc?: Record<string, { name: string; first: number; last: number; pb?: boolean }>;
+  loot?: number; best?: { name: string; value: number; id?: number };
+  levels?: Record<string, number>; total?: number;
+  log?: { item?: string; id?: number; done?: number; total?: number };
+  pets?: string[];
+}
+export function fold(sm: Summary, report: any): boolean {
+  const d = report && report.data;
+  if (!d || typeof d !== "object") return false;
+  const kind = report.type;
+  if (kind === "KILL_COUNT" && d.boss && Number.isInteger(d.count)) {
+    const k = (sm.kc = sm.kc || {});
+    const key = String(d.boss).toLowerCase();
+    const b = (k[key] = k[key] || { name: d.boss, first: d.count - 1, last: d.count });
+    b.last = Math.max(b.last, d.count);
+    if (d.pb) b.pb = true;
+    sm.boss = d.boss;
+  } else if (kind === "LOOT" && Number.isInteger(d.value) && d.value > 0) {
+    sm.loot = (sm.loot || 0) + d.value;
+    for (const i of d.items || []) {
+      const v = (i.quantity || 0) * (i.price || 0);
+      if (v > (sm.best ? sm.best.value : 0)) sm.best = i.id ? { name: i.name, value: v, id: i.id } : { name: i.name, value: v };
+    }
+  } else if (kind === "LEVEL" && d.skills && typeof d.skills === "object") {
+    sm.levels = Object.assign(sm.levels || {}, d.skills);
+    if (d.total) sm.total = d.total;
+  } else if (kind === "COLLECTION" && d.total) {
+    const log: any = {};
+    for (const k of ["item", "id", "done", "total"]) if (d[k] !== undefined && d[k] !== null) log[k] = d[k];
+    sm.log = log;
+  } else if (kind === "PET" && d.pet) {
+    sm.pets = (sm.pets || []).slice(-(SUMMARY_PETS - 1)).concat([d.pet]);
+  } else return false;
+  return true;
 }
 
 export class Channel extends DurableObject<Env> {
@@ -191,6 +250,7 @@ export class Channel extends DurableObject<Env> {
       set: this.meta.keyHash !== null, // (the channel was handed out: Outside says "no portal here yet" when it wasn't)
       pings: !this.meta.pingsOff,
       chat: !this.meta.chatOff,
+      title: this.meta.title || "",
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
@@ -234,6 +294,7 @@ export class Channel extends DurableObject<Env> {
     if (this.lastData) this.send(ws, this.lastData);
     if (this.lastFrame && this.live()) this.sendBinary(ws, this.lastFrame); // (off air, no old frame)
     for (const r of this.reports) this.send(ws, r);
+    if (this.meta.summary) this.send(ws, this.summaryLine());
     this.lateJoiner(ws, "watch");
   }
 
@@ -310,13 +371,29 @@ export class Channel extends DurableObject<Env> {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
-                             viewers: this.seated().length });
+                             viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "",
+                             live_s: this.secondsThisMonth(), doing: this.doing() });
     }
     if (role === "_revoke") return this.revoke();
+    if (role === "_notice") {
+      // the keeper's notice, set or taken down: to every desk here now
+      const line = pyjson(await request.json());
+      for (const d of this.sockets("desk")) this.send(d, line);
+      return new Response(null, { status: 204 });
+    }
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
+    // (an anomaly report's channel and key, checked: index.ts's /reports)
+    if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
+    if (role === "_dm") return this.takeDm(request);
+    if (role === "_clips") return this.clips(request, q, ip, false);
+    if (role === "_clips_admin") return this.clips(request, q, ip, true);
 
-    // the key first, so a refused socket never counts as the channel's, even for a moment
-    const no = role === "watch" || role === "look" ? null : await this.checkKey(q.get("key") || "", ip);
+    // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
+    // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit)
+    const min = this.env.MIN_CLIENT || "";
+    const no: [number, string] | null = role === "watch" || role === "look" ? null
+      : tooOld(q.get("v"), min) ? [4026, `this outstation is too old for the relay: ${min} or newer is needed`]
+      : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
@@ -331,9 +408,11 @@ export class Channel extends DurableObject<Env> {
       this.openLook(ws, a, q.get("code") || "");
     } else {
       if (role === "transmit") {
-        this.openTransmit(ws, q.get("code") || "");
+        this.openTransmit(ws, q.get("code") || "", q.get("v"));
       } else if (role === "desk") {
         this.openDesk(ws, a, q.get("name") || "");
+        await this.tellNotice(ws);
+        await this.tellDms(ws);
       } else {
         this.openSound(ws);
       }
@@ -341,11 +420,24 @@ export class Channel extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  openTransmit(ws: WebSocket, code: string) {
+  openTransmit(ws: WebSocket, code: string, version: string | null) {
     for (const old of this.sockets("transmit")) {
       if (old !== ws) this.close(old, 4000, "replaced by a newer transmitter");
     }
     this.meta.code = code;
+    this.meta.client = oneLine(version || "", 32);
+    // time on air: a stretch left open by an object that went before its transmitter said goodbye ends where it
+    // was last seen; then a new stretch begins (unless another transmitter is already on)
+    if (this.meta.liveSince && !this.sockets("transmit").some((t) => t !== ws)) {
+      this.addLive(this.meta.liveSince, this.meta.liveSeen || this.meta.liveSince);
+      this.meta.liveSince = undefined;
+    }
+    if (!this.meta.liveSince) { this.meta.liveSince = Date.now(); this.meta.liveSeen = Date.now(); }
+    // this stream's summary: a new one, unless it went off air only a little while ago
+    const sm = this.meta.summary;
+    if (!sm || (sm.ended && Date.now() - sm.ended > SUMMARY_GAP)) this.meta.summary = { since: Date.now() };
+    else delete sm.ended;
+    this.tellSummary();
     this.meta.state = "open";
     this.saveMeta();
     // viewers whose code no longer matches go
@@ -406,6 +498,65 @@ export class Channel extends DurableObject<Env> {
     this.send(ws, this.viewerList());
   }
 
+  // messages between portals: this portal's to another channel's (through that channel's object), and another's held
+  // here till this portal's desk opens
+
+  dmsSent: number[] = [];
+
+  async sendDm(ws: WebSocket, host: string, dm: any) {
+    const to = typeof dm?.to === "string" ? dm.to.trim().toLowerCase() : "";
+    const text = oneLine(dm?.text, SAY_MAX);
+    const now = Date.now();
+    this.dmsSent = this.dmsSent.filter((t) => now - t < 60_000);
+    const fail = (why: string) => this.send(ws, pyjson({ dm_failed: { to, text, why } }));
+    if (!text || !/^[A-Za-z0-9_.~-]{1,64}$/.test(to)) return fail("a message needs a channel and some words");
+    if (to === this.name) return fail("that's your own outstation");
+    if (this.dmsSent.length >= DMS_A_MINUTE) return fail(`${DMS_A_MINUTE} messages a minute at most: wait a moment`);
+    this.dmsSent.push(now);
+    const d: Dm = { from: this.name, name: host, text, at: now };
+    try {
+      const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(to)).fetch(new Request("https://channel/_dm", {
+        method: "POST", headers: { "x-channel": to, "content-type": "application/json" }, body: JSON.stringify(d) }));
+      if (r.status === 404) return fail(`no outstation called ${to} on this relay`);
+      if (!r.ok) return fail("the relay couldn't pass it on");
+      const got = (await r.json()) as { held: boolean };
+      this.send(ws, pyjson({ dm_sent: { to, text, at: now, held: got.held } }));
+    } catch {
+      fail("the relay couldn't pass it on");
+    }
+  }
+
+  async takeDm(request: Request): Promise<Response> {
+    if (this.meta.keyHash === null) return new Response(null, { status: 404 });
+    const d = (await request.json()) as Dm;
+    const desks = this.sockets("desk");
+    if (desks.length) {
+      for (const w of desks) this.send(w, pyjson({ dm: d }));
+    } else {
+      const now = Date.now();
+      const kept = ((await this.ctx.storage.get<Dm[]>("dms")) || []).filter((x) => now - x.at <= DMS_DAYS * 86_400_000);
+      await this.ctx.storage.put("dms", [...kept.slice(-(DMS_KEPT - 1)), d]);
+    }
+    return Response.json({ held: !desks.length });
+  }
+
+  /** Messages that came while this portal was closed, to its desk as it connects. */
+  async tellDms(ws: WebSocket) {
+    const now = Date.now();
+    const kept = ((await this.ctx.storage.get<Dm[]>("dms")) || []).filter((x) => now - x.at <= DMS_DAYS * 86_400_000);
+    for (const d of kept) this.send(ws, pyjson({ dm: d }));
+    if (kept.length || (await this.ctx.storage.get("dms"))) await this.ctx.storage.delete("dms");
+  }
+
+  /** The keeper's notice, if there is one, to a desk that's just connected. */
+  async tellNotice(ws: WebSocket) {
+    try {
+      const r = await this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory")).fetch("https://dir/notice");
+      const got = (await r.json()) as { notice: unknown };
+      if (got.notice) this.send(ws, pyjson(got));
+    } catch { /* (no notice, then) */ }
+  }
+
   bannedLine(): string {
     return pyjson({ banned: (this.meta.bans || []).map((b) => ({ who: b.who, name: b.name })) });
   }
@@ -435,11 +586,15 @@ export class Channel extends DurableObject<Env> {
     const size = typeof msg === "string" ? msg.length : msg.byteLength;
     if (size > MAX_MESSAGE) return;
     const a = this.att(ws);
-    if (a.role === "transmit") this.deliver(msg);
-    else if (a.role === "watch") {
+    if (a.role === "transmit") {
+      this.deliver(msg);
+      // (seen on air: saved about once a minute, so a stretch that ends unseen still counts up to here)
+      const now = Date.now();
+      if (this.meta.liveSince && now - (this.meta.liveSeen || 0) > 60_000) { this.meta.liveSeen = now; this.saveMeta(); }
+    } else if (a.role === "watch") {
       if (typeof msg === "string" && msg.length <= VIEWER_TEXT) this.fromViewer(ws, a, msg);
     } else if (a.role === "desk") {
-      if (typeof msg === "string") this.fromDesk(a.host || this.name, msg);
+      if (typeof msg === "string") this.fromDesk(a.host || this.name, msg, ws);
     } else if (a.role === "sound") this.fromSound(msg);
     else if (a.role === "look" && typeof msg === "string" && msg.length <= VIEWER_TEXT) {
       let m: any;
@@ -482,9 +637,34 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
+  /** Time on air from `from` to `to` (ms) into its month's count, keeping the last four months. */
+  addLive(from: number, to: number) {
+    if (to <= from) return;
+    const month = new Date(to).toISOString().slice(0, 7);
+    const all = this.meta.liveMs || {};
+    all[month] = (all[month] || 0) + (to - from);
+    for (const m of Object.keys(all).sort().slice(0, -4)) delete all[m];
+    this.meta.liveMs = all;
+  }
+
+  /** Seconds on air this month (UTC), the stretch going on now included. */
+  secondsThisMonth(): number {
+    const now = Date.now(), month = new Date(now).toISOString().slice(0, 7);
+    const ms = (this.meta.liveMs || {})[month] || 0;
+    const ongoing = this.meta.liveSince && this.live() ? now - Math.max(this.meta.liveSince, Date.parse(month + "-01T00:00:00Z")) : 0;
+    return Math.floor((ms + ongoing) / 1000);
+  }
+
   // the transmitter gone (or cut off): viewers hear it, and the upload line stops
   offAir() {
     if (this.live()) return;
+    if (this.meta.summary) { this.meta.summary.ended = Date.now(); this.tellSummary(); }
+    if (this.meta.liveSince) {
+      this.addLive(this.meta.liveSince, Date.now());
+      this.meta.liveSince = undefined;
+      this.meta.liveSeen = undefined;
+      this.saveMeta();
+    }
     if (this.uploadTimer) clearInterval(this.uploadTimer);
     this.uploadTimer = null;
     this.soundHeld = [];
@@ -502,10 +682,15 @@ export class Channel extends DurableObject<Env> {
         return;
       }
     }
+    let summed = false;
     if (typeof msg === "string" && msg.startsWith('{"report"')) {
       this.reports.push(msg);
       this.reports = this.reports.slice(-REPORTS_KEPT);
       this.ctx.storage.put("reports", this.reports);
+      if (this.meta.summary) {
+        try { summed = fold(this.meta.summary, JSON.parse(msg).report); } catch { /* not a report after all */ }
+        if (summed) this.saveMeta();
+      }
     } else if (typeof msg === "string") {
       this.lastData = msg;
       if (msg.startsWith('{"state"')) {
@@ -522,11 +707,27 @@ export class Channel extends DurableObject<Env> {
     }
     if (typeof msg === "string") {
       for (const v of this.seated()) if (this.send(v, msg)) this.out += msg.length;
+      if (summed) this.tellSummary(); // (after the report itself)
     } else {
       for (const v of this.seated()) if (this.sendBinary(v, msg)) this.out += msg.byteLength;
       // (lookers get full frames only from a transmitter that sends no small ones)
       if (Date.now() - this.thumbAt > THUMB_FRESH) this.toLookers(msg);
     }
+  }
+
+  summaryLine(): string { return pyjson({ summary: this.meta.summary || null }); }
+
+  tellSummary() {
+    if (!this.meta.summary) return;
+    const line = this.summaryLine();
+    for (const v of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look")]) this.send(v, line);
+  }
+
+  /** What the stream's at now, for the open portals: the boss of the last kill count and its count (live only). */
+  doing(): { boss: string; kc: number } | null {
+    const sm = this.meta.summary;
+    const b = sm && sm.kc && sm.boss ? sm.kc[sm.boss.toLowerCase()] : undefined;
+    return b && this.live() ? { boss: b.name, kc: b.last } : null;
   }
 
   toLookers(msg: ArrayBuffer) {
@@ -678,11 +879,13 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
-  fromDesk(host: string, msg: string) {
+  fromDesk(host: string, msg: string, ws?: WebSocket) {
     let m: any;
     try { m = JSON.parse(msg); } catch { return; }
     if (!m || typeof m !== "object" || Array.isArray(m)) return;
-    if ("say" in m) {
+    if ("dm" in m && ws) {
+      this.ctx.waitUntil(this.sendDm(ws, host, m.dm));
+    } else if ("say" in m) {
       const text = oneLine(m.say, SAY_MAX * 2);
       if (text) this.say(host, text, true);
     } else if (Number.isInteger(m.hide)) {
@@ -773,6 +976,14 @@ export class Channel extends DurableObject<Env> {
       // (11/05/2026, Jace: "add ability to toggle chat off")
       if (!m.chat_on !== !!this.meta.chatOff) {
         this.meta.chatOff = !m.chat_on;
+        this.saveMeta();
+        this.tellViewers();
+      }
+    } else if (typeof m.title === "string") {
+      // the broadcast's title (11/06/2026): one line, TITLE_MAX long; every status line carries it
+      const title = oneLine(m.title, TITLE_MAX);
+      if (title !== (this.meta.title || "")) {
+        this.meta.title = title;
         this.saveMeta();
         this.tellViewers();
       }
@@ -911,6 +1122,79 @@ export class Channel extends DurableObject<Env> {
     return new Response(null, { status: 204 });
   }
 
+  // clips on the player's Outside page (clips.ts): the upload and the taking down (its key, or the keeper's: admin,
+  // which index.ts has already let through), the list (its watch code, if it has one)
+
+  clipsUploads: number[] = []; // (in memory: a sleep forgets, which only loosens it)
+
+  async clipList(): Promise<Clip[]> {
+    const all = await this.ctx.storage.list<Clip>({ prefix: "clip:" });
+    const most = parseInt(this.env.CLIPS_MOST || "") || 20, days = parseFloat(this.env.CLIPS_DAYS || "") || 30;
+    const { kept, gone } = trim([...all.values()], most, days);
+    if (gone.length) await this.dropClips(gone);
+    return kept;
+  }
+
+  async dropClips(gone: Clip[]) {
+    await this.ctx.storage.delete(gone.map((c) => "clip:" + c.id));
+    await this.env.CLIPS?.delete(gone.flatMap((c) => [fileKey(this.name, c.id, "mp4"), fileKey(this.name, c.id, "jpg")]));
+    for (const c of gone) this.tellClip({ clip_gone: c.id });
+  }
+
+  tellClip(msg: object) {
+    const line = pyjson(msg);
+    for (const v of [...this.seated(), ...this.sockets("desk"), ...this.sockets("look")]) this.send(v, line);
+  }
+
+  async clips(request: Request, q: URLSearchParams, ip: string, admin: boolean): Promise<Response> {
+    const id = q.get("id") || "";
+    if (request.method === "GET") {
+      if (!admin && this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      return json({ clips: await this.clipList() });
+    }
+    if (!admin) {
+      const no = await this.checkKey(q.get("key") || "", ip);
+      if (no) return json({ error: no[1] }, 403);
+    }
+    if (request.method === "DELETE") {
+      if (!ID.test(id)) return json({ error: "which clip?" }, 400);
+      const c = await this.ctx.storage.get<Clip>("clip:" + id);
+      if (!c) return json({ error: "no such clip" }, 404);
+      await this.dropClips([c]);
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST" || admin) return new Response(null, { status: 405 });
+    if (id) {
+      // kept for good, or let go again
+      if (!ID.test(id)) return json({ error: "which clip?" }, 400);
+      const c = await this.ctx.storage.get<Clip>("clip:" + id);
+      if (!c) return json({ error: "no such clip" }, 404);
+      const keep = q.get("keep") === "1";
+      if (keep && !c.kept && (await this.clipList()).filter((x) => x.kept).length >= KEPT_MOST) {
+        return json({ error: `${KEPT_MOST} kept at most: let one go first` }, 409);
+      }
+      if (keep) c.kept = true; else delete c.kept;
+      await this.ctx.storage.put("clip:" + id, c);
+      this.tellClip({ clip_kept: { id, kept: keep } });
+      await this.clipList(); // (let go, the oldest past the most go now)
+      return json({ id, kept: keep });
+    }
+    if (!this.env.CLIPS) return json({ error: "this relay doesn't keep clips" }, 503);
+    const now = Date.now(), most = parseInt(this.env.CLIPS_AN_HOUR || "") || 30;
+    this.clipsUploads = this.clipsUploads.filter((t) => now - t < 3_600_000);
+    if (this.clipsUploads.length >= most) return json({ error: `${most} clips an hour at most: try again later` }, 429);
+    const got = await readUpload(request);
+    if (Array.isArray(got)) return json({ error: got[1] }, got[0]);
+    this.clipsUploads.push(now);
+    const clip: Clip = { id: newId(), ...got.meta };
+    await this.env.CLIPS.put(fileKey(this.name, clip.id, "mp4"), got.clip, { httpMetadata: { contentType: "video/mp4" } });
+    await this.env.CLIPS.put(fileKey(this.name, clip.id, "jpg"), got.strip, { httpMetadata: { contentType: "image/jpeg" } });
+    await this.ctx.storage.put("clip:" + clip.id, clip);
+    const kept = await this.clipList(); // (the oldest past the most go, and are told gone)
+    if (kept.some((c) => c.id === clip.id)) this.tellClip({ clip });
+    return json({ id: clip.id }, 201);
+  }
+
   // Jace's admin (index.ts checks the admin token before it reaches here)
 
   async mint(): Promise<Response> {
@@ -937,6 +1221,22 @@ export class Channel extends DurableObject<Env> {
 }
 
 // Dink's JSON: the payload_json part of a multipart post, or a plain JSON body
+/** "0.10.2" as [0, 10, 2]; anything after a "-" or "+" (a pre-release) is left out, a part that isn't a number is 0. */
+export function versionNumbers(v: string): number[] {
+  const core = v.trim().replace(/^[vV]/, "").split(/[-+]/, 1)[0];
+  const parts = core.split(".").slice(0, 3).map((p) => (/^\d+$/.test(p) ? parseInt(p, 10) : 0));
+  while (parts.length < 3) parts.push(0);
+  return parts;
+}
+
+/** Whether a client saying version v is older than min (no min, or no version said: never). */
+export function tooOld(v: string | null, min: string): boolean {
+  if (!min || v === null) return false;
+  const a = versionNumbers(v), b = versionNumbers(min);
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+}
+
 async function dinkPayload(request: Request): Promise<unknown> {
   try {
     const type = (request.headers.get("content-type") || "").toLowerCase();

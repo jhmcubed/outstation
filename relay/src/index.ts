@@ -5,15 +5,44 @@
 //   ws(s)://<relay>/desk/<channel>?key=<key>&name=<name in the chat>   the chat window
 //   ws(s)://<relay>/watch/<channel>?code=<watch code>                  a viewer (Outside)
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
+//   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
 //
 // Channels are handed out by the relay's owner (Authorization: Bearer <ADMIN_TOKEN>, a Worker secret):
 //   POST   /admin/channels/<channel>    a new key for it: {"channel", "key", "code"} (code: the attach code)
 //   DELETE /admin/channels/<channel>    taken back: its transmitter cut off, its key refused
-//   GET    /admin/channels              the channels handed out
-// The attach code is "portal1:" and base64url JSON {"relay", "channel", "key"}: the client takes it in one paste.
+//   GET    /admin/channels              the channels handed out (live, title, client: its last transmitter's version)
+// The attach code (the station key) is "outstation1:" ("portal1:" before 11/06/2026) and base64url JSON {"relay", "channel", "key"}: the client takes it in one paste.
+//
+// Asking for a portal (11/06/2026), so nobody has to email the keeper for a code:
+//   POST   /requests/<channel>  {"player", "note", "pickup"}   a friend's client asks for that player's channel
+//   GET    /requests/<channel>?pickup=<secret>                waiting / given (the attach code, once) / turned down
+//   DELETE /requests/<channel>?pickup=<secret>                the asker takes it back
+//   GET    /admin/requests                                    the keeper's list of those waiting
+//   POST   /admin/requests/<channel>                          handed out: the code waits for the asker's client
+//   DELETE /admin/requests/<channel>                          turned down
+// Only the pickup's SHA-256 is kept; the attach code is kept only until the asker's client collects it.
+//
+// Anomaly reports (11/06/2026, Jace: "build both routes"): a friend's outstation sends a report of something gone wrong
+// (their words, and the station log with its keys, codes and webhook addresses taken out by the client), only when
+// they press "send to the listening post"; the keeper reads them in his station's drawer.
+//   POST   /reports  {"kind", "channel", "key", "name", "note", "log", "version", "windows"}   kind: "anomaly" (the
+//                    default) or "requisition" (11/06/2026, Jace: "requests can also come straight to my outstation
+//                    client": something wanted, a feature request, with no log)   (channel and key optional:
+//                    with them the report says it's that channel's, checked; without, the name is as they typed it)
+//   GET    /admin/reports              the reports, newest first
+//   DELETE /admin/reports/<id>         one read and done with
+// At most REPORTS_KEPT (50) and REPORT_DAYS (30) days each; REPORTS_AN_HOUR (5) from one address; a log at most
+// REPORT_LOG (64 KB), a note at most 1,000 characters.
+//
+// A notice from the keeper to every portal (11/06/2026): one line every friend's client shows in its chat.
+//   GET    /admin/notice              the notice now ({"notice": {"text", "at"}} or {"notice": null})
+//   PUT    /admin/notice  {"text"}    a new one, sent at once to every desk connected and to each that connects
+//   DELETE /admin/notice              taken down
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, type Env } from "./channel";
+import { fileKey, serveFile, ID } from "./clips";
+import { oneLine } from "./text";
 
 export { Channel };
 
@@ -21,16 +50,167 @@ const ROLES = new Set(["transmit", "watch", "desk", "sound"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
 const MAX_POST = 16 * 1024 * 1024;
 
-// the channels handed out, for the owner's list
+const PLAYER = /^[a-z0-9]{1,12}$/; // a channel asked for: a player's name as the page has it (lower case, no spaces)
+const ASKS_AN_HOUR = 3; // requests from one address in an hour
+const WAITING_MOST = 50; // requests waiting at once, everyone's
+const WAIT_DAYS = 14, PICKUP_DAYS = 7; // a request not answered in this long goes; an answer not collected, too
+const DAY = 86_400_000;
+const REPORTS_KEPT = 50, REPORT_DAYS = 30, REPORTS_AN_HOUR = 5, REPORT_LOG = 64 * 1024, REPORT_NOTE = 1000;
+
+interface Report {
+  id: string;
+  kind: "anomaly" | "requisition"; // something gone wrong, or something wanted (a feature request)
+  at: number;
+  channel: string; // checked against its key ("" when none was given, or it didn't match)
+  name: string; // as they typed it (or the channel)
+  note: string;
+  log: string;
+  version: string;
+  windows: string;
+}
+
+interface Ask {
+  channel: string;
+  player: string; // the name as they typed it
+  note: string; // how the keeper knows them (their words, one line)
+  at: number;
+  pickup: string; // the SHA-256 of the secret only the asker's client holds
+  state: "waiting" | "given" | "turned down";
+  code?: string; // the attach code, until it's collected
+  decided?: number;
+}
+
+async function sha256(text: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// the channels handed out, for the owner's list; and the requests for one
 export class Directory extends DurableObject<Env> {
+  asks = new Map<string, number[]>(); // an address -> when it asked (in memory: a sleep forgets, which only loosens it)
+  reportsFrom = new Map<string, number[]>(); // an address -> when it sent a report (the same)
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
+    if (url.pathname === "/requests") return this.requests(request, url);
+    if (url.pathname === "/reports") return this.reports(request, url);
+    if (url.pathname === "/notice") {
+      if (request.method === "PUT") {
+        const { text } = (await request.json()) as { text: string };
+        await this.ctx.storage.put("notice", { text, at: Date.now() });
+      } else if (request.method === "DELETE") {
+        await this.ctx.storage.delete("notice");
+      }
+      return Response.json({ notice: (await this.ctx.storage.get("notice")) || null });
+    }
     if (request.method === "PUT") await this.ctx.storage.put("c:" + name, { since: Date.now() });
     else if (request.method === "DELETE") await this.ctx.storage.delete("c:" + name);
     const all = await this.ctx.storage.list({ prefix: "c:" });
     return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), ...(v as object) })));
   }
+
+  // anomaly reports: "add" (a friend's outstation, its channel already checked by the Worker), "list" and "delete" (the
+  // keeper, already let through by admin())
+  async reports(request: Request, url: URL): Promise<Response> {
+    const what = url.searchParams.get("what") || "", now = Date.now();
+    const all = await this.ctx.storage.list<Report>({ prefix: "r:" });
+    const live: Report[] = [];
+    for (const [k, r] of all) {
+      if (now - r.at > REPORT_DAYS * DAY) await this.ctx.storage.delete(k);
+      else live.push(r);
+    }
+    live.sort((a, b) => b.at - a.at);
+    if (what === "list") return Response.json(live);
+    if (what === "delete") {
+      await this.ctx.storage.delete("r:" + (url.searchParams.get("id") || ""));
+      return new Response(null, { status: 204 });
+    }
+    if (what !== "add") return new Response(null, { status: 400 });
+    const ip = request.headers.get("cf-connecting-ip") || "";
+    const times = (this.reportsFrom.get(ip) || []).filter((t) => now - t < 3_600_000);
+    if (times.length >= (parseInt(this.env.REPORTS_AN_HOUR || "") || REPORTS_AN_HOUR)) {
+      return Response.json({ error: "too many reports from here: try again in an hour, or write to research@ghillie.wiki" }, { status: 429 });
+    }
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body) return Response.json({ error: "a report is JSON: name, note, log, version" }, { status: 400 });
+    const text = (v: unknown, most: number) => (typeof v === "string" ? v.replace(/\u0000/g, "").slice(0, most) : "");
+    const note = text(body.note, REPORT_NOTE).trim(), log = text(body.log, REPORT_LOG);
+    if (!note && !log) return Response.json({ error: "say what happened, or send the station log" }, { status: 400 });
+    times.push(now);
+    this.reportsFrom.set(ip, times);
+    const r: Report = { id: crypto.randomUUID().replace(/-/g, "").slice(0, 16), kind: body.kind === "requisition" ? "requisition" : "anomaly", at: now, channel: text(url.searchParams.get("checked"), 64),
+                        name: oneLine(body.name, 40), note, log, version: oneLine(body.version, 20), windows: oneLine(body.windows, 60) };
+    await this.ctx.storage.put("r:" + r.id, r);
+    for (const old of live.slice(REPORTS_KEPT - 1)) await this.ctx.storage.delete("r:" + old.id);
+    return Response.json({ id: r.id }, { status: 201 });
+  }
+
+  // what's asked, by whom: "ask" (a friend's client), "check" and "cancel" (with the pickup), "list", "give" and
+  // "turn down" (the keeper, already let through by admin())
+  async requests(request: Request, url: URL): Promise<Response> {
+    const what = url.searchParams.get("what") || "", channel = url.searchParams.get("name") || "";
+    const now = Date.now();
+    const stale = (a: Ask) => now - a.at > WAIT_DAYS * DAY || (a.decided !== undefined && now - a.decided > PICKUP_DAYS * DAY);
+    if (what === "list") {
+      const all = await this.ctx.storage.list<Ask>({ prefix: "q:" });
+      const rows = [];
+      for (const [k, a] of all) {
+        if (stale(a)) { await this.ctx.storage.delete(k); continue; }
+        if (a.state !== "waiting") continue;
+        const given = (await this.ctx.storage.get("c:" + a.channel)) !== undefined;
+        rows.push({ channel: a.channel, player: a.player, note: a.note, at: a.at, given });
+      }
+      rows.sort((x, y) => x.at - y.at);
+      return Response.json(rows);
+    }
+    const k = "q:" + channel;
+    const a = await this.ctx.storage.get<Ask>(k);
+    const live = a && !stale(a) ? a : undefined;
+    if (what === "ask") {
+      const body = (await request.json().catch(() => null)) as { player?: unknown; note?: unknown; pickup?: unknown } | null;
+      const pickup = typeof body?.pickup === "string" ? body.pickup : "";
+      if (pickup.length < 32 || pickup.length > 128) return Response.json({ error: "a pickup of 32 to 128 characters" }, { status: 400 });
+      const hash = await sha256(pickup);
+      if (live && live.pickup !== hash && live.state !== "turned down") {
+        return Response.json({ error: "someone has already asked for this name: the keeper will answer them first" }, { status: 409 });
+      }
+      if (live && live.pickup === hash && live.state !== "waiting") {
+        return Response.json({ state: live.state }); // (already answered: collected with a check, never reset)
+      }
+      if (!live || live.pickup !== hash) {
+        const ip = request.headers.get("cf-connecting-ip") || "";
+        const times = (this.asks.get(ip) || []).filter((t) => now - t < 3_600_000);
+        if (times.length >= (parseInt(this.env.ASKS_AN_HOUR || "") || ASKS_AN_HOUR)) return Response.json({ error: "too many requests from here: try again in an hour" }, { status: 429 });
+        const waiting = [...(await this.ctx.storage.list<Ask>({ prefix: "q:" })).values()].filter((x) => x.state === "waiting" && !stale(x)).length;
+        if (waiting >= WAITING_MOST) return Response.json({ error: "too many requests waiting: try again in a few days" }, { status: 503 });
+        times.push(now);
+        this.asks.set(ip, times);
+      }
+      const ask: Ask = { channel, player: oneLine(body?.player, 12) || channel, note: oneLine(body?.note, 200), at: live && live.pickup === hash ? live.at : now,
+                         pickup: hash, state: "waiting" };
+      await this.ctx.storage.put(k, ask);
+      return Response.json({ state: "waiting", given: (await this.ctx.storage.get("c:" + channel)) !== undefined }, { status: 201 });
+    }
+    if (what === "check" || what === "cancel") {
+      const pickup = url.searchParams.get("pickup") || "";
+      if (!live || pickup.length < 32 || live.pickup !== (await sha256(pickup))) return Response.json({ state: "none" }, { status: 404 });
+      if (what === "cancel") { await this.ctx.storage.delete(k); return new Response(null, { status: 204 }); }
+      if (live.state === "waiting") return Response.json({ state: "waiting" });
+      await this.ctx.storage.delete(k); // an answer is collected once
+      return Response.json(live.state === "given" ? { state: "given", code: live.code } : { state: "turned down" });
+    }
+    if (what === "give" || what === "turn down") {
+      if (!live || live.state !== "waiting") return Response.json({ error: "nobody is waiting for that name" }, { status: 404 });
+      live.state = what === "give" ? "given" : "turned down";
+      live.decided = now;
+      if (what === "give") live.code = url.searchParams.get("code") || "";
+      await this.ctx.storage.put(k, live);
+      return new Response(null, { status: 204 });
+    }
+    return new Response(null, { status: 400 });
+  }
 }
+
 
 function sameText(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -42,7 +222,7 @@ function sameText(a: string, b: string): boolean {
 function attachCode(relay: string, channel: string, key: string): string {
   const json = JSON.stringify({ relay, channel, key });
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
-  return "portal1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return "outstation1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function channelStub(env: Env, name: string) {
@@ -57,24 +237,92 @@ function toChannel(request: Request, name: string, path: string): Request {
   return new Request(url.toString(), { method: request.method, headers, body: request.body });
 }
 
+/** A channel handed out (a new key for it): {channel, key, code}. */
+async function mint(request: Request, env: Env, name: string): Promise<{ channel: string; key: string; code: string }> {
+  const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+  const r = await channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST" }), name, "/_mint"));
+  const { key } = (await r.json()) as { key: string };
+  await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "PUT" });
+  const u = new URL(request.url);
+  const relay = (u.protocol === "https:" ? "wss://" : "ws://") + u.host;
+  return { channel: name, key, code: attachCode(relay, name, key) };
+}
+
+function dirRequests(env: Env, what: string, name: string, extra = ""): Request {
+  return new Request("https://dir/requests?what=" + encodeURIComponent(what) + "&name=" + encodeURIComponent(name) + extra);
+}
+
 async function admin(request: Request, env: Env, parts: string[]): Promise<Response> {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) {
     return new Response("no", { status: 403 });
   }
   const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
-  if (parts.length === 2 && request.method === "GET") return dir.fetch("https://dir/");
+  if (parts[1] === "clips") {
+    // a channel's clips, whatever its watch code; and any one taken down
+    const name = parts[2] || "";
+    if (!NAME.test(name) || parts.length > 4) return new Response("which channel?", { status: 400 });
+    const url = new URL(request.url);
+    if (parts.length === 4) url.searchParams.set("id", parts[3]);
+    if (request.method !== "GET" && !(request.method === "DELETE" && parts.length === 4)) return new Response(null, { status: 405 });
+    return channelStub(env, name).fetch(toChannel(new Request(url.toString(), request), name, "/_clips_admin"));
+  }
+  if (parts[1] === "notice" && parts.length === 2) {
+    if (request.method === "GET") return dir.fetch("https://dir/notice");
+    if (request.method !== "PUT" && request.method !== "DELETE") return new Response(null, { status: 405 });
+    let text = "";
+    if (request.method === "PUT") {
+      const body = (await request.json().catch(() => null)) as { text?: unknown } | null;
+      text = oneLine(body?.text, 300);
+      if (!text) return Response.json({ error: "a notice needs some words (DELETE takes one down)" }, { status: 400 });
+    }
+    const r = await dir.fetch(new Request("https://dir/notice", request.method === "PUT"
+      ? { method: "PUT", body: JSON.stringify({ text }) } : { method: "DELETE" }));
+    const now = (await r.json()) as { notice: { text: string; at: number } | null };
+    // to every channel handed out, so each desk connected now hears it (one that connects later asks for it)
+    const names = ((await (await dir.fetch("https://dir/")).json()) as { channel: string }[]).map((c) => c.channel);
+    await Promise.all(names.map((n) => channelStub(env, n).fetch(toChannel(
+      new Request(request.url, { method: "POST", body: JSON.stringify(now) }), n, "/_notice")).catch(() => null)));
+    return Response.json(now);
+  }
+  if (parts[1] === "reports") {
+    if (parts.length === 2 && request.method === "GET") return dir.fetch("https://dir/reports?what=list");
+    if (parts.length === 3 && request.method === "DELETE") return dir.fetch("https://dir/reports?what=delete&id=" + encodeURIComponent(parts[2]));
+    return new Response(null, { status: 405 });
+  }
+  if (parts[1] === "requests") {
+    if (parts.length === 2 && request.method === "GET") return dir.fetch(dirRequests(env, "list", ""));
+    const name = parts[2] || "";
+    if (parts.length !== 3 || !PLAYER.test(name)) return new Response("which name?", { status: 400 });
+    if (request.method === "POST") {
+      // handed out: only if someone's waiting for it, and then the code waits for their client
+      const waiting = ((await (await dir.fetch(dirRequests(env, "list", ""))).json()) as { channel: string }[]).some((r) => r.channel === name);
+      if (!waiting) return Response.json({ error: "nobody is waiting for that name" }, { status: 404 });
+      const got = await mint(request, env, name);
+      await dir.fetch(dirRequests(env, "give", name, "&code=" + encodeURIComponent(got.code)));
+      return Response.json(got);
+    }
+    if (request.method === "DELETE") return dir.fetch(dirRequests(env, "turn down", name));
+    return new Response(null, { status: 405 });
+  }
+  if (parts.length === 2 && request.method === "GET") {
+    // the channels handed out, each with what its channel says now: live, its title, the version of the client
+    // that last transmitted on it (so the keeper can see who'd be turned away by a higher MIN_CLIENT), and its seconds
+    // on air this month, UTC (the keeper's bill)
+    const given = (await (await dir.fetch("https://dir/")).json()) as { channel: string; since?: number }[];
+    const rows = await Promise.all(given.map(async (c) => {
+      try {
+        const r = await channelStub(env, c.channel).fetch(toChannel(new Request(request.url), c.channel, "/_status"));
+        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number };
+        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0 };
+      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0 }; }
+    }));
+    return Response.json(rows);
+  }
   const name = parts[2] || "";
   if (parts.length !== 3 || !NAME.test(name)) return new Response("which channel?", { status: 400 });
   const stub = channelStub(env, name);
-  if (request.method === "POST") {
-    const r = await stub.fetch(toChannel(new Request(request.url, { method: "POST" }), name, "/_mint"));
-    const { key } = (await r.json()) as { key: string };
-    await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "PUT" });
-    const u = new URL(request.url);
-    const relay = (u.protocol === "https:" ? "wss://" : "ws://") + u.host;
-    return Response.json({ channel: name, key, code: attachCode(relay, name, key) });
-  }
+  if (request.method === "POST") return Response.json(await mint(request, env, name));
   if (request.method === "DELETE") {
     await stub.fetch(toChannel(new Request(request.url, { method: "POST" }), name, "/_revoke"));
     await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "DELETE" });
@@ -89,7 +337,61 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && parts[1] === "channels") return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports")) return admin(request, env, parts);
+
+    // an anomaly report from a friend's outstation: its channel checked against its key when it gives them
+    if (parts[0] === "reports" && parts.length === 1) {
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const n = parseInt(request.headers.get("content-length") || "0") || 0;
+      if (n > REPORT_LOG + 16 * 1024) return Response.json({ error: "a report is 64 KB at most" }, { status: 413 });
+      const raw = await request.text();
+      if (raw.length > REPORT_LOG + 16 * 1024) return Response.json({ error: "a report is 64 KB at most" }, { status: 413 });
+      let checked = "";
+      try {
+        const b = JSON.parse(raw) as { channel?: unknown; key?: unknown };
+        if (typeof b.channel === "string" && NAME.test(b.channel) && typeof b.key === "string" && b.key) {
+          const r = await channelStub(env, b.channel).fetch(toChannel(new Request(url.origin + "/?key=" + encodeURIComponent(b.key), { headers: request.headers }), b.channel, "/_keyok"));
+          if (((await r.json()) as { ok: boolean }).ok) checked = b.channel;
+        }
+      } catch { /* not JSON: the Directory says so */ }
+      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+      return dir.fetch(new Request("https://dir/reports?what=add&checked=" + encodeURIComponent(checked), { method: "POST", headers: request.headers, body: raw }));
+    }
+
+    // clips on a player's Outside page (clips.ts): the files straight from the bucket, the rest through the channel
+    if (parts[0] === "clips" && (parts.length === 2 || parts.length === 3) && NAME.test(parts[1])) {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
+                                                             "access-control-allow-headers": "range, content-type", "access-control-max-age": "86400" } });
+      }
+      if (parts.length === 3) {
+        const m = /^([A-Za-z0-9_-]{16,32})\.(mp4|jpg)$/.exec(parts[2]);
+        if ((request.method === "GET" || request.method === "HEAD") && m) return serveFile(env.CLIPS, fileKey(parts[1], m[1], m[2] as "mp4" | "jpg"), request);
+        if ((request.method === "DELETE" || request.method === "POST") && ID.test(parts[2])) {
+          url.searchParams.set("id", parts[2]);
+          return channelStub(env, parts[1]).fetch(toChannel(new Request(url.toString(), request), parts[1], "/_clips"));
+        }
+        return new Response(null, { status: 404 });
+      }
+      if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_clips"));
+      return new Response(null, { status: 405 });
+    }
+
+    // asking for a portal: a friend's client, with a secret of its own (the pickup) that collects the answer
+    if (parts[0] === "requests" && parts.length === 2) {
+      const name = parts[1];
+      if (!PLAYER.test(name)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
+      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+      const pickup = "&pickup=" + encodeURIComponent(url.searchParams.get("pickup") || "");
+      if (request.method === "POST") {
+        const n = parseInt(request.headers.get("content-length") || "0") || 0;
+        if (n > 4096) return new Response(null, { status: 413 });
+        return dir.fetch(new Request(dirRequests(env, "ask", name).url, { method: "POST", headers: request.headers, body: request.body }));
+      }
+      if (request.method === "GET") return dir.fetch(dirRequests(env, "check", name, pickup));
+      if (request.method === "DELETE") return dir.fetch(dirRequests(env, "cancel", name, pickup));
+      return new Response(null, { status: 405 });
+    }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)
     if (request.method === "GET" && url.pathname === "/channels") {
@@ -98,10 +400,10 @@ export default {
       const rows = await Promise.all(names.map(async (n) => {
         try {
           const r = await channelStub(env, n).fetch(toChannel(new Request(url.toString()), n, "/_status"));
-          return (await r.json()) as { channel: string; set: boolean; code: boolean; live: boolean; open: boolean; static: boolean; viewers: number };
+          return (await r.json()) as { channel: string; set: boolean; code: boolean; live: boolean; open: boolean; static: boolean; viewers: number; title?: string; doing?: unknown };
         } catch { return null; }
       }));
-      const open = rows.filter((r) => r && r.set && !r.code).map((r) => ({ channel: r!.channel, live: r!.live, open: r!.open, static: r!.static, viewers: r!.viewers }));
+      const open = rows.filter((r) => r && r.set && !r.code).map((r) => ({ channel: r!.channel, live: r!.live, open: r!.open, static: r!.static, viewers: r!.viewers, title: r!.title || "", doing: r!.doing || null }));
       open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
       return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
     }
@@ -120,7 +422,7 @@ export default {
     }
 
     if (url.pathname === "/" && (request.method === "GET" || request.method === "HEAD")) {
-      return new Response("the portal's relay (outside-portal)\n", { headers: { "content-type": "text/plain" } });
+      return new Response("the relay for ⊂λ,ｍ⊙ outstation\n", { headers: { "content-type": "text/plain" } });
     }
     return new Response(null, { status: 404 });
   },

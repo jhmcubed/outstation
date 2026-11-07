@@ -1,6 +1,6 @@
 //! The client's settings: one JSON file, read by every part and written by the window and the hotkeys.
 //!
-//! %APPDATA%\outside-portal\settings.json (or --settings <file>). Anything in the file this version doesn't know is
+//! %APPDATA%\outstation\settings.json (or --settings <file>). Anything in the file this version doesn't know is
 //! kept as it was. The fields are those of ghillie's start.py settings, as the parity list asks
 //! (claude/the-portal.md, "Parity"), with the capture's options as fields of their own instead of a "capture" list.
 
@@ -48,6 +48,21 @@ fn d_viewers() -> u32 { 10 }
 fn d_upload() -> f64 { 40.0 }
 fn d_dink_port() -> u16 { 8796 }
 fn d_one() -> u32 { 1 }
+fn d_clip_gp() -> u64 { 1_000_000 }
+
+/// A request for a portal, waiting for the keeper's answer (ask.rs): kept so it outlives closing the portal.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Asked {
+    /// the keeper's relay, as http(s)
+    pub relay: String,
+    pub channel: String,
+    /// the name as it was typed
+    pub player: String,
+    /// the secret that collects the answer (the relay keeps only its SHA-256)
+    pub pickup: String,
+    /// when it was asked (seconds since 1970)
+    pub at: u64,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Dink {
@@ -63,13 +78,25 @@ pub struct Dink {
     /// kill counts on the portal: every Nth (1: each), and always the first and personal bests
     #[serde(default = "d_one")]
     pub kc_every: u32,
+    /// a clip saved by itself when Dink tells of something big (a pet, a new collection log slot, a 99, a drop worth
+    /// clip_gp or more), while live and with the replay buffer on (dink.rs, big_moment)
+    #[serde(default = "d_true")]
+    pub auto_clip: bool,
+    #[serde(default = "d_clip_gp")]
+    pub clip_gp: u64,
+    /// and each one put on the player's Outside page too (clipsup.rs): a standard copy, off to begin with
+    #[serde(default)]
+    pub clips_up: bool,
+    /// the drawer's first question, "do you use Dink with Discord too?": not answered yet, yes or no
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord: Option<bool>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl Default for Dink {
     fn default() -> Self {
-        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, extra: Map::new() }
+        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, discord: None, extra: Map::new() }
     }
 }
 
@@ -94,6 +121,10 @@ pub struct Settings {
     /// the name your lines go out under in the chat (the channel's when empty)
     #[serde(default)]
     pub chat_name: String,
+    /// the broadcast's title (11/06/2026): beside "✼ portal" on Outside, scrolling slowly when it's too long to fit;
+    /// empty: none. It goes out through the desk ({"title"}), at most 100 characters.
+    #[serde(default)]
+    pub stream_title: String,
     #[serde(default = "d_fps")]
     pub fps: u32,
     #[serde(default = "d_width")]
@@ -131,13 +162,18 @@ pub struct Settings {
     /// the replay buffer: the last 0 to 30 seconds kept here, for a clip (0 keeps nothing)
     #[serde(default)]
     pub replay_seconds: u32,
-    /// where clips go (empty: Videos\outside-portal)
+    /// where clips go (empty: Videos\outstation)
     #[serde(default)]
     pub clip_folder: String,
     #[serde(default)]
     pub only_logged_in: bool,
-    /// go live / end stream
-    #[serde(default = "d_true")]
+    /// the mouse pointer in the picture, where it's over RuneLite (11/06/2026; off: the picture never has it).
+    /// Windows Graphics Capture draws it; PrintWindow, the fallback, can't.
+    #[serde(default)]
+    pub show_cursor: bool,
+    /// go live / end stream (off for a new portal: 11/06/2026, it had begun live, so attaching a code streamed at once,
+    /// before the first-time setup was done; a portal left live stays live as it was)
+    #[serde(default)]
     pub on_air: bool,
     /// "off", "game" or "all"
     #[serde(default = "d_sound")]
@@ -158,6 +194,32 @@ pub struct Settings {
     /// minimising the window sends it to the tray (the stream goes on)
     #[serde(default = "d_true")]
     pub minimize_to_tray: bool,
+    /// the ready check above the title while off air (RuneLite, logged in, the relay, Dink, the sound)
+    #[serde(default = "d_true")]
+    pub ready_check: bool,
+    /// the keeper's last notice shown (its "at"), so a reconnect or a restart doesn't show it again
+    #[serde(default)]
+    pub notice_seen: u64,
+    /// the first-time setup (ui.rs, setup_screen), from attaching till it's finished or skipped: which step it's at
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_step: Option<u8>,
+    /// go live when RuneLite opens (autolive.rs), and with it end the stream when RuneLite closes
+    #[serde(default)]
+    pub auto_live: bool,
+    #[serde(default = "d_true")]
+    pub auto_end: bool,
+    /// the friends list (friendlist.rs): players' names as typed, in the order added
+    #[serde(default)]
+    pub friends: Vec<String>,
+    /// a line in the chat when a friend goes live or off air
+    #[serde(default = "d_true")]
+    pub friends_tell: bool,
+    /// and Windows' own notification when one goes live (notify.rs; it needs the Start menu's shortcut)
+    #[serde(default = "d_true")]
+    pub friends_toast: bool,
+    /// the Start menu's shortcut (shortcut.rs): not asked yet, yes (kept pointing at this copy), or no
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_menu: Option<bool>,
     /// the live view: the portal as the site gets it, small, in the window (off: not connected at all)
     #[serde(default = "d_true")]
     pub live_view: bool,
@@ -200,6 +262,9 @@ pub struct Settings {
     /// forward.py's rules: {"discord": [webhook…], "forward": {"LEVEL": true, "LOOT": {…}, …}}
     #[serde(default)]
     pub forward: Value,
+    /// a request for a portal waiting for the keeper (the attach screen's "ask for one"; ask.rs)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<Asked>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -217,9 +282,11 @@ impl Settings {
     pub fn host_name(&self) -> String {
         if self.chat_name.trim().is_empty() { self.channel.clone() } else { self.chat_name.trim().to_string() }
     }
-    /// the relay's address for one of its sockets
+    /// the relay's address for one of its sockets, with this client's version (v=): a relay that needs a newer
+    /// client turns it away with 4026 and says which (docs/protocol.md, "The client's version")
     pub fn socket_url(&self, role: &str, query: &str) -> String {
-        format!("{}/{}/{}?{}", self.relay.trim_end_matches('/'), role, enc(&self.channel), query)
+        let sep = if query.is_empty() { "" } else { "&" };
+        format!("{}/{}/{}?{}{}v={}", self.relay.trim_end_matches('/'), role, enc(&self.channel), query, sep, enc(VERSION))
     }
     /// its http(s) address (for Dink's posts)
     pub fn http_base(&self) -> String {
@@ -230,6 +297,20 @@ impl Settings {
     }
 }
 
+/// this client's version (client/Cargo.toml's, which each release's tag must match)
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// where the releases are, for "a newer one is out" and "too old for the relay" (shown, never opened or fetched)
+pub const RELEASES: &str = "github.com/jhmcubed/outstation/releases";
+/// what the portal does and doesn't, line by line, and how to check it (the attach screen's link)
+pub const SAFETY_PAGE: &str = "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md";
+
+/// The words for a relay's 4026 (this client too old for it), from the relay's own reason.
+pub fn too_old_note(reason: &str) -> String {
+    let why = if reason.trim().is_empty() { "this outstation is too old for the relay" } else { reason.trim() };
+    format!("{} (this is {}): get the newest at {}", why, VERSION, RELEASES)
+}
+
 pub fn enc(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -238,17 +319,29 @@ pub fn enc(s: &str) -> String {
     out
 }
 
-pub fn default_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("outside-portal").join("settings.json")
+/// The program's own name, as Windows and the window show it (its files and folders are plain `outstation`).
+pub const NAME: &str = "⊂λ,ｍ⊙ outstation";
+
+/// The key's prefix (11/06/2026: the attach code is the station's key now, "outstation1:"); a key from before,
+/// "portal1:", is the same inside and still read.
+pub const KEY_PREFIX: &str = "outstation1:";
+pub const OLD_KEY_PREFIX: &str = "portal1:";
+pub fn is_key(s: &str) -> bool {
+    let s = s.trim();
+    s.starts_with(KEY_PREFIX) || s.starts_with(OLD_KEY_PREFIX)
 }
 
-/// ghillie's own portal settings (start.py's), which the attach screen can take over
-pub fn ghillie_path() -> Option<PathBuf> {
-    let home = std::env::var_os("USERPROFILE")?;
-    let p = PathBuf::from(home).join("Documents").join("ghillie portal").join("settings.json");
-    p.exists().then_some(p)
+pub fn default_path() -> PathBuf {
+    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let now = base.join("outstation");
+    // (11/06/2026, the name's outstation: the folder it had as outside-portal moved once, settings, log and all)
+    let old = base.join("outside-portal");
+    if !now.exists() && old.is_dir() {
+        let _ = std::fs::rename(&old, &now);
+    }
+    now.join("settings.json")
 }
+
 
 /// The settings shared by every part: kept in memory, saved on each change, read again when the file changes.
 #[derive(Clone)]
@@ -302,79 +395,24 @@ fn write(p: &Path, s: &Settings) -> std::io::Result<()> {
     std::fs::rename(&tmp, p)
 }
 
-/// An attach code: "portal1:" and base64url JSON {"relay", "channel", "key"}.
+/// A station key (the attach code): "outstation1:" (or, from before, "portal1:") and base64url JSON {"relay",
+/// "channel", "key"}.
 pub fn parse_attach(code: &str) -> Result<(String, String, String), String> {
     use base64::Engine;
     let code = code.trim();
-    let raw = code.strip_prefix("portal1:").ok_or("that isn't an attach code (it starts portal1:)")?;
+    let raw = code.strip_prefix(KEY_PREFIX).or_else(|| code.strip_prefix(OLD_KEY_PREFIX))
+        .ok_or_else(|| format!("that isn't a station key (it starts {})", KEY_PREFIX))?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(raw.trim_end_matches('=').as_bytes())
-        .map_err(|_| "the attach code is cut short or changed".to_string())?;
-    let v: Value = serde_json::from_slice(&bytes).map_err(|_| "the attach code is cut short or changed".to_string())?;
+        .map_err(|_| "the station key is cut short or changed".to_string())?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|_| "the station key is cut short or changed".to_string())?;
     let get = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
     match (get("relay"), get("channel"), get("key")) {
         (Some(r), Some(c), Some(k)) if (r.starts_with("ws://") || r.starts_with("wss://")) && !c.is_empty() && k.len() >= 8 => Ok((r, c, k)),
-        _ => Err("the attach code is missing its relay, channel or key".into()),
+        _ => Err("the station key is missing its relay, channel or key".into()),
     }
 }
 
-/// ghillie's start.py settings, as this client's: the relay on this PC, its channel, key, code and the rest.
-pub fn from_ghillie(p: &Path) -> Option<Settings> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()?;
-    let mut s = Settings::default();
-    let port = v.get("port").and_then(|x| x.as_u64()).unwrap_or(8786);
-    s.relay = format!("ws://127.0.0.1:{}", port);
-    let st = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string());
-    s.channel = st("channel").unwrap_or_else(|| "sburb".into());
-    s.key = st("key")?;
-    s.code = st("code").unwrap_or_default();
-    s.chat_name = st("chat_name").unwrap_or_default();
-    if let Some(m) = st("sound") { s.sound = m; }
-    if let Some(m) = st("sound_key") { s.sound_key = m; }
-    if let Some(n) = v.get("fps").and_then(|x| x.as_u64()) { s.fps = n as u32; }
-    if let Some(n) = v.get("max_viewers").and_then(|x| x.as_u64()) { s.max_viewers = n as u32; }
-    if let Some(n) = v.get("sound_kbps").and_then(|x| x.as_u64()) { s.sound_kbps = n as u32; }
-    if let Some(n) = v.get("upload_mbit").and_then(|x| x.as_f64()) { s.upload_mbit = n; }
-    if let Some(b) = v.get("on_air").and_then(|x| x.as_bool()) { s.on_air = b; }
-    // the capture's own options, from its "capture" list
-    let cap: Vec<String> = v.get("capture").and_then(|x| x.as_array()).map(|a| {
-        a.iter().map(|x| x.as_str().map(|s| s.to_string()).unwrap_or_else(|| x.to_string())).collect()
-    }).unwrap_or_default();
-    let arg = |flag: &str| cap.iter().position(|x| x == flag).and_then(|i| cap.get(i + 1)).cloned();
-    if let Some(w) = arg("--width").and_then(|x| x.parse().ok()) { s.width = w; }
-    if let Some(q) = arg("--quality").and_then(|x| x.parse().ok()) { s.quality = q; }
-    if let Some(x) = arg("--view") { s.view = x; }
-    if let Some(x) = arg("--mask") { s.mask = x; }
-    if let Some(x) = arg("--method") { s.method = x; }
-    if let Some(x) = arg("--title") { s.title = x; }
-    if let Some(x) = arg("--pause-key") { s.static_key = x; }
-    // round two's (11/05/2026): the hotkeys, the replay buffer, the chat over the game, the guesses
-    let key = |k: &str| match v.get(k) {
-        Some(Value::String(x)) if !x.is_empty() => Some(x.clone()),
-        Some(Value::Number(n)) => n.as_u64().map(|n| format!("0x{:x}", n)),
-        _ => None,
-    };
-    if let Some(x) = key("static_key") { s.static_key = x; }
-    if let Some(x) = key("sound_key") { s.sound_key = x; }
-    if let Some(x) = key("clip_key") { s.clip_key = x; }
-    if let Some(n) = v.get("replay_seconds").and_then(|x| x.as_u64()) { s.replay_seconds = n.min(30) as u32; }
-    if let Some(x) = st("clip_folder") { s.clip_folder = x; }
-    if let Some(b) = v.get("game_chat").and_then(|x| x.as_bool()) { s.game_chat = b; }
-    if let Some(a) = v.get("game_chat_at").and_then(|x| x.as_array()) {
-        if let (Some(x), Some(y)) = (a.first().and_then(|x| x.as_f64()), a.get(1).and_then(|x| x.as_f64())) {
-            s.game_chat_at = Some([x, y]);
-        }
-    }
-    if let Some(n) = v.get("guess_min_value").and_then(|x| x.as_u64()) { s.guess_min_value = n; }
-    if cap.iter().any(|x| x == "--only-logged-in") { s.only_logged_in = true; }
-    // and his Discord forwarding rules (forward.json beside it)
-    if let Some(f) = p.parent().map(|d| d.join("forward.json")) {
-        if let Some(rules) = std::fs::read_to_string(f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
-            s.forward = rules;
-        }
-    }
-    Some(s)
-}
 
 #[cfg(test)]
 mod tests {
@@ -384,9 +422,14 @@ mod tests {
     fn an_attach_code_reads_back() {
         use base64::Engine;
         let json = r#"{"relay": "wss://outside-portal.x.workers.dev", "channel": "ja", "key": "abcdefghijkl"}"#;
-        let code = format!("portal1:{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json));
-        assert_eq!(parse_attach(&code).unwrap(), ("wss://outside-portal.x.workers.dev".into(), "ja".into(), "abcdefghijkl".into()));
-        assert!(parse_attach("portal1:!!!").is_err());
+        let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json);
+        // (a key now, and one from before the name was outstation: the same inside)
+        for code in [format!("outstation1:{}", body), format!("portal1:{}", body)] {
+            assert!(is_key(&code));
+            assert_eq!(parse_attach(&code).unwrap(), ("wss://outside-portal.x.workers.dev".into(), "ja".into(), "abcdefghijkl".into()));
+        }
+        assert!(parse_attach("outstation1:!!!").is_err());
+        assert!(!is_key("hello"));
         assert!(parse_attach("hello").is_err());
     }
 
@@ -404,7 +447,8 @@ mod tests {
         let mut s = Settings::default();
         s.relay = "wss://r.example/".into();
         s.channel = "a b".into();
-        assert_eq!(s.socket_url("watch", "code="), "wss://r.example/watch/a%20b?code=");
+        assert_eq!(s.socket_url("watch", "code="), format!("wss://r.example/watch/a%20b?code=&v={}", VERSION));
+        assert_eq!(s.socket_url("sound", ""), format!("wss://r.example/sound/a%20b?v={}", VERSION));
         assert_eq!(s.http_base(), "https://r.example");
     }
 }

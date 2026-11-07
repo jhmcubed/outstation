@@ -70,14 +70,14 @@ pub const CYAN: Color32 = Color32::from_rgb(0x5f, 0xe6, 0xf5);
 pub const ROLES: &[(&str, &str, &str)] = &[
     ("bg", "the window", "behind everything"),
     ("plate", "the plates", "the raised panels things sit on"),
-    ("inset", "the dark windows", "the chat, the live view, the sample, the boxes you type in"),
+    ("inset", "the dark windows", "the chat, the monitor, the sample, the boxes you type in"),
     ("line", "the lines", "the edges round plates, boxes and buttons"),
     ("text", "the words", "the chat's lines and the main words"),
     ("dim", "the quiet words", "labels and explanations"),
     ("lime", "the lettering", "titles, values, buttons and what's on"),
     ("teal", "the hover", "whatever the hand is over"),
-    ("pink", "the accent", "live, warnings and what matters"),
-    ("cyan", "viewers' names", "names in the chat"),
+    ("pink", "the accent", "transmitting, warnings and what matters"),
+    ("cyan", "observers' names", "names in the chat"),
 ];
 
 static PAL: RwLock<Option<Palette>> = RwLock::new(None);
@@ -224,7 +224,11 @@ pub fn apply_visuals(ctx: &egui::Context) {
     v.window_shadow = v.popup_shadow;
     // (the click-anywhere cursor: every clickable thing asks for the hand, which cursor.rs draws as the lime star)
     v.interact_cursor = Some(egui::CursorIcon::PointingHand);
-    ctx.set_visuals(v);
+    // (the portal is always its own dark look, whatever Windows' light or dark mode says: egui keeps a style for each,
+    // and following a PC in light mode left the boxes you type in white, with the light words in them nearly unreadable)
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.set_visuals_of(egui::Theme::Dark, v.clone());
+    ctx.set_visuals_of(egui::Theme::Light, v);
 }
 
 /// A plate (jute's): a panel with a little depth under it, a lit top edge and a shaded bottom one, and small

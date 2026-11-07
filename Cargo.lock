@@ -1948,7 +1948,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outside-portal"
+name = "outstation"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -1958,6 +1958,7 @@ dependencies = [
  "jpeg-encoder",
  "opus",
  "png",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

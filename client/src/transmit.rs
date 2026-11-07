@@ -21,7 +21,7 @@ pub struct Status {
     pub kb: f64,
     /// the last thing worth saying (the log line)
     pub note: String,
-    /// stopped for good (4000, 4001, 4003) until the settings change
+    /// stopped for good (4000, 4001, 4003, 4026) until the settings change
     pub stopped: Option<String>,
 }
 
@@ -133,6 +133,14 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
             stopped_for = Some(who);
             continue;
         }
+        if closed.ends_with("(4026)") {
+            // this client is older than the relay allows: trying again won't help, a newer one will
+            let note = crate::settings::too_old_note(closed.trim_end_matches("(4026)"));
+            log(&note);
+            say(&status, |st| st.stopped = Some(note.clone()));
+            stopped_for = Some(who);
+            continue;
+        }
         if closed.contains("(4001)") || closed.contains("(4003)") || closed.contains("(4029)") {
             say(&status, |st| st.stopped = Some(closed.clone()));
             stopped_for = Some(who);
@@ -181,6 +189,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                         }
                     }
                 }
+                Ok(Got::Closed(code, why)) if !why.is_empty() => return format!("{} ({})", why, code),
                 Ok(Got::Closed(code, _)) => return format!("the relay closed it ({})", code),
                 Ok(Got::Nothing) => break,
                 Ok(Got::Binary(_)) => {}

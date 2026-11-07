@@ -89,9 +89,7 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     let kind = payload.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let mut went = Vec::new();
     if forward_wants(&s.forward, &payload) {
-        let urls: Vec<String> = s.forward.get("discord").and_then(|x| x.as_array()).map(|a| {
-            a.iter().filter_map(|u| u.as_str()).filter(|u| u.starts_with("https://") || u.starts_with("http://")).map(|u| u.to_string()).collect()
-        }).unwrap_or_default();
+        let urls = forward_urls(&s.forward, &kind);
         if !urls.is_empty() {
             went.push("Discord");
             let (body, ct) = (body.clone(), content_type.clone());
@@ -106,9 +104,13 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
         }
     }
     if s.attached() && portal_wants(&s, &payload) {
-        went.push("the portal");
+        went.push("your Outside page");
         let url = format!("{}/dink/{}?key={}", s.http_base(), enc(&s.channel), enc(&s.key));
-        let json = payload.to_string();
+        // (only what the relay uses leaves this PC: for_relay; and when it came, so two drops alike in a few seconds
+        // stay two at the relay, whose own check for a post sent twice would take them for one)
+        let mut trimmed = for_relay(&payload);
+        trimmed["at"] = serde_json::json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
+        let json = trimmed.to_string();
         std::thread::spawn(move || {
             let r = ureq::post(&url).header("Content-Type", "application/json").send(json.as_bytes());
             if let Err(e) = r {
@@ -116,7 +118,67 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
             }
         });
     }
+    // something big (11/06/2026, Jace: "an auto clip when something big drops"): the replay buffer saved a few seconds
+    // on, so the clip holds the moment and a little after it
+    if s.dink.auto_clip && s.on_air && s.replay_seconds > 0 {
+        if let Some(what) = big_moment(&payload, s.dink.clip_gp) {
+            went.push(if s.dink.clips_up { "a clip, on your Outside page too" } else { "a clip" });
+            // (on the page too: the page's copy runs to 5 s after the moment, so it waits that long, if the buffer
+            // holds that much)
+            let up = s.dink.clips_up;
+            let secs = if up { (crate::clip::AFTER / 1000).min((s.replay_seconds / 3).max(1) as u64) } else { (s.replay_seconds / 4).clamp(1, 4) as u64 };
+            let (folder, wait, moment, settings) = (s.clip_folder.clone(), Duration::from_secs(secs), Instant::now(), settings.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(wait);
+                crate::clip::save_as(&folder, Some(what.clone()));
+                if up {
+                    let s = settings.get();
+                    match crate::clipsup::upload(&s, &what, &kind_of(&what), moment) {
+                        Ok(said) => crate::clip::say(said),
+                        Err(e) => crate::clip::say(format!("the clip didn't reach your Outside page: {}", e)),
+                    }
+                }
+            });
+        }
+    }
     st.lock().unwrap().last = Some((kind, Instant::now(), if went.is_empty() { "nowhere".into() } else { went.join(" and ") }));
+}
+
+/// Is this post something big enough to clip by itself: a pet (a duplicate too: kept, 11/06/2026, Jace), a new
+/// collection log slot, a 99 (11/06/2026, Jace: "add 99's"; a skill reaching 99, not a virtual level past it), or a
+/// drop worth `gp` or more (the whole drop, every stack in it)? What it was, in a few words, for the clip's name.
+pub fn big_moment(p: &Value, gp: u64) -> Option<String> {
+    let e = extra(p);
+    let text = |k: &str| e.get(k).and_then(|x| x.as_str()).map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty());
+    match p.get("type").and_then(|x| x.as_str()).unwrap_or("") {
+        "PET" => Some(format!("pet {}", text("petName").unwrap_or_else(|| "a pet".into()))),
+        "COLLECTION" => Some(format!("log {}", text("itemName").unwrap_or_else(|| "a new slot".into()))),
+        "LEVEL" => {
+            let skills: Vec<String> = e.get("levelledSkills").and_then(|x| x.as_object()).map(|m| {
+                m.iter().filter(|(_, v)| int(Some(v)) == 99).map(|(k, _)| k.trim().to_lowercase()).collect()
+            }).unwrap_or_default();
+            if skills.is_empty() { None } else { Some(format!("99 {}", skills.join(" and "))) }
+        }
+        "LOOT" => {
+            let all = stacks(p);
+            let worth: i64 = all.iter().map(|(_, v)| *v).sum();
+            if gp == 0 || worth < gp as i64 { return None; }
+            let best = all.iter().max_by_key(|(_, v)| *v).map(|(n, _)| n.clone()).unwrap_or_default();
+            Some(format!("drop {} {}", gp_words(worth), best).trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+/// A big moment's kind, as Dink names it, from its words (big_moment's).
+fn kind_of(what: &str) -> String {
+    if what.starts_with("pet ") { "PET" } else if what.starts_with("log ") { "COLLECTION" } else if what.starts_with("99 ") { "LEVEL" } else { "LOOT" }.to_string()
+}
+
+/// 4200000 as "4.2m" (the page's own way: gpWords in outside-portal.js)
+pub fn gp_words(n: i64) -> String {
+    let f = n as f64;
+    if f >= 1e9 { format!("{:.2}b", f / 1e9) } else if f >= 1e6 { format!("{:.1}m", f / 1e6) } else if f >= 1e3 { format!("{}k", (f / 1e3).round()) } else { n.to_string() }
 }
 
 /// Dink's JSON: the payload_json part of a multipart post, or a plain JSON body.
@@ -172,6 +234,65 @@ fn stacks(p: &Value) -> Vec<(String, i64)> {
     }).unwrap_or_default()
 }
 
+/// What of Dink's post goes to the relay (11/06/2026): only what the relay uses of it, so nothing else leaves this PC.
+/// That's its kind, the line it shows (the embed's description, else its title, else the post's content: as the relay
+/// picks it), and the few numbers the readings and the drop guesses need for that kind (relay/src/text.ts's
+/// reportData and channel.ts's dinkCounts, relay-py's report_data and dink_counts: the same fields, every loot stack
+/// and the loot's kill count included). Everything else in Dink's post stays here: your player's name and account type as
+/// Dink sends them, Dink's account hash, your Discord user if Dink adds it, the world and the region, the screenshot,
+/// a raid party's names, a PvP killer's name, the player a PvP drop came from. A PvP drop or death keeps no line (the
+/// relay would drop it: it names the other player), and a death says only that it was PvP, never who.
+pub fn for_relay(p: &Value) -> Value {
+    let kind = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    let e = extra(p);
+    let keep: &[&str] = match kind {
+        "KILL_COUNT" => &["boss", "count", "isPersonalBest"],
+        "LEVEL" => &["levelledSkills", "allSkills", "combatLevel"],
+        "LOOT" => &["category", "source", "killCount"],
+        "COLLECTION" => &["itemName", "itemId", "completedEntries", "totalEntries"],
+        "PET" => &["petName", "duplicate", "milestone"],
+        "QUEST" => &["questName", "completedQuests", "totalQuests"],
+        "CLUE" => &["clueType", "numberCompleted"],
+        "SLAYER" => &["slayerTask", "slayerCompleted", "slayerPoints"],
+        "COMBAT_ACHIEVEMENT" => &["tier", "task"],
+        "ACHIEVEMENT_DIARY" => &["area", "difficulty"],
+        _ => &[],
+    };
+    let mut out = serde_json::Map::new();
+    for k in keep {
+        if let Some(v) = e.get(*k) { out.insert(k.to_string(), v.clone()); }
+    }
+    let truthy = |v: Option<&Value>| match v {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Number(n)) => n.as_f64() != Some(0.0),
+        _ => true,
+    };
+    let from_player = kind == "LOOT" && e.get("category").and_then(|x| x.as_str()).is_some_and(|c| c.eq_ignore_ascii_case("PLAYER"));
+    let pvp_death = kind == "DEATH" && (truthy(e.get("isPvp")) || truthy(e.get("pvp")) || truthy(e.get("killerName")));
+    if kind == "LOOT" {
+        // (each stack's name, how many, their price and the item's id: the readings keep the first 12, a drop guess
+        // looks at every one)
+        let items: Vec<Value> = e.get("items").and_then(|x| x.as_array()).map(|a| a.iter().filter(|i| i.is_object()).map(|i| {
+            let mut it = serde_json::Map::new();
+            for k in ["name", "quantity", "priceEach", "id"] {
+                if let Some(v) = i.get(k) { it.insert(k.to_string(), v.clone()); }
+            }
+            Value::Object(it)
+        }).collect()).unwrap_or_default();
+        out.insert("items".into(), Value::Array(items));
+        if from_player { out.remove("source"); }
+    }
+    if pvp_death { out.insert("isPvp".into(), Value::Bool(true)); }
+    let said = |v: Option<&Value>| v.and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
+    let first = p.get("embeds").and_then(|x| x.as_array()).and_then(|a| a.first());
+    let text = if from_player || pvp_death { String::new() } else {
+        said(first.and_then(|f| f.get("description"))).or_else(|| said(first.and_then(|f| f.get("title"))))
+            .or_else(|| said(p.get("content"))).unwrap_or_default()
+    };
+    serde_json::json!({ "type": kind, "content": text, "extra": Value::Object(out) })
+}
+
 /// Your switches for the broadcast.
 pub fn portal_wants(s: &Settings, p: &Value) -> bool {
     let kind = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
@@ -189,6 +310,15 @@ pub fn portal_wants(s: &Settings, p: &Value) -> bool {
         }
         _ => true,
     }
+}
+
+/// Where a kind goes on to: its own webhooks if its rule names some (a notifier with its own webhook in Dink:
+/// dinksetup.rs), else the rules' Discord list.
+pub fn forward_urls(rules: &Value, kind: &str) -> Vec<String> {
+    let own = rules.get("forward").and_then(|f| f.get(kind)).and_then(|r| r.get("webhooks")).and_then(|x| x.as_array());
+    own.or_else(|| rules.get("discord").and_then(|x| x.as_array())).map(|a| {
+        a.iter().filter_map(|u| u.as_str()).filter(|u| u.starts_with("https://") || u.starts_with("http://")).map(|u| u.to_string()).collect()
+    }).unwrap_or_default()
 }
 
 /// Would Discord have got this post under the rules? (forward.py's Forward.wants)
@@ -284,6 +414,26 @@ mod tests {
                "extra": {"boss": "X", "count": count, "isPersonalBest": pb}})
     }
 
+    #[test]
+    fn big_moments_clip_themselves() {
+        assert_eq!(big_moment(&json!({"type": "PET", "extra": {"petName": "Vorki"}}), 1_000_000).as_deref(), Some("pet vorki"));
+        assert_eq!(big_moment(&json!({"type": "COLLECTION", "extra": {"itemName": "Skeletal visage"}}), 1_000_000).as_deref(), Some("log skeletal visage"));
+        assert_eq!(big_moment(&loot(&[("Dragon bones", 2, 3000)]), 1_000_000), None);
+        assert_eq!(big_moment(&loot(&[("Dragon bones", 2, 3000), ("Skeletal visage", 1, 4_200_000)]), 1_000_000).as_deref(),
+                   Some("drop 4.2m skeletal visage"));
+        assert_eq!(big_moment(&loot(&[("Coins", 600_000, 1), ("Rune bolts", 400, 1000)]), 1_000_000).as_deref(), Some("drop 1.0m coins"));
+        assert_eq!(big_moment(&loot(&[("Skeletal visage", 1, 4_200_000)]), 0), None); // (0: drops never)
+        assert_eq!(big_moment(&kc(412, true, false), 1), None);
+        let level = |skills: Value| json!({"type": "LEVEL", "extra": {"levelledSkills": skills}});
+        assert_eq!(big_moment(&level(json!({"Slayer": 99})), 1_000_000).as_deref(), Some("99 slayer"));
+        assert_eq!(big_moment(&level(json!({"Attack": 99, "Strength": 99})), 1_000_000).as_deref(), Some("99 attack and strength"));
+        assert_eq!(big_moment(&level(json!({"Slayer": 98})), 1_000_000), None);
+        assert_eq!(big_moment(&level(json!({"Slayer": 100})), 1_000_000), None); // (a virtual level: not a 99)
+        assert_eq!(kind_of("99 slayer"), "LEVEL");
+        assert_eq!(big_moment(&json!({"type": "PET", "extra": {"petName": "Vorki", "duplicate": true}}), 1).as_deref(), Some("pet vorki"));
+        assert_eq!(crate::clip::file_safe("drop 4.2m abyssal whip <a/b>?"), "drop 4.2m abyssal whip a b");
+    }
+
     // (relay-py/test_relay.py's Rules, the same cases)
     #[test]
     fn loot_needs_a_stack_worth_a_million_or_an_allowed_item() {
@@ -330,6 +480,43 @@ mod tests {
         s.dink.kc_every = 10;
         assert!(!portal_wants(&s, &kc(7, false, false)));
         assert!(portal_wants(&s, &kc(20, false, false)) && portal_wants(&s, &kc(1, false, false)) && portal_wants(&s, &kc(7, true, false)));
+    }
+
+    #[test]
+    fn only_what_the_relay_keeps_leaves_this_pc() {
+        let kc = serde_json::json!({
+            "type": "KILL_COUNT", "playerName": "Lichen Ring", "accountType": "IRONMAN", "dinkAccountHash": "abc123",
+            "discordUser": {"id": "1234", "name": "someone"}, "world": 330, "regionId": 12345, "clanName": "moss",
+            "content": "", "embeds": [{"title": "kill count", "description": "**Lichen Ring** has defeated Vorkath with a completion count of 50",
+                                       "author": {"name": "Lichen Ring"}, "fields": [{"name": "x", "value": "y"}]}],
+            "extra": {"boss": "Vorkath", "count": 50, "isPersonalBest": false, "gameMessage": "...", "party": ["Moss Fern", "Bog"]}});
+        let t = for_relay(&kc);
+        assert_eq!(t, serde_json::json!({"type": "KILL_COUNT", "content": "**Lichen Ring** has defeated Vorkath with a completion count of 50",
+                                         "extra": {"boss": "Vorkath", "count": 50, "isPersonalBest": false}}));
+        let s = t.to_string();
+        for gone in ["abc123", "1234", "330", "12345", "Moss Fern", "IRONMAN", "moss\""] { assert!(!s.contains(gone), "{} went", gone); }
+        // a drop from another player: its stacks, never who it came from, and no line (it names them)
+        let pk = serde_json::json!({"type": "LOOT", "embeds": [{"description": "Lichen Ring has looted 1m from Moss Fern"}],
+            "extra": {"category": "PLAYER", "source": "Moss Fern", "items": [{"name": "Coins", "quantity": 1000000, "priceEach": 1, "id": 995, "rarity": null, "criteria": ["VALUE"]}, 7]}});
+        assert_eq!(for_relay(&pk), serde_json::json!({"type": "LOOT", "content": "",
+            "extra": {"category": "PLAYER", "items": [{"name": "Coins", "quantity": 1000000, "priceEach": 1, "id": 995}]}}));
+        // a death in PvP: that it was, never who
+        let d = serde_json::json!({"type": "DEATH", "content": "Lichen Ring was killed by Moss Fern", "extra": {"isPvp": true, "killerName": "Moss Fern", "valueLost": 9}});
+        assert_eq!(for_relay(&d), serde_json::json!({"type": "DEATH", "content": "", "extra": {"isPvp": true}}));
+        // a plain JSON post's own words, when there's no embed
+        // a boss's drop: every stack, and the kill count it came at (a drop guess decides on it)
+        let many: Vec<Value> = (0..15).map(|n| serde_json::json!({"name": format!("item {}", n), "quantity": 1, "priceEach": n, "id": n, "rarity": 0.1})).collect();
+        let boss = serde_json::json!({"type": "LOOT", "content": "drop", "extra": {"category": "NPC", "source": "Vorkath", "killCount": 51, "npcId": 8061, "party": ["Bog"], "items": many}});
+        let tb = for_relay(&boss);
+        assert_eq!(tb["extra"]["killCount"], 51);
+        assert_eq!(tb["extra"]["source"], "Vorkath");
+        assert_eq!(tb["extra"]["items"].as_array().unwrap().len(), 15);
+        assert_eq!(tb["extra"]["items"][14], serde_json::json!({"name": "item 14", "quantity": 1, "priceEach": 14, "id": 14}));
+        assert!(tb["extra"].get("party").is_none() && tb["extra"].get("npcId").is_none());
+        let lv = serde_json::json!({"type": "LEVEL", "content": "Lichen Ring has levelled Attack to 99",
+            "extra": {"levelledSkills": {"Attack": 99}, "allSkills": {"Attack": 99}, "combatLevel": {"value": 100, "increased": true}}});
+        assert_eq!(for_relay(&lv)["content"], "Lichen Ring has levelled Attack to 99");
+        assert_eq!(for_relay(&lv)["extra"]["combatLevel"]["value"], 100);
     }
 
     #[test]

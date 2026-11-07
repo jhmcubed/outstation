@@ -57,12 +57,17 @@ export function reportData(kind: string, extra: any): Record<string, unknown> {
     }
   } else if (kind === "LOOT") {
     const items = (Array.isArray(extra.items) ? extra.items : []).filter((i: any) => i && typeof i === "object").slice(0, 12);
-    const list = items.filter((i: any) => short(i.name)).map((i: any) => ({ name: short(i.name), quantity: number(i.quantity) || 0, price: number(i.priceEach) || 0 }));
+    // (each item's id too, for its picture: RuneLite's icons go by id; 11/06/2026)
+    const list = items.filter((i: any) => short(i.name)).map((i: any) => {
+      const it: any = { name: short(i.name), quantity: number(i.quantity) || 0, price: number(i.priceEach) || 0 };
+      if (number(i.id) !== undefined) it.id = number(i.id);
+      return it;
+    });
     d.items = list;
     d.value = list.reduce((s: number, i: any) => s + i.quantity * i.price, 0);
     if (String(extra.category || "").toUpperCase() !== "PLAYER") d.source = short(extra.source);
   } else if (kind === "COLLECTION") {
-    d = { item: short(extra.itemName), done: number(extra.completedEntries), total: number(extra.totalEntries) };
+    d = { item: short(extra.itemName), id: number(extra.itemId), done: number(extra.completedEntries), total: number(extra.totalEntries) };
   } else if (kind === "PET") {
     d = { pet: short(extra.petName), duplicate: !!extra.duplicate, milestone: short(extra.milestone) };
   } else if (kind === "QUEST") {

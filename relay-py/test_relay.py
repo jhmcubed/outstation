@@ -112,13 +112,15 @@ class Fanout(RelayTest):
         lines = []
         while True:
             kind, line = await v.recv()
+            if line.startswith('{"summary"'):
+                continue            # (the stream's summary, 11/06/2026: not a status line)
             lines.append(json.loads(line)["relay"])
             if lines[-1]["live"]:
                 break
         tx.close()
         while True:
             kind, line = await v.recv()
-            if not json.loads(line)["relay"]["live"]:
+            if line.startswith('{"relay"') and not json.loads(line)["relay"]["live"]:
                 break
 
 
@@ -809,6 +811,20 @@ class Talk(RelayTest):
         await tx.send('{"state": "open"}')
         while not (await next_of(desk, "relay"))["open"]:
             pass
+
+    async def test_the_broadcasts_title_reaches_viewers_and_newcomers_in_one_line(self):
+        # (11/06/2026: the title beside "✼ portal" on Outside)
+        tx, desk, a, b = await self.setup_room()
+        await desk.send(json.dumps({"title": "  zulrah\n until the pet "}))
+        r = await next_of(a, "relay")
+        while not r["title"]:
+            r = await next_of(a, "relay")
+        self.assertEqual(r["title"], "zulrah until the pet")
+        late = await self.connect("/watch/sburb")
+        self.assertEqual((await next_of(late, "relay"))["title"], "zulrah until the pet")
+        await desk.send(json.dumps({"title": "y" * 500}))
+        while len(r["title"]) != relay.TITLE_MAX:
+            r = await next_of(a, "relay")
 
     async def test_the_desk_needs_the_key_and_the_public_side_refuses_it(self):
         await self.connect("/transmit/sburb?key=secret-key")
