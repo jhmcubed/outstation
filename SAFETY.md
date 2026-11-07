@@ -87,6 +87,11 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 - a random code your PC keeps, to collect the answer
 - While the request waits, the outstation asks the same relay every 20 seconds whether he's answered.
 
+**To your relay, for invites** (friends ▸, "invite a friend"; 11/07/2026), only while the drawer's open:
+- your channel and its key, to read how many invites are left (on opening it, then at most every 30 seconds)
+- when you press **make a key**: the name you typed for your friend, with your channel and key
+- The station key that comes back is only shown to you and copied when you press copy. You send it on yourself.
+
 **For your friends list** (friends ▸), while anyone's on it, to your relay (Jace's, before you're attached):
 - a request for the relay's list of open outstations, every minute (every 20 seconds while the list is open). Nothing about you or your list goes with it: the names are matched on your PC.
 - With the hand over a live friend's name, it watches their outstation through the relay for a small picture of it, the way the outstations page does: not counted as watching, and stopped when the hand moves away.
@@ -218,6 +223,8 @@ Your picture and sound are passed on as they come and never written down. Only t
 A viewer's address (IP) isn't written down, and the relay never learns their name in the game or anything about their account.
 
 **Anomalies and requisitions** (only those you send): your words, the name you chat under, the version, the station log for an anomaly, your channel if it checked out, and when. At most 50, each for 30 days, until Jace reads it and takes it off. The address one came from is held in memory for an hour (5 an hour from one place).
+
+**Invites** (11/07/2026): how many each outstation has used and the names it invited, its time on air in all (invites are earned from it), and, for an outstation established through an invite, whose invite it was. That last one's public, on the relay's list of open outstations.
 
 **Asking for an outstation:**
 - the name and note you typed, and the SHA-256 of your outstation's pickup code
