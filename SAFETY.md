@@ -105,6 +105,8 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 
 **To GitHub,** once on opening (settings ▸ more turns it off): "is there a newer version?". Nothing about you goes with it.
 
+**From the Outside plugin in RuneLite** (a separate plugin, only if you install it and give it your station key; 11/07/2026), to your relay while you're logged in: what you wear and carry, your looting bag (once you've looked in it), rune pouch and quiver, your hitpoints, prayer, run and special and the prayers you have on, each skill's level and experience, your name, world and account type, and each of those items' name and price. Never your screen, your chat, where you are, your bank, or anything you type. [plugin/README.md](plugin/README.md) has it all.
+
 **Your internet address.** Every connection shows your internet address (IP) to the server it reaches, as any connection on the internet does: Cloudflare (the relay), GitHub, Discord. The relay doesn't write it down (see [What the relay keeps](#what-the-relay-keeps)).
 
 **Dark, with the tape rolling** ("clips only", or "and while dark too" in dink ▸; 11/07/2026): the outstation takes RuneLite's picture and sound exactly as when transmitting, but keeps them only in memory, the last few seconds, for clips. Nothing goes to the relay. A clip that saves itself goes to your clips folder and, if your Discord gets Dink's posts through the outstation, to Discord under that post, and nowhere else (never your Outside page while dark).
@@ -226,6 +228,8 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 **Anomalies and requisitions** (only those you send): your words, the name you chat under, the version, the station log for an anomaly, your channel if it checked out, and when. At most 50, each for 30 days, until Jace reads it and takes it off. The address one came from is held in memory for an hour (5 an hour from one place).
 
 **Invites** (11/07/2026): how many each outstation has used and the names it invited, its time on air in all (invites are earned from it), and, for an outstation established through an invite, whose invite it was. That last one's public, on the relay's list of open outstations.
+
+**The Outside plugin's game** (only if you use the plugin; 11/07/2026): the last of what it sent (what you wore and carried, your looting bag, rune pouch and quiver, your vitals, prayers and skills, your name, world and account type, and the names and prices of those items), so your page shows it while you're away. Saved at most once a minute while it changes, and when the plugin disconnects. Your page shows it to anyone who opens it, as your transmission. Taken away when your channel is.
 
 **Asking for an outstation:**
 - the name and note you typed, and the SHA-256 of your outstation's pickup code

@@ -425,6 +425,13 @@ fn write(p: &Path, s: &Settings) -> std::io::Result<()> {
     std::fs::rename(&tmp, p)
 }
 
+/// This outstation's own station key, made again from its settings (11/07/2026: for the Outside plugin's settings).
+pub fn make_attach(relay: &str, channel: &str, key: &str) -> String {
+    use base64::Engine;
+    let body = serde_json::json!({ "relay": relay, "channel": channel, "key": key }).to_string();
+    format!("{}{}", KEY_PREFIX, base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(body))
+}
+
 /// A station key (the attach code): "outstation1:" (or, from before, "portal1:") and base64url JSON {"relay",
 /// "channel", "key"}.
 pub fn parse_attach(code: &str) -> Result<(String, String, String), String> {
@@ -459,6 +466,9 @@ mod tests {
             assert_eq!(parse_attach(&code).unwrap(), ("wss://outside-portal.x.workers.dev".into(), "ja".into(), "abcdefghijkl".into()));
         }
         assert!(parse_attach("outstation1:!!!").is_err());
+        // (its own key, made again for the Outside plugin, reads back the same)
+        let made = make_attach("wss://relay.ghillie.workers.dev", "sburb", "abcdefghijkl");
+        assert_eq!(parse_attach(&made).unwrap(), ("wss://relay.ghillie.workers.dev".into(), "sburb".into(), "abcdefghijkl".into()));
         assert!(!is_key("hello"));
         assert!(parse_attach("hello").is_err());
     }

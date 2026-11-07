@@ -254,6 +254,8 @@ pub struct App {
     /// when the last ping and ✼ came: their windows stay a few seconds after (LINGER), so a burst makes one window
     /// something came that flashes the taskbar button (once, after what came is read: drain)
     flash_wanted: bool,
+    /// the Outside plugin (RuneLite) connected to this channel, as the relay last said (None: not said yet)
+    plugin_on: Option<bool>,
     pings_last: Option<Instant>,
     /// the moving box put where the chat sits, once as moving starts (it's dragged from there)
     moving_placed: bool,
@@ -489,7 +491,7 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), flash_wanted: false, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -634,6 +636,8 @@ impl App {
         }
         if let Some(r) = m.get("relay") {
             self.live = r.get("live").and_then(|x| x.as_bool()).unwrap_or(false);
+            // (the Outside plugin connected to this channel now: the relay says so with every status line; 11/07/2026)
+            self.plugin_on = r.get("game").and_then(|x| x.as_bool());
             self.viewers = r.get("viewers").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             self.open = r.get("open").and_then(|x| x.as_bool()).unwrap_or(false);
             self.static_on = r.get("static").and_then(|x| x.as_bool()).unwrap_or(false);
@@ -1839,6 +1843,23 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             field(ui, &mut s.code, 140.0, "", false);
         });
         ui.label(rich(&format!("relay {} · channel {}", s.relay, s.channel), 14.0, QUIET()));
+        // (for the Outside plugin's settings, 11/07/2026: the key it attached with, made again)
+        if s.attached() {
+            ui.horizontal_wrapped(|ui| {
+                if button(ui, "copy my station key", true, None)
+                    .on_hover_text(tip("for the Outside plugin in RuneLite (its settings, \"Station key\"): what you wear and carry, live on your Outside page. It's this outstation's key: give it to nobody else.")).clicked() {
+                    win::copy_text(&crate::settings::make_attach(&s.relay, &s.channel, &s.key));
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("key copied"), Instant::now()));
+                }
+                let copied = ui.ctx().data(|d| d.get_temp::<Instant>(egui::Id::unique("key copied"))).is_some_and(|t| t.elapsed() < Duration::from_secs(4));
+                if copied {
+                    ui.label(rich("on the clipboard: paste it into the Outside plugin's settings in RuneLite", 14.0, LIME()));
+                    ui.ctx().request_repaint_after(Duration::from_millis(500));
+                } else {
+                    ui.label(rich("for the Outside plugin (RuneLite)", 14.0, QUIET()));
+                }
+            });
+        }
         let detach = button(ui, "attach another station key…", true, None).clicked();
         if detach {
             s.key.clear();
@@ -3543,6 +3564,12 @@ impl App {
             (Some((kind, at, _)), _, _) => ("Dink".into(), Some(true), format!("heard from Dink {} ago ({})", ago(at.elapsed()), kind)),
             (None, _, Some(e)) => ("Dink".into(), Some(false), format!("Dink can't reach the outstation: {}", e)),
             _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (only for drops and level-ups under your outstation)".into()),
+        });
+        // the Outside plugin (11/07/2026): optional, so a dot till it's there
+        items.push(if self.plugin_on == Some(true) {
+            ("Outside plugin".into(), Some(true), "connected: what you wear and carry is live on your Outside page".into())
+        } else {
+            ("Outside plugin".into(), None, "optional: the Outside plugin for RuneLite puts what you wear and carry, live, on your Outside page. In its settings, paste your station key (settings ▸ more: \"copy my station key\")".into())
         });
         let sound = match s.sound.as_str() { "game" => "the game", "all" => "game + desktop", _ => "off" };
         items.push((format!("sound: {}", sound), None, "the sound row below: off, the game, or game + desktop (never a microphone)".into()));
