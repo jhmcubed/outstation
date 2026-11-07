@@ -1410,6 +1410,114 @@ class Flow(Base):
         self.assertEqual((await v.recv_data())[0], "binary")
 
 
+class Invites(Base):
+    """An outstation's invites (11/07/2026): it hands out channels of its own, three to begin with and one more every 10
+    hours on air (the earning is relay-py/test_relay.py's: ten hours on air can't be waited for here). An invite's code
+    attaches a client as the keeper's does, and the new channel says whose invite it came from."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        if not WORKER:
+            tx = await self.tx()           # (relay.py: a channel is handed out once its first transmitter claims it)
+            await next_of(tx, "relay")
+            tx.close()
+            await self.pause(2)
+
+    def status(self, key=None):
+        return http("GET", "/invites/%s?key=%s" % (self.ch, key or self.key))
+
+    def invite(self, player, key=None):
+        return http("POST", "/invites/" + self.ch, {"key": key or self.key, "player": player})
+
+    async def given(self, name):
+        """A name with an outstation already: handed out by the keeper (the Worker), or claimed (relay.py)."""
+        if WORKER:
+            self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
+        else:
+            c = await Client().open("%s/transmit/%s?key=its-own-key-%s" % (RELAY, name, secrets.token_hex(3)))
+            self.clients.append(c)
+            await next_of(c, "relay")
+
+    async def test_a_new_outstation_has_three_and_has_used_none(self):
+        status, got = self.status()
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(got), ["earned", "hours", "left", "next_in_s", "used"])
+        self.assertEqual((got["left"], got["earned"], got["used"], got["hours"]), (3, 3, [], 0))
+        self.assertTrue(35990 <= got["next_in_s"] <= 36000, got["next_in_s"])
+
+    async def test_an_invite_is_a_station_key_for_a_new_channel_that_says_whose_it_was(self):
+        name = "i" + secrets.token_hex(5)
+        status, got = self.invite(name)
+        self.assertEqual(status, 200)
+        self.assertEqual((got["channel"], got["left"]), (name, 2))
+        self.assertTrue(got["code"].startswith("outstation1:"))
+        raw = got["code"][len("outstation1:"):]
+        info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        self.assertEqual(info, {"relay": RELAY, "channel": name, "key": got["key"]})
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, info["key"]))
+        self.clients.append(tx)
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+        status, st = self.status()
+        self.assertEqual((status, st["left"], st["used"]), (200, 2, [name]))
+        await self.pause(2)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        self.assertEqual(rows[name]["by"], self.ch)
+        self.assertIsNone(rows[self.ch]["by"])
+        if WORKER:
+            kept = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}
+            self.assertEqual(kept[name]["by"], self.ch)
+            self.assertIsNone(kept[self.ch]["by"])                  # (the keeper's own)
+
+    async def test_a_name_with_an_outstation_already_isnt_invited(self):
+        other = "i" + secrets.token_hex(5)
+        await self.given(other)
+        status, got = self.invite(other)
+        self.assertEqual((status, got["error"]), (409, "that name has an outstation already"))
+        name = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(name)[0], 200)
+        self.assertEqual(self.invite(name)[0], 409)                   # (it has one now: this invite's)
+        self.assertEqual(self.status()[1]["used"], [name])            # (nothing refused was counted)
+
+    async def test_the_wrong_key_and_a_channel_nobody_has_are_refused(self):
+        self.assertEqual(self.status(key="not-the-key-at-all")[0], 403)
+        status, got = self.invite("i" + secrets.token_hex(5), key="not-the-key-at-all")
+        self.assertEqual(status, 403)
+        self.assertTrue(got["error"])
+        self.assertEqual(self.status()[1]["left"], 3)
+        self.assertEqual(http("GET", "/invites/none%s?key=%s" % (secrets.token_hex(4), self.key))[0], 404)
+
+    async def test_three_to_begin_with_and_then_none_left(self):
+        names = ["i" + secrets.token_hex(5) for _ in range(4)]
+        self.assertEqual([self.invite(n)[1].get("left") for n in names[:3]], [2, 1, 0])
+        status, got = self.invite(names[3])
+        self.assertEqual((status, got["error"]), (409, "no invites left: one more every 10 hours on air"))
+        got = self.status()[1]
+        self.assertEqual((got["left"], got["earned"], got["used"]), (0, 3, names[:3]))
+
+    async def test_your_own_name_and_names_that_arent_a_players_are_refused(self):
+        got = {name: self.invite(name) for name in (self.ch, "Moss", "moss man", "thirteenchars")}
+        self.assertEqual([status for status, _ in got.values()], [400] * 4)
+        self.assertEqual(got[self.ch][1]["error"], "that's your own outstation")
+        self.assertEqual(self.status()[1]["used"], [])
+
+    @unittest.skipUnless(WORKER, "a new key and taking back: the keeper's, the Worker only")
+    async def test_a_new_key_keeps_whose_invite_it_was_and_taking_back_takes_nothing_back(self):
+        name = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(name)[0], 200)
+        self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)   # (the keeper's new key for it)
+        self.assertEqual({c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[name]["by"], self.ch)
+        self.assertEqual(admin("DELETE", "/admin/channels/" + name)[0], 204)
+        self.assertEqual(self.status()[1]["used"], [name])                  # (the invite stays spent)
+        other = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(other)[0], 200)
+        self.assertEqual(admin("DELETE", "/admin/channels/" + self.ch)[0], 204)
+        self.assertEqual({c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[other]["by"], self.ch)
+
+    async def test_z_past_five_posts_an_hour_wait(self):
+        codes = [self.invite("i" + secrets.token_hex(5))[0] for _ in range(6)]
+        self.assertEqual(codes, [200, 200, 200, 409, 409, 429])
+
+
 @unittest.skipUnless(WORKER, "channels handed out by an owner: the Worker only")
 class Channels(Base):
     async def test_a_channel_nobody_handed_out_cant_be_taken(self):

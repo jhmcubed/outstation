@@ -136,3 +136,16 @@ export function pyjson(v: unknown): string {
   }
   return "null";
 }
+
+// The attach code (the station key, in the client's words): "outstation1:" and base64url JSON {"relay", "channel",
+// "key"}, which the client takes in one paste. The relay's own address is the one the request came to (wss:// on
+// Cloudflare, ws:// under wrangler dev). (Here since 11/07/2026, so a channel's invites make one too: channel.ts.)
+export function relayOf(requestUrl: string): string {
+  const u = new URL(requestUrl);
+  return (u.protocol === "https:" ? "wss://" : "ws://") + u.host;
+}
+export function attachCode(relay: string, channel: string, key: string): string {
+  const json = JSON.stringify({ relay, channel, key });
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
+  return "outstation1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}

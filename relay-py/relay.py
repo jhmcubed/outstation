@@ -73,6 +73,14 @@ The client's version (11/06/2026): outstation's client adds v=<its version> to t
 sound addresses. With --min-client set, a client that says an older version is turned away with 4026 and
 the oldest version allowed in the reason, so it can say where to get a newer one instead of trying again.
 A connection that says no version (ghillie's Python portal, which predates it) is let in as before.
+
+Invites (11/07/2026; docs/protocol.md "Invites"): an outstation hands out channels of its own, INVITES_START to begin
+with and one more every INVITE_EVERY_S (10 hours) on air, counted from when it was claimed (in memory: a restart
+starts every count again, as it forgets every channel).
+    GET   http://HOST:PORT/invites/<channel>?key=<secret>          {"left", "earned", "used", "hours", "next_in_s"}
+    POST  http://HOST:PORT/invites/<channel>  {"key", "player"}     {"channel", "key", "code", "left"}
+  The new channel is claimed with a new key, and the code attaches a client to it; GET /channels says whose invite
+  each channel came from ("by"). The public side refuses both.
 """
 
 import argparse
@@ -103,6 +111,11 @@ CLIPS_MOST, CLIPS_DAYS, CLIPS_AN_HOUR = 20, 30, 30
 # messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
 # for it till its portal next opens (at most DMS_KEPT, DMS_DAYS each); a portal may send DMS_A_MINUTE a minute
 DMS_KEPT, DMS_DAYS, DMS_A_MINUTE = 20, 7, 20
+# invites (11/07/2026, Jace: "each of my friends being able to pass out a few keys so that way the platform propagates
+# easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
+# begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (the Worker's, the same)
+INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
+PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -304,6 +317,22 @@ def fold(summary, report):
     return True
 
 
+def invite_numbers(seconds, used):
+    """An outstation's invites, from its time on air in all (seconds) and the names it's invited (the Worker's
+    inviteNumbers, the same). hours: one decimal, rounded down, so it never says 10.0 before the invite at 10."""
+    s = max(0, int(seconds))
+    earned = INVITES_START + s // INVITE_EVERY_S
+    return {"left": max(0, earned - len(used)), "earned": earned, "used": list(used), "hours": (s // 360) / 10,
+            "next_in_s": INVITE_EVERY_S - s % INVITE_EVERY_S}
+
+
+def attach_code(relay, channel, key):
+    """The attach code (the station key): "outstation1:" and base64url JSON {"relay", "channel", "key"} (the Worker's
+    attachCode, the same)."""
+    raw = json.dumps({"relay": relay, "channel": channel, "key": key}, separators=(",", ":")).encode()
+    return "outstation1:" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
 class Channel:
     def __init__(self, name, key):
         self.name, self.key = name, key
@@ -348,6 +377,17 @@ class Channel:
         self.dms = []                # messages to this portal held till its desk opens (send_dm)
         self.dms_sent = []           # when this portal sent its last messages, for DMS_A_MINUTE
         self.summary = None          # this stream's summary (fold): {"since", "ended", "boss", "kc", "loot", ...}
+        # invites (11/07/2026): time on air in all (in memory, as everything here), the names it's invited, and whose
+        # invite it came from (None: claimed by its first transmitter)
+        self.live_all = 0.0          # seconds on air in all, the stretch going on now not included
+        self.live_since = None       # when this stretch on air began (time.monotonic()), while it lasts
+        self.invited = []
+        self.invite_posts = []       # when it last posted for an invite, for INVITES_AN_HOUR
+        self.by = None
+
+    def seconds_in_all(self):
+        """Seconds on air in all, the stretch going on now included (for invites)."""
+        return self.live_all + (time.monotonic() - self.live_since if self.live_since is not None else 0.0)
 
     def summary_line(self):
         return json.dumps({"summary": self.summary})
@@ -360,8 +400,13 @@ class Channel:
         else:
             self.summary.pop("ended", None)
         self.tell_summary()
+        if self.live_since is None:  # (a transmitter replacing another: the same stretch goes on)
+            self.live_since = time.monotonic()
 
     def off_air(self):
+        if self.live_since is not None:
+            self.live_all += time.monotonic() - self.live_since
+            self.live_since = None
         if self.summary is not None:
             self.summary["ended"] = int(time.time() * 1000)
             self.tell_summary()
@@ -683,8 +728,9 @@ class Relay:
         url = urlsplit(target)
         path = [unquote(p) for p in url.path.split("/") if p]
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
-        if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch"))):
-            # from the internet: no transmitting and no Dink posts, whatever key comes with them
+        if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch"))
+                       or (path and path[0] == "invites")):
+            # from the internet: no transmitting, no Dink posts and no invites, whatever key comes with them
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -694,6 +740,9 @@ class Relay:
             return
         if method == "POST" and len(path) == 2 and path[0] == "dink":
             await self.dink(reader, writer, headers, path[1], q.get("key", ""))
+            return
+        if len(path) == 2 and path[0] == "invites" and not key:
+            await self.invites(reader, writer, method, headers, path[1], q)
             return
         if method == "GET" and not key and url.path == "/channels":
             await self.channel_list(writer)
@@ -1127,7 +1176,7 @@ class Relay:
         public side too); a channel with a watch code is never listed."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
-                 "doing": ch.doing()}
+                 "doing": ch.doing(), "by": ch.by}
                 for ch in self.channels.values() if ch.key is not None and not ch.code]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         body = json.dumps({"channels": rows}).encode()
@@ -1137,6 +1186,85 @@ class Relay:
             await writer.drain()
         finally:
             writer.close()
+
+    async def invites(self, reader, writer, method, headers, name, q):
+        """Invites (11/07/2026; docs/protocol.md "Invites"; the Worker's channel.ts invites, the same): an outstation
+        hands out channels of its own, INVITES_START to begin with and one more every INVITE_EVERY_S on air.
+            GET  /invites/<channel>?key=<key>          {"left", "earned", "used", "hours", "next_in_s"}
+            POST /invites/<channel>  {"key", "player"}  {"channel", "key", "code", "left"}: a new channel for that
+                                                        player, claimed with a new key, which says whose invite it was
+        Here a channel is "handed out" once it's claimed (its first transmitter, or an invite). Nothing is awaited
+        between the checks and the new channel's key, so two posts at once can't both take the last invite."""
+        async def answer(status, body=None):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method not in ("GET", "POST"):
+            return await answer("405 Method Not Allowed")
+        if not re.fullmatch(r"[A-Za-z0-9_.~-]{1,64}", name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        body = {}
+        if method == "POST":
+            try:
+                if headers.get("transfer-encoding", "").lower() == "chunked":
+                    raw = await read_chunked(reader)
+                else:
+                    n = int(headers.get("content-length", "0") or 0)
+                    if n > 4096:
+                        return await answer("413 Payload Too Large", {"error": "an invite is a key and a name"})
+                    raw = await reader.readexactly(n)
+            except (ValueError, asyncio.IncompleteReadError):
+                return await answer("400 Bad Request")
+            if len(raw) > 4096:
+                return await answer("413 Payload Too Large", {"error": "an invite is a key and a name"})
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+        ch = self.channels.get(name)
+        if ch is None or ch.key is None:
+            return await answer("404 Not Found", {"error": "no outstation called that here"})
+        key = q.get("key", "") if method == "GET" else body.get("key")
+        if not isinstance(key, str) or len(key) < 8:
+            return await answer("403 Forbidden", {"error": "a transmit key needs at least 8 characters"})
+        if key != ch.key:
+            return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+        if method == "GET":
+            return await answer("200 OK", invite_numbers(ch.seconds_in_all(), ch.invited))
+        now = time.monotonic()
+        ch.invite_posts = [t for t in ch.invite_posts if now - t < 3600]
+        if len(ch.invite_posts) >= INVITES_AN_HOUR:
+            return await answer("429 Too Many Requests", {"error": "%d invites an hour at most: try again later" % INVITES_AN_HOUR})
+        ch.invite_posts.append(now)
+        player = body.get("player")
+        if not isinstance(player, str) or not PLAYER.fullmatch(player):
+            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters or numbers, lower case"})
+        if player == name.lower():
+            return await answer("400 Bad Request", {"error": "that's your own outstation"})
+        if invite_numbers(ch.seconds_in_all(), ch.invited)["left"] <= 0:
+            return await answer("409 Conflict", {"error": "no invites left: one more every %d hours on air" % (INVITE_EVERY_S // 3600)})
+        other = self.channels.get(player)
+        if other is not None and other.key is not None:
+            return await answer("409 Conflict", {"error": "that name has an outstation already"})
+        new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
+        if other is None:
+            other = self.channels[player] = Channel(player, new_key)
+        else:
+            other.key = new_key       # (a channel only viewers were waiting on: now it's handed out, and they hear so)
+            other.tell_viewers()
+        other.by = name
+        ch.invited.append(player)
+        self.log("invite    %s  -> %s" % (name, player))
+        code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
+        return await answer("200 OK", {"channel": player, "key": new_key, "code": code,
+                                       "left": invite_numbers(ch.seconds_in_all(), ch.invited)["left"]})
 
     async def page(self, writer, path, head_only=False):
         """The watching page itself, so a friend needs only this relay's address."""

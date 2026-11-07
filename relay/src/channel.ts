@@ -8,7 +8,7 @@
 // frames keep it awake, so the last frame lives in memory only.
 
 import { DurableObject } from "cloudflare:workers";
-import { dinkReport, oneLine, pyjson } from "./text";
+import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 
 export interface Env {
@@ -49,6 +49,20 @@ const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused 
 // for it till its portal next opens (relay.py's DMS_KEPT, DMS_DAYS, DMS_A_MINUTE)
 const DMS_KEPT = 20, DMS_DAYS = 7, DMS_A_MINUTE = 20;
 interface Dm { from: string; name: string; text: string; at: number }
+// invites (11/07/2026, Jace: "each of my friends being able to pass out a few keys so that way the platform propagates
+// easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
+// begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (relay.py's, the same)
+export const INVITES_START = 3, INVITE_EVERY_S = 36_000, INVITES_AN_HOUR = 5;
+// a channel asked for or invited: a player's name as the page has it (lower case, no spaces)
+export const PLAYER = /^[a-z0-9]{1,12}$/;
+
+/** An outstation's invites, from its time on air in all (seconds) and the names it's invited (relay.py's
+ *  invite_numbers, the same). hours: one decimal, rounded down, so it never says 10.0 before the invite at 10. */
+export function inviteNumbers(seconds: number, used: string[]) {
+  const s = Math.max(0, Math.floor(seconds)), earned = INVITES_START + Math.floor(s / INVITE_EVERY_S);
+  return { left: Math.max(0, earned - used.length), earned, used, hours: Math.floor(s / 360) / 10,
+           next_in_s: INVITE_EVERY_S - (s % INVITE_EVERY_S) };
+}
 const OPEN = 1; // WebSocket.OPEN
 // Flow control: a viewer says {"got": <binary bytes received so far>} about once a second, and past this much
 // sent and not yet acknowledged it's sent no more frames or sound until it catches up. (Cloudflare's server side
@@ -130,6 +144,8 @@ interface Meta {
   liveSince?: number; // when this stretch on air began (ms), while it lasts
   liveSeen?: number; // the last moment it was seen on air (saved about once a minute), for a stretch that ended unseen
   liveMs?: Record<string, number>; // time on air by month ("2026-11"), the last few months, for the keeper's bill
+  liveAll?: number; // time on air in all, in seconds, the stretch going on now not included (11/07/2026: invites)
+  invited?: string[]; // the channels this one has invited, in order (11/07/2026)
   summary?: Summary | null; // this stream's summary (fold): the readings the same for everyone, and the recap off air
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
@@ -463,7 +479,7 @@ export class Channel extends DurableObject<Env> {
     let [, role] = url.pathname.split("/");
     if (role === "watch" && q.get("look") === "1") role = "look";
 
-    if (role === "_mint") return this.mint();
+    if (role === "_mint") return this.mint(q.get("new") === "1");
     if (role === "_status") {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
@@ -483,6 +499,7 @@ export class Channel extends DurableObject<Env> {
     // (an anomaly report's channel and key, checked: index.ts's /reports)
     if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
     if (role === "_dm") return this.takeDm(request);
+    if (role === "_invites") return this.invites(request, q, ip);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
 
@@ -739,14 +756,32 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
-  /** Time on air from `from` to `to` (ms) into its month's count, keeping the last four months. */
+  /** Time on air from `from` to `to` (ms) into its month's count, keeping the last four months, and into the count of
+   *  it all (11/07/2026, for invites). */
   addLive(from: number, to: number) {
     if (to <= from) return;
+    const before = this.lifetime(); // (first: a channel from before starts from the months it keeps, this one not yet in)
     const month = new Date(to).toISOString().slice(0, 7);
     const all = this.meta.liveMs || {};
     all[month] = (all[month] || 0) + (to - from);
     for (const m of Object.keys(all).sort().slice(0, -4)) delete all[m];
     this.meta.liveMs = all;
+    this.meta.liveAll = before + (to - from) / 1000;
+  }
+
+  /** Seconds on air in all, the stretch going on now not included. A channel from before it was counted (11/07/2026)
+   *  starts from the months it still keeps, the first time it's asked. */
+  lifetime(): number {
+    if (this.meta.liveAll === undefined) {
+      this.meta.liveAll = Object.values(this.meta.liveMs || {}).reduce((a, b) => a + b, 0) / 1000;
+      this.saveMeta();
+    }
+    return this.meta.liveAll;
+  }
+
+  /** Seconds on air in all, the stretch going on now included. */
+  secondsInAll(): number {
+    return this.lifetime() + (this.meta.liveSince && this.live() ? (Date.now() - this.meta.liveSince) / 1000 : 0);
   }
 
   /** Seconds on air this month (UTC), the stretch going on now included. */
@@ -1301,9 +1336,72 @@ export class Channel extends DurableObject<Env> {
     return json({ id: clip.id }, 201);
   }
 
+  // Invites (11/07/2026; docs/protocol.md, "Invites"): this outstation hands out channels of its own, as the keeper does
+  // (index.ts's mint, the same steps), INVITES_START to begin with and one more every INVITE_EVERY_S on air.
+  //   GET  ?key=              {"left", "earned", "used", "hours", "next_in_s"}
+  //   POST {"key", "player"}  {"channel", "key", "code", "left"}: a new channel for that player, its row in the
+  //                           Directory saying it came from this one ("by")
+  // An invite is counted only once the new channel has its key, so nothing that fails loses one. While one's being made
+  // its name is held here (inviting), so two posts at once can't both take the last invite: this object handles one
+  // request at a time, but another can come in while this one waits on the Directory or the new channel.
+
+  invitePosts: number[] = []; // when this outstation last posted for an invite (in memory: a sleep forgets, which only loosens it)
+  inviting = new Set<string>();
+
+  async invites(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    if (request.method !== "GET" && request.method !== "POST") return new Response(null, { status: 405 });
+    const body = request.method === "POST" ? ((await request.json().catch(() => null)) as { key?: unknown; player?: unknown } | null) : null;
+    const key = request.method === "GET" ? q.get("key") || "" : typeof body?.key === "string" ? body.key : "";
+    const no = await this.checkKey(key, ip);
+    if (no) return json({ error: no[1] }, 403);
+    const used = () => this.meta.invited || [];
+    if (request.method === "GET") return json(inviteNumbers(this.secondsInAll(), used()));
+    const now = Date.now();
+    this.invitePosts = this.invitePosts.filter((t) => now - t < 3_600_000);
+    if (this.invitePosts.length >= INVITES_AN_HOUR) return json({ error: `${INVITES_AN_HOUR} invites an hour at most: try again later` }, 429);
+    this.invitePosts.push(now);
+    const player = typeof body?.player === "string" ? body.player : "";
+    if (!PLAYER.test(player)) return json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, 400);
+    if (player === this.name.toLowerCase()) return json({ error: "that's your own outstation" }, 400);
+    if (inviteNumbers(this.secondsInAll(), used()).left - this.inviting.size <= 0) {
+      return json({ error: `no invites left: one more every ${INVITE_EVERY_S / 3600} hours on air` }, 409);
+    }
+    const taken = () => json({ error: "that name has an outstation already" }, 409);
+    if (this.inviting.has(player)) return taken();
+    this.inviting.add(player);
+    try {
+      const dir = (this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory")));
+      const row = "https://dir/?name=" + encodeURIComponent(player);
+      // the name in the Directory first (only if nobody has it), then the new channel's key; the row taken back if the
+      // key can't be made
+      const r = await dir.fetch(row + "&by=" + encodeURIComponent(this.name), { method: "PUT" });
+      if (r.status === 409) return taken();
+      if (!r.ok) return json({ error: "the invite didn't go through: try again" }, 503);
+      let minted: Response | null = null;
+      try {
+        minted = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(player))
+          .fetch(new Request(new URL("/_mint?new=1", request.url).toString(), { method: "POST", headers: { "x-channel": player } }));
+      } catch { /* (below) */ }
+      const got = minted && minted.ok ? ((await minted.json()) as { key?: string }) : null;
+      if (!got?.key) {
+        await dir.fetch(row, { method: "DELETE" }).catch(() => null);
+        return minted?.status === 409 ? taken() : json({ error: "the invite didn't go through: try again" }, 503);
+      }
+      this.meta.invited = [...used(), player];
+      this.saveMeta();
+      return json({ channel: player, key: got.key, code: attachCode(relayOf(request.url), player, got.key),
+                    left: inviteNumbers(this.secondsInAll(), used()).left });
+    } finally {
+      this.inviting.delete(player);
+    }
+  }
+
   // Jace's admin (index.ts checks the admin token before it reaches here)
 
-  async mint(): Promise<Response> {
+  // (onlyNew: an invite's, which never takes a channel that has a key already, whatever the Directory says)
+  async mint(onlyNew = false): Promise<Response> {
+    if (onlyNew && this.meta.keyHash !== null) return json({ error: "that name has an outstation already" }, 409);
     const bytes = crypto.getRandomValues(new Uint8Array(18));
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);

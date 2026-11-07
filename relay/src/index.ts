@@ -10,8 +10,18 @@
 // Channels are handed out by the relay's owner (Authorization: Bearer <ADMIN_TOKEN>, a Worker secret):
 //   POST   /admin/channels/<channel>    a new key for it: {"channel", "key", "code"} (code: the attach code)
 //   DELETE /admin/channels/<channel>    taken back: its transmitter cut off, its key refused
-//   GET    /admin/channels              the channels handed out (live, title, client: its last transmitter's version)
+//   GET    /admin/channels              the channels handed out (live, title, client: its last transmitter's version;
+//                                       by: the channel whose invite it came from, null for the keeper's own)
 // The attach code (the station key) is "outstation1:" ("portal1:" before 11/06/2026) and base64url JSON {"relay", "channel", "key"}: the client takes it in one paste.
+//
+// Invites (11/07/2026, Jace: "each of my friends being able to pass out a few keys so that way the platform propagates
+// easier", "people earning more invites through streaming"): an outstation hands out channels of its own, as the keeper
+// does, three to begin with and one more every 10 hours on air (channel.ts, invites):
+//   GET    /invites/<channel>?key=<key>                       {"left", "earned", "used", "hours", "next_in_s"}
+//   POST   /invites/<channel>  {"key", "player"}              a new channel for that player: {"channel", "key", "code", "left"}
+// The new channel's row in the Directory says whose invite it came from ("by"), in GET /admin/channels and in the open
+// outstations' list (GET /channels); the inviter's channel keeps the names it's invited. Taking a channel back takes
+// nothing back from the channels it invited, or gives its inviter the invite back.
 //
 // Asking for a portal (11/06/2026), so nobody has to email the keeper for a code:
 //   POST   /requests/<channel>  {"player", "note", "pickup"}   a friend's client asks for that player's channel
@@ -40,9 +50,9 @@
 //   DELETE /admin/notice              taken down
 
 import { DurableObject } from "cloudflare:workers";
-import { Channel, type Env, type Listing } from "./channel";
+import { Channel, PLAYER, type Env, type Listing } from "./channel";
 import { fileKey, serveFile, ID } from "./clips";
-import { oneLine } from "./text";
+import { attachCode, oneLine, relayOf } from "./text";
 
 export { Channel };
 
@@ -50,7 +60,6 @@ const ROLES = new Set(["transmit", "watch", "desk", "sound"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
 const MAX_POST = 16 * 1024 * 1024;
 
-const PLAYER = /^[a-z0-9]{1,12}$/; // a channel asked for: a player's name as the page has it (lower case, no spaces)
 const ASKS_AN_HOUR = 3; // requests from one address in an hour
 const WAITING_MOST = 50; // requests waiting at once, everyone's
 const WAIT_DAYS = 14, PICKUP_DAYS = 7; // a request not answered in this long goes; an answer not collected, too
@@ -96,7 +105,9 @@ export class Directory extends DurableObject<Env> {
   // answered when asked; in memory, so a sleep only means asking each channel once more. A read used to ask every
   // channel handed out for its status, waking each: a request to every channel each time the outstations page (every
   // 20 s while open) or any friend's client (every minute) read the list.
-  names: string[] | null = null; // the channels handed out (their "c:" keys), till one's handed out or taken back
+  // the channels handed out (their "c:" rows), each with whose invite it came from (null: the keeper's own), till one's
+  // handed out or taken back
+  given: Map<string, string | null> | null = null;
   listed = new Map<string, { row: Listing; seen: number }>();
 
   async fetch(request: Request): Promise<Response> {
@@ -119,21 +130,33 @@ export class Directory extends DurableObject<Env> {
       }
       return Response.json({ notice: (await this.ctx.storage.get("notice")) || null });
     }
-    if (request.method === "PUT") await this.ctx.storage.put("c:" + name, { since: Date.now() });
-    else if (request.method === "DELETE") await this.ctx.storage.delete("c:" + name);
+    // a channel handed out: its row is {since, by}. "by" (11/07/2026) is the channel whose invite it came from, and
+    // null for the keeper's own; a new key from the keeper keeps it. An invite (?by=) takes only a name nobody has:
+    // the read and the write here can't be split by another request (nothing but storage is waited on between them),
+    // so two invites for one name, or an invite and the keeper, never both get it.
+    const k = "c:" + name, by = url.searchParams.get("by");
+    if (request.method === "PUT") {
+      const had = await this.ctx.storage.get<{ since: number; by?: string | null }>(k);
+      if (by !== null && had) return Response.json({ error: "that name has an outstation already" }, { status: 409 });
+      await this.ctx.storage.put(k, { since: Date.now(), by: by ?? had?.by ?? null });
+    } else if (request.method === "DELETE") await this.ctx.storage.delete(k);
     if (request.method === "PUT" || request.method === "DELETE") {
-      this.names = null;
+      this.given = null;
       this.listed.delete(name); // (a new key: whatever it said before, it's asked again)
+      if (request.method === "PUT" && by !== null) return new Response(null, { status: 204 }); // (an invite's: no list)
     }
     const all = await this.ctx.storage.list({ prefix: "c:" });
-    return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), ...(v as object) })));
+    return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), by: null, ...(v as object) })));
   }
 
   /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
    *  missing (or LISTING_CHECK old) is asked. */
   async openPortals(): Promise<Response> {
-    if (!this.names) this.names = [...(await this.ctx.storage.list({ prefix: "c:" })).keys()].map((k) => k.slice(2));
-    const names = this.names, now = Date.now(); // (a channel handed out meanwhile is in the next read)
+    if (!this.given) {
+      const rows = await this.ctx.storage.list<{ by?: string | null }>({ prefix: "c:" });
+      this.given = new Map([...rows].map(([k, v]) => [k.slice(2), v.by ?? null]));
+    }
+    const given = this.given, names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
     const ask = names.filter((n) => { const l = this.listed.get(n); return !l || now - l.seen > LISTING_CHECK; });
     await Promise.all(ask.map(async (n) => {
       try {
@@ -146,7 +169,7 @@ export class Directory extends DurableObject<Env> {
     }));
     const open = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set && !r.code)
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
-                     title: r.title || "", doing: r.doing || null }));
+                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
   }
@@ -261,12 +284,6 @@ function sameText(a: string, b: string): boolean {
   return d === 0;
 }
 
-function attachCode(relay: string, channel: string, key: string): string {
-  const json = JSON.stringify({ relay, channel, key });
-  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
-  return "outstation1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
 function channelStub(env: Env, name: string) {
   return env.CHANNEL.get(env.CHANNEL.idFromName(name));
 }
@@ -285,9 +302,7 @@ async function mint(request: Request, env: Env, name: string): Promise<{ channel
   const r = await channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST" }), name, "/_mint"));
   const { key } = (await r.json()) as { key: string };
   await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "PUT" });
-  const u = new URL(request.url);
-  const relay = (u.protocol === "https:" ? "wss://" : "ws://") + u.host;
-  return { channel: name, key, code: attachCode(relay, name, key) };
+  return { channel: name, key, code: attachCode(relayOf(request.url), name, key) };
 }
 
 function dirRequests(env: Env, what: string, name: string, extra = ""): Request {
@@ -357,7 +372,7 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
         const r = await channelStub(env, c.channel).fetch(toChannel(new Request(request.url), c.channel, "/_status"));
         const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number };
         return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0 };
-      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0 }; }
+      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0 }; } // (c: channel, since, by)
     }));
     return Response.json(rows);
   }
@@ -433,6 +448,17 @@ export default {
       if (request.method === "GET") return dir.fetch(dirRequests(env, "check", name, pickup));
       if (request.method === "DELETE") return dir.fetch(dirRequests(env, "cancel", name, pickup));
       return new Response(null, { status: 405 });
+    }
+
+    // invites: an outstation's own (its key in the query to read them, in the body to use one), all in its channel
+    if (parts[0] === "invites" && parts.length === 2) {
+      const name = parts[1];
+      if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
+      if (request.method === "GET") return channelStub(env, name).fetch(toChannel(request, name, "/_invites"));
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const raw = await request.text();
+      if (raw.length > 4096) return Response.json({ error: "an invite is a key and a name" }, { status: 413 });
+      return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST", headers: request.headers, body: raw }), name, "/_invites"));
     }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)

@@ -13,6 +13,7 @@ import struct
 import sys
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import forward  # noqa: E402
