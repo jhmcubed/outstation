@@ -252,6 +252,8 @@ pub struct App {
     banned: Vec<(i64, String)>,
     over: Vec<OverLine>,
     /// when the last ping and ✼ came: their windows stay a few seconds after (LINGER), so a burst makes one window
+    /// something came that flashes the taskbar button (once, after what came is read: drain)
+    flash_wanted: bool,
     pings_last: Option<Instant>,
     /// the moving box put where the chat sits, once as moving starts (it's dragged from there)
     moving_placed: bool,
@@ -487,7 +489,7 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), flash_wanted: false, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -569,7 +571,7 @@ impl App {
             }
             t.lines.push(DmLine { mine: false, text, when, note: false });
             if !open { t.unread += 1; }
-            win::flash(TITLE);
+            self.flash_wanted = true;
         } else if let Some(d) = m.get("dm_sent") {
             let (to, text) = (s(d, "to"), s(d, "text"));
             let when = local_hhmm(d.get("at").and_then(|x| x.as_i64()).unwrap_or(0));
@@ -602,6 +604,10 @@ impl App {
                 In::Msg(v) => self.message(v),
                 In::Stopped(why) => self.desk_stopped = Some(why),
             }
+        }
+        // (the taskbar button flashed once for whatever came, not once a line)
+        if std::mem::take(&mut self.flash_wanted) {
+            win::flash(TITLE);
         }
         while let Ok(e) = self.tray_rx.try_recv() {
             self.tray_event(ctx, e);
@@ -649,9 +655,10 @@ impl App {
                 self.over.push(OverLine { at: Instant::now(), name: c.get("name").and_then(|x| x.as_str()).unwrap_or("").into(),
                                           text: c.get("text").and_then(|x| x.as_str()).unwrap_or("").into(), host });
                 if self.over.len() > 7 { self.over.remove(0); }
-            }
-            if !host {
-                win::flash(TITLE);
+                // (a new line flashes the taskbar button; the chat so far, handed over on connecting, doesn't)
+                if !host {
+                    self.flash_wanted = true;
+                }
             }
         } else if let Some(id) = m.get("unsay").and_then(|x| x.as_i64()) {
             for l in self.lines.iter_mut().filter(|l| l.id == Some(id)) { l.hidden = true; }

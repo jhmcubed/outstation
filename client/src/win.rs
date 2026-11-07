@@ -326,6 +326,12 @@ pub fn first_copy(tag: &str, title: &str) -> bool {
 /// The portal's own window: the largest top-level window with exactly this title belonging to this program (one of
 /// its own processes, outstation.exe), never another program's window that happens to share a title
 pub fn find_main(title: &str) -> Option<HWND> {
+    // (this program's own window first, among its own process's windows: no list of every process on the PC, which
+    // took long enough on a busy PC that a flash for each of the chat's lines on connecting held the window up 11 s:
+    // 11/07/2026. The list is for a second copy looking for the first, another process.)
+    if let Some(h) = find_own(title) {
+        return Some(h);
+    }
     struct Found<'a> { title: &'a str, best: Option<(i64, HWND)>, procs: std::collections::HashMap<u32, (u32, String)>, me: String }
     unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
         let f = unsafe { &mut *(l.0 as *mut Found) };
@@ -344,6 +350,30 @@ pub fn find_main(title: &str) -> Option<HWND> {
     let me = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
         .unwrap_or_else(|| "outstation.exe".into());
     let mut f = Found { title, best: None, procs: processes(), me };
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(&mut f as *mut Found as isize));
+    }
+    f.best.map(|x| x.1)
+}
+
+/// This process's own largest top-level window with exactly this title.
+fn find_own(title: &str) -> Option<HWND> {
+    struct Found<'a> { title: &'a str, me: u32, best: Option<(i64, HWND)> }
+    unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
+        let f = unsafe { &mut *(l.0 as *mut Found) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(h, Some(&mut pid)); }
+        if pid == f.me && text(h) == f.title {
+            let (a, b, c, d) = rect(h);
+            let area = (c - a) as i64 * (d - b) as i64;
+            if f.best.map_or(true, |x| area > x.0) {
+                f.best = Some((area, h));
+            }
+        }
+        BOOL(1)
+    }
+    let me = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() };
+    let mut f = Found { title, me, best: None };
     unsafe {
         let _ = EnumWindows(Some(each), LPARAM(&mut f as *mut Found as isize));
     }
