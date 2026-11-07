@@ -227,6 +227,8 @@ pub struct App {
     asking_close: bool,
     quitting: bool,
     hidden: bool,
+    /// when the window was last brought back from the tray (a moment's grace before "minimised" can send it back)
+    shown_at: Option<Instant>,
     tray: Option<tray_icon::TrayIcon>,
     tray_items: Option<TrayItems>,
     tray_rx: std::sync::mpsc::Receiver<tray_icon::menu::MenuEvent>,
@@ -384,7 +386,11 @@ impl App {
         let (tray_tx, tray_rx) = std::sync::mpsc::channel();
         {
             let ctx = ctx.clone();
-            tray_icon::menu::MenuEvent::set_event_handler(Some(move |e| {
+            let open_id = std::sync::Arc::new(std::sync::Mutex::new(None::<tray_icon::menu::MenuId>));
+            OPEN_ITEM.get_or_init(|| open_id.clone());
+            tray_icon::menu::MenuEvent::set_event_handler(Some(move |e: tray_icon::menu::MenuEvent| {
+                // ("open the outstation" brings the window up at once, as a click on the ✼ does)
+                if open_id.lock().unwrap().as_ref() == Some(&e.id) { win::show_window(TITLE); }
                 let _ = tray_tx.send(e);
                 ctx.request_repaint();
             }));
@@ -399,6 +405,10 @@ impl App {
                                          | tray_icon::TrayIconEvent::DoubleClick { .. });
                 if opened {
                     let _ = click_tx.send(());
+                    // (brought up at once, by Windows itself: a window hidden in the tray isn't sent the frames its
+                    // own catching-up waits for, so a click had waited for something else to wake it: 11/07/2026,
+                    // Jace, "large delay on single left click to open up the client")
+                    win::show_window(TITLE);
                     ctx.request_repaint();
                 }
             }));
@@ -415,6 +425,7 @@ impl App {
         let (tray, tray_items, station_tray) = make_tray(&settings.get(), station.as_ref());
         #[cfg(not(feature = "station"))]
         let (tray, tray_items) = make_tray(&settings.get());
+        if let (Some(items), Some(cell)) = (&tray_items, OPEN_ITEM.get()) { *cell.lock().unwrap() = Some(items.open.id().clone()); }
         // a newer version, if the repository has one (it never updates itself)
         let newer = Arc::new(Mutex::new(None));
         if settings.get().check_updates {
@@ -440,7 +451,7 @@ impl App {
             started: Instant::now(), drawer: Drawer::None, panel: None,
             attach_code: String::new(), attach_note: String::new(), by_hand: false,
             hand: (s.relay.clone(), s.channel.clone(), String::new(), s.code.clone()),
-            pings: Vec::new(), ping_n: 0, asking_close: false, quitting: false, hidden: false,
+            pings: Vec::new(), ping_n: 0, asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
@@ -757,6 +768,7 @@ impl App {
 
     fn show(&mut self, ctx: &egui::Context) {
         self.hidden = false;
+        self.shown_at = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         // (brought to the front by Windows' own call, never egui's Focus: winit's focus sends a pretend Alt key)
@@ -1646,6 +1658,8 @@ fn decode(jpg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 /// when "copy my log" was last pressed (the drawer says so for a moment)
 static LOG_COPIED: Mutex<Option<Instant>> = Mutex::new(None);
 /// settings ▸ more's "report an anomaly" pressed: the window opens its drawer
+/// the tray menu's "open the outstation", for its event handler to know it by
+static OPEN_ITEM: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<Option<tray_icon::menu::MenuId>>>> = std::sync::OnceLock::new();
 static OPEN_REPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// and its "file a requisition"
 static OPEN_REQUISITION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -2743,7 +2757,11 @@ impl eframe::App for App {
             self.note(n);
         }
         // minimised: into the tray (the tray's "open the portal" brings it back), the stream going on
+        // (not in the moment after it's brought back: the window it hid is still minimised underneath, and a frame
+        // that read that before the restore landed had sent it straight back to the tray: 11/07/2026, Jace, the tray's
+        // left click had seemed slow, or had to be done twice)
         if !self.hidden && self.tray.is_some() && self.settings.get().minimize_to_tray
+            && self.shown_at.is_none_or(|t| t.elapsed() > Duration::from_millis(800))
             && ctx.input(|i| i.viewport().minimized) == Some(true) {
             self.hidden = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
