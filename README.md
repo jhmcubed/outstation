@@ -11,12 +11,15 @@ An outstation on your PC, transmitting your RuneLite to your Outside page on [gh
 **Is it safe for my account?** It does what streaming software does and nothing more: it never touches RuneLite or the game, and it can't press a key or click for you. [SAFETY.md](SAFETY.md) says it in plain words: what's in the picture, everything that leaves your PC and where it goes, everything that comes back and what none of it can do, what the relay keeps, and how to check every line yourself.
 
 <p>
-  <img src="docs/pictures/first.png" width="32%" alt="the first screen: paste a station key, or request one with your player's name and a note">
-  <img src="docs/pictures/ready.png" width="32%" alt="attached and dark, the station check ticking RuneLite, logged in, the relay and Dink">
-  <img src="docs/pictures/live.png" width="32%" alt="transmitting, with two observers chatting">
+  <img src="docs/pictures/first.png" width="32%" alt="the first screen: paste a station key, request one, or report an anomaly">
+  <img src="docs/pictures/ready.png" width="32%" alt="attached and dark, the station check ticking RuneLite, the relay and Dink">
+  <img src="docs/pictures/live.png" width="32%" alt="transmitting, with two observers chatting and the monitor showing what went out">
+</p>
+<p>
+  <img src="docs/pictures/viewer.png" width="60%" alt="the viewer on the player's Outside page: the picture, a field report, and the two observers' chat">
 </p>
 
-The first screen, ready to transmit, and transmitting with two observers chatting. (Pictured under Wine, with a stand-in window in RuneLite's place, before the name was outstation: some words in them are the old ones.)
+The first screen; attached and dark, ready to transmit; transmitting, with two observers chatting; and what they see on the player's Outside page. (Pictured under Wine, with a drawn stand-in in RuneLite's place.)
 
 **Its words.** The window speaks ⊂λ,ｍ⊙'s language. Your **station key** is the code that attaches it to your channel; **transmitting** is live and **dark** is off air; **observers** are your viewers, and **on standby** the ones waiting for a seat; **the tape** is the replay buffer (the last seconds, always rolling); **redactions** are masks; **the monitor** is the small live view of what went out; **field reports** are Dink's posts; **the station check** is the ready check. The keeper **issues** keys, **denies** a request, **re-keys** a channel (a new key; the old one stops working) and **stands one down** (takes it back).
 
