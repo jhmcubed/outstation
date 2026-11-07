@@ -81,6 +81,18 @@ starts every count again, as it forgets every channel).
     POST  http://HOST:PORT/invites/<channel>  {"key", "player"}     {"channel", "key", "code", "left"}
   The new channel is claimed with a new key, and the code attaches a client to it; GET /channels says whose invite
   each channel came from ("by"). The public side refuses both.
+
+The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin, a RuneLite plugin of our own, sends the player's
+live game state (vitals, skills, what's worn and carried, prayers, item names and prices) and Outside draws it beside the
+transmission and the chat, live, and as last known while dark.
+    game:      ws://HOST:PORT/game/<channel>?key=<secret>&v=<the plugin's version>
+  The same key as transmitting (--min-client never applies: the plugin has versions of its own); one at a time, a newer
+  one replacing the older (4000). It sends {"game": {...fields}}, GAME_MESSAGE long at most, GAME_A_SECOND a second.
+  Each field replaces the one kept, but "items", which is merged; what changed goes on to seated viewers, lookers and
+  desks as {"game": {...the fields, "at"}}, and someone just come gets the whole of it. The status line's "game" says
+  whether one is connected. Kept in memory, as everything here, while the relay runs.
+    read:      GET http://HOST:PORT/game/<channel>?code=<watch code>    {"game": {...}, "at", "connected"}
+  The public side allows the read (it's what viewers see anyway) and refuses the game socket.
 """
 
 import argparse
@@ -116,6 +128,14 @@ DMS_KEPT, DMS_DAYS, DMS_A_MINUTE = 20, 7, 20
 # begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (the Worker's, the same)
 INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
 PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
+# the game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's socket. A message at most GAME_MESSAGE long, and
+# GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as JSON (a message that would take it past is
+# ignored), its dictionary of item names and prices at most GAME_ITEMS ids (past that, new ones are ignored). The
+# Worker's, the same.
+GAME_MESSAGE, GAME_KEPT, GAME_ITEMS, GAME_A_SECOND = 64 * 1024, 192 * 1024, 3000, 5
+GAME_INT = 2 ** 31 - 1            # the most any number in the game holds (a Java int: RuneLite's)
+GAME_SKILL = re.compile(r"[A-Za-z][A-Za-z _-]{0,23}")     # a skill's name (fullmatch)
+GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the dictionary has it (fullmatch)
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -333,6 +353,162 @@ def attach_code(relay, channel, key):
     return "outstation1:" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
+# The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's fields checked, and kept. The Worker's
+# gameFields and GameState (channel.ts), the same.
+
+_BAD = object()                   # (a field, or a part of one, that isn't its shape)
+
+
+class GameText(str):
+    """A game socket's message held back by --delay (Relay.game): taken into the kept state when it's let go."""
+
+
+def no_constant(name):
+    """NaN and Infinity aren't JSON (the Worker's JSON.parse refuses them): a message with one is ignored."""
+    raise ValueError(name)
+
+
+def game_whole(v, most=GAME_INT):
+    """A whole number from 0 to most (5.0 counts as 5), or None."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= most else None
+
+
+def game_pair(v):
+    """[a, b], two whole numbers (an item and how many; a vital now and at most), or _BAD."""
+    if isinstance(v, list) and len(v) == 2:
+        a, b = game_whole(v[0]), game_whole(v[1])
+        if a is not None and b is not None:
+            return [a, b]
+    return _BAD
+
+
+def game_slots(v, most):
+    """At most `most` slots, each [item, how many] or null (empty), or _BAD."""
+    if not isinstance(v, list) or len(v) > most:
+        return _BAD
+    out = [None if s is None else game_pair(s) for s in v]
+    return _BAD if any(s is _BAD for s in out) else out
+
+
+def game_fields(g):
+    """A {"game"} message's fields as they're kept: each known field checked and cleaned (its words one line, its numbers
+    whole), one that isn't its shape left out, and unknown ones left out. Always in this order, whatever order they
+    came in, so both relays write them out the same; "items" in id order (the Worker's objects keep number-like keys
+    so)."""
+    out = {}
+    if not isinstance(g, dict):
+        return out
+    if isinstance(g.get("name"), str):
+        out["name"] = one_line(g["name"], 12)
+    if game_whole(g.get("world")) is not None:
+        out["world"] = game_whole(g["world"])
+    if isinstance(g.get("type"), str):
+        out["type"] = one_line(g["type"], 40)
+    if isinstance(g.get("off"), bool):
+        out["off"] = g["off"]
+    if g.get("paused") is False or isinstance(g.get("paused"), str):
+        # (why it's stopped sending what's worn and carried, for the player's safety: "wilderness"; false, carrying on)
+        out["paused"] = False if g["paused"] is False else one_line(g["paused"], 32)
+    if isinstance(g.get("vitals"), dict):
+        v, vitals = g["vitals"], {}
+        for k in ("hp", "prayer"):
+            if game_pair(v.get(k)) is not _BAD:
+                vitals[k] = game_pair(v[k])
+        for k in ("run", "spec"):
+            if game_whole(v.get(k), 100) is not None:
+                vitals[k] = game_whole(v[k], 100)
+        out["vitals"] = vitals
+    if isinstance(g.get("skills"), dict):
+        out["skills"] = {k: [game_whole(x) for x in v] for k, v in g["skills"].items()
+                         if GAME_SKILL.fullmatch(k) and isinstance(v, list) and len(v) == 3
+                         and all(game_whole(x) is not None for x in v)}
+    for k, most in (("worn", 14), ("inv", 28), ("bag", 28), ("pouch", 8)):
+        if k in g:
+            s = None if g[k] is None and k == "bag" else game_slots(g[k], most)   # (the bag: null, not known yet)
+            if s is not _BAD:
+                out[k] = s
+    if "quiver" in g:
+        s = None if g["quiver"] is None else game_pair(g["quiver"])
+        if s is not _BAD:
+            out["quiver"] = s
+    p = g.get("prayers")
+    if isinstance(p, list) and len(p) <= 64 and all(isinstance(x, str) for x in p):
+        out["prayers"] = [one_line(x, 40) for x in p]
+    if isinstance(g.get("items"), dict):
+        items = {}
+        for k in sorted((k for k in g["items"] if GAME_ID.fullmatch(k) and int(k) <= GAME_INT), key=int):
+            v = g["items"][k]
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and game_whole(v[1]) is not None:
+                items[k] = [one_line(v[0], 60), game_whole(v[1])]
+        if items:
+            out["items"] = items
+    return out
+
+
+class Game:
+    """A channel's game state: each field as the plugin last sent it, and "items" merged (a name and a price for each
+    item id it's been told of, GAME_ITEMS ids at most). Its length as JSON is kept as it changes, so a message that
+    would take it past GAME_KEPT is found without writing the whole of it out each time."""
+
+    ITEMS = len('"items": {}')
+
+    def __init__(self):
+        self.kept = {}
+        self.at = 0                  # when it last changed (ms)
+        self.lens = {}               # each field's length in the kept state's JSON, as '"field": value'
+        self.item_lens = {}          # each item's, as '"id": [name, price]'
+        self.items_body = 0          # those summed
+
+    def size(self, lens=None):
+        """The kept state's length as JSON (json.dumps's; the Worker's pyjson writes the same)."""
+        lens = self.lens if lens is None else lens
+        return 2 + sum(lens.values()) + 2 * max(0, len(lens) - 1)
+
+    @staticmethod
+    def item_len(i, e):
+        return len(json.dumps(i)) + 2 + len(json.dumps(e))
+
+    def apply(self, fields, now=None):
+        """A message's fields (game_fields) taken in. What goes on to viewers: the fields given (items: those not
+        ignored), or None when nothing changed or when it would take the kept state past GAME_KEPT (then none of it is
+        kept)."""
+        changed, out, lens = False, {}, dict(self.lens)
+        for k, v in fields.items():
+            if k != "items":
+                line = json.dumps(v)
+                changed = changed or k not in self.kept or line != json.dumps(self.kept[k])
+                lens[k] = len(json.dumps(k)) + 2 + len(line)
+                out[k] = v
+        have = self.kept.get("items", {})
+        items, new_lens, body, n = {}, {}, self.items_body, len(have)
+        for i, e in fields.get("items", {}).items():
+            if i not in have:
+                if n >= GAME_ITEMS:
+                    continue             # (the dictionary's full: a new id is ignored)
+                n += 1
+                changed = True
+            elif e != have[i]:
+                changed = True
+            new_lens[i] = self.item_len(i, e)
+            body += new_lens[i] - self.item_lens.get(i, 0)
+            items[i] = e
+        if items:
+            lens["items"] = self.ITEMS + body + 2 * (n - 1)
+        if not changed or self.size(lens) > GAME_KEPT:
+            return None
+        self.kept.update(out)
+        if items:
+            self.kept.setdefault("items", {}).update(items)
+            self.item_lens.update(new_lens)
+            self.items_body = body
+            out["items"] = items
+        self.lens = lens
+        self.at = int(time.time() * 1000) if now is None else now
+        return out
+
+
 class Channel:
     def __init__(self, name, key):
         self.name, self.key = name, key
@@ -384,6 +560,10 @@ class Channel:
         self.invited = []
         self.invite_posts = []       # when it last posted for an invite, for INVITES_AN_HOUR
         self.by = None
+        # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
+        # streams and the plugin's going: a page shows the last of it while the player's away)
+        self.gamer = None
+        self.game = Game()
 
     def seconds_in_all(self):
         """Seconds on air in all, the stretch going on now included (for invites)."""
@@ -391,6 +571,26 @@ class Channel:
 
     def summary_line(self):
         return json.dumps({"summary": self.summary})
+
+    def game_line(self):
+        """The whole game state, for someone just come (a seat, a desk, a looker); None while there's none."""
+        return json.dumps({"game": dict(self.game.kept, at=self.game.at)}) if self.game.kept else None
+
+    def take_game(self, msg):
+        """A message from the game socket (Relay.game) into the kept state, and what it changed on to the seated
+        viewers, the lookers and the desks."""
+        try:
+            m = json.loads(msg, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(m, dict) or not isinstance(m.get("game"), dict):
+            return
+        got = self.game.apply(game_fields(m["game"]))
+        if got is None:
+            return
+        line = json.dumps({"game": dict(got, at=self.game.at)})
+        for v in list(self.viewers) + list(self.lookers) + list(self.desks):
+            v.send_nowait(line)
 
     def on_air(self):
         """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
@@ -439,7 +639,7 @@ class Channel:
               "open": self.sender is not None and self.state == "open",
               "static": self.sender is not None and self.state == "static",
               "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on,     # (set: someone has claimed it; Outside says "no portal here yet" when not)
-              "title": self.title}
+              "title": self.title, "game": self.gamer is not None}     # (game: the Outside plugin's connected, 11/07/2026)
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -491,6 +691,8 @@ class Channel:
             sock.send_nowait(r)
         if self.summary is not None:
             sock.send_nowait(self.summary_line())
+        if self.game.kept:
+            sock.send_nowait(self.game_line())
         self.late_joiner(sock)
 
     def seat_waiting(self, cap):
@@ -503,6 +705,8 @@ class Channel:
         return moved
 
     def deliver(self, msg):
+        if isinstance(msg, GameText):
+            return self.take_game(msg)       # (the game's, held back by the delay: Relay.game)
         # a small frame (11/05/2026: the open portals' tiles, the listening post, the client's live view): for lookers
         # only, never a viewer, and never the last frame a newcomer gets
         if isinstance(msg, (bytes, bytearray)) and len(msg) > 8 and msg[4:6] == b"TH":
@@ -707,7 +911,7 @@ class Relay:
         await self.handle(reader, writer, public=True)
 
     async def handle(self, reader, writer, public=False):
-        """public: the port the internet reaches (Tailscale Funnel): the page and watching only."""
+        """public: the port the internet reaches (Tailscale Funnel): the page, watching and reading only."""
         try:
             request = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
         except Exception:
@@ -730,7 +934,8 @@ class Relay:
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch"))
                        or (path and path[0] == "invites")):
-            # from the internet: no transmitting, no Dink posts and no invites, whatever key comes with them
+            # from the internet: no transmitting, no Dink posts, no invites and no game socket, whatever key comes with
+            # them (the game's read, GET /game, is let through: it's what viewers see anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -747,10 +952,13 @@ class Relay:
         if method == "GET" and not key and url.path == "/channels":
             await self.channel_list(writer)
             return
+        if len(path) == 2 and path[0] == "game" and not key:
+            await self.game_read(writer, method, path[1], q)
+            return
         if method in ("GET", "HEAD") and not key:
             await self.page(writer, url.path, method == "HEAD")
             return
-        if method != "GET" or not key or len(path) != 2 or path[0] not in ("transmit", "watch", "desk", "sound") \
+        if method != "GET" or not key or len(path) != 2 or path[0] not in ("transmit", "watch", "desk", "sound", "game") \
                 or not (1 <= len(path[1]) <= 64):
             writer.write(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
             await writer.drain()
@@ -772,6 +980,8 @@ class Relay:
                 await self.desk(sock, name, q.get("key", ""), q.get("name", ""))
             elif role == "sound":
                 await self.sound(sock, name, q.get("key", ""))
+            elif role == "game":
+                await self.game(sock, name, q.get("key", ""))
             else:
                 if q.get("look") == "1":
                     await self.look(sock, name, q.get("code", ""))
@@ -841,6 +1051,8 @@ class Relay:
         sock.look_frames, sock.look_at = False, 0.0
         ch.lookers.add(sock)
         sock.send_nowait(ch.status())
+        if ch.game.kept:
+            sock.send_nowait(ch.game_line())
         try:
             while True:
                 msg = await sock.recv()
@@ -996,6 +1208,8 @@ class Relay:
         self.log("desk      %s  (%d open)" % (name, len(ch.desks)))
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
+        if ch.game.kept:
+            sock.send_nowait(ch.game_line())
         sock.send_nowait(ch.banned_line())
         sock.send_nowait(ch.viewer_list())
         # (messages that came while the portal was closed)
@@ -1170,13 +1384,51 @@ class Relay:
                     v.send_nowait(ch.sound_info)
                 self.log("no sound  %s" % name)
 
+    async def game(self, sock, name, key):
+        """The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's {"game"} messages into the channel's
+        kept state (Channel.take_game), GAME_A_SECOND a second at most and GAME_MESSAGE long at most (the rest
+        dropped, with no answer). One at a time: a newer one replaces the older. Its v= is the plugin's own version,
+        which --min-client never looks at. Held back by --delay as everything is."""
+        ch = await self.claim(sock, name, key)
+        if ch is None:
+            return
+        if ch.gamer is not None:
+            await ch.gamer.close(4000, "replaced by a newer game")
+        ch.gamer = sock
+        self.log("game      %s" % name)
+        ch.tell_viewers()                    # (the status line's "game")
+        read = deque()                       # when its last messages were read, for GAME_A_SECOND
+        try:
+            while ch.gamer is sock:
+                msg = await sock.recv()
+                if not isinstance(msg, str) or ch.gamer is not sock:
+                    continue
+                now = time.monotonic()
+                while read and now - read[0] >= 1.0:
+                    read.popleft()
+                if len(read) >= GAME_A_SECOND:
+                    continue
+                read.append(now)
+                if len(msg) > GAME_MESSAGE:
+                    continue
+                if self.delay > 0:
+                    ch.held.append((now + self.delay, GameText(msg)))
+                    self.due(ch.held[-1][0])
+                else:
+                    ch.take_game(msg)
+        finally:
+            if ch.gamer is sock:
+                ch.gamer = None
+                self.log("no game   %s" % name)
+                ch.tell_viewers()
+
     async def channel_list(self, writer):
         """The open portals (11/05/2026, Jace: "a page ... that shows all active connected public portals"): every channel
         that's set up and has no watch code, live ones first, with whether each is live. Anyone may read it (the
         public side too); a channel with a watch code is never listed."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
-                 "doing": ch.doing(), "by": ch.by}
+                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None}
                 for ch in self.channels.values() if ch.key is not None and not ch.code]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         body = json.dumps({"channels": rows}).encode()
@@ -1186,6 +1438,30 @@ class Relay:
             await writer.drain()
         finally:
             writer.close()
+
+    async def game_read(self, writer, method, name, q):
+        """GET /game/<channel>?code=<watch code> (11/07/2026): the game state kept, for a page while the outstation's
+        dark, and whether the plugin's connected now. It needs the watch code when the channel has one, as watching
+        does. Anyone may read it (the public side too: it's what viewers see anyway)."""
+        async def answer(status, body=None):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\nAccess-Control-Allow-Origin: *\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method != "GET":
+            return await answer("405 Method Not Allowed")
+        if not re.fullmatch(r"[A-Za-z0-9_.~-]{1,64}", name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        ch = self.channels.get(name)
+        if ch is not None and ch.code and q.get("code", "") != ch.code:
+            return await answer("403 Forbidden", {"error": "wrong watch code"})
+        if ch is None or not ch.game.kept:
+            return await answer("404 Not Found", {"error": "no game state for that outstation"})
+        await answer("200 OK", {"game": ch.game.kept, "at": ch.game.at, "connected": ch.gamer is not None})
 
     async def invites(self, reader, writer, method, headers, name, q):
         """Invites (11/07/2026; docs/protocol.md "Invites"; the Worker's channel.ts invites, the same): an outstation

@@ -9,6 +9,7 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 - the reports, the stream's summary and each boss's last kill count
 - the version that last transmitted, the time on air by month, and in all (for invites)
 - the names it has invited
+- the game state the Outside plugin last sent (11/07/2026), saved at most once a minute while it sends and when it goes
 - messages held for the outstation, and the list of its clips (the clips' files are in R2)
 
 The Directory (one object for the whole relay) keeps the channels handed out (each with whose invite it came from, if any), the requests for station keys, the keeper's notice, and the anomalies and requisitions sent to the listening post.
@@ -34,6 +35,8 @@ curl -X POST -H "Authorization: Bearer <the token>" http://127.0.0.1:8790/admin/
 ```
 
 That answers `{"channel", "key", "code"}`. `npm run check` checks the types.
+
+The Outside plugin (a RuneLite plugin of our own, 11/07/2026) sends the player's game state on `/game/<channel>?key=` with the channel's key, and pages read what's kept with `GET /game/<channel>?code=` (`src/game.ts`; `../docs/protocol.md`, "The game").
 
 Each outstation can hand out channels too (invites, since 11/07/2026): three to begin with and one more every 10 hours on air, through `GET`/`POST /invites/<channel>` with its own key (`../docs/protocol.md`, "Invites"). Each channel's row in `GET /admin/channels` says whose invite it came from (`by`, `null` for yours).
 

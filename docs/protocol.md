@@ -12,13 +12,14 @@ Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Pytho
 | desk | `/desk/<channel>?key=<key>&name=<your name in the chat>` | the chat window (several may be open) |
 | watch | `/watch/<channel>?code=<watch code>` | a viewer (Outside) |
 | look | `/watch/<channel>?look=1&code=<watch code>` | a looker: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek (below, "Lookers") |
+| game | `/game/<channel>?key=<key>&v=<the plugin's version>` | the Outside plugin: the player's game state (below, "The game") |
 
 `ws://` on this PC, `wss://` on Cloudflare. A channel is 1 to 64 characters: letters, digits and `_ . ~ -`.
 
 The client adds `&v=<its version>` to every address it opens (below, "The client's version").
 
 Closing codes:
-- 4000: replaced by a newer transmitter or sound.
+- 4000: replaced by a newer transmitter, sound or game.
 - 4001: a key under 8 characters.
 - 4003: the wrong key, the wrong watch code, the watch code changed, a channel nobody handed out (Cloudflare), or the channel given a new key or taken back.
 - 4026: this client is older than the relay allows; the reason says which version is needed ("… 0.2.0 or newer is needed"). Trying again won't help: the client stops and says where to get a newer one.
@@ -31,6 +32,7 @@ The client says its version (`client/Cargo.toml`'s, which a release's tag must m
 - Versions are compared by number (`0.10.0` is newer than `0.9.0`), and a pre-release's suffix is left out (`0.5.0-rc.1` counts as `0.5.0`).
 - A socket that says no version is let in: ghillie's Python portal predates it.
 - Viewers never need one.
+- The game socket's `v=` is the Outside plugin's own version (below, "The game"): the minimum never applies to it.
 - No minimum (the default) lets every version in. Raise it only when the protocol changes in a way older clients can't follow, and after the keeper's list (`GET /admin/channels`, `client`) shows who'd be turned away.
 
 ## The transmitter
@@ -47,8 +49,9 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Viewers
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title"}}`. `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
-- frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the chat so far, the poll, the drop guess and the sound's line.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game"}}`. `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the game state, the chat so far, the poll, the drop guess and the sound's line.
+- `{"game": {...}}`: the player's game state, from the Outside plugin (below, "The game"), once seated.
 - `{"report": {"type", "text", "at", "data"}}`: a field report (from Dink; below, "Dink").
 - `{"summary": {...} | null}`: this stream's summary (below, "The stream's summary").
 - `{"chat": {"id", "name", "text", "host", "who", "queued", "at"}}`, `{"unsay": id}`
@@ -72,7 +75,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -90,14 +93,14 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Lookers
 
 A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek in its friends list. It needs the watch code, as a viewer does.
-- It hears the status lines, the summary and the clips' lines.
+- It hears the status lines, the summary, the clips' lines and the game state (below, "The game").
 - It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
 - It never says `{"got"}`, so the Worker takes it to read 128 KB a second (since 11/07/2026: before, a looker's frames stopped for good after its first 4 MB).
 - Anything else it sends is thrown away.
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
 
 ## The stream's summary
 
@@ -139,8 +142,8 @@ The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts o
 ## Handing out channels (Cloudflare)
 
 `Authorization: Bearer <ADMIN_TOKEN>`:
-- `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off.
-- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound and desks are cut off. Viewers stay, off air.
+- `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off. Its game state is forgotten (below, "The game").
+- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound, desks and game socket are cut off, and its game state forgotten. Viewers stay, off air.
 - `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
 
 The attach code (the station key, in the client's words) is `outstation1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up. Keys made before 11/06/2026 start `portal1:`, with the same inside; the client still reads them.
@@ -201,6 +204,67 @@ Refused, each with `{"error": "…"}`:
 - 413 past 4 KB; 405 any other method.
 
 The Python relay refuses both routes on its public side (the Funnel's port), as it refuses transmitting.
+
+## The game: the Outside plugin (11/07/2026)
+
+The Outside plugin, a RuneLite plugin of our own, sends the player's live game state to their channel, and Outside (the
+viewer page) draws it beside the transmission and the chat: live, and as last known while dark. Both relays
+(`relay/src/game.ts` and channel.ts; relay-py's `game_fields`, `Game` and `Relay.game`).
+
+    ws(s)://<relay>/game/<channel>?key=<key>&v=<the plugin's version>     the plugin
+    GET <relay>/game/<channel>?code=<watch code>                         the state kept: {"game", "at", "connected"}
+
+**The socket.** The same key as transmitting, with the same refusals: 4001 for a key under 8 characters, 4003 for the
+wrong one (on Cloudflare also for a channel nobody handed out), and on Cloudflare 4029 past 10 wrong keys a minute from one
+address. Its `v=` is the plugin's own version: `MIN_CLIENT` (`--min-client`) never looks at it. One at a time: a newer
+one replaces the older (4000). It hears nothing, and nothing it sends is answered.
+
+**It sends** text, `{"game": {...}}`, with any of these fields:
+- `name`: the player's name (one line, 12 characters at most)
+- `world`: the world they're on
+- `type`: the account type (one line, 40 at most)
+- `off`: `true` when the player logs out. Kept like the others: a later message without it leaves it as it was, and `"off": false` clears it.
+- `paused`: why the plugin has stopped sending what the player wears and carries, for their safety (one line, 32 characters at most, e.g. `"wilderness"`: the Wilderness, a PvP world), or `false` when it carries on. Kept like the others (`true` isn't its shape: left out). What was kept before it paused stays as it was, unless the plugin clears it (`"worn": []`, `"inv": []`).
+- `vitals`: `{"hp": [now, most], "prayer": [now, most], "run": 0–100, "spec": 0–100}`
+- `skills`: `{"<Skill name>": [real level, boosted level, xp]}`; a name is a letter, then letters, spaces, `_` or `-`, 24 at most
+- `worn`: 14 slots, each `[item id, how many]` or `null` (the place in the list is RuneLite's `EquipmentInventorySlot` index)
+- `inv`: 28 slots, the same
+- `bag`: the looting bag, its slots (at most 28), or `null` while it isn't known
+- `pouch`: the rune pouch's slots (at most 8)
+- `quiver`: `[item id, how many]` or `null`
+- `prayers`: the prayers on, by name (at most 64, 40 characters each)
+- `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
+
+Each field given replaces the one kept, whole; `items` is merged instead (a name and a price for each id). Checked
+loosely:
+- The message must be a JSON object, and `game` one too. Unknown fields are left out, and never kept.
+- Numbers are whole, 0 to 2,147,483,647 (a Java int: RuneLite's); words are made one line.
+- A field that isn't its shape is left out (one slot that isn't `[id, how many]` or `null` leaves its whole list out). In `vitals` and `skills` only the parts that aren't are left out; in `items` only the entries (an id is digits, no leading zeros).
+
+The limits:
+- A message at most 64 KB (65,536 characters); a longer one is ignored.
+- 5 messages a second from one socket; more are dropped, with no answer.
+- The item dictionary at most 3,000 ids; past that, new ids are ignored (those it has can still change).
+- The kept state at most 192 KB as JSON; a message that would take it past is ignored, all of it.
+
+**What others get:**
+- A message that changed something goes on to seated viewers, lookers and desks as `{"game": {...the fields given, less anything left out, "at": <ms>}}`. One that changed nothing goes nowhere.
+- Someone just come (a viewer as it takes its seat, a looker, a desk) gets `{"game": {...the whole state kept, "at": <ms, when it last changed>}}`, if there's any. A viewer in line for a seat gets it once seated, as it does frames.
+- The status line's `game` (above, "Viewers"), and each row of `GET /channels`: whether a game socket is connected now.
+
+**The read:** `GET /game/<channel>?code=<watch code>`, for a page while the outstation's dark:
+- 200 `{"game": {...the whole state}, "at": <ms, when it last changed>, "connected": bool}`
+- 404 `{"error": "no game state for that outstation"}` when there's none
+- 403 `{"error": "wrong watch code"}` when the channel has a watch code and it isn't the one given, as watching would be
+- 400 for a channel that can't be one, 405 for anything but `GET`
+
+Anyone may read it (any origin). The Python relay's public side (the Funnel's port) allows the read, since it's what
+viewers see anyway, and refuses the socket.
+
+**What's kept, and for how long:** the state stays when the stream ends and when the plugin goes, so a page shows the
+last of it while the player's away, until the plugin next changes it.
+- On Cloudflare: in memory, and saved in the channel's storage at most once a minute while messages come (the first at once, then a minute after the last save), and when the game socket closes; a channel that's slept starts from what was saved, so a restart of the channel's object while the plugin's sending loses at most that minute. Forgotten when the keeper gives the channel a new key or takes it back.
+- On the Python relay: in memory only, as everything there, while the relay runs. `--delay` holds the game's messages back too.
 
 ## Clips (11/06/2026)
 

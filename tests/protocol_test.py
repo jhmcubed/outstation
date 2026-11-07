@@ -1410,6 +1410,185 @@ class Flow(Base):
         self.assertEqual((await v.recv_data())[0], "binary")
 
 
+class Game(Base):
+    """The game (11/07/2026): the Outside plugin, a RuneLite plugin of our own, sends the player's live game state on a
+    socket of its own. Each field replaces the one kept but "items", which is merged; what changed reaches seated
+    viewers, lookers and desks, and someone just come gets the whole of it; GET /game reads it while the outstation's
+    dark. (The checking of each field, the dictionary's most and the kept state's most: relay-py/test_relay.py's.)"""
+
+    STATE = {"name": "Sburb", "world": 302, "type": "NORMAL", "off": False, "paused": False,
+             "vitals": {"hp": [80, 99], "prayer": [43, 70], "run": 100, "spec": 50},
+             "skills": {"Attack": [99, 112, 13034431], "Hitpoints": [99, 99, 13034431]},
+             "worn": [[1163, 1]] + [None] * 13, "inv": [[385, 12]] + [None] * 27, "bag": None,
+             "pouch": [[560, 1000], [565, 2000], [9075, 400]], "quiver": [11212, 120], "prayers": ["PIETY"],
+             "items": {"385": ["Shark", 870], "1163": ["Rune full helm", 21000]}}
+
+    async def game(self, key=None):
+        """A game socket, saying a version older than any MIN_CLIENT: the plugin's versions are its own."""
+        return await self.connect("game", "key=%s&v=0.0.1" % (key or self.key))
+
+    def read(self, code="", channel=None):
+        return http("GET", "/game/%s?code=%s" % (channel or self.ch, code))
+
+    async def test_the_right_key_connects_whatever_its_version_and_a_wrong_or_short_one_is_refused(self):
+        v = await self.watch()
+        self.assertFalse((await next_of(v, "relay"))["game"])
+        await self.game()
+        while not (await next_of(v, "relay"))["game"]:
+            pass
+        wrong = await self.game(key="wrong-key-" + secrets.token_hex(3))
+        self.assertEqual(await wrong.recv_close(), ("close", 4003))
+        short = await self.game(key="short")
+        self.assertEqual(await short.recv_close(), ("close", 4001))
+
+    async def test_what_changed_reaches_viewers_lookers_and_desks_and_someone_just_come_gets_it_all(self):
+        g = await self.game()
+        v, look, d = await self.watch(), await self.connect("watch", "look=1"), await self.desk()
+        await self.pause()
+        t0 = time.time() * 1000
+        await g.send(json.dumps({"game": self.STATE}))
+        for c in (v, look, d):
+            got = await next_of(c, "game")
+            self.assertLess(abs(got.pop("at") - t0), 60000)
+            self.assertEqual(got, self.STATE)
+        await g.send(json.dumps({"game": {"vitals": {"hp": [70, 99], "prayer": [40, 70], "run": 98, "spec": 50}}}))
+        got = await next_of(v, "game")
+        self.assertEqual(sorted(got), ["at", "vitals"])                   # (only what was sent)
+        for late in (await self.watch(), await self.connect("watch", "look=1"), await self.desk(name="late")):
+            whole = await next_of(late, "game")
+            self.assertEqual((whole["vitals"]["hp"], whole["inv"], whole["at"]), ([70, 99], self.STATE["inv"], got["at"]))
+
+    async def test_items_merge_while_every_other_field_is_replaced_whole(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        await g.send(json.dumps({"game": {"inv": [[385, 1]] + [None] * 27, "items": {"385": ["Shark", 870]}, "off": True,
+                                          "paused": "  wilderness\n"}}))
+        await g.send(json.dumps({"game": {"inv": [None] * 27 + [[2434, 4]],
+                                          "items": {"2434": ["Prayer potion(4)", 9000], "385": ["Shark", 900]}}}))
+        await next_of(v, "game")
+        self.assertEqual((await next_of(v, "game"))["items"], {"385": ["Shark", 900], "2434": ["Prayer potion(4)", 9000]})
+        whole = await next_of(await self.watch(), "game")
+        self.assertEqual(whole["inv"], [None] * 27 + [[2434, 4]])
+        self.assertEqual(whole["items"], {"385": ["Shark", 900], "2434": ["Prayer potion(4)", 9000]})
+        self.assertEqual((whole["off"], whole["paused"]), (True, "wilderness"))   # (a message without them: as they were)
+        await g.send(json.dumps({"game": {"off": False, "paused": False}}))
+        got = await next_of(v, "game")
+        self.assertEqual((got["off"], got["paused"]), (False, False))
+        self.assertEqual(self.read()[1]["game"]["paused"], False)
+        await g.send(json.dumps({"game": {"off": False, "paused": True}}))   # (nothing changed, true isn't its shape)
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "game", timeout=0.5)
+
+    async def test_a_second_game_socket_replaces_the_first(self):
+        old = await self.game()
+        await self.pause()
+        new = await self.game()
+        self.assertEqual(await old.recv_close(), ("close", 4000))
+        v = await self.watch()
+        self.assertTrue((await next_of(v, "relay"))["game"])
+        await new.send(json.dumps({"game": {"world": 420}}))
+        self.assertEqual((await next_of(v, "game"))["world"], 420)
+
+    async def test_the_read_gives_the_last_of_it_and_whether_the_plugin_is_connected(self):
+        status, got = self.read()
+        self.assertEqual((status, got["error"]), (404, "no game state for that outstation"))
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        await g.send(json.dumps({"game": {"name": "Sburb", "world": 302}}))
+        at = (await next_of(v, "game"))["at"]
+        status, got = self.read()
+        self.assertEqual((status, got), (200, {"game": {"name": "Sburb", "world": 302}, "at": at, "connected": True}))
+        g.close()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        status, got = self.read()
+        self.assertEqual((status, got["game"]["world"], got["connected"]), (200, 302, False))   # (while the player's away)
+        self.assertEqual(self.read(channel="none" + secrets.token_hex(4))[0], 404)
+
+    async def test_a_coded_outstations_game_needs_its_code(self):
+        await self.tx("moss")
+        g = await self.game()
+        v = await self.watch("moss")
+        await self.pause()
+        await g.send(json.dumps({"game": {"world": 302}}))
+        await next_of(v, "game")
+        self.assertEqual([self.read(code)[0] for code in ("lichen", "")], [403, 403])
+        self.assertEqual(self.read("moss")[1]["game"], {"world": 302})
+
+    async def test_the_status_line_and_the_open_outstations_say_whether_its_connected(self):
+        def row():
+            return {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}[self.ch]
+        v = await self.watch()
+        self.assertFalse((await next_of(v, "relay"))["game"])
+        g = await self.game()
+        while not (await next_of(v, "relay"))["game"]:
+            pass
+        await self.pause(2)
+        self.assertTrue(row()["game"])
+        g.close()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        await self.pause(2)
+        self.assertFalse(row()["game"])
+
+    async def test_too_big_unknown_and_wrong_shaped_fields_are_ignored(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        big = json.dumps({"game": {"name": "Big", "prayers": ["x" * 40] * 2000}})
+        self.assertGreater(len(big), 64 * 1024)
+        await g.send(big)
+        await g.send(json.dumps({"game": {"name": "  Sburb\n ", "world": "302", "inv": "full", "worn": [[1, 1]] * 15,
+                                          "secret": "kept?", "vitals": {"hp": [10, 99], "mood": "fine", "run": 140}}}))
+        got = await next_of(v, "game")                       # (the first: the big one never came)
+        got.pop("at")
+        self.assertEqual(got, {"name": "Sburb", "vitals": {"hp": [10, 99]}})
+        self.assertEqual(self.read()[1]["game"], {"name": "Sburb", "vitals": {"hp": [10, 99]}})
+        await g.send(json.dumps({"something": {"world": 302}}))     # (not a game message at all)
+        await g.send(json.dumps({"game": {"secret": 1}}))           # (nothing known in it)
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "game", timeout=0.5)
+
+    async def test_more_than_five_a_second_are_dropped(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        for i in range(8):
+            await g.send(json.dumps({"game": {"world": 300 + i}}))
+        worlds = []
+        try:
+            while True:
+                worlds.append((await next_of(v, "game", timeout=0.6))["world"])
+        except asyncio.TimeoutError:
+            pass
+        self.assertEqual(worlds, [300, 301, 302, 303, 304])
+        await asyncio.sleep(1.0)
+        await g.send(json.dumps({"game": {"world": 399}}))
+        self.assertEqual((await next_of(v, "game"))["world"], 399)
+
+    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
+    async def test_a_new_key_cuts_the_game_off_and_forgets_it(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        await g.send(json.dumps({"game": {"world": 302}}))
+        await next_of(v, "game")
+        self.assertEqual(admin("POST", "/admin/channels/" + self.ch)[0], 200)
+        self.assertEqual(await g.recv_close(), ("close", 4003))
+        self.assertEqual(self.read()[0], 404)
+        self.assertIsNone(await nothing_game(await self.watch()))
+
+
+async def nothing_game(c, wait=0.5):
+    """The game line someone just come is sent, or None if none comes in `wait` seconds."""
+    try:
+        return await next_of(c, "game", timeout=wait)
+    except asyncio.TimeoutError:
+        return None
+
+
 class Invites(Base):
     """An outstation's invites (11/07/2026): it hands out channels of its own, three to begin with and one more every 10
     hours on air (the earning is relay-py/test_relay.py's: ten hours on air can't be waited for here). An invite's code

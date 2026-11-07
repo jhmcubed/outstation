@@ -4,6 +4,8 @@
 //   ws(s)://<relay>/sound/<channel>?key=<key>                          the sound
 //   ws(s)://<relay>/desk/<channel>?key=<key>&name=<name in the chat>   the chat window
 //   ws(s)://<relay>/watch/<channel>?code=<watch code>                  a viewer (Outside)
+//   ws(s)://<relay>/game/<channel>?key=<key>&v=<its version>           the Outside plugin: the player's game state (game.ts)
+//   GET <relay>/game/<channel>?code=<watch code>                       the game state kept, and whether the plugin's connected
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
 //   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
 //
@@ -56,7 +58,7 @@ import { attachCode, oneLine, relayOf } from "./text";
 
 export { Channel };
 
-const ROLES = new Set(["transmit", "watch", "desk", "sound"]);
+const ROLES = new Set(["transmit", "watch", "desk", "sound", "game"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
 const MAX_POST = 16 * 1024 * 1024;
 
@@ -169,7 +171,7 @@ export class Directory extends DurableObject<Env> {
     }));
     const open = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set && !r.code)
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
-                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null }));
+                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
   }
@@ -471,6 +473,13 @@ export default {
       const n = parseInt(request.headers.get("content-length") || "0") || 0;
       if (n > MAX_POST) return new Response(null, { status: 413 });
       return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_dink"));
+    }
+
+    // the game state kept (11/07/2026; game.ts): for Outside while the outstation's dark, with the watch code as watching
+    if (parts[0] === "game" && parts.length === 2 && !upgrade) {
+      if (request.method !== "GET") return new Response(null, { status: 405 });
+      if (!NAME.test(parts[1])) return Response.json({ error: "which outstation?" }, { status: 400 });
+      return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_game"));
     }
 
     if (upgrade) {

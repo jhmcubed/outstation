@@ -345,6 +345,98 @@ class InviteNumbers(unittest.TestCase):
                                "M3ktazN5In0")
 
 
+class GameFields(unittest.TestCase):
+    """The game (11/07/2026): each field of the Outside plugin's messages checked and cleaned (relay.game_fields; the
+    Worker's gameFields in game.ts is the same). The shared suite (tests/protocol_test.py, Game) tests the socket."""
+
+    def test_each_field_is_checked_cleaned_and_put_in_order_and_unknown_ones_left_out(self):
+        got = relay.game_fields({
+            "secret": "not kept", "items": {"385": ["Shark\n", 870.0], "007": ["Bond", 1], "99999999999": ["Big", 1],
+                                            "12": ["Price as words", "870"], "4": ["Bronze bar", 30]},
+            "prayers": ["PIETY", " RIGOUR "], "quiver": None, "pouch": None, "bag": None,
+            "inv": [[385, 2], None, [1, -1]], "worn": [[1163, 1]] + [None] * 13,
+            "skills": {"Attack": [99, 112, 13034431], "1st": [1, 1, 0], "Magic": [99, 99], "Hitpoints": [10.0, 10, 1154]},
+            "vitals": {"hp": [80, 99], "prayer": [1, 2, 3], "run": 140, "spec": 50.0, "mood": "fine"},
+            "off": "yes", "paused": "  wilderness, or a world where players fight each other ", "type": "IRONMAN",
+            "world": 302.0, "name": " So\u202ebig  longername "})
+        self.assertEqual(list(got), ["name", "world", "type", "paused", "vitals", "skills", "worn", "bag", "quiver",
+                                     "prayers", "items"])
+        self.assertEqual(got["paused"], "wilderness, or a world where pla")     # (one line, 32 at most)
+        self.assertEqual(got["name"], "So big longe")                      # (one line, no direction marks, 12 at most)
+        self.assertEqual((got["world"], got["type"], got["bag"], got["quiver"]), (302, "IRONMAN", None, None))
+        self.assertEqual(got["vitals"], {"hp": [80, 99], "spec": 50})
+        self.assertEqual(got["skills"], {"Attack": [99, 112, 13034431], "Hitpoints": [10, 10, 1154]})
+        self.assertEqual(got["prayers"], ["PIETY", "RIGOUR"])
+        self.assertEqual(list(got["items"].items()), [("4", ["Bronze bar", 30]), ("385", ["Shark", 870])])   # (by id)
+        self.assertNotIn("inv", got)                                       # (a slot that isn't [item, how many])
+        self.assertNotIn("off", got)
+        self.assertNotIn("pouch", got)                                     # (only the bag may be null)
+        self.assertEqual(relay.game_fields({"quiver": [11212, 120], "off": False, "world": True, "paused": False}),
+                         {"off": False, "paused": False, "quiver": [11212, 120]})
+        self.assertEqual(relay.game_fields({"paused": True}), {})          # (a word or two, or false)
+        self.assertEqual(relay.game_fields({"worn": [None] * 15, "items": {"1": ["x"]}}), {})
+        self.assertEqual(relay.game_fields(["not", "an", "object"]), {})
+
+    def test_nan_and_infinity_are_not_json(self):
+        ch = relay.Channel("moss", "secret-key")
+        ch.take_game('{"game": {"world": 302, "name": NaN}}')
+        ch.take_game('{"game": {"world": Infinity}}')
+        self.assertEqual(ch.game.kept, {})
+        ch.take_game('{"game": {"world": 1e400}}')          # (a number too big for anything: left out)
+        ch.take_game('{"game": {"world": 302}}')
+        self.assertEqual(ch.game.kept, {"world": 302})
+
+
+class GameState(unittest.TestCase):
+    """The game state kept (relay.Game; the Worker's GameState, the same): each field replaced whole but "items", merged
+    into one dictionary (GAME_ITEMS ids at most), the whole at most GAME_KEPT as JSON."""
+
+    def test_each_field_is_replaced_whole_but_items_which_merge(self):
+        g = relay.Game()
+        out = g.apply({"inv": [[385, 1]], "items": {"385": ["Shark", 870]}, "off": True}, now=1)
+        self.assertEqual(out, {"inv": [[385, 1]], "off": True, "items": {"385": ["Shark", 870]}})
+        out = g.apply({"inv": [None, [2434, 4]], "items": {"2434": ["Prayer potion(4)", 9000]}}, now=2)
+        self.assertEqual(out, {"inv": [None, [2434, 4]], "items": {"2434": ["Prayer potion(4)", 9000]}})
+        self.assertEqual(g.kept, {"inv": [None, [2434, 4]], "off": True,
+                                  "items": {"385": ["Shark", 870], "2434": ["Prayer potion(4)", 9000]}})
+        self.assertEqual(g.at, 2)
+
+    def test_what_changes_nothing_goes_nowhere_and_with_a_change_all_of_it_goes(self):
+        g = relay.Game()
+        g.apply({"world": 302, "items": {"385": ["Shark", 870]}}, now=1)
+        self.assertIsNone(g.apply({"world": 302, "items": {"385": ["Shark", 870]}}, now=2))
+        self.assertEqual(g.at, 1)
+        self.assertEqual(g.apply({"world": 302, "items": {"385": ["Shark", 900]}}, now=3),
+                         {"world": 302, "items": {"385": ["Shark", 900]}})
+        self.assertIsNone(g.apply({}, now=4))
+        self.assertEqual(g.apply({"bag": None}, now=5), {"bag": None})     # (null, where there was nothing: new)
+
+    def test_no_new_ids_past_the_dictionarys_most_but_known_ones_still_change(self):
+        g = relay.Game()
+        with mock.patch.object(relay, "GAME_ITEMS", 3):
+            g.apply({"items": {"1": ["a", 1], "2": ["b", 2]}}, now=1)
+            out = g.apply({"items": {"3": ["c", 3], "4": ["d", 4], "5": ["e", 5]}}, now=2)
+            self.assertEqual(out, {"items": {"3": ["c", 3]}})
+            self.assertIsNone(g.apply({"items": {"6": ["f", 6]}}, now=3))
+            self.assertEqual(g.apply({"world": 1, "items": {"6": ["f", 6], "1": ["a", 10]}}, now=4),
+                             {"world": 1, "items": {"1": ["a", 10]}})
+        self.assertEqual(g.kept["items"], {"1": ["a", 10], "2": ["b", 2], "3": ["c", 3]})
+
+    def test_its_length_is_its_json_and_a_message_past_the_most_is_ignored_whole(self):
+        g = relay.Game()
+        self.assertEqual(g.size(), len(json.dumps(g.kept)))
+        g.apply(relay.game_fields({"name": "Sburb", "vitals": {"hp": [80, 99]}, "bag": None, "prayers": ["PIETY"],
+                                   "items": {str(i): ["Item é %d" % i, i * 7] for i in range(50)}}), now=1)
+        g.apply({"name": "Sb", "items": {"3": ["Changed", 1], "1000": ["New", 2]}}, now=2)
+        self.assertEqual(g.size(), len(json.dumps(g.kept)))
+        kept, size = json.dumps(g.kept), g.size()
+        with mock.patch.object(relay, "GAME_KEPT", size + 20):
+            self.assertIsNone(g.apply({"world": 302, "type": "x" * 40}, now=3))     # (past it: none of it kept)
+            self.assertEqual(json.dumps(g.kept), kept)
+            self.assertEqual(g.apply({"world": 302}, now=4), {"world": 302})
+        self.assertEqual(g.size(), len(json.dumps(g.kept)))
+
+
 async def ask(port, method, path, body=None):
     """(status, JSON or None) of a request with a JSON body, as the outstation client makes one."""
     data = json.dumps(body).encode() if body is not None else b""
@@ -532,6 +624,18 @@ class PublicSide(RelayTest):
         self.clients.append(c)
         self.assertEqual(c.status, 403)
 
+    async def test_the_game_is_read_there_but_its_socket_is_refused_even_with_the_key(self):
+        g = await self.connect("/game/sburb?key=secret-key")
+        v = await self.connect("/watch/sburb")
+        await asyncio.sleep(0.05)
+        await g.send(json.dumps({"game": {"world": 302}}))
+        await next_of(v, "game")
+        status, kind, body = await get(self.public_port, "/game/sburb")
+        self.assertEqual((status, json.loads(body)["game"]), (200, {"world": 302}))
+        c = await Client().open(self.public_port, "/game/sburb?key=secret-key")
+        self.clients.append(c)
+        self.assertEqual(c.status, 403)
+
     async def test_dink_posts_there_are_refused_even_with_the_key(self):
         await self.connect("/transmit/sburb?key=secret-key")
         v = await self.connect("/watch/sburb")
@@ -682,6 +786,15 @@ class Delay(RelayTest):
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.25)
         self.assertEqual(await v.recv_data(timeout=1.0), ("text", '{"tick": 7}'))
+
+    async def test_the_game_is_held_back_too(self):
+        g = await self.connect("/game/sburb?key=secret-key")
+        v = await self.connect("/watch/sburb")
+        await asyncio.sleep(0.05)
+        await g.send(json.dumps({"game": {"world": 302}}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "game", timeout=0.25)
+        self.assertEqual((await next_of(v, "game", timeout=1.0))["world"], 302)
 
 
 async def next_of(client, kind, timeout=1.0):
