@@ -10,6 +10,8 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 - the version that last transmitted, and the time on air by month
 - messages held for the outstation, and the list of its clips (the clips' files are in R2)
 
+The Directory (one object for the whole relay) keeps the channels handed out, the requests for station keys, the keeper's notice, and the anomalies and requisitions sent to the listening post.
+
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
 
 ## On this PC

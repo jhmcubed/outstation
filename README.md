@@ -61,7 +61,14 @@ The first screen, ready to transmit, and transmitting with two observers chattin
 - **A key does nothing in RuneLite:** the outstation holds its four keys (Pause, Scroll Lock, Insert, End) while it's open. Give it others in the settings' hotkeys.
 - **Dink isn't heard:** the address from **dink ▸** has to be on a line of its own in Dink's Primary Webhook URLs, in the RuneLite profile you're playing on.
 - **"too old for the relay":** download the newest release and open that one.
-- **It crashed:** it says so, and says so again the next time it opens. In the settings, under **more**, press **copy the station log**, then paste it into a new issue here ("Something went wrong") or send it to Jace. Your keys, codes and webhook addresses are taken out first.
+- **It crashed:** it says so, and says so again the next time it opens. Report it as an anomaly (below).
+
+## Anomalies and requisitions
+
+Something wrong with the outstation is an **anomaly**; something you'd like it to do is a **requisition**. The pink **report an anomaly** and **file a requisition** at the foot of the window (and in settings ▸ more; an anomaly on the first screen too) open the same drawer, with three ways to send it:
+1. **To the listening post,** from the outstation itself: your words, this version and, for an anomaly, the station log, with its keys, codes and webhook addresses taken out first. It reaches Jace's own outstation. Nothing is sent until you press **send to the listening post**.
+2. **On GitHub:** **open the form** opens this repository's "Something went wrong" or "A requisition" form in your browser; for an anomaly, the station log is put on the clipboard to paste in. It needs a GitHub account.
+3. **By email,** to the listening post: **research@ghillie.wiki**. For an anomaly, **copy the station log** and paste it in.
 
 ## Which Windows
 

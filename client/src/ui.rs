@@ -133,7 +133,7 @@ fn tip(text: &str) -> egui::WidgetText {
 
 #[derive(PartialEq, Clone, Copy)]
 #[cfg_attr(not(feature = "station"), allow(dead_code))]
-enum Drawer { None, Settings, Dink, Friends, FriendList }
+enum Drawer { None, Settings, Dink, Friends, FriendList, Report }
 
 /// A conversation with another portal (11/06/2026, Jace: "allow for messaging friends directly ... at the top of the
 /// chat box, make a tab for stream chat, and then whenever you get a message from a friend directly it opens a new tab
@@ -283,6 +283,8 @@ pub struct App {
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
     /// the Dink drawer's "the replay buffer ▸": the settings drawer opened at it
     go_replay: bool,
+    /// an anomaly report being written (report.rs)
+    report: crate::report::Report,
     /// step 1's ways open again once it's set up ("change"), and its by-hand rules open
     discord_change: bool,
     discord_hand: bool,
@@ -448,7 +450,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, go_replay: false, discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -469,7 +471,7 @@ impl App {
             std::thread::spawn(move || if let Err(e) = crate::shortcut::make(&p) { crate::transmit::log(&format!("the Start menu's shortcut: {}", e)); });
         }
         if let Some(what) = crate::crash::last_time() {
-            app.note(format!("the outstation stopped unexpectedly last time ({}). settings ▸ more ▸ \"copy the station log\" puts what happened on the clipboard, to send to the listening post", what));
+            app.note(format!("the outstation stopped unexpectedly last time ({}). \"report an anomaly\" (at the foot of the window) sends what happened to the listening post", what));
         }
         if !s.attached() {
             if let Some(code) = win::paste_text().filter(|c| crate::settings::is_key(c)) {
@@ -961,6 +963,34 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(wrapped("anyone with the token can issue a key for any channel and stand any of them down: it stays on this PC (Documents\\ghillie portal\\admin.json), never in a repository", 14.0, QUIET(), ui.available_width()));
     }
     ui.add_space(10.0);
+    // anomaly reports from friends' outstations (report.rs): who, when, their words; the log copied, and each done with
+    let reports = app.keeper.reports.lock().unwrap().clone();
+    if let Some(Ok(reports)) = reports {
+        if !reports.is_empty() {
+            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+            ui.label(rich(&format!("anomalies and requisitions ({})", reports.len()), 16.0, PINK()));
+            for r in reports {
+                let who = if r.channel.is_empty() { format!("{} (not checked)", if r.name.is_empty() { "someone" } else { &r.name }) } else { r.channel.clone() };
+                ui.horizontal(|ui| {
+                    ui.label(rich(if r.requisition { "requisition" } else { "anomaly" }, 14.0, if r.requisition { LIME() } else { PINK() }));
+                    ui.label(rich(&format!("{} · {} ago · {}", who, ago(Duration::from_millis(now_ms.saturating_sub(r.at_ms))), r.version), 14.0, TEXT()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if button(ui, "done with it", true, None).on_hover_text(tip("takes it off the relay")).clicked() {
+                            app.keeper.drop_report(r.id.clone(), wake.clone());
+                        }
+                        let words = if r.log.is_empty() { "copy it" } else { "copy it and its log" };
+                        if button(ui, words, true, None).on_hover_text(tip("their words (and their station log, keys and codes already taken out) on the clipboard")).clicked() {
+                            let kind = if r.requisition { "requisition" } else { "anomaly" };
+                            win::copy_text(&format!("{} {} from {}\n{}\n\n{}", kind, r.id, who, r.note, r.log));
+                            app.note(format!("{}'s {} is on the clipboard", who, kind));
+                        }
+                    });
+                });
+                if !r.note.is_empty() { ui.label(wrapped(&format!("“{}”", r.note), 14.0, GREY(), ui.available_width())); }
+            }
+            ui.add_space(10.0);
+        }
+    }
     // those asking for a portal (a friend's client, from its attach screen; ask.rs)
     let asks = app.keeper.asks.lock().unwrap().clone();
     if let Some(Ok(asks)) = asks {
@@ -1613,6 +1643,10 @@ fn decode(jpg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 /// The rest of the capture's and the channel's settings (what settings.json held by hand).
 /// when "copy my log" was last pressed (the drawer says so for a moment)
 static LOG_COPIED: Mutex<Option<Instant>> = Mutex::new(None);
+/// settings ▸ more's "report an anomaly" pressed: the window opens its drawer
+static OPEN_REPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// and its "file a requisition"
+static OPEN_REQUISITION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn more(ui: &mut egui::Ui, settings: &Shared) {
     egui::CollapsingHeader::new(rich("more", 16.0, LIME())).id_salt("more").show(ui, |ui| {
@@ -1696,6 +1730,14 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         });
         ui.add_space(8.0);
         ui.label(rich("if something goes wrong", 16.0, LIME()));
+        ui.horizontal_wrapped(|ui| {
+            if pink_button(ui, "report an anomaly ▸", true).on_hover_text(tip("something wrong: to the listening post, on GitHub, or by email")).clicked() {
+                OPEN_REPORT.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            if button(ui, "file a requisition ▸", true, None).on_hover_text(tip("something you'd like it to do (a feature request): to the listening post, on GitHub, or by email")).clicked() {
+                OPEN_REQUISITION.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
         ui.horizontal_wrapped(|ui| {
             if button(ui, "copy the station log", true, None)
                 .on_hover_text(tip("the station log's last 400 lines and this version, on the clipboard, to paste to the listening post. Keys, watch codes, station keys and Discord webhook addresses are taken out first.")).clicked() {
@@ -2426,8 +2468,83 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     start_menu_offer(app, ui);
+    // (an outstation that won't attach is the anomaly most worth reporting: the form here too)
+    ui.add_space(10.0);
+    let open = app.report.open;
+    if pink_button(ui, if open { "report an anomaly ▾" } else { "report an anomaly ▸" }, true).clicked() { app.report.open = !open; }
+    if app.report.open {
+        ui.add_space(6.0);
+        anomaly_ui(app, ui);
+    }
     ui.add_space(14.0);
     ui.label(wrapped(JAGEX, 14.0, QUIET(), ui.available_width()));
+}
+
+/// "report an anomaly" (report.rs): what happened, then the three ways it goes: to the listening post from here, on
+/// GitHub, or by email.
+fn anomaly_ui(app: &mut App, ui: &mut egui::Ui) {
+    let w = ui.available_width();
+    let req = app.report.requisition;
+    ui.horizontal_wrapped(|ui| {
+        if button(ui, "an anomaly", true, Some(!req)).on_hover_text(tip("something wrong with the outstation (a bug)")).clicked() { app.report.requisition = false; }
+        if button(ui, "a requisition", true, Some(req)).on_hover_text(tip("something you'd like the outstation to do (a feature request)")).clicked() { app.report.requisition = true; }
+    });
+    let req = app.report.requisition;
+    ui.add_space(4.0);
+    if req {
+        ui.label(rich("file a requisition", 18.0, LIME()));
+        ui.label(wrapped("something you'd like the outstation to do? ask the listening post for it.", 14.0, GREY(), w));
+    } else {
+        ui.label(rich("report an anomaly", 18.0, PINK()));
+        ui.label(wrapped("something wrong with the outstation? tell the listening post what happened. the station log goes with it, its keys, codes and webhook addresses taken out first.", 14.0, GREY(), w));
+    }
+    ui.add_space(6.0);
+    ui.label(rich(if req { "what you'd like it to do, and when you'd use it" } else { "what happened, and what you were doing" }, 14.0, GREY()));
+    ui.add(egui::TextEdit::multiline(&mut app.report.note).desired_rows(4).desired_width(w).font(egui::TextStyle::Body)
+        .hint_text(if req { "a way to…" } else { "the tape stopped after i went dark…" }));
+    ui.add_space(10.0);
+    ui.label(rich("1 · to the listening post", 16.0, LIME()));
+    ui.label(wrapped(if req { "sent from here, only when you press it: your words and this version (with your channel, when the outstation's attached to the listening post's relay)." }
+                     else { "sent from here, only when you press it: your words, the station log and this version (with your channel, when the outstation's attached to the listening post's relay)." }, 14.0, QUIET(), w));
+    let busy = *app.report.busy.lock().unwrap();
+    if pink_button(ui, if busy { "sending…" } else { "send to the listening post" }, !busy).clicked() && !busy {
+        if app.report.note.trim().is_empty() {
+            *app.report.said.lock().unwrap() = Some(Err("say what happened first: a line is enough".into()));
+        } else {
+            let c = ui.ctx().clone();
+            let s = app.settings.get();
+            app.report.send(&s, move || c.request_repaint());
+        }
+    }
+    let said = app.report.said.lock().unwrap().clone();
+    match said {
+        Some(Ok(t)) => { ui.label(wrapped(&t, 14.0, TEAL(), w)); }
+        Some(Err(e)) => { ui.label(wrapped(&e, 14.0, PINK(), w)); }
+        None => {}
+    }
+    ui.add_space(10.0);
+    ui.label(rich("2 · on GitHub", 16.0, LIME()));
+    ui.label(wrapped(if req { "the outstation's \"A requisition\" form opens in your browser (it needs a GitHub account)." }
+                     else { "the station log goes on the clipboard and the outstation's \"Something went wrong\" form opens in your browser: paste the log in its last box (it needs a GitHub account)." }, 14.0, QUIET(), w));
+    if button(ui, "open the form ↗", true, None).clicked() {
+        if !req { win::copy_text(&crate::crash::log_for_sending()); }
+        app.report.hint = if !win::open_page(&crate::report::issue_url(req)) { format!("couldn't open {}", crate::report::ISSUE_PAGE) }
+                          else if req { "the form's open in your browser".into() } else { "the station log is on the clipboard: paste it in the form's last box".into() };
+    }
+    ui.add_space(10.0);
+    ui.label(rich("3 · by email", 16.0, LIME()));
+    ui.label(wrapped(&if req { format!("write to {}.", crate::report::ADDRESS) } else { format!("write to {}, with the station log pasted in or attached.", crate::report::ADDRESS) }, 14.0, QUIET(), w));
+    ui.horizontal_wrapped(|ui| {
+        if button(ui, "copy the address", true, None).clicked() {
+            win::copy_text(crate::report::ADDRESS);
+            app.report.hint = format!("{} is on the clipboard", crate::report::ADDRESS);
+        }
+        if !req && button(ui, "copy the station log", true, None).clicked() {
+            win::copy_text(&crate::crash::log_for_sending());
+            app.report.hint = "the station log is on the clipboard (keys, codes and webhook addresses taken out)".into();
+        }
+    });
+    if !app.report.hint.is_empty() { ui.label(wrapped(&app.report.hint, 14.0, TEAL(), w)); }
 }
 
 /// The Start menu, offered once (shortcut.rs): yes makes the shortcut, either answer puts the question away.
@@ -2553,6 +2670,11 @@ impl eframe::App for App {
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
         for n in crate::autolive::take_notes() { self.note(n); }
         for n in crate::hotkeys::take_notes() { self.note(n); }
+        let (rep, req) = (OPEN_REPORT.swap(false, std::sync::atomic::Ordering::Relaxed), OPEN_REQUISITION.swap(false, std::sync::atomic::Ordering::Relaxed));
+        if rep || req {
+            self.report.requisition = req;
+            if self.drawer != Drawer::Report { self.open_drawer(ctx, Drawer::Report); }
+        }
         // those asking for a portal (the keeper's build): counted on the portals button, and a line in the chat for each new one
         #[cfg(feature = "station")]
         {
@@ -2560,6 +2682,12 @@ impl eframe::App for App {
             if self.drawer != Drawer::Friends { self.keeper.watch_asks(move || c.request_repaint()); }
             let new = self.keeper.new_asks();
             if let Some(line) = crate::keeper::asking_line(&new.iter().map(|r| r.player.clone()).collect::<Vec<_>>()) { self.note(line); }
+            let new = self.keeper.new_reports();
+            for req in [false, true] {
+                let who: Vec<String> = new.iter().filter(|r| r.requisition == req)
+                    .map(|r| if r.channel.is_empty() { if r.name.is_empty() { "someone".into() } else { r.name.clone() } } else { r.channel.clone() }).collect();
+                if let Some(line) = crate::keeper::anomaly_line(&who, req) { self.note(line); }
+            }
         }
         if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
             #[cfg(feature = "station")]
@@ -2701,6 +2829,8 @@ impl eframe::App for App {
                             friends_drawer(self, ui);
                         } else if self.drawer == Drawer::FriendList {
                             friendlist_drawer(self, ui);
+                        } else if self.drawer == Drawer::Report {
+                            anomaly_ui(self, ui);
                         } else {
                             dink_drawer(self, ui);
                         }
@@ -2872,7 +3002,7 @@ impl App {
         let gap = ui.spacing().item_spacing.x;
         let mut need = button_w(ui, &watching) + button_w(ui, "settings ▸") + button_w(ui, "dink ▸") + button_w(ui, &friends_words) + gap * 5.0;
         #[cfg(feature = "station")]
-        let portals_words = crate::keeper::portals_words(self.keeper.asking_now(), self.drawer == Drawer::Friends);
+        let portals_words = { let (a, q) = self.keeper.reports_now(); crate::keeper::portals_words(self.keeper.asking_now(), a, q, self.drawer == Drawer::Friends) };
         #[cfg(not(feature = "station"))]
         let portals_words = String::new();
         if cfg!(feature = "station") { need += button_w(ui, &portals_words) + gap; }
@@ -3395,6 +3525,23 @@ impl App {
             }
             if button(ui, "clip", false, None).on_hover_text("the tape saved as a clip (the clip key does the same)").clicked() {
                 crate::clip::save(&self.settings.get().clip_folder);
+            }
+        });
+        // (11/06/2026, Jace: "make the report bug button easy to find and obvious": pink, on a line of its own at the foot
+        // of the window, always there)
+        ui.add_space(4.0);
+        let ctx = ui.ctx().clone();
+        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let open = self.drawer == Drawer::Report;
+            if button(ui, "file a requisition ▸", false, None)
+                .on_hover_text(tip("something you'd like the outstation to do? ask the listening post for it (a feature request): from here, on GitHub, or by email")).clicked() {
+                self.report.requisition = true;
+                if !open { self.open_drawer(&ctx, Drawer::Report); }
+            }
+            if pink_button(ui, if open && !self.report.requisition { "report an anomaly ◂" } else { "report an anomaly ▸" }, true)
+                .on_hover_text(tip("something wrong with the outstation? report it to the listening post (your words and the station log, keys and codes taken out), on GitHub, or by email")).clicked() {
+                if open && !self.report.requisition { self.open_drawer(&ctx, Drawer::Report); }
+                else { self.report.requisition = false; if !open { self.open_drawer(&ctx, Drawer::Report); } }
             }
         });
     }

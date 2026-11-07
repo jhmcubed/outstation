@@ -177,10 +177,39 @@ pub fn take(player: &str) -> Result<String, String> {
     Ok(ch)
 }
 
-/// The portals button's words: with how many are asking for a portal, when any are.
-pub fn portals_words(asking: usize, open: bool) -> String {
+/// An anomaly report from a friend's outstation (report.rs; the relay's /admin/reports).
+#[derive(Clone, Debug)]
+pub struct ReportRow { pub id: String, pub requisition: bool, pub at_ms: u64, pub channel: String, pub name: String, pub note: String, pub log: String, pub version: String }
+
+/// The anomaly reports waiting, newest first.
+pub fn reports_list() -> Result<Vec<ReportRow>, String> {
+    let v = call("GET", "/admin/reports", true)?;
+    Ok(v.as_array().cloned().unwrap_or_default().iter().filter_map(|r| {
+        let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        Some(ReportRow { id: r.get("id")?.as_str()?.to_string(), requisition: s("kind") == "requisition", at_ms: r.get("at").and_then(|x| x.as_u64()).unwrap_or(0), channel: s("channel"),
+                         name: s("name"), note: s("note"), log: s("log"), version: s("version") })
+    }).collect())
+}
+
+/// The outstations button's words: with how many are requesting a key, and how many anomalies and requisitions
+/// wait, when any do.
+pub fn portals_words(asking: usize, anomalies: usize, requisitions: usize, open: bool) -> String {
     let arrow = if open { "◂" } else { "▸" };
-    if asking == 0 { format!("outstations {}", arrow) } else { format!("outstations · {} requesting {}", asking, arrow) }
+    let mut w = "outstations".to_string();
+    if asking > 0 { w += &format!(" · {} requesting", asking); }
+    if anomalies > 0 { w += &format!(" · {} {}", anomalies, if anomalies == 1 { "anomaly" } else { "anomalies" }); }
+    if requisitions > 0 { w += &format!(" · {} {}", requisitions, if requisitions == 1 { "requisition" } else { "requisitions" }); }
+    format!("{} {}", w, arrow)
+}
+
+/// The chat's line for newly reported anomalies, or newly filed requisitions (None for none).
+pub fn anomaly_line(names: &[String], requisitions: bool) -> Option<String> {
+    let (one, many) = if requisitions { ("a requisition filed", "requisitions filed") } else { ("an anomaly reported", "anomalies reported") };
+    match names {
+        [] => None,
+        [n] => Some(format!("{} by {} · open outstations to read it", one, n)),
+        all => Some(format!("{} {}: {} · open outstations to read them", all.len(), many, all.join(", "))),
+    }
 }
 
 /// The chat's line for those newly asking for a portal (None for nobody).
@@ -213,6 +242,9 @@ pub struct Keeper {
     /// the chat (channel and when they asked: someone turned down who asks again is told of again)
     asks_at: Option<Instant>,
     told: std::collections::HashSet<(String, u64)>,
+    /// the anomaly reports waiting (read with the requests), and those already told of in the chat
+    pub reports: Arc<Mutex<Option<Result<Vec<ReportRow>, String>>>>,
+    told_reports: std::collections::HashSet<String>,
     busy: Arc<Mutex<bool>>,
     pub answer: Arc<Mutex<Option<Result<(String, String), String>>>>,
     pub note: Arc<Mutex<String>>,
@@ -228,7 +260,7 @@ impl Keeper {
         let m = load();
         Keeper { rows: Arc::new(Mutex::new(None)), asks: Arc::new(Mutex::new(None)), confirm_ask: None,
                  notice_now: Arc::new(Mutex::new(None)), notice_text: String::new(),
-                 read_at: None, asks_at: None, told: std::collections::HashSet::new(), busy: Arc::new(Mutex::new(false)),
+                 read_at: None, asks_at: None, told: std::collections::HashSet::new(), reports: Arc::new(Mutex::new(None)), told_reports: std::collections::HashSet::new(), busy: Arc::new(Mutex::new(false)),
                  answer: Arc::new(Mutex::new(None)), note: Arc::new(Mutex::new(String::new())), name: String::new(),
                  relay: field(&m, "relay"), setup_open: field(&m, "relay").is_empty(), confirm: None }
     }
@@ -238,12 +270,13 @@ impl Keeper {
         if *self.busy.lock().unwrap() { return; }
         if !now && self.read_at.is_some_and(|t| t.elapsed() < Duration::from_secs(10)) { return; }
         self.read_at = Some(Instant::now());
-        let (rows, asks, busy, notice_now) = (self.rows.clone(), self.asks.clone(), self.busy.clone(), self.notice_now.clone());
+        let (rows, asks, busy, notice_now, reports) = (self.rows.clone(), self.asks.clone(), self.busy.clone(), self.notice_now.clone(), self.reports.clone());
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
             let got = listing();
             *rows.lock().unwrap() = Some(got);
             *asks.lock().unwrap() = Some(asking());
+            *reports.lock().unwrap() = Some(reports_list());
             if let Ok(n) = notice() { *notice_now.lock().unwrap() = Some(n); }
             *busy.lock().unwrap() = false;
             wake();
@@ -259,11 +292,12 @@ impl Keeper {
             || self.read_at.is_some_and(|t| t.elapsed() < minute) { return; }
         self.asks_at = Some(Instant::now());
         if !self.has_token() { return; }
-        let (asks, busy) = (self.asks.clone(), self.busy.clone());
+        let (asks, busy, reports) = (self.asks.clone(), self.busy.clone(), self.reports.clone());
         *busy.lock().unwrap() = true;
         std::thread::spawn(move || {
             // (a relay out of reach keeps the last count: the drawer says why when it's opened)
             if let Ok(a) = asking() { *asks.lock().unwrap() = Some(Ok(a)); }
+            if let Ok(r) = reports_list() { *reports.lock().unwrap() = Some(Ok(r)); }
             *busy.lock().unwrap() = false;
             wake();
         });
@@ -278,6 +312,34 @@ impl Keeper {
     pub fn new_asks(&mut self) -> Vec<AskRow> {
         let Some(Ok(asks)) = self.asks.lock().unwrap().clone() else { return Vec::new() };
         asks.into_iter().filter(|r| self.told.insert((r.channel.clone(), r.at_ms))).collect()
+    }
+
+    /// how many anomalies and requisitions wait (0 till the first read)
+    pub fn reports_now(&self) -> (usize, usize) {
+        match &*self.reports.lock().unwrap() {
+            Some(Ok(r)) => { let q = r.iter().filter(|x| x.requisition).count(); (r.len() - q, q) }
+            _ => (0, 0),
+        }
+    }
+
+    /// The anomaly reports not yet told of in the chat, oldest first.
+    pub fn new_reports(&mut self) -> Vec<ReportRow> {
+        let Some(Ok(mut r)) = self.reports.lock().unwrap().clone() else { return Vec::new() };
+        r.reverse();
+        r.into_iter().filter(|x| self.told_reports.insert(x.id.clone())).collect()
+    }
+
+    /// One read and done with: off the relay, off the window's thread.
+    pub fn drop_report(&mut self, id: String, wake: impl Fn() + Send + 'static) {
+        let reports = self.reports.clone();
+        if let Some(Ok(list)) = &mut *reports.lock().unwrap() { list.retain(|r| r.id != id); }
+        std::thread::spawn(move || {
+            if let Err(e) = call("DELETE", &format!("/admin/reports/{}", crate::settings::enc(&id)), true) {
+                crate::transmit::log(&format!("couldn't take the anomaly report off the relay: {}", e));
+            }
+            if let Ok(r) = reports_list() { *reports.lock().unwrap() = Some(Ok(r)); }
+            wake();
+        });
     }
 
     pub fn has(&self, channel: &str) -> bool {
@@ -364,8 +426,12 @@ mod tests {
 
     #[test]
     fn those_asking_are_counted_and_told_once() {
-        assert_eq!(portals_words(0, false), "outstations ▸");
-        assert_eq!(portals_words(2, true), "outstations · 2 requesting ◂");
+        assert_eq!(portals_words(0, 0, 0, false), "outstations ▸");
+        assert_eq!(portals_words(2, 0, 0, true), "outstations · 2 requesting ◂");
+        assert_eq!(portals_words(2, 1, 0, false), "outstations · 2 requesting · 1 anomaly ▸");
+        assert_eq!(portals_words(0, 3, 1, false), "outstations · 3 anomalies · 1 requisition ▸");
+        assert_eq!(anomaly_line(&["Moss Fern".into()], false).unwrap(), "an anomaly reported by Moss Fern · open outstations to read it");
+        assert_eq!(anomaly_line(&["a".into(), "b".into()], true).unwrap(), "2 requisitions filed: a, b · open outstations to read them");
         assert_eq!(asking_line(&[]), None);
         assert_eq!(asking_line(&["Moss Fern".into()]).unwrap(), "Moss Fern is requesting a key · open outstations to issue one or deny it");
         assert_eq!(asking_line(&["a".into(), "b".into()]).unwrap(), "2 are requesting keys: a, b · open outstations to answer them");

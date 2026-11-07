@@ -231,6 +231,8 @@ ADDRESSES = {
                                          "friends list's open portals before you're attached",
     "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; and the Outside pages the "
                             "friends list opens in your browser when you click a name (win.rs open_page: ghillie.wiki's only)",
+    "https://github.com/jhmcubed/outstation/issues/new": "the repository's \"Something went wrong\" form, opened in your "
+                                                       "browser from \"report an anomaly\" (report.rs, win.rs open_page)",
     "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
                                                                      "screen's link (win.rs open_page)",
     "http://127.0.0.1": "Dink's address on this PC, shown to you",

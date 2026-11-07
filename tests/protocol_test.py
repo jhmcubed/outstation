@@ -35,6 +35,7 @@ WORKER = MODE == "worker" or (MODE.startswith("ws") and bool(os.environ.get("ADM
 ADMIN = os.environ.get("ADMIN_TOKEN") or "test-admin-" + secrets.token_hex(12)
 # the oldest client the relays under test let in (a relay already running: whatever it was started with, given here)
 ASKS_AN_HOUR = 12    # (the Worker's own is 3: the tests all ask from one address)
+REPORTS_AN_HOUR = 8  # (the Worker's own is 5)
 MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.0")
 SAY_BURST = 20
 SOUND_HOLD = 0.5
@@ -81,7 +82,7 @@ def setUpModule():
         PROC = subprocess.Popen(
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
-             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR)],
+             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR)],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32")
         up = wait_up(90)
@@ -1507,6 +1508,55 @@ class Requests(unittest.IsolatedAsyncioTestCase):
         codes = [self.ask(name="q%s" % secrets.token_hex(3), pickup=secrets.token_urlsafe(32))[0] for _ in range(ASKS_AN_HOUR + 1)]
         self.assertIn(429, codes)
         self.assertEqual(codes[codes.index(429):], [429] * (len(codes) - codes.index(429)))
+
+
+@unittest.skipUnless(WORKER, "anomaly reports: the Worker only (the keeper's relay)")
+class Reports(unittest.IsolatedAsyncioTestCase):
+    """A friend's outstation sends a report (their words and the station log); its channel is named only when its key
+    checks out; the keeper lists them, newest first, and deletes each when read."""
+
+    def mine(self, report_id):
+        status, got = admin("GET", "/admin/reports")
+        self.assertEqual(status, 200)
+        return next((r for r in got if r["id"] == report_id), None)
+
+    async def test_a_report_with_its_key_names_its_channel_and_one_without_doesnt(self):
+        ch = "r" + secrets.token_hex(4)
+        status, minted = admin("POST", "/admin/channels/" + ch)
+        self.assertEqual(status, 200)
+        status, got = http("POST", "/reports", {"channel": ch, "key": minted["key"], "name": "Moss Fern", "note": "the tape stopped",
+                                                 "log": "outstation 0.1.0 · its station log\nline", "version": "0.1.0", "windows": "Windows 11"})
+        self.assertEqual(status, 201)
+        r = self.mine(got["id"])
+        self.assertEqual((r["channel"], r["name"], r["note"], r["version"], r["windows"]), (ch, "Moss Fern", "the tape stopped", "0.1.0", "Windows 11"))
+        self.assertIn("its station log", r["log"])
+        status, got2 = http("POST", "/reports", {"channel": ch, "key": "not-its-key-at-all", "name": "Bog", "note": "hm", "log": ""})
+        self.assertEqual(status, 201)
+        self.assertEqual(self.mine(got2["id"])["channel"], "")
+        status, got3 = http("POST", "/reports", {"name": "nobody yet", "note": "can't attach"})
+        self.assertEqual(self.mine(got3["id"])["channel"], "")
+        self.assertEqual(self.mine(got3["id"])["kind"], "anomaly")
+        status, got4 = http("POST", "/reports", {"kind": "requisition", "name": "Moss Fern", "note": "a guess on raids"})
+        self.assertEqual(status, 201)
+        self.assertEqual(self.mine(got4["id"])["kind"], "requisition")
+        self.assertEqual(admin("DELETE", "/admin/reports/" + got4["id"])[0], 204)
+        for i in (got["id"], got2["id"], got3["id"]):
+            self.assertEqual(admin("DELETE", "/admin/reports/" + i)[0], 204)
+            self.assertIsNone(self.mine(i))
+
+    async def test_empty_or_too_big_reports_are_refused_and_the_list_is_the_keepers(self):
+        self.assertEqual(http("POST", "/reports", {"name": "x", "note": "", "log": ""})[0], 400)
+        self.assertEqual(http("POST", "/reports", {"name": "x", "note": "big", "log": "x" * (90 * 1024)})[0], 413)
+        req = urllib.request.Request(http_url() + "/admin/reports", headers={"Authorization": "Bearer nope-nope-nope-nope"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
+
+    async def test_z_more_reports_from_one_place_wait_an_hour(self):
+        codes = [http("POST", "/reports", {"name": "x", "note": "n%d" % i})[0] for i in range(REPORTS_AN_HOUR + 1)]
+        self.assertIn(429, codes)
+        for r in admin("GET", "/admin/reports")[1]:
+            admin("DELETE", "/admin/reports/" + r["id"])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ export interface Env {
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
   MIN_CLIENT?: string; // the oldest outstation client let in (its v=); older ones are told to update (4026)
   ASKS_AN_HOUR?: string; // (tests) requests for a portal from one address in an hour (index.ts's ASKS_AN_HOUR)
+  REPORTS_AN_HOUR?: string; // (tests) anomaly reports from one address in an hour (index.ts's REPORTS_AN_HOUR)
   POLL_MIN_SECONDS?: string; // (tests: a poll that ends quickly)
   POLL_KEPT_SECONDS?: string;
   CLIPS?: R2Bucket; // the clips on players' Outside pages (clips.ts); unbound, the relay takes none
@@ -381,6 +382,8 @@ export class Channel extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
+    // (an anomaly report's channel and key, checked: index.ts's /reports)
+    if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
     if (role === "_dm") return this.takeDm(request);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);

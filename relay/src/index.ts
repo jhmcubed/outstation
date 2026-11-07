@@ -22,6 +22,18 @@
 //   DELETE /admin/requests/<channel>                          turned down
 // Only the pickup's SHA-256 is kept; the attach code is kept only until the asker's client collects it.
 //
+// Anomaly reports (11/06/2026, Jace: "build both routes"): a friend's outstation sends a report of something gone wrong
+// (their words, and the station log with its keys, codes and webhook addresses taken out by the client), only when
+// they press "send to the listening post"; the keeper reads them in his station's drawer.
+//   POST   /reports  {"kind", "channel", "key", "name", "note", "log", "version", "windows"}   kind: "anomaly" (the
+//                    default) or "requisition" (11/06/2026, Jace: "requests can also come straight to my outstation
+//                    client": something wanted, a feature request, with no log)   (channel and key optional:
+//                    with them the report says it's that channel's, checked; without, the name is as they typed it)
+//   GET    /admin/reports              the reports, newest first
+//   DELETE /admin/reports/<id>         one read and done with
+// At most REPORTS_KEPT (50) and REPORT_DAYS (30) days each; REPORTS_AN_HOUR (5) from one address; a log at most
+// REPORT_LOG (64 KB), a note at most 1,000 characters.
+//
 // A notice from the keeper to every portal (11/06/2026): one line every friend's client shows in its chat.
 //   GET    /admin/notice              the notice now ({"notice": {"text", "at"}} or {"notice": null})
 //   PUT    /admin/notice  {"text"}    a new one, sent at once to every desk connected and to each that connects
@@ -43,6 +55,19 @@ const ASKS_AN_HOUR = 3; // requests from one address in an hour
 const WAITING_MOST = 50; // requests waiting at once, everyone's
 const WAIT_DAYS = 14, PICKUP_DAYS = 7; // a request not answered in this long goes; an answer not collected, too
 const DAY = 86_400_000;
+const REPORTS_KEPT = 50, REPORT_DAYS = 30, REPORTS_AN_HOUR = 5, REPORT_LOG = 64 * 1024, REPORT_NOTE = 1000;
+
+interface Report {
+  id: string;
+  kind: "anomaly" | "requisition"; // something gone wrong, or something wanted (a feature request)
+  at: number;
+  channel: string; // checked against its key ("" when none was given, or it didn't match)
+  name: string; // as they typed it (or the channel)
+  note: string;
+  log: string;
+  version: string;
+  windows: string;
+}
 
 interface Ask {
   channel: string;
@@ -63,10 +88,12 @@ async function sha256(text: string): Promise<string> {
 // the channels handed out, for the owner's list; and the requests for one
 export class Directory extends DurableObject<Env> {
   asks = new Map<string, number[]>(); // an address -> when it asked (in memory: a sleep forgets, which only loosens it)
+  reportsFrom = new Map<string, number[]>(); // an address -> when it sent a report (the same)
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
     if (url.pathname === "/requests") return this.requests(request, url);
+    if (url.pathname === "/reports") return this.reports(request, url);
     if (url.pathname === "/notice") {
       if (request.method === "PUT") {
         const { text } = (await request.json()) as { text: string };
@@ -80,6 +107,42 @@ export class Directory extends DurableObject<Env> {
     else if (request.method === "DELETE") await this.ctx.storage.delete("c:" + name);
     const all = await this.ctx.storage.list({ prefix: "c:" });
     return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), ...(v as object) })));
+  }
+
+  // anomaly reports: "add" (a friend's outstation, its channel already checked by the Worker), "list" and "delete" (the
+  // keeper, already let through by admin())
+  async reports(request: Request, url: URL): Promise<Response> {
+    const what = url.searchParams.get("what") || "", now = Date.now();
+    const all = await this.ctx.storage.list<Report>({ prefix: "r:" });
+    const live: Report[] = [];
+    for (const [k, r] of all) {
+      if (now - r.at > REPORT_DAYS * DAY) await this.ctx.storage.delete(k);
+      else live.push(r);
+    }
+    live.sort((a, b) => b.at - a.at);
+    if (what === "list") return Response.json(live);
+    if (what === "delete") {
+      await this.ctx.storage.delete("r:" + (url.searchParams.get("id") || ""));
+      return new Response(null, { status: 204 });
+    }
+    if (what !== "add") return new Response(null, { status: 400 });
+    const ip = request.headers.get("cf-connecting-ip") || "";
+    const times = (this.reportsFrom.get(ip) || []).filter((t) => now - t < 3_600_000);
+    if (times.length >= (parseInt(this.env.REPORTS_AN_HOUR || "") || REPORTS_AN_HOUR)) {
+      return Response.json({ error: "too many reports from here: try again in an hour, or write to research@ghillie.wiki" }, { status: 429 });
+    }
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body) return Response.json({ error: "a report is JSON: name, note, log, version" }, { status: 400 });
+    const text = (v: unknown, most: number) => (typeof v === "string" ? v.replace(/\u0000/g, "").slice(0, most) : "");
+    const note = text(body.note, REPORT_NOTE).trim(), log = text(body.log, REPORT_LOG);
+    if (!note && !log) return Response.json({ error: "say what happened, or send the station log" }, { status: 400 });
+    times.push(now);
+    this.reportsFrom.set(ip, times);
+    const r: Report = { id: crypto.randomUUID().replace(/-/g, "").slice(0, 16), kind: body.kind === "requisition" ? "requisition" : "anomaly", at: now, channel: text(url.searchParams.get("checked"), 64),
+                        name: oneLine(body.name, 40), note, log, version: oneLine(body.version, 20), windows: oneLine(body.windows, 60) };
+    await this.ctx.storage.put("r:" + r.id, r);
+    for (const old of live.slice(REPORTS_KEPT - 1)) await this.ctx.storage.delete("r:" + old.id);
+    return Response.json({ id: r.id }, { status: 201 });
   }
 
   // what's asked, by whom: "ask" (a friend's client), "check" and "cancel" (with the pickup), "list", "give" and
@@ -222,6 +285,11 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
       new Request(request.url, { method: "POST", body: JSON.stringify(now) }), n, "/_notice")).catch(() => null)));
     return Response.json(now);
   }
+  if (parts[1] === "reports") {
+    if (parts.length === 2 && request.method === "GET") return dir.fetch("https://dir/reports?what=list");
+    if (parts.length === 3 && request.method === "DELETE") return dir.fetch("https://dir/reports?what=delete&id=" + encodeURIComponent(parts[2]));
+    return new Response(null, { status: 405 });
+  }
   if (parts[1] === "requests") {
     if (parts.length === 2 && request.method === "GET") return dir.fetch(dirRequests(env, "list", ""));
     const name = parts[2] || "";
@@ -269,7 +337,26 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips")) return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports")) return admin(request, env, parts);
+
+    // an anomaly report from a friend's outstation: its channel checked against its key when it gives them
+    if (parts[0] === "reports" && parts.length === 1) {
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const n = parseInt(request.headers.get("content-length") || "0") || 0;
+      if (n > REPORT_LOG + 16 * 1024) return Response.json({ error: "a report is 64 KB at most" }, { status: 413 });
+      const raw = await request.text();
+      if (raw.length > REPORT_LOG + 16 * 1024) return Response.json({ error: "a report is 64 KB at most" }, { status: 413 });
+      let checked = "";
+      try {
+        const b = JSON.parse(raw) as { channel?: unknown; key?: unknown };
+        if (typeof b.channel === "string" && NAME.test(b.channel) && typeof b.key === "string" && b.key) {
+          const r = await channelStub(env, b.channel).fetch(toChannel(new Request(url.origin + "/?key=" + encodeURIComponent(b.key), { headers: request.headers }), b.channel, "/_keyok"));
+          if (((await r.json()) as { ok: boolean }).ok) checked = b.channel;
+        }
+      } catch { /* not JSON: the Directory says so */ }
+      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+      return dir.fetch(new Request("https://dir/reports?what=add&checked=" + encodeURIComponent(checked), { method: "POST", headers: request.headers, body: raw }));
+    }
 
     // clips on a player's Outside page (clips.ts): the files straight from the bucket, the rest through the channel
     if (parts[0] === "clips" && (parts.length === 2 || parts.length === 3) && NAME.test(parts[1])) {

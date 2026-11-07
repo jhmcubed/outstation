@@ -33,7 +33,7 @@ pub fn install(log_path: PathBuf) {
         if !SHOWN.swap(true, Ordering::SeqCst) {
             let log = LOG_PATH.get().map(|p| p.display().to_string()).unwrap_or_else(|| "portal.log".into());
             message(&format!("the outstation hit a fault and part of it stopped:\n\n{}\n\nclose it and open it again. \
-                              what happened is written in\n{}\n\n\"copy the station log\" (in the settings, under more) puts it on the clipboard, to send to the listening post.",
+                              what happened is written in\n{}\n\n\"report an anomaly\" (pink, at the foot of the outstation's window) sends it to the listening post.",
                              one_line(&what), log));
         }
     }));

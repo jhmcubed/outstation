@@ -34,6 +34,7 @@ mod hotkeys;
 mod keeper;
 mod net;
 mod notify;
+mod report;
 mod settings;
 mod shortcut;
 mod sound;

@@ -209,6 +209,18 @@ On the desk socket, both relays:
 `at` in ms. A message for an outstation with no desk connected is held, at most 20 and 7 days each, and handed over as its
 desk next connects. Both outstations must be on the same relay.
 
+## Anomalies and requisitions (Cloudflare)
+
+A friend's outstation reports something gone wrong (an anomaly) or asks for something (a requisition), only when they press "send to the listening post" (client/src/report.rs); the keeper reads them in his station's drawer.
+- `POST /reports` with `{"kind": "anomaly" | "requisition", "name", "note", "log", "version", "windows", "channel", "key"}`: 201 `{"id"}`.
+  - `log` is the station log with its keys, codes and webhook addresses already taken out by the client (`crash.rs`, `scrub`); a requisition sends none.
+  - `channel` and `key` only from an outstation attached to this relay: when the key checks out, the report names the channel; otherwise its `channel` is `""` and only the typed `name` says who.
+  - Refused: 400 with no note and no log, 413 past 64 KB, 429 past 5 an hour from one address.
+- `GET /admin/reports` (the keeper): newest first, each `{"id", "kind", "at", "channel", "name", "note", "log", "version", "windows"}`.
+- `DELETE /admin/reports/<id>`: read and done with.
+
+At most 50 are kept, each for 30 days.
+
 ## A notice from the keeper (Cloudflare)
 
 One line from the keeper that every friend's client shows in its chat, once (the relay moving, a newer version to get).

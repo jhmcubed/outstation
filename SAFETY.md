@@ -74,6 +74,12 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 - A clip is made from what had already gone out: the same frames, redactions and all, and the same sound. It shows nothing your viewers didn't.
 - Never the clips you save with the clip key: those stay on your PC. So do all clips while the switch is off.
 
+**To Jace's relay, when you report an anomaly or file a requisition** (the pink **report an anomaly** and **file a requisition** at the foot of the window), only when you press **send to the listening post**:
+- your words, this version, and the name you chat under
+- for an anomaly, the station log, as "copy the station log" makes it: its last 400 lines, with your keys, codes and webhook addresses taken out first. A requisition carries no log.
+- your channel and its key, only if the outstation's attached to Jace's relay, so the report says whose it is
+- The drawer's other two ways send nothing from the outstation: **open the form** opens this repository's GitHub form in your browser (the log on your clipboard, for an anomaly), and the email address is only shown.
+
 **To Jace's relay, when you request a station key** (the first screen's "no key yet? request one"), only when you press **request**:
 - your player's name as you typed it, and your note for him
 - a random code your PC keeps, to collect the answer
@@ -205,6 +211,8 @@ Your picture and sound are passed on as they come and never written down. Only t
 
 A viewer's address (IP) isn't written down, and the relay never learns their name in the game or anything about their account.
 
+**Anomalies and requisitions** (only those you send): your words, the name you chat under, the version, the station log for an anomaly, your channel if it checked out, and when. At most 50, each for 30 days, until Jace reads it and takes it off. The address one came from is held in memory for an hour (5 an hour from one place).
+
 **Asking for an outstation:**
 - the name and note you typed, and the SHA-256 of your outstation's pickup code
 - once Jace issues it, the station key, until your outstation collects it
@@ -286,6 +294,7 @@ Everything it touches in Windows and on the network, by file:
 - `feed.rs`: the monitor, and a friend's peek: a channel watched through the relay as a looker (not counted as watching).
 - `friendlist.rs`: the relay's list of open outstations, read while your list has anyone on it.
 - `ask.rs`: asking for an outstation, and looking for the answer.
+- `report.rs`: an anomaly or a requisition sent to the listening post's relay, only when you press send; the GitHub form's address.
 - `notify.rs`: Windows' own notification when a friend goes live (`ToastNotificationManager`).
 - `shortcut.rs`: the Start menu's shortcut (Windows' shell link, with the program's id for its notifications).
 - `crash.rs`: a crash written into the log and `crash.txt`, and Windows' message box saying so.

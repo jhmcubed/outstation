@@ -243,15 +243,22 @@ pub fn bytes_sent() -> Option<u64> {
 // ---- the clipboard ----
 
 /// Open one of ghillie.wiki's pages in the browser (the friends list's names), or the portal's own SAFETY.md on GitHub
-/// (the attach screen's link): Windows opens it with whatever opens web pages. Nothing else is opened this way.
+/// (the attach screen's link), or its own "Something went wrong" form (report.rs, an anomaly reported on GitHub): Windows
+/// opens it with whatever opens web pages. Nothing else is opened this way.
 pub fn open_page(url: &str) -> bool {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let ours = url.starts_with("https://ghillie.wiki/") || url == crate::settings::SAFETY_PAGE;
-    if !ours || url.chars().any(|c| c.is_whitespace() || c == '"') { return false; }
+    if !opens(url) { return false; }
     let (verb, what) = (wide("open"), wide(url));
     let r = unsafe { ShellExecuteW(None, windows::core::PCWSTR(verb.as_ptr()), windows::core::PCWSTR(what.as_ptr()), None, None, SW_SHOWNORMAL) };
     r.0 as usize > 32
+}
+
+/// Whether open_page opens this: ghillie.wiki's pages, SAFETY.md, and the repository's form for a report.
+pub fn opens(url: &str) -> bool {
+    let ours = url.starts_with("https://ghillie.wiki/") || url == crate::settings::SAFETY_PAGE
+        || url.starts_with(&format!("{}?", crate::report::ISSUE_PAGE));
+    ours && !url.chars().any(|c| c.is_whitespace() || c == '"')
 }
 
 pub fn copy_text(s: &str) -> bool {
