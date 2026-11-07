@@ -2023,6 +2023,7 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     if let Some(e) = app.friendlist.trouble() {
         ui.label(wrapped(&e, 14.0, PINK(), ui.available_width()));
     }
+    ui.label(wrapped("a name's state comes from the relay's open outstations, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
     ui.add_space(10.0);
     let mut tell = s.friends_tell;
     if tick(ui, &mut tell, rich("say in the chat when a friend starts transmitting or goes dark", 14.0, GREY())).changed() {
@@ -2040,11 +2041,13 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     let all = ui.add(egui::Label::new(rich("every open outstation ↗", 14.0, TEAL())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tip("ghillie.wiki/portals: everyone's open outstations, transmitting ones first"));
     if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
+    // the invites under a line of their own, so the friends list's notes above are plainly the list's (11/07/2026)
     if s.attached() {
-        ui.add_space(12.0);
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(6.0);
         invites_ui(app, ui);
     }
-    ui.label(wrapped("a name's state comes from the relay's open outstations, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
 }
 
 // ---- the dink drawer ----
