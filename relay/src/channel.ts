@@ -19,6 +19,7 @@ import { type Fields, GameState, gameFields, GAME_A_SECOND, GAME_MESSAGE } from 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
   DIRECTORY: DurableObjectNamespace;
+  AETHER: DurableObjectNamespace; // the aether (aether.ts, 11/07/2026): one room for every outstation and visitor
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
@@ -518,6 +519,8 @@ export class Channel extends DurableObject<Env> {
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
     // (an anomaly report's channel and key, checked: index.ts's /reports)
     if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
+    // (an outstation joining the aether, aether.ts: its key checked as its desk's would be, and why not if not)
+    if (role === "_key") return Response.json({ no: await this.checkKey(q.get("key") || "", ip) });
     if (role === "_dm") return this.takeDm(request);
     if (role === "_invites") return this.invites(request, q, ip);
     if (role === "_game") return this.readGame(q);

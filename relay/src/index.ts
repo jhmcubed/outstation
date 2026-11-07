@@ -50,13 +50,22 @@
 //   GET    /admin/notice              the notice now ({"notice": {"text", "at"}} or {"notice": null})
 //   PUT    /admin/notice  {"text"}    a new one, sent at once to every desk connected and to each that connects
 //   DELETE /admin/notice              taken down
+//
+// The aether (11/07/2026, Jace: "a global chat… reminds me of IRC and AOL Instant Messenger. i want this to feel like a
+// real network people are joining"): one room for every outstation and visitor, one Durable Object (aether.ts):
+//   ws(s)://<relay>/aether?name=<name>&device=<random id>          a visitor (its name not an outstation's: the Directory's)
+//   ws(s)://<relay>/aether?channel=<channel>&key=<key>&v=<version>  an outstation, its key checked by its channel
+//   GET    /aether                    the last 30 lines and how many are here, for a page before it joins
+//   GET    /admin/aether              the keeper's: every line kept with who wrote it, and the bans
+//   POST   /admin/aether/unsay {"id"}  /ban {"id"}  /unban {"who"}
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
+import { Aether } from "./aether";
 import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, relayOf } from "./text";
 
-export { Channel };
+export { Channel, Aether };
 
 const ROLES = new Set(["transmit", "watch", "desk", "sound", "game"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
@@ -123,6 +132,12 @@ export class Directory extends DurableObject<Env> {
     }
     if (url.pathname === "/requests") return this.requests(request, url);
     if (url.pathname === "/reports") return this.reports(request, url);
+    if (url.pathname === "/taken") {
+      // the aether's (11/07/2026, aether.ts): whether a visitor's name, in a channel's form (lower case, no spaces), is
+      // a channel handed out's, whatever its case
+      const form = url.searchParams.get("name") || "";
+      return Response.json({ taken: [...(await this.givenNames()).keys()].some((n) => n.toLowerCase() === form) });
+    }
     if (url.pathname === "/notice") {
       if (request.method === "PUT") {
         const { text } = (await request.json()) as { text: string };
@@ -151,14 +166,20 @@ export class Directory extends DurableObject<Env> {
     return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), by: null, ...(v as object) })));
   }
 
-  /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
-   *  missing (or LISTING_CHECK old) is asked. */
-  async openPortals(): Promise<Response> {
+  /** The channels handed out, each with whose invite it came from: read from storage once, till one's handed out or
+   *  taken back. */
+  async givenNames(): Promise<Map<string, string | null>> {
     if (!this.given) {
       const rows = await this.ctx.storage.list<{ by?: string | null }>({ prefix: "c:" });
       this.given = new Map([...rows].map(([k, v]) => [k.slice(2), v.by ?? null]));
     }
-    const given = this.given, names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
+    return this.given;
+  }
+
+  /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
+   *  missing (or LISTING_CHECK old) is asked. */
+  async openPortals(): Promise<Response> {
+    const given = await this.givenNames(), names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
     const ask = names.filter((n) => { const l = this.listed.get(n); return !l || now - l.seen > LISTING_CHECK; });
     await Promise.all(ask.map(async (n) => {
       try {
@@ -317,6 +338,16 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     return new Response("no", { status: 403 });
   }
   const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+  if (parts[1] === "aether") {
+    // the aether's keeper (aether.ts): the lines with who wrote each, and taking one back or banning its writer
+    const aether = env.AETHER.get(env.AETHER.idFromName("aether"));
+    if (parts.length === 2) return request.method === "GET" ? aether.fetch("https://aether/admin") : new Response(null, { status: 405 });
+    if (parts.length !== 3 || !["unsay", "ban", "unban"].includes(parts[2])) return new Response(null, { status: 404 });
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const raw = await request.text();
+    if (raw.length > 4096) return new Response(null, { status: 413 });
+    return aether.fetch(new Request("https://aether/admin/" + parts[2], { method: "POST", body: raw }));
+  }
   if (parts[1] === "clips") {
     // a channel's clips, whatever its watch code; and any one taken down
     const name = parts[2] || "";
@@ -396,7 +427,19 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports")) return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether")) return admin(request, env, parts);
+
+    // the aether (11/07/2026; aether.ts): one room for every outstation and visitor, and its read for a page
+    if (parts[0] === "aether" && parts.length === 1) {
+      const aether = env.AETHER.get(env.AETHER.idFromName("aether"));
+      if (upgrade) {
+        const channel = url.searchParams.get("channel");
+        if (request.method !== "GET" || (channel !== null && !NAME.test(channel))) return new Response(null, { status: 400 });
+        return aether.fetch(new Request("https://aether/socket" + url.search, { headers: request.headers }));
+      }
+      if (request.method !== "GET") return new Response(null, { status: 405 });
+      return aether.fetch("https://aether/read");
+    }
 
     // an anomaly report from a friend's outstation: its channel checked against its key when it gives them
     if (parts[0] === "reports" && parts.length === 1) {

@@ -93,13 +93,30 @@ transmission and the chat, live, and as last known while dark.
   whether one is connected. Kept in memory, as everything here, while the relay runs.
     read:      GET http://HOST:PORT/game/<channel>?code=<watch code>    {"game": {...}, "at", "connected"}
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
+
+The aether (11/07/2026, Jace: "a global chat... reminds me of IRC and AOL Instant Messenger. i want this to feel like a
+real network people are joining"; docs/protocol.md "The aether"; the Worker's aether.ts, the same): one room for every
+outstation and every visitor on the relay.
+    aether:    ws://HOST:PORT/aether?name=<name>&device=<random id>               a visitor
+               ws://HOST:PORT/aether?channel=<channel>&key=<secret>&v=<version>   an outstation (its key as its desk's)
+  Either sends {"say": text}: a line of up to AETHER_ROWS rows of AETHER_WIDTH characters (ASCII art keeps its shape),
+  one every 2 s and 15 a minute from someone at most (past that, only they hear {"aether_slow": seconds}). Everyone hears
+  {"aether": {"id", "name", "text", "from", "at"}}; whoever joins, the last AETHER_KEPT lines ({"aether_so_far"}) and how
+  many are here ({"aether_here"}, told to all at most every 2 s as it changes). A visitor's name may not be a claimed
+  channel's (4009). Nothing crosses between the aether and any channel, and --delay doesn't hold it back.
+    read:      GET http://HOST:PORT/aether                                         {"lines": [the last 30], "here"}
+    keeper:    GET /admin/aether; POST /admin/aether/unsay {"id"}, /ban {"id"}, /unban {"who"}
+  The keeper's routes need --admin-token (Authorization: Bearer <it>); without one they're refused. The public side lets
+  visitors in and allows the read, and refuses an outstation's socket and the keeper's routes.
 """
 
 import argparse
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
+import math
 import os
 import re
 import struct
@@ -136,6 +153,20 @@ GAME_MESSAGE, GAME_KEPT, GAME_ITEMS, GAME_A_SECOND = 64 * 1024, 192 * 1024, 3000
 GAME_INT = 2 ** 31 - 1            # the most any number in the game holds (a Java int: RuneLite's)
 GAME_SKILL = re.compile(r"[A-Za-z][A-Za-z _-]{0,23}")     # a skill's name (fullmatch)
 GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the dictionary has it (fullmatch)
+# the aether (11/07/2026; docs/protocol.md "The aether"): one room for every outstation and visitor. A line at most
+# AETHER_ROWS rows of AETHER_WIDTH characters (so 960 in all); one from someone every AETHER_EVERY ms at most, and
+# AETHER_A_MINUTE a minute; the last AETHER_KEPT kept (and handed to whoever joins), the last AETHER_READ in GET /aether;
+# who's here told to everyone at most every AETHER_HERE_EVERY seconds; a socket's message past AETHER_MESSAGE thrown away
+# unread. The Worker's (aether.ts, text.ts), the same.
+AETHER_ROWS, AETHER_WIDTH, AETHER_KEPT, AETHER_READ = 12, 80, 100, 30
+AETHER_EVERY, AETHER_A_MINUTE, AETHER_HERE_EVERY, AETHER_MESSAGE = 2000, 15, 2.0, 8192
+# control characters but the newline (C1's too), and the direction and zero-width ones: taken out, not made spaces
+AETHER_CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# a row's trailing spaces: Unicode's spaces (Zs), written out so both relays trim the same ones
+AETHER_TRAILING = re.compile(r"[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$")
+AETHER_NAME = re.compile(r"[A-Za-z0-9_. -]{1,20}")        # a visitor's name, its spaces tidied (fullmatch)
+AETHER_DEVICE = re.compile(r"[\x21-\x7e]{8,64}")           # a visitor's device id: printable, no spaces (fullmatch)
+CHANNEL_NAME = re.compile(r"[A-Za-z0-9_.~-]{1,64}")       # a channel (fullmatch)
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -507,6 +538,170 @@ class Game:
         self.lens = lens
         self.at = int(time.time() * 1000) if now is None else now
         return out
+
+
+# The aether (11/07/2026; docs/protocol.md "The aether"): a line cleaned row by row (it may be ASCII art, so it isn't made
+# one line), a visitor's name, and the rate. The Worker's aetherText, aetherName, channelForm, aetherRecent and
+# aetherWait (text.ts), the same.
+
+def aether_text(text):
+    """A line for the aether, or "" (ignored): its control characters taken out (but the newlines between its rows),
+    each row cut to AETHER_WIDTH characters and its trailing spaces trimmed, the empty rows at its start and end dropped,
+    and its first AETHER_ROWS rows kept. A row's leading spaces stay (the art's shape). Characters are code points, as
+    the Worker counts them."""
+    if not isinstance(text, str):
+        return ""
+    rows = [AETHER_TRAILING.sub("", r[:AETHER_WIDTH]) for r in AETHER_CONTROL.sub("", text).split("\n")]
+    a, b = 0, len(rows)
+    while a < b and not rows[a]:
+        a += 1
+    while b > a and not rows[b - 1]:
+        b -= 1
+    kept = rows[a:b][:AETHER_ROWS]
+    while kept and not kept[-1]:
+        kept.pop()
+    return "\n".join(kept)
+
+
+def aether_name(name):
+    """A visitor's name in the aether, or "" (refused): runs of spaces made one and its ends trimmed, then 1 to 20
+    letters, digits, spaces, "_", "-" or "." (ASCII only, so no name can pass for another by its look)."""
+    if not isinstance(name, str):
+        return ""
+    s = re.sub(" +", " ", name).strip(" ")
+    return s if AETHER_NAME.fullmatch(s) else ""
+
+
+def channel_form(name):
+    """A name as a channel would have it: lower case, no spaces (a visitor's may not be an outstation's, so)."""
+    return name.lower().replace(" ", "")
+
+
+def aether_recent(times, now):
+    """The times (ms, oldest first) of someone's last lines in the aether, kept to the last minute's AETHER_A_MINUTE."""
+    return [t for t in times if now - t < 60000][-AETHER_A_MINUTE:]
+
+
+def aether_wait(times, now):
+    """How long someone must wait before a line goes (seconds, rounded up to a tenth), or 0 when it may go now: a line
+    every AETHER_EVERY ms at most, and AETHER_A_MINUTE in a minute. times: their last lines' (aether_recent), in ms."""
+    until = 0
+    if times and now - times[-1] < AETHER_EVERY:
+        until = times[-1] + AETHER_EVERY
+    minute = [t for t in times if now - t < 60000]
+    if len(minute) >= AETHER_A_MINUTE:
+        until = max(until, minute[-AETHER_A_MINUTE] + 60000)
+    if until <= now:
+        return 0
+    wait = math.ceil((until - now) / 100) / 10
+    return int(wait) if wait == int(wait) else wait      # (2, not 2.0: as the Worker writes it)
+
+
+class Aether:
+    """The aether's room (the Worker's aether.ts, the same): who's here, the last AETHER_KEPT lines, the bans, and the
+    times of each one's last lines. In memory, as everything here, while the relay runs. Each socket in it has .aether,
+    {"from", "name", "who"}: who is "device:<id>" for a visitor and "channel:<name>" for an outstation, what a ban holds
+    on to and what the rate's counted by (so a reconnect doesn't start it again)."""
+
+    def __init__(self):
+        self.socks = set()
+        self.lines = deque(maxlen=AETHER_KEPT)   # each {"id", "name", "text", "from", "at", "who"}
+        self.next_id = 0
+        self.bans = {}                           # who -> {"who", "name", "at"}
+        self.said = {}                           # who -> their last lines' times (ms; aether_recent)
+        self.here_sent, self.here_at, self.here_timer = None, 0.0, None
+
+    @staticmethod
+    def public(line):
+        """A line as everyone sees it: never who wrote it (a device, a channel), only the name."""
+        return {k: line[k] for k in ("id", "name", "text", "from", "at")}
+
+    def count(self):
+        """How many are here: each visitor's device and each outstation once, however many sockets it has open."""
+        return len({s.aether["who"] for s in self.socks})
+
+    def broadcast(self, line):
+        for s in list(self.socks):
+            s.send_nowait(line)
+
+    def here_changed(self, joiner=None):
+        """Who's here changed (or someone just came: joiner): everyone's told the count at most every
+        AETHER_HERE_EVERY, the last change waiting its turn; whoever just came hears it at once. (One told a count the
+        others weren't means everyone's told at the next turn, even if the count's back to what they were told by then.)"""
+        n, now = self.count(), time.monotonic()
+        if n != self.here_sent and now - self.here_at >= AETHER_HERE_EVERY:
+            return self.tell_here()
+        if joiner is not None:
+            joiner.send_nowait(json.dumps({"aether_here": n}))
+            if n != self.here_sent:
+                self.here_sent = None
+        if n != self.here_sent and self.here_timer is None:
+            self.here_timer = asyncio.get_running_loop().call_later(
+                max(0.0, self.here_at + AETHER_HERE_EVERY - now), self.tell_here)
+
+    def tell_here(self):
+        if self.here_timer is not None:
+            self.here_timer.cancel()
+        self.here_timer = None
+        n = self.count()
+        if n == self.here_sent:
+            return
+        self.here_sent, self.here_at = n, time.monotonic()
+        self.broadcast(json.dumps({"aether_here": n}))
+
+    def take(self, sock, msg):
+        """A message from a socket in the room: a {"say"} line, cleaned (aether_text), to everyone here, unless its
+        sender's last line was under AETHER_EVERY ago or it's said AETHER_A_MINUTE this minute (then only it hears
+        {"aether_slow": seconds}, and the line goes nowhere). Anything else is thrown away."""
+        if sock not in self.socks:
+            return                           # (banned: its socket's on its way out)
+        try:
+            m = json.loads(msg)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(m, dict) or "say" not in m:
+            return
+        text = aether_text(m["say"])
+        if not text:
+            return
+        now, who = int(time.monotonic() * 1000), sock.aether["who"]
+        times = aether_recent(self.said.get(who, []), now)
+        wait = aether_wait(times, now)
+        if wait:
+            sock.send_nowait(json.dumps({"aether_slow": wait}))
+            return
+        self.said[who] = (times + [now])[-AETHER_A_MINUTE:]
+        if len(self.said) > 1000:
+            self.said = {k: t for k, t in self.said.items() if aether_recent(t, now)}
+        self.next_id += 1
+        line = {"id": self.next_id, "name": sock.aether["name"], "text": text, "from": sock.aether["from"],
+                "at": int(time.time() * 1000), "who": who}
+        self.lines.append(line)
+        self.broadcast(json.dumps({"aether": self.public(line)}))
+
+    def unsay(self, ids):
+        """Lines taken back off everyone's page (the keeper's), each told {"aether_unsay": id}."""
+        gone = set(ids)
+        self.lines = deque((l for l in self.lines if l["id"] not in gone), maxlen=AETHER_KEPT)
+        for i in ids:
+            self.broadcast(json.dumps({"aether_unsay": i}))
+
+    def ban(self, line):
+        """Whoever wrote this line banned (by its device or its channel): every line of theirs kept taken back, and
+        their sockets closed (4033). The ids taken back."""
+        who = line["who"]
+        self.bans[who] = {"who": who, "name": line["name"], "at": int(time.time() * 1000)}
+        gone = [l["id"] for l in self.lines if l["who"] == who]
+        self.unsay(gone)
+        for s in [s for s in self.socks if s.aether["who"] == who]:
+            self.socks.discard(s)
+            asyncio.ensure_future(s.close(4033, "banned from the aether"))
+        self.here_changed()
+        return gone
+
+    def read(self):
+        """GET /aether's: the last AETHER_READ lines as everyone sees them, and how many are here."""
+        return {"lines": [self.public(l) for l in list(self.lines)[-AETHER_READ:]], "here": self.count()}
 
 
 class Channel:
@@ -885,8 +1080,10 @@ def too_old(v, min_client):
 
 
 class Relay:
-    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None):
+    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token=""):
         self.delay = delay
+        self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
+        self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
         self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
         # how many may watch a channel at once (0: no limit). Each viewer gets their own copy
@@ -932,10 +1129,16 @@ class Relay:
         url = urlsplit(target)
         path = [unquote(p) for p in url.path.split("/") if p]
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
-        if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch"))
-                       or (path and path[0] == "invites")):
-            # from the internet: no transmitting, no Dink posts, no invites and no game socket, whatever key comes with
-            # them (the game's read, GET /game, is let through: it's what viewers see anyway)
+        aether = path == ["aether"]
+        if aether:
+            # (a blank one kept: "channel=" is an outstation's, as on the Worker)
+            q = {k: v[0] for k, v in parse_qs(url.query, keep_blank_values=True).items()}
+        visitor = aether and "channel" not in q
+        if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch") and not visitor)
+                       or (path and path[0] in ("invites", "admin"))):
+            # from the internet: no transmitting, no Dink posts, no invites, no game socket, no outstation in the aether
+            # and none of the keeper's routes, whatever key comes with them (the game's read, GET /game, the aether's read
+            # and a visitor in the aether are let through: what anyone on Outside may do anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -955,11 +1158,18 @@ class Relay:
         if len(path) == 2 and path[0] == "game" and not key:
             await self.game_read(writer, method, path[1], q)
             return
+        if aether and not key:
+            await self.aether_read(writer, method)
+            return
+        if path[:2] == ["admin", "aether"] and not key:
+            await self.aether_keeper(reader, writer, method, headers, path)
+            return
         if method in ("GET", "HEAD") and not key:
             await self.page(writer, url.path, method == "HEAD")
             return
-        if method != "GET" or not key or len(path) != 2 or path[0] not in ("transmit", "watch", "desk", "sound", "game") \
-                or not (1 <= len(path[1]) <= 64):
+        if (method != "GET" or not key or len(path) != 2 or path[0] not in ("transmit", "watch", "desk", "sound", "game")
+                or not (1 <= len(path[1]) <= 64)) \
+                and not (aether and method == "GET" and ("channel" not in q or CHANNEL_NAME.fullmatch(q["channel"]))):
             writer.write(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -969,6 +1179,14 @@ class Relay:
                       "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
         await writer.drain()
         sock = Socket(reader, writer)
+        if aether:
+            try:
+                await self.aether_socket(sock, q)
+            except (Closed, asyncio.IncompleteReadError, ConnectionError):
+                pass
+            finally:
+                await sock.close()
+            return
         role, name = path
         try:
             if role in CLIENT_ROLES and too_old(q.get("v"), self.min_client):
@@ -1462,6 +1680,129 @@ class Relay:
         if ch is None or not ch.game.kept:
             return await answer("404 Not Found", {"error": "no game state for that outstation"})
         await answer("200 OK", {"game": ch.game.kept, "at": ch.game.at, "connected": ch.gamer is not None})
+
+    async def aether_socket(self, sock, q):
+        """The aether (11/07/2026; Aether): a visitor (?name=&device=) or an outstation (?channel=&key=: its version and
+        its key as its desk's, so a key claims a channel nobody has, as a desk's does) into the one room, and its lines
+        to everyone in it (Aether.take). Refused: 4002 a name or device the aether can't take, 4033 banned, 4009 a
+        visitor's name that's a claimed channel's (case and spaces aside); 4001, 4003 and 4026 as a desk's."""
+        a = self.aether
+        if "channel" in q:
+            name = q["channel"]
+            if too_old(q.get("v"), self.min_client):
+                await sock.close(4026, "this outstation is too old for the relay: %s or newer is needed" % self.min_client)
+                return
+            if await self.claim(sock, name, q.get("key", "")) is None:
+                return
+            me = {"from": "outstation", "name": name, "who": "channel:" + name}
+        else:
+            name, device = aether_name(q.get("name")), q.get("device", "")
+            if not name:
+                await sock.close(4002, "a name in the aether is 1 to 20 letters, digits, spaces, _ - or .")
+                return
+            if not AETHER_DEVICE.fullmatch(device):
+                await sock.close(4002, "a device id is 8 to 64 characters")
+                return
+            me = {"from": "visitor", "name": name, "who": "device:" + device}
+        if me["who"] in a.bans:
+            await sock.close(4033, "banned from the aether")
+            return
+        form = channel_form(me["name"])
+        if me["from"] == "visitor" and any(ch.key is not None and ch.name.lower() == form for ch in self.channels.values()):
+            await sock.close(4009, "that name belongs to an outstation")
+            return
+        sock.aether = me
+        a.socks.add(sock)
+        self.log("aether    %s  (%d here)" % (me["name"], a.count()))
+        sock.send_nowait(json.dumps({"aether_so_far": [a.public(l) for l in a.lines]}))
+        a.here_changed(sock)
+        try:
+            while True:
+                msg = await sock.recv()
+                if isinstance(msg, str) and len(msg) <= AETHER_MESSAGE:
+                    a.take(sock, msg)
+        finally:
+            if sock in a.socks:
+                a.socks.discard(sock)
+                a.here_changed()
+
+    async def aether_read(self, writer, method):
+        """GET /aether (11/07/2026): the room's last AETHER_READ lines and how many are here, for a page before it
+        joins. Anyone may read it (the public side too); cached a few seconds."""
+        if method == "GET":
+            body = json.dumps(self.aether.read()).encode()
+            head = ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: public, max-age=5\r\n"
+                    "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body))
+        else:
+            body, head = b"", "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        writer.write(head.encode() + body)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def aether_keeper(self, reader, writer, method, headers, path):
+        """The aether's keeper (11/07/2026; the Worker's, the same), with --admin-token (Authorization: Bearer <it>):
+            GET  /admin/aether                  every line kept, with who wrote it, and the bans
+            POST /admin/aether/unsay  {"id"}    a line taken back off everyone's page
+            POST /admin/aether/ban    {"id"}    whoever wrote it banned: their lines taken back, their sockets closed
+            POST /admin/aether/unban  {"who"}   let back in
+        Without a token (16 characters at least) all of them are refused; the public side refuses them whatever."""
+        async def answer(status, body=None, plain=None):
+            data = json.dumps(body).encode() if body is not None else (plain or b"")
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode()
+                         + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        auth = headers.get("authorization", "").encode("latin-1")
+        if len(self.admin_token) < 16 or not hmac.compare_digest(auth, ("Bearer " + self.admin_token).encode("utf-8")):
+            return await answer("403 Forbidden", plain=b"no")
+        a = self.aether
+        if len(path) == 2:
+            if method != "GET":
+                return await answer("405 Method Not Allowed")
+            return await answer("200 OK", {"lines": [dict(a.public(l), who=l["who"]) for l in a.lines],
+                                           "bans": list(a.bans.values())})
+        if len(path) != 3 or path[2] not in ("unsay", "ban", "unban"):
+            return await answer("404 Not Found")
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        try:
+            if headers.get("transfer-encoding", "").lower() == "chunked":
+                raw = await read_chunked(reader)
+            else:
+                n = int(headers.get("content-length", "0") or 0)
+                if n > 4096:
+                    return await answer("413 Payload Too Large")
+                raw = await reader.readexactly(n)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request")
+        if len(raw) > 4096:
+            return await answer("413 Payload Too Large")
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        body = body if isinstance(body, dict) else {}
+        if path[2] == "unban":
+            if not isinstance(body.get("who"), str) or a.bans.pop(body["who"], None) is None:
+                return await answer("404 Not Found", {"error": "nobody's banned by that"})
+            return await answer("200 OK", {"bans": list(a.bans.values())})
+        i = body.get("id")
+        if isinstance(i, float) and i.is_integer():
+            i = int(i)
+        line = next((l for l in a.lines if l["id"] == i), None) if isinstance(i, int) and not isinstance(i, bool) else None
+        if line is None:
+            return await answer("404 Not Found", {"error": "no such line in the aether"})
+        if path[2] == "unsay":
+            a.unsay([line["id"]])
+            return await answer("200 OK", {"unsaid": [line["id"]]})
+        gone = a.ban(line)
+        self.log("aether    banned %s" % line["who"])
+        return await answer("200 OK", {"banned": line["who"], "unsaid": gone})
 
     async def invites(self, reader, writer, method, headers, name, q):
         """Invites (11/07/2026; docs/protocol.md "Invites"; the Worker's channel.ts invites, the same): an outstation
@@ -2114,10 +2455,10 @@ def dink_report(p):
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
-                settings=None, min_client="", clips_dir=None):
+                settings=None, min_client="", clips_dir=None, admin_token=""):
     """port: everything (keep it on this PC). public_port: the page and watching only,
-    for Tailscale Funnel (or anything else) to hand to the internet."""
-    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir)
+    for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes)."""
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -2162,6 +2503,8 @@ def main(argv=None):
                     help="where clips on players' Outside pages are kept (\"\" takes none)")
     ap.add_argument("--min-client", default="",
                     help="the oldest outstation client let in (e.g. 0.2.0); older ones are told to update")
+    ap.add_argument("--admin-token", default="",
+                    help="the keeper's token (16 characters at least) for the aether's keeper routes; none refuses them")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -2172,7 +2515,7 @@ def main(argv=None):
     try:
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
-                          clips_dir=a.clips or None))
+                          clips_dir=a.clips or None, admin_token=a.admin_token))
     except KeyboardInterrupt:
         pass
 

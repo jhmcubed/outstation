@@ -24,6 +24,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,8 @@ ADMIN = os.environ.get("ADMIN_TOKEN") or "test-admin-" + secrets.token_hex(12)
 ASKS_AN_HOUR = 12    # (the Worker's own is 3: the tests all ask from one address)
 REPORTS_AN_HOUR = 8  # (the Worker's own is 5)
 MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.0")
+# the aether's keeper (11/07/2026): the Worker's ADMIN_TOKEN, and relay-py's --admin-token (given it here)
+AETHER_KEEPER = WORKER or MODE == "python"
 SAY_BURST = 20
 SOUND_HOLD = 0.5
 RELAY = None          # ws://127.0.0.1:port
@@ -90,7 +93,7 @@ def setUpModule():
     else:
         STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE],
+                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -1695,6 +1698,263 @@ class Invites(Base):
     async def test_z_past_five_posts_an_hour_wait(self):
         codes = [self.invite("i" + secrets.token_hex(5))[0] for _ in range(6)]
         self.assertEqual(codes, [200, 200, 200, 409, 409, 429])
+
+
+class Aether(Base):
+    """The aether (11/07/2026): one room for every outstation and visitor on the relay, IRC's way. A visitor joins with a
+    name and a device id, an outstation with its channel and key; a line may be several rows (ASCII art); the keeper
+    takes lines back and bans. The room is the relay's one, shared by every test, so each test gives each visitor a
+    device of its own and finds its own lines by their words. (The cleaning and the rate in full, 15 a minute among
+    them: relay-py/test_relay.py's AetherWords and AetherRate.)"""
+
+    async def visitor(self, name=None, device=None, extra=""):
+        """A visitor's socket (its .name and .device as it gave them)."""
+        name = name or "v" + secrets.token_hex(4)
+        device = device or secrets.token_hex(16)
+        c = await Client().open("%s/aether?name=%s&device=%s%s" % (RELAY, urllib.parse.quote(name), urllib.parse.quote(device), extra))
+        self.clients.append(c)
+        c.name, c.device = name, device
+        return c
+
+    async def station(self, key=None, v=""):
+        """This test's outstation in the aether, under its channel."""
+        c = await Client().open("%s/aether?channel=%s&key=%s%s" % (RELAY, self.ch, key or self.key, "&v=" + v if v else ""))
+        self.clients.append(c)
+        return c
+
+    @staticmethod
+    def words():
+        return "words " + secrets.token_hex(6)
+
+    async def say(self, c, text):
+        await c.send(json.dumps({"say": text}))
+
+    async def lines(self, c, wait=0.6):
+        """The words of every aether line that comes in `wait` seconds."""
+        got = []
+        try:
+            while True:
+                got.append((await next_of(c, "aether", timeout=wait))["text"])
+        except asyncio.TimeoutError:
+            return got
+
+    async def test_a_visitor_joins_to_the_room_so_far_and_how_many_are_here(self):
+        a = await self.visitor()
+        self.assertIsInstance(await next_of(a, "aether_so_far"), list)
+        self.assertGreaterEqual(await next_of(a, "aether_here"), 1)
+        text = self.words()
+        await self.say(a, text)
+        await next_of(a, "aether")
+        b = await self.visitor()
+        so_far = await next_of(b, "aether_so_far")
+        self.assertLessEqual(len(so_far), 100)
+        self.assertEqual(so_far[-1]["text"], text)
+        self.assertEqual(sorted(so_far[-1]), ["at", "from", "id", "name", "text"])     # (never a device)
+        self.assertGreaterEqual(await next_of(b, "aether_here"), 2)
+        end = time.monotonic() + 5                       # (everyone else hears it too, at most every 2 s)
+        while await next_of(a, "aether_here", timeout=max(0.1, end - time.monotonic())) < 2:
+            pass
+
+    async def test_a_line_reaches_everyone_with_its_name_and_when(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        text, t0 = self.words(), time.time() * 1000
+        await self.say(a, text)
+        for c in (a, b):
+            line = await next_of(c, "aether")
+            self.assertEqual(sorted(line), ["at", "from", "id", "name", "text"])
+            self.assertEqual((line["text"], line["name"], line["from"]), (text, a.name, "visitor"))
+            self.assertLess(abs(line["at"] - t0), 60000)
+        text2 = self.words()
+        await self.say(b, text2)
+        self.assertGreater((await next_of(a, "aether"))["id"], line["id"])
+
+    async def test_ascii_art_keeps_its_rows_twelve_of_eighty_at_most(self):
+        # (more rows are cut to 12, a longer row to 80: cut, not refused; empty rows at the ends and trailing spaces go)
+        a = await self.visitor()
+        tag = secrets.token_hex(4)
+        art = ["", "   ", "  /\\_/\\   ", " ( o.o ) " + tag, "x" * 81] + ["row %d" % i for i in range(3, 14)] + ["", "  "]
+        await self.say(a, "\n".join(art))
+        want = ["  /\\_/\\", " ( o.o ) " + tag, "x" * 80] + ["row %d" % i for i in range(3, 12)]
+        self.assertEqual((await next_of(a, "aether"))["text"].split("\n"), want)
+
+    async def test_control_characters_go_and_a_line_of_nothing_is_ignored(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        await self.say(a, "\x01\x02 \n \t\n\u200b")      # (nothing, once cleaned: ignored, and not counted)
+        await a.send(json.dumps({"say": 5}))
+        await a.send(json.dumps({"something": "else"}))
+        tag = secrets.token_hex(4)
+        await self.say(a, "a\x07b\tc\u202ed\r\ne " + tag + "\x85")
+        self.assertEqual((await next_of(b, "aether"))["text"], "abcd\ne " + tag)
+        self.assertEqual(await self.lines(b), [])
+
+    async def test_a_second_line_within_two_seconds_waits_and_a_reconnect_doesnt_start_again(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        first, second = self.words(), self.words()
+        await self.say(a, first)
+        await self.say(a, second)
+        wait = await next_of(a, "aether_slow")
+        self.assertTrue(0 < wait <= 2, wait)
+        self.assertEqual(await self.lines(b), [first])
+        again = await self.visitor(name=a.name, device=a.device)       # (the same device: its count goes on)
+        await next_of(again, "aether_so_far")
+        await self.say(again, self.words())
+        self.assertTrue(0 < await next_of(again, "aether_slow") <= 2)
+        await asyncio.sleep(2.1)
+        third = self.words()
+        await self.say(again, third)
+        self.assertEqual(await self.lines(b), [third])
+
+    async def test_an_outstation_joins_with_its_key_and_speaks_under_its_channel(self):
+        s = await self.station()
+        self.assertIsInstance(await next_of(s, "aether_so_far"), list)
+        b = await self.visitor()
+        await next_of(b, "aether_so_far")
+        text = self.words()
+        await self.say(s, text)
+        line = await next_of(b, "aether")
+        self.assertEqual((line["text"], line["name"], line["from"]), (text, self.ch, "outstation"))
+
+    async def test_a_wrong_or_short_key_is_refused_as_a_desks_would_be(self):
+        if not WORKER:
+            await next_of(await self.station(), "aether_so_far")       # (relay.py: the first key claims it, as a desk's)
+        wrong = await self.station(key="wrong-key-" + secrets.token_hex(3))
+        self.assertEqual(await wrong.recv_close(), ("close", 4003))
+        short = await self.station(key="short")
+        self.assertEqual(await short.recv_close(), ("close", 4001))
+
+    @unittest.skipUnless(WORKER, "channels handed out by the keeper: the Worker only")
+    async def test_an_outstation_nobody_handed_out_is_refused(self):
+        c = await Client().open("%s/aether?channel=free%s&key=some-key-at-all" % (RELAY, secrets.token_hex(4)))
+        self.clients.append(c)
+        self.assertEqual(await c.recv_close(), ("close", 4003))
+
+    @unittest.skipUnless(MIN_CLIENT, "the relay under test lets every version in (MIN_CLIENT not given)")
+    async def test_an_older_outstation_is_turned_away_and_a_visitor_needs_no_version(self):
+        old = await self.station(v="0.0.1")
+        self.assertEqual(await old.recv_close(), ("close", 4026))
+        self.assertIn(MIN_CLIENT, old.reason)
+        v = await self.visitor(extra="&v=0.0.1")
+        self.assertIsInstance(await next_of(v, "aether_so_far"), list)
+        new = await self.station(v=MIN_CLIENT)
+        self.assertIsInstance(await next_of(new, "aether_so_far"), list)
+
+    async def test_a_visitor_cant_take_an_outstations_name_whatever_its_case_and_spaces(self):
+        if not WORKER:
+            await next_of(await self.station(), "aether_so_far")       # (relay.py: claimed)
+        taken = await self.visitor(name=self.ch[:4].upper() + " " + self.ch[4:])
+        self.assertEqual(await taken.recv_close(), ("close", 4009))
+        self.assertIn("belongs to an outstation", taken.reason)
+        free = await self.visitor(name=self.ch + "x")
+        self.assertIsInstance(await next_of(free, "aether_so_far"), list)
+
+    async def test_a_name_or_device_the_aether_cant_take_is_refused(self):
+        for name, device in (("moss!", None), ("x" * 21, None), ("   ", None), ("moss\u00e9", None), ("moss", "short"),
+                             ("moss", "has space " + secrets.token_hex(4))):
+            c = await self.visitor(name=name, device=device)
+            self.assertEqual(await c.recv_close(), ("close", 4002), (name, device))
+        tidy = await self.visitor(name="  moss   fern ")
+        await next_of(tidy, "aether_so_far")
+        await self.say(tidy, self.words())
+        self.assertEqual((await next_of(tidy, "aether"))["name"], "moss fern")
+
+    async def test_the_read_shows_the_room_before_joining(self):
+        a = await self.visitor()
+        text = self.words()
+        await self.say(a, text)
+        await next_of(a, "aether")
+
+        def read():
+            with urllib.request.urlopen(http_url() + "/aether", timeout=10) as r:
+                self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+                return json.load(r)
+        got = await asyncio.to_thread(read)
+        self.assertEqual(sorted(got), ["here", "lines"])
+        self.assertLessEqual(len(got["lines"]), 30)
+        self.assertEqual(got["lines"][-1]["text"], text)
+        self.assertEqual(sorted(got["lines"][-1]), ["at", "from", "id", "name", "text"])
+        self.assertGreaterEqual(got["here"], 1)
+        self.assertEqual(http("POST", "/aether", {"say": "x"})[0], 405)
+
+    async def test_nothing_crosses_between_the_aether_and_a_channel(self):
+        await self.tx()
+        v, d = await self.watch(), await self.desk()
+        s = await self.station()
+        await next_of(s, "aether_so_far")
+        await self.pause(2)
+        await self.say(s, self.words())
+        await next_of(s, "aether")
+        for c in (v, d):
+            with self.assertRaises(asyncio.TimeoutError):
+                await next_of(c, "chat", timeout=0.5)
+        other = self.words()
+        await d.send(json.dumps({"say": other}))
+        await v.send(json.dumps({"say": other + " too"}))
+        self.assertEqual((await next_of(v, "chat"))["text"], other)
+        self.assertEqual(await self.lines(s), [])
+
+    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
+    async def test_the_keeper_takes_a_line_back_off_everyones_page(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        text = self.words()
+        await self.say(a, text)
+        line = await next_of(b, "aether")
+        status, got = admin("GET", "/admin/aether")
+        self.assertEqual(status, 200)
+        kept = {x["id"]: x for x in got["lines"]}[line["id"]]
+        self.assertEqual((kept["text"], kept["who"]), (text, "device:" + a.device))
+        self.assertEqual(admin_json("POST", "/admin/aether/unsay", {"id": line["id"]}), (200, {"unsaid": [line["id"]]}))
+        self.assertEqual(await next_of(b, "aether_unsay"), line["id"])
+        self.assertNotIn(line["id"], [x["id"] for x in http("GET", "/aether")[1]["lines"]])
+        late = await self.visitor()
+        self.assertNotIn(line["id"], [x["id"] for x in await next_of(late, "aether_so_far")])
+        self.assertEqual(admin_json("POST", "/admin/aether/unsay", {"id": line["id"]})[0], 404)
+
+    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
+    async def test_the_keeper_bans_a_visitor_by_its_device_and_takes_back_all_its_lines(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        await self.say(a, self.words())
+        first = await next_of(b, "aether")
+        await asyncio.sleep(2.1)
+        await self.say(a, self.words())
+        second = await next_of(b, "aether")
+        status, got = admin_json("POST", "/admin/aether/ban", {"id": second["id"]})
+        self.assertEqual((status, got), (200, {"banned": "device:" + a.device, "unsaid": [first["id"], second["id"]]}))
+        self.assertEqual([await next_of(b, "aether_unsay"), await next_of(b, "aether_unsay")], [first["id"], second["id"]])
+        self.assertEqual(await a.recv_close(), ("close", 4033))
+        again = await self.visitor(name="another name", device=a.device)
+        self.assertEqual(await again.recv_close(), ("close", 4033))
+        bans = {x["who"]: x for x in admin("GET", "/admin/aether")[1]["bans"]}
+        self.assertEqual(bans["device:" + a.device]["name"], a.name)
+        self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "device:" + a.device})[0], 200)
+        back = await self.visitor(device=a.device)
+        self.assertIsInstance(await next_of(back, "aether_so_far"), list)
+        self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "device:" + a.device})[0], 404)
+
+    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
+    async def test_the_keeper_bans_an_outstation_by_its_channel(self):
+        s = await self.station()
+        await next_of(s, "aether_so_far")
+        await self.say(s, self.words())
+        line = await next_of(s, "aether")
+        self.assertEqual(admin_json("POST", "/admin/aether/ban", {"id": line["id"]})[1]["banned"], "channel:" + self.ch)
+        self.assertEqual(await s.recv_close(), ("close", 4033))
+        again = await self.station()
+        self.assertEqual(await again.recv_close(), ("close", 4033))
+        self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "channel:" + self.ch})[0], 200)
+        self.assertIsInstance(await next_of(await self.station(), "aether_so_far"), list)
+
+    async def test_the_keepers_routes_need_the_token(self):
+        for method, path in (("GET", "/admin/aether"), ("POST", "/admin/aether/unsay"), ("POST", "/admin/aether/ban")):
+            req = urllib.request.Request(http_url() + path, method=method, data=b'{"id": 1}' if method == "POST" else None,
+                                         headers={"Authorization": "Bearer not-the-token-at-all"})
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(req, timeout=10)
+            self.assertEqual(e.exception.code, 403, path)
 
 
 @unittest.skipUnless(WORKER, "channels handed out by an owner: the Worker only")

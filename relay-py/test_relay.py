@@ -1116,5 +1116,140 @@ class Sound(RelayTest):
         self.assertEqual((await next_of(v, "sound"))["mode"], "off")
 
 
+class AetherWords(unittest.TestCase):
+    """The aether (11/07/2026): a line cleaned row by row (relay.aether_text; the Worker's aetherText, the same), and a
+    visitor's name (relay.aether_name). The shared suite (tests/protocol_test.py, Aether) tests the room on both relays."""
+
+    def test_a_line_keeps_its_rows_twelve_of_eighty_at_most_its_ends_tidied(self):
+        t = relay.aether_text
+        self.assertEqual(t("  a  \n\n   b\t \n"), "  a\n\n   b")              # (leading spaces and inner empty rows stay)
+        self.assertEqual(t("\n \n x\n\n  \n"), " x")                           # (empty rows at the ends go)
+        self.assertEqual(t("y" * 81), "y" * 80)                                # (a row's cut, not refused)
+        self.assertEqual(t("x" * 78 + " " * 5 + "y"), "x" * 78)                # (cut at 80, then its trailing spaces)
+        self.assertEqual(t("\n".join(str(i) for i in range(13))), "\n".join(str(i) for i in range(12)))
+        self.assertEqual(t("\n".join(["a"] + [""] * 11 + ["b"])), "a")         # (the 12th row empty: dropped; b, the 13th, gone)
+        full = t("\n".join(["z" * 85] * 14))
+        self.assertEqual((len(full.replace("\n", "")), full.count("\n")), (960, 11))   # (960 in all, the newlines aside)
+        self.assertEqual(t("\u00e9" * 81 + "\n" + "\U0001f600" * 81), "\u00e9" * 80 + "\n" + "\U0001f600" * 80)   # (code points)
+
+    def test_control_and_direction_characters_go_but_the_newline(self):
+        t = relay.aether_text
+        self.assertEqual(t("a\x07b\tc\u202ed\r\ne\u200bf\x85g\u2028h\u3000"), "abcd\nefgh")
+        self.assertEqual(t(" \u00a0x\u00a0 \u3000"), " \u00a0x")                       # (any space leads; none trails)
+        self.assertEqual(t("\x01\x02 \n \t\n\u200b\ufeff"), "")                      # (nothing once cleaned: ignored)
+        for v in (None, 5, ["x"], {"say": "x"}):
+            self.assertEqual(t(v), "")
+
+    def test_a_visitors_name(self):
+        n = relay.aether_name
+        self.assertEqual(n("  moss   fern "), "moss fern")
+        self.assertEqual(n("Moss_Fern-2.0"), "Moss_Fern-2.0")
+        self.assertEqual(n("x" * 20), "x" * 20)
+        for bad in ("", "   ", "x" * 21, "moss!", "mos\ts", "moss\u00e9", "moss\u200b", None, 5):
+            self.assertEqual(n(bad), "", bad)
+        self.assertEqual(relay.channel_form("Moss Fern"), "mossfern")
+
+
+class AetherRate(unittest.TestCase):
+    """The aether's rate (relay.aether_wait and aether_recent; the Worker's aetherWait and aetherRecent, the same): a line
+    every 2 s and 15 a minute from someone at most, and how long to wait past that."""
+
+    def test_one_line_every_two_seconds(self):
+        w = relay.aether_wait
+        self.assertEqual(w([], 10000), 0)
+        self.assertEqual(w([9500], 10000), 1.5)
+        self.assertEqual(w([8000], 10000), 0)
+        self.assertEqual(w([8001], 10000), 0.1)                                # (rounded up to a tenth)
+        self.assertEqual(w([9999], 10000), 2)
+        self.assertIsInstance(w([9999], 10000), int)                           # (2, not 2.0: as the Worker writes it)
+
+    def test_fifteen_a_minute(self):
+        w, now = relay.aether_wait, 100000
+        times = [now - 59000 + i * 3000 for i in range(15)]                    # (the last 17 s ago)
+        self.assertEqual(w(times, now), 1)                                     # (till the oldest is a minute old)
+        self.assertEqual(w(times[1:], now), 0)
+        self.assertEqual(w(times, now + 1000), 0)
+        self.assertEqual(relay.aether_recent([now - 60000, now - 59999] + times, now), times)   # (the minute's last 15)
+
+
+async def keeper(port, method, path, token, body=None):
+    """(status, JSON or the body) of one of the aether keeper's routes, with this token."""
+    data = json.dumps(body).encode() if body is not None else b""
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    w.write(CRLF.join(["%s %s HTTP/1.1" % (method, path), "Host: x", "Authorization: Bearer " + token,
+                       "Content-Type: application/json", "Content-Length: %d" % len(data), "", ""]).encode() + data)
+    await w.drain()
+    raw = await r.read()
+    w.close()
+    head, _, got = raw.partition((CRLF * 2).encode())
+    try:
+        got = json.loads(got)
+    except ValueError:
+        pass
+    return int(head.split(b" ")[1]), got
+
+
+class AetherRoom(RelayTest):
+    """The aether's room on this relay: who's here, its public side, and its keeper's token."""
+
+    async def test_whos_here_is_told_at_most_every_two_seconds_and_a_device_counts_once(self):
+        a = await self.connect("/aether?name=moss&device=" + "a" * 16)
+        self.assertEqual(await next_of(a, "aether_here"), 1)
+        t = time.monotonic()
+        b = await self.connect("/aether?name=fern&device=" + "b" * 16)
+        self.assertEqual(await next_of(b, "aether_here"), 2)                   # (whoever comes hears it at once)
+        b2 = await self.connect("/aether?name=fern&device=" + "b" * 16)        # (the same device again: still 2)
+        self.assertEqual(await next_of(b2, "aether_here"), 2)
+        self.assertEqual(await next_of(a, "aether_here", timeout=3), 2)        # (everyone else, its turn come)
+        self.assertGreater(time.monotonic() - t, 1.5)
+
+    async def test_one_told_a_count_the_others_werent_hears_the_next_turns(self):
+        # (everyone's told 2; both go; one comes and is told 1 at once, then another: the count's 2 again, what the rest
+        # were last told, and the first still hears it at the next turn)
+        a = await self.connect("/aether?name=moss&device=" + "a" * 16)
+        await self.connect("/aether?name=fern&device=" + "b" * 16)
+        while await next_of(a, "aether_here", timeout=3) != 2:
+            pass
+        for x in self.clients:
+            x.close()
+        await asyncio.sleep(0.1)
+        c = await self.connect("/aether?name=peat&device=" + "c" * 16)
+        self.assertEqual(await next_of(c, "aether_here"), 1)
+        d = await self.connect("/aether?name=bog&device=" + "d" * 16)
+        self.assertEqual(await next_of(d, "aether_here"), 2)
+        self.assertEqual(await next_of(c, "aether_here", timeout=3), 2)
+
+    async def test_the_public_side_lets_visitors_in_and_the_read_but_no_outstation_or_keeper(self):
+        self.relay.admin_token = "the-keepers-token-" + "x" * 8
+        v = await Client().open(self.public_port, "/aether?name=moss&device=" + "a" * 16)
+        self.clients.append(v)
+        self.assertEqual(v.status, 101)
+        self.assertEqual(await next_of(v, "aether_so_far"), [])
+        await self.connect("/transmit/sburb?key=secret-key")
+        for path in ("/aether?channel=sburb&key=secret-key", "/aether?channel=&name=moss&device=" + "b" * 16):
+            c = await Client().open(self.public_port, path)
+            self.clients.append(c)
+            self.assertEqual(c.status, 403, path)
+        status, kind, body = await get(self.public_port, "/aether")
+        self.assertEqual((status, json.loads(body)), (200, {"lines": [], "here": 1}))
+        self.assertEqual((await keeper(self.public_port, "GET", "/admin/aether", self.relay.admin_token))[0], 403)
+        self.assertEqual((await keeper(self.port, "GET", "/admin/aether", self.relay.admin_token))[0], 200)
+
+    async def test_without_a_token_the_keepers_routes_are_refused(self):
+        for token in ("", "short"):
+            self.relay.admin_token = token
+            self.assertEqual(await keeper(self.port, "GET", "/admin/aether", token), (403, b"no"))
+            self.assertEqual((await keeper(self.port, "POST", "/admin/aether/ban", token, {"id": 1}))[0], 403)
+
+    async def test_the_delay_doesnt_hold_it_back_and_a_bad_channel_isnt_upgraded(self):
+        self.relay.delay = 30.0
+        a = await self.connect("/aether?name=moss&device=" + "a" * 16)
+        await a.send(json.dumps({"say": "now"}))
+        self.assertEqual((await next_of(a, "aether"))["text"], "now")
+        c = await Client().open(self.port, "/aether?channel=no%20such&key=secret-key")
+        self.clients.append(c)
+        self.assertEqual(c.status, 400)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -13,6 +13,7 @@ Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Pytho
 | watch | `/watch/<channel>?code=<watch code>` | a viewer (Outside) |
 | look | `/watch/<channel>?look=1&code=<watch code>` | a looker: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek (below, "Lookers") |
 | game | `/game/<channel>?key=<key>&v=<the plugin's version>` | the Outside plugin: the player's game state (below, "The game") |
+| aether | `/aether?name=<name>&device=<random id>`, or `/aether?channel=<channel>&key=<key>&v=<version>` | a visitor, or an outstation: the one room for everyone (below, "The aether") |
 
 `ws://` on this PC, `wss://` on Cloudflare. A channel is 1 to 64 characters: letters, digits and `_ . ~ -`.
 
@@ -24,11 +25,15 @@ Closing codes:
 - 4003: the wrong key, the wrong watch code, the watch code changed, a channel nobody handed out (Cloudflare), or the channel given a new key or taken back.
 - 4026: this client is older than the relay allows; the reason says which version is needed ("… 0.2.0 or newer is needed"). Trying again won't help: the client stops and says where to get a newer one.
 - 4029: too many wrong keys from one address in a minute (Cloudflare).
+- 4002: a name or device id the aether can't take (below, "The aether"). The same again won't help.
+- 4009: a visitor's name in the aether that's an outstation's.
+- 4033: banned from the aether.
+- 1013: the relay couldn't check an aether socket's key or name just then (Cloudflare): try again.
 
 ## The client's version
 
-The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, and on its monitor's and a friend's peek's watch sockets.
-- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
+The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, its aether socket, and on its monitor's and a friend's peek's watch sockets.
+- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket, or an outstation's aether socket, from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
 - Versions are compared by number (`0.10.0` is newer than `0.9.0`), and a pre-release's suffix is left out (`0.5.0-rc.1` counts as `0.5.0`).
 - A socket that says no version is let in: ghillie's Python portal predates it.
 - Viewers never need one.
@@ -306,6 +311,84 @@ On the desk socket, both relays:
 
 `at` in ms. A message for an outstation with no desk connected is held, at most 20 and 7 days each, and handed over as its
 desk next connects. Both outstations must be on the same relay.
+
+## The aether (11/07/2026)
+
+One room for every outstation and every visitor on the relay, as IRC's channels were (Jace: "a global chat… seeing people
+spam ascii art and stuff. reminds me of IRC and AOL Instant Messenger. i want this to feel like a real network people are
+joining"). Both relays: the Worker's `relay/src/aether.ts`, one Durable Object for the whole relay; relay-py's `Aether`
+and `Relay.aether_socket`. Outside shows it as a tab beside a transmission's chat, the client as a tab of its own
+(client/src/aether.rs).
+
+    ws(s)://<relay>/aether?name=<name>&device=<random id>                 a visitor
+    ws(s)://<relay>/aether?channel=<channel>&key=<key>&v=<its version>    an outstation, under its channel's name
+    GET <relay>/aether                                                     the room before joining: {"lines", "here"}
+
+**Joining.** With `channel` it's an outstation's socket; without, a visitor's.
+- An outstation: its version and its key are checked as its desk's would be: 4026 for a client older than `MIN_CLIENT`
+  (`--min-client`), then 4001 for a key under 8 characters, 4003 for the wrong one (on Cloudflare also for a channel
+  nobody handed out; on the Python relay a key claims a channel nobody has, as a desk's does), and on Cloudflare 4029
+  past 10 wrong keys a minute from one address. Its name in the room is its channel. A `channel` that can't be one
+  ("The sockets", above) isn't upgraded: 400.
+- A visitor: `name`, with its runs of spaces made one and its ends trimmed, must then be 1 to 20 letters, digits, spaces,
+  `_`, `-` or `.`, ASCII only; `device` is the random id its page keeps, 8 to 64 printable characters with no spaces
+  (what a ban holds on to). Either wrong: 4002. A name that's an outstation's, case and spaces aside ("Moss Fern" is
+  `mossfern`'s), is refused with 4009, "that name belongs to an outstation": on Cloudflare any channel handed out (the
+  Directory's list), on the Python relay any channel claimed. A visitor's `v=` is never looked at.
+- Banned (below, the keeper): 4033 "banned from the aether", a visitor by its device, an outstation by its channel.
+- On Cloudflare, 1013 when the relay couldn't check the key or the name just then: try again.
+
+**On joining** it hears `{"aether_so_far": [line, …]}`, the last 100 lines, oldest first, and then `{"aether_here": n}`.
+
+**It sends** text, `{"say": text}`. Anything else is thrown away, and anything over 8 KB isn't read.
+- A line may be several rows (ASCII art). Control characters are taken out, all but `\n` (C1's too, and the direction
+  and zero-width ones); each row is cut to 80 characters and its trailing spaces trimmed (its leading spaces stay, for
+  the art's shape); empty rows at the start and the end are dropped; and the first 12 rows are kept. So a line is at
+  most 960 characters, the newlines between its rows aside. Characters are code points. A row over 80 is cut, not
+  refused, and a 13th row and on are left out.
+- A line that's empty after that is ignored, and isn't counted.
+- At most one line every 2 s and 15 a minute, counted for the socket and for whoever it is (a visitor's device, an
+  outstation's channel), so opening another socket or reconnecting doesn't start the count again. Past either, the line
+  goes nowhere, and only that socket hears `{"aether_slow": s}`: the seconds to wait, rounded up to a tenth.
+
+**Everyone in the room hears:**
+- `{"aether": {"id", "name", "text", "from", "at"}}`: a line, its sender included. `id` goes up with each line; `from` is
+  `"outstation"` or `"visitor"`; `at` in ms. Never a device or a key.
+- `{"aether_here": n}`: how many are here, each visitor's device and each outstation counted once, however many sockets
+  it has open. Sent to everyone as it changes, at most once every 2 s (a change in between waits its turn); whoever's
+  just come hears it at once.
+- `{"aether_unsay": id}`: a line the keeper's taken back (below).
+
+Nothing an aether socket sends reaches any channel, and nothing from a channel (its chat, its desk, its viewers) reaches
+the aether. The Python relay's `--delay` doesn't hold it back.
+
+**The read:** `GET /aether` answers `{"lines": [the last 30, as above], "here": n}`, for a page to show the room before
+it joins. Anyone may read it (any origin), and it may be cached for 5 s (`Cache-Control: public, max-age=5`). 405 for
+anything but `GET`.
+
+**What's kept:** the last 100 lines, each with who wrote it (for the keeper), and the bans.
+- On Cloudflare: in memory, and in the Aether object's storage as one row, written at most every 5 s while lines come
+  (soon after the first, then 5 s after the last write) and when the room empties; the bans as they change. A restart
+  of the object while lines come loses at most those 5 s. Each sender's count for the rate is in memory (a sleep
+  forgets it, which only loosens it); each socket's own outlives a sleep.
+- On the Python relay: in memory, as everything there, while the relay runs.
+
+**The keeper** (`Authorization: Bearer <ADMIN_TOKEN>`; on the Python relay `--admin-token`, 16 characters at least,
+without which they're all refused):
+- `GET /admin/aether`: `{"lines": [{"id", "name", "text", "from", "at", "who"}, …], "bans": [{"who", "name", "at"}, …]}`.
+  `who` is `"device:<id>"` for a visitor and `"channel:<channel>"` for an outstation.
+- `POST /admin/aether/unsay` with `{"id"}`: the line taken back. Everyone hears `{"aether_unsay": id}`, and it's gone from
+  what's kept (and from the read). Answers `{"unsaid": [id]}`, or 404 `{"error": "no such line in the aether"}`.
+- `POST /admin/aether/ban` with `{"id"}`: whoever wrote that line is banned, a visitor by its device and an outstation by
+  its channel. Every line of theirs still kept is taken back (each `{"aether_unsay": id}`), and their sockets are closed
+  with 4033 "banned from the aether"; trying again is refused the same. Answers `{"banned": who, "unsaid": [ids]}`, or
+  404 as above.
+- `POST /admin/aether/unban` with `{"who"}` (as the list has it): let back in. Answers `{"bans": [...]}`, or 404
+  `{"error": "nobody's banned by that"}`.
+- 403 without the token, 405 for another method, 413 past 4 KB.
+
+The Python relay's public side (the Funnel's port) lets visitors in and allows the read; it refuses an outstation's
+socket and the keeper's routes, whatever key or token comes with them.
 
 ## Anomalies and requisitions (Cloudflare)
 

@@ -14,6 +14,8 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 
 The Directory (one object for the whole relay) keeps the channels handed out (each with whose invite it came from, if any), the requests for station keys, the keeper's notice, and the anomalies and requisitions sent to the listening post.
 
+The Aether (one object for the whole relay, `src/aether.ts`, since 11/07/2026) is the aether: one room for every outstation and visitor on `/aether`, with `GET /aether` for a page before it joins. It keeps the last 100 lines and the bans; the lines are one row, written at most every 5 s while they come and when the room empties. The keeper takes lines back and bans with `/admin/aether` (`../docs/protocol.md`, "The aether"). Its migration (`v2` in `wrangler.jsonc`) goes up with the next `npm run deploy`.
+
 It also answers `GET /channels`, the open portals' list, from what each channel has told it (in memory only). A channel tells the Directory its row whenever the row changes: live, the picture, viewers, title, what it's doing. A row the Directory hasn't heard (after it slept), or hasn't heard for 5 minutes, it asks that channel for. So a read costs one request, however many channels there are. Before 11/07/2026, every read asked every channel and woke each one.
 
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.

@@ -9,7 +9,9 @@
   "durable_objects": {
     "bindings": [
       { "name": "CHANNEL", "class_name": "Channel" },
-      { "name": "DIRECTORY", "class_name": "Directory" }
+      { "name": "DIRECTORY", "class_name": "Directory" },
+      // the aether (11/07/2026, src/aether.ts): one room for every outstation and visitor, one object for the relay
+      { "name": "AETHER", "class_name": "Aether" }
     ]
   },
   // the clips on players' Outside pages (src/clips.ts): made once with `npx wrangler r2 bucket create outside-clips`
@@ -17,7 +19,8 @@
     { "binding": "CLIPS", "bucket_name": "outside-clips" }
   ],
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] }
+    { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] },
+    { "tag": "v2", "new_sqlite_classes": ["Aether"] }
   ],
   "vars": {
     "MAX_VIEWERS": "0",

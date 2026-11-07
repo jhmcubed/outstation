@@ -149,3 +149,60 @@ export function attachCode(relay: string, channel: string, key: string): string 
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
   return "outstation1:" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+
+// The aether (11/07/2026; aether.ts, docs/protocol.md "The aether"): one room for every outstation and visitor. A line
+// there may be several rows (ASCII art), so it isn't made one line; it's cleaned row by row instead. relay.py's
+// aether_text, aether_name, channel_form and aether_wait, the same.
+export const AETHER_ROWS = 12, AETHER_WIDTH = 80; // a line's rows at most, and each row's characters (so 960 in all)
+export const AETHER_EVERY = 2000, AETHER_A_MINUTE = 15; // one line every 2 s at most, and 15 a minute
+// control characters but the newline (C1's too), and the direction and zero-width ones: taken out, not made spaces
+const AETHER_CONTROL = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+// a row's trailing spaces: Unicode's spaces (Zs), written out so both relays trim the same ones
+const AETHER_TRAILING = /[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$/;
+const AETHER_NAME = /^[A-Za-z0-9_. -]{1,20}$/;
+
+/** A line for the aether, or "" (ignored): its control characters taken out (but the newlines between its rows), each
+ *  row cut to AETHER_WIDTH characters and its trailing spaces trimmed, the empty rows at its start and end dropped, and
+ *  its first AETHER_ROWS rows kept. A row's leading spaces stay (the art's shape). Characters are counted as code
+ *  points, as relay.py's str counts them. */
+export function aetherText(text: unknown): string {
+  if (typeof text !== "string") return "";
+  const rows = text.replace(AETHER_CONTROL, "").split("\n")
+    .map((r) => Array.from(r).slice(0, AETHER_WIDTH).join("").replace(AETHER_TRAILING, ""));
+  let a = 0, b = rows.length;
+  while (a < b && !rows[a]) a++;
+  while (b > a && !rows[b - 1]) b--;
+  const kept = rows.slice(a, b).slice(0, AETHER_ROWS);
+  while (kept.length && !kept[kept.length - 1]) kept.pop();
+  return kept.join("\n");
+}
+
+/** A visitor's name in the aether, or "" (refused): runs of spaces made one and its ends trimmed, then 1 to 20 letters,
+ *  digits, spaces, "_", "-" or "." (ASCII only, so no name can pass for another by its look). */
+export function aetherName(name: unknown): string {
+  if (typeof name !== "string") return "";
+  const s = name.replace(/ +/g, " ").replace(/^ | $/g, "");
+  return AETHER_NAME.test(s) ? s : "";
+}
+
+/** A name as a channel would have it: lower case, no spaces (a visitor's may not be an outstation's, so). */
+export function channelForm(name: string): string {
+  return name.toLowerCase().replace(/ /g, "");
+}
+
+/** The times (ms, oldest first) of the last lines one socket or one sender put in the aether, kept to the last
+ *  minute's AETHER_A_MINUTE. */
+export function aetherRecent(times: number[], now: number): number[] {
+  return times.filter((t) => now - t < 60_000).slice(-AETHER_A_MINUTE);
+}
+
+/** How long one must wait before a line goes (seconds, rounded up to a tenth), or 0 when it may go now: a line every
+ *  AETHER_EVERY at most, and AETHER_A_MINUTE in a minute. times: their last lines' (aetherRecent). */
+export function aetherWait(times: number[], now: number): number {
+  let until = 0;
+  const last = times[times.length - 1];
+  if (last !== undefined && now - last < AETHER_EVERY) until = last + AETHER_EVERY;
+  const minute = times.filter((t) => now - t < 60_000);
+  if (minute.length >= AETHER_A_MINUTE) until = Math.max(until, minute[minute.length - AETHER_A_MINUTE] + 60_000);
+  return until > now ? Math.ceil((until - now) / 100) / 10 : 0;
+}
