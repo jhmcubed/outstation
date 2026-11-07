@@ -87,6 +87,10 @@ pub struct Dink {
     /// and each one put on the player's Outside page too (clipsup.rs): a standard copy, off to begin with
     #[serde(default)]
     pub clips_up: bool,
+    /// and each one sent to Discord under Dink's post, where that post went (dink.rs, 11/07/2026: "Dink, but with
+    /// video"): the same standard copy, on to begin with, and only ever where Dink's post was going anyway
+    #[serde(default = "d_true")]
+    pub clips_discord: bool,
     /// the drawer's first question, "do you use Dink with Discord too?": not answered yet, yes or no
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<bool>,
@@ -96,7 +100,7 @@ pub struct Dink {
 
 impl Default for Dink {
     fn default() -> Self {
-        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, discord: None, extra: Map::new() }
+        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, clips_discord: true, discord: None, extra: Map::new() }
     }
 }
 

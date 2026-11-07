@@ -88,8 +88,11 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     let s = settings.get();
     let kind = payload.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let mut went = Vec::new();
+    // (where Dink's post went in Discord: the clip, if one saves itself, follows it there)
+    let mut discord_urls: Vec<String> = Vec::new();
     if forward_wants(&s.forward, &payload) {
         let urls = forward_urls(&s.forward, &kind);
+        discord_urls = urls.clone();
         if !urls.is_empty() {
             went.push("Discord");
             let (body, ct) = (body.clone(), content_type.clone());
@@ -122,21 +125,53 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     // on, so the clip holds the moment and a little after it
     if s.dink.auto_clip && s.on_air && s.replay_seconds > 0 {
         if let Some(what) = big_moment(&payload, s.dink.clip_gp) {
-            went.push(if s.dink.clips_up { "a clip, on your Outside page too" } else { "a clip" });
-            // (on the page too: the page's copy runs to 5 s after the moment, so it waits that long, if the buffer
-            // holds that much)
             let up = s.dink.clips_up;
-            let secs = if up { (crate::clip::AFTER / 1000).min((s.replay_seconds / 3).max(1) as u64) } else { (s.replay_seconds / 4).clamp(1, 4) as u64 };
+            let to_discord = s.dink.clips_discord && !discord_urls.is_empty();
+            went.push(match (up, to_discord) {
+                (true, true) => "a clip, on your Outside page and in Discord too",
+                (true, false) => "a clip, on your Outside page too",
+                (false, true) => "a clip, in Discord too",
+                _ => "a clip",
+            });
+            // (a standard copy, for the page or Discord: it runs to 5 s after the moment, so it waits that long, if the
+            // buffer holds that much)
+            let copy = up || to_discord;
+            let secs = if copy { (crate::clip::AFTER / 1000).min((s.replay_seconds / 3).max(1) as u64) } else { (s.replay_seconds / 4).clamp(1, 4) as u64 };
             let (folder, wait, moment, settings) = (s.clip_folder.clone(), Duration::from_secs(secs), Instant::now(), settings.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(wait);
                 crate::clip::save_as(&folder, Some(what.clone()));
+                if !copy {
+                    return;
+                }
+                // (made once, for both: the page's and Discord's copy are the same)
+                let items = crate::clip::snapshot();
+                let page = match crate::clip::page_copy(&items, moment) {
+                    Ok(p) => p,
+                    Err(e) => return crate::clip::say(format!("no copy of the clip for {}: {}",
+                                                              if up { "your Outside page" } else { "Discord" }, e)),
+                };
                 if up {
                     let s = settings.get();
-                    match crate::clipsup::upload(&s, &what, &kind_of(&what), moment) {
+                    match crate::clipsup::upload_copy(&s, &what, &kind_of(&what), moment, &page) {
                         Ok(said) => crate::clip::say(said),
                         Err(e) => crate::clip::say(format!("the clip didn't reach your Outside page: {}", e)),
                     }
+                }
+                if to_discord {
+                    let (body, ct) = discord_clip(&what, &page.mp4);
+                    let mut failed = None;
+                    for u in &discord_urls {
+                        if let Some(why) = post_discord(u, &body, &ct) {
+                            // (never the address itself in the log: it's the key to the server)
+                            crate::transmit::log(&format!("the clip didn't reach Discord: {}", why));
+                            failed = Some(why);
+                        }
+                    }
+                    crate::clip::say(match failed {
+                        None => format!("in Discord, under Dink's post: {} ({:.1} MB)", what, page.mp4.len() as f64 / 1048576.0),
+                        Some(why) => format!("the clip didn't reach Discord: {}", why),
+                    });
                 }
             });
         }
@@ -168,6 +203,21 @@ pub fn big_moment(p: &Value, gp: u64) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The clip as a Discord webhook post (multipart, as Dink's own are): a line naming it, in the outstation's words, and
+/// the video, which Discord plays in the channel. Its body and Content-Type.
+pub fn discord_clip(what: &str, mp4: &[u8]) -> (Vec<u8>, String) {
+    let b = "outstationclipfordiscord";
+    let payload = serde_json::json!({ "content": format!("✼ recovered footage: {}", what) }).to_string();
+    let name = format!("{}.mp4", { let n = crate::clip::file_safe(what).replace(' ', "-"); if n.is_empty() { "clip".to_string() } else { n } });
+    let mut out = Vec::with_capacity(mp4.len() + payload.len() + 512);
+    out.extend_from_slice(format!("--{}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n", b).as_bytes());
+    out.extend_from_slice(payload.as_bytes());
+    out.extend_from_slice(format!("\r\n--{}\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"{}\"\r\nContent-Type: video/mp4\r\n\r\n", b, name).as_bytes());
+    out.extend_from_slice(mp4);
+    out.extend_from_slice(format!("\r\n--{}--\r\n", b).as_bytes());
+    (out, format!("multipart/form-data; boundary={}", b))
 }
 
 /// A big moment's kind, as Dink names it, from its words (big_moment's).
@@ -412,6 +462,19 @@ mod tests {
     fn kc(count: i64, pb: bool, laps: bool) -> Value {
         json!({"type": "KILL_COUNT", "content": if laps { format!("has completed {} laps at X", count) } else { "kc".into() },
                "extra": {"boss": "X", "count": count, "isPersonalBest": pb}})
+    }
+
+    #[test]
+    fn a_clip_goes_to_discord_as_dink_posts_do() {
+        let (body, ct) = discord_clip("pet vorki", b"MP4BYTES");
+        assert_eq!(ct, "multipart/form-data; boundary=outstationclipfordiscord");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("name=\"payload_json\""));
+        assert!(text.contains("recovered footage: pet vorki"));
+        assert!(text.contains("name=\"files[0]\"; filename=\"pet-vorki.mp4\""));
+        assert!(text.contains("Content-Type: video/mp4\r\n\r\nMP4BYTES\r\n--outstationclipfordiscord--"));
+        // (the same parser that reads Dink's own multipart posts finds its line)
+        assert!(payload(&ct, &body).unwrap()["content"].as_str().unwrap().contains("pet vorki"));
     }
 
     #[test]

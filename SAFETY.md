@@ -94,6 +94,7 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 **To your Discord,** only if you set the outstation to pass Dink's posts on (dink ▸, "do you use Dink with Discord too?"):
 - each post just as Dink made it, its embed and screenshot included
 - to your own webhook addresses, by the rules taken from your Dink settings, so your Discord gets what it got before
+- and, while you're transmitting with the tape on, the clip of a big moment (a pet, a new log slot, a 99, a big drop) a few seconds later, under that same post and only where it went: a copy of what you transmitted round that moment (up to 17 s, at most 768 px wide, under 8 MB), the same copy your Outside page would get. dink ▸, "and send them to Discord, under Dink's post", turns it off (11/07/2026).
 - Nowhere else ever gets a screenshot.
 
 **To GitHub,** once on opening (settings ▸ more turns it off): "is there a newer version?". Nothing about you goes with it.

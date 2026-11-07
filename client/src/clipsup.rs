@@ -11,13 +11,12 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-/// The page's copy made from the buffer round `moment` and sent, on the caller's thread. What to say, either way.
-pub fn upload(s: &Settings, what: &str, kind: &str, moment: Instant) -> Result<String, String> {
+/// A standard copy already made (dink.rs makes one for the Outside page and Discord both) to the relay, on the caller's
+/// thread. What to say, either way.
+pub fn upload_copy(s: &Settings, what: &str, kind: &str, moment: Instant, page: &crate::clip::PageCopy) -> Result<String, String> {
     if !s.attached() {
         return Err("not attached to a relay".into());
     }
-    let items = crate::clip::snapshot();
-    let page = crate::clip::page_copy(&items, moment)?;
     let at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0).saturating_sub(moment.elapsed().as_secs());
     let meta = json!({
         "what": what, "kind": kind, "at": at, "dur": page.dur, "w": page.w, "h": page.h, "frames": page.frames, "fps": page.fps,

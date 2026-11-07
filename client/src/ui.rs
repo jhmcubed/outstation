@@ -2045,6 +2045,9 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         if s.dink.clips_up {
             page_clips_ui(app, ui, &s);
         }
+        let colour = if s.dink.clips_discord { TEXT() } else { GREY() };
+        ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
+            .on_hover_text(tip("wherever Dink's post goes in Discord (step 1 above), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
     }
     if serde_json::to_string(&s).unwrap_or_default() != before {
         let _ = app.settings.update(|x| *x = s);
@@ -2152,6 +2155,8 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 if s.dink.auto_clip {
                     ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
                         .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
+                    ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
+                        .on_hover_text(tip("wherever Dink's post goes in Discord, its clip follows a few seconds later, playing in the channel."));
                 }
             }
         }
