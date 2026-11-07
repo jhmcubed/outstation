@@ -2102,7 +2102,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
         tick(ui, &mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
-            .on_hover_text(tip("Dink's post comes, and a few seconds later the tape is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while transmitting: the tape holds what the outstation sent."));
+            .on_hover_text(tip("Dink's post comes, and a few seconds later the tape is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. While transmitting, or while dark with \"and while dark too\" on (the tape rolls then too, sent nowhere)."));
         ui.add(egui::DragValue::new(&mut s.dink.clip_gp).range(0..=2_147_483_647u64).speed(10000.0).suffix(" gp"));
         ui.label(rich("or more", 16.0, GREY()));
     });
