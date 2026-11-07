@@ -66,7 +66,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 - `{"ping": {"x", "y"}}`: a spot on the frame, 0–1 each. One every half second, and only with a seat.
 - `{"signal": true}`: the ✼ button, as often as a hand can press (one every 80 ms at most).
 - `{"guess": {"id", "kc"}}`: a kill count still to come, for the drop guess going on, while it's open. One a device, which they can change.
-- `{"got": bytes}` (Cloudflare): every binary byte received so far, about once a second. Past 4 MB sent and not yet acknowledged, a viewer gets no more frames or sound until it catches up. A viewer that never says it gets the first 4 MB and then text only. The Python relay ignores it: it reads its own send buffer.
+- `{"got": bytes}` (Cloudflare): every binary byte received so far: the first at once, then every 3 s or once 2 MB more has come, never more than once a second (about once a second until 11/07/2026; each is a request the relay counts). The desk's `acked` is the rate over about the last 5 s. Past 4 MB sent and not yet acknowledged, a viewer gets no more frames or sound until it catches up. A viewer that never says it gets the first 4 MB and then text only. The Python relay ignores it: it reads its own send buffer.
 
 **The waiting line:** past the cap, a viewer waits in line, with status lines and the chat but no frames. The first in line takes the first seat that frees.
 

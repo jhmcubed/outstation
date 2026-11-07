@@ -62,6 +62,8 @@ const LOOK_READS = 128 * 1024;
 // this channel's row in the open portals' list (GET /channels), told to the Directory this long after it changes, so a
 // few changes at once (a desk's settings, viewers arriving together) are told once
 const LISTING_WAIT = 50;
+// the acknowledged rate (tellUpload's "acked") over this long: pages acknowledge every 1-3 s since 11/07/2026
+const ACKED_OVER = 5000;
 
 type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "refused";
 
@@ -190,7 +192,9 @@ export class Channel extends DurableObject<Env> {
   uploadTimer: ReturnType<typeof setInterval> | null = null;
   out = 0; // bytes sent to viewers (frames, sound, lines), for the desk's upload line
   acked = 0; // bytes viewers say they've had ({"got"}): proof the site is getting it
-  ackedSeen: [number, number] = [0, Date.now()];
+  // what viewers' pages said they'd had, a sample a second for the last 6 s (11/07/2026: the page acknowledges every
+  // 1-3 s now, so a second at a time read 0 between acks; the rate is taken over the last 5 s or so)
+  ackedSeen: [number, number][] = [[0, Date.now()]];
   outSeen: [number, number] = [0, Date.now()];
   wrong = new Map<string, number[]>();
   flow = new WeakMap<WebSocket, Flow>();
@@ -877,9 +881,10 @@ export class Channel extends DurableObject<Env> {
     this.outSeen = [this.out, now];
     const desks = this.sockets("desk");
     if (!desks.length) return;
-    const [had, hadAt] = this.ackedSeen;
-    this.ackedSeen = [this.acked, now];
-    // acked: what viewers' pages say they've had, a second at a time (the client's live view)
+    this.ackedSeen.push([this.acked, now]);
+    while (this.ackedSeen.length > 2 && now - this.ackedSeen[1][1] >= ACKED_OVER) this.ackedSeen.shift();
+    const [had, hadAt] = this.ackedSeen[0];
+    // acked: what viewers' pages say they've had, over about the last 5 s (the client's live view)
     const line = pyjson({ upload: { bps: Math.floor(((this.out - was) * 8) / Math.max(0.001, (now - at) / 1000)),
                                     viewers: this.seated().length,
                                     acked: Math.floor(((this.acked - had) * 8) / Math.max(0.001, (now - hadAt) / 1000)) } });

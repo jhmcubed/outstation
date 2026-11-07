@@ -113,6 +113,7 @@ NAME_MAX = 20
 TITLE_MAX = 100                   # the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
 PING_EVERY = 0.5                  # a ping a viewer every half second (1.5 until Jace asked for more, 11/05)
 POLL_OPTIONS, POLL_SECONDS = (2, 6), (10, 900)
+ACKED_OVER = 5.0                  # the acknowledged rate (tell_upload's "acked") over this long, in seconds
 THUMB_FRESH = 3.0                 # a small frame this recent, and lookers get those instead of the full ones
 LOOK_EVERY = 0.5                  # a looker (the listening post's receiver) gets a frame at most this often
 SIGNAL_EVERY = 0.08               # a viewer's ✼ (the signal button): as often as a hand can press (Jace, 11/05: "allow for
@@ -337,7 +338,7 @@ class Channel:
         self.sound_held = deque()
         self.out = 0                 # bytes sent to viewers so far (frames, sound, lines): his upload, for the desk
         self.acked = 0               # bytes viewers say they've had ({"got"}): proof the site is getting it
-        self.acked_seen = (0, time.monotonic())
+        self.acked_seen = [(0, time.monotonic())]   # (samples of the last 5 s or so: tell_upload)
         self.replay = deque()        # (arrival, message): the last replay_seconds of frames and sound, for a clip
         self.kc = {}                 # boss (lower case) -> (its name, the kill count Dink last told of)
         self.guess = None            # the drop guess round (11/05/2026): see from_desk's guess_open
@@ -1488,8 +1489,12 @@ class Relay:
             for ch in list(self.channels.values()):
                 was, at = ch.out_seen
                 ch.out_seen = (ch.out, now)
-                had, had_at = ch.acked_seen
-                ch.acked_seen = (ch.acked, now)
+                # (acked over about the last 5 s: pages acknowledge every 1-3 s since 11/07/2026, so a second at a time
+                # read 0 between acks)
+                ch.acked_seen.append((ch.acked, now))
+                while len(ch.acked_seen) > 2 and now - ch.acked_seen[1][1] >= ACKED_OVER:
+                    ch.acked_seen.pop(0)
+                had, had_at = ch.acked_seen[0]
                 if ch.desks:
                     # acked: what viewers' pages say they've had, a second at a time (the client's live view)
                     line = json.dumps({"upload": {"bps": int((ch.out - was) * 8 / max(0.001, now - at)),
