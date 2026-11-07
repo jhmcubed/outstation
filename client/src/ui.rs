@@ -250,7 +250,10 @@ pub struct App {
     feed: Arc<Mutex<crate::feed::Feed>>,
     feed_tex: Option<(egui::TextureHandle, Instant)>,
     acked: Option<u64>,
-    tray_live: Option<Option<usize>>, // (the tray's ✼ as last set: None lime, Some(step) the pulse)
+    tray_live: Option<(Option<usize>, bool)>, // (the tray's ✼ as last set: None lime, Some(step) the pulse; and its inbox mark)
+    /// something new in the station's inbox (a key requested, an anomaly reported, a requisition filed) not yet looked
+    /// at: the outstations button glows and pulses, the tray's ✼ wears a mark, the taskbar button flashes (11/07/2026)
+    inbox_new: bool,
     tray_click: std::sync::mpsc::Receiver<()>,
     editing_masks: bool,
     mask_drag: Option<MaskDrag>,
@@ -328,14 +331,30 @@ pub fn tinted(colour: Color32, alpha: f32) -> (Vec<u8>, u32, u32) {
 
 /// the tray's pulse while live: a step every 100 ms, 1.2 s round, its brightness eased from full to 30% and back
 const TRAY_STEPS: usize = 12;
-fn tray_frame(step: Option<usize>) -> (Vec<u8>, u32, u32) {
-    match step {
+fn tray_frame(step: Option<usize>, mark: bool) -> (Vec<u8>, u32, u32) {
+    let (mut px, w, h) = match step {
         None => tinted(LIME(), 1.0),
         Some(i) => {
             let a = 0.65 + 0.35 * (i as f32 / TRAY_STEPS as f32 * std::f32::consts::TAU).cos();
             tinted(PINK(), a)
         }
+    };
+    if mark {
+        // the inbox's mark: a round dot in the top right corner, dark-rimmed so it reads on any taskbar; hotpink on
+        // the lime ✼, lime on the pulsing hotpink one
+        let dot = if step.is_some() { LIME() } else { PINK() };
+        let (cx, cy, r) = (w as f32 * 0.76, h as f32 * 0.24, w as f32 * 0.22);
+        for y in 0..h {
+            for x in 0..w {
+                let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+                if d > r { continue; }
+                let i = ((y * w + x) * 4) as usize;
+                let c = if d > r - w as f32 * 0.05 { Color32::from_rgb(10, 10, 10) } else { dot };
+                px[i] = c.r(); px[i + 1] = c.g(); px[i + 2] = c.b(); px[i + 3] = 255;
+            }
+        }
     }
+    (px, w, h)
 }
 
 pub fn icon_rgba() -> (Vec<u8>, u32, u32) {
@@ -454,7 +473,7 @@ impl App {
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
-            feed, feed_tex: None, acked: None, tray_live: None, tray_click, editing_masks: false, mask_drag: None,
+            feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
@@ -780,10 +799,10 @@ impl App {
             (self.born.elapsed().as_millis() / 100) as usize % TRAY_STEPS
         });
         if live { ctx.request_repaint_after(Duration::from_millis(100)); }
-        if self.tray_live != Some(step) {
-            self.tray_live = Some(step);
+        if self.tray_live != Some((step, self.inbox_new)) {
+            self.tray_live = Some((step, self.inbox_new));
             if let Some(t) = &self.tray {
-                let (rgba, w, h) = tray_frame(step);
+                let (rgba, w, h) = tray_frame(step, self.inbox_new);
                 if let Ok(i) = tray_icon::Icon::from_rgba(rgba, w, h) {
                     let _ = t.set_icon(Some(i));
                 }
@@ -860,7 +879,7 @@ fn tray_menu(_s: &Settings) -> (tray_icon::menu::Menu, tray_icon::menu::MenuItem
 
 fn tray_finish(menu: tray_icon::menu::Menu, open: tray_icon::menu::MenuItem, live: tray_icon::menu::MenuItem, modes: SoundItems,
                quit: tray_icon::menu::MenuItem) -> (Option<tray_icon::TrayIcon>, Option<TrayItems>) {
-    let (rgba, w, h) = tray_frame(None);
+    let (rgba, w, h) = tray_frame(None, false);
     let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok();
     let mut b = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("the outstation");
     if let Some(i) = icon {
@@ -1192,6 +1211,33 @@ fn button(ui: &mut egui::Ui, text: &str, small: bool, lit: Option<bool>) -> egui
     p.rect_stroke(rect, 2.0, Stroke::new(1.0, if hover { TEAL() } else { edge }), egui::StrokeKind::Inside);
     let g = ui.painter().layout_job(job(text, sz, if hover { Color32::WHITE } else { colour }));
     p.galley(rect.center() - g.size() / 2.0, g, colour);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A button with something new behind it (the station's inbox, 11/07/2026, Jace: "flash/glow/be more noticeable"):
+/// hotpink, in a glow that swells and fades about once a second (held still with Windows' animations off), its fill
+/// breathing with it.
+fn alert_button(ui: &mut egui::Ui, text: &str, seen: bool) -> egui::Response {
+    let g = ui.painter().layout_job(job(text, 14.0, PINK()));
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 14.0, 21.0), Sense::click());
+    let hover = resp.hovered();
+    let still = crate::cursor::still();
+    let a = if still { 1.0 } else { (0.5 + 0.5 * (ui.input(|i| i.time) * std::f64::consts::TAU / 1.1).cos()) as f32 };
+    let pal = theme::pal();
+    let p = ui.painter();
+    // the glow: rings outward, fainter as they go, all of them with the beat
+    for (grow, k) in [(7.0, 0.06), (5.0, 0.1), (3.0, 0.18), (1.5, 0.3)] {
+        p.rect_stroke(rect.expand(grow), 2.0 + grow, Stroke::new(2.0, PINK().gamma_multiply(k * (0.35 + 0.65 * a))), egui::StrokeKind::Middle);
+    }
+    let fill = if hover { theme::mix(pal.well, pal.teal, 0.3) } else { theme::mix(pal.well, pal.pink, 0.15 + 0.3 * a) };
+    p.rect_filled(rect, 2.0, fill);
+    p.rect_stroke(rect, 2.0, Stroke::new(1.0, if hover { TEAL() } else { PINK() }), egui::StrokeKind::Inside);
+    let g = ui.painter().layout_job(job(text, 14.0, if hover { Color32::WHITE } else { theme::mix(pal.pink, Color32::WHITE, 0.35 * a) }));
+    ui.painter().galley(rect.center() - g.size() / 2.0, g, PINK());
+    // (beating only while the window can be seen: hidden or minimised, the tray's mark and the taskbar say it)
+    if !still && seen {
+        ui.ctx().request_repaint_after(Duration::from_millis(40));
+    }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -2700,8 +2746,18 @@ impl eframe::App for App {
             let c = ctx.clone();
             if self.drawer != Drawer::Friends { self.keeper.watch_asks(move || c.request_repaint()); }
             let new = self.keeper.new_asks();
+            let mut arrived = !new.is_empty();
             if let Some(line) = crate::keeper::asking_line(&new.iter().map(|r| r.player.clone()).collect::<Vec<_>>()) { self.note(line); }
             let new = self.keeper.new_reports();
+            arrived |= !new.is_empty();
+            // (the inbox lit till it's opened: the button, the tray's mark, the taskbar flashing)
+            if arrived && self.drawer != Drawer::Friends {
+                self.inbox_new = true;
+                win::flash(TITLE);
+            }
+            if self.drawer == Drawer::Friends {
+                self.inbox_new = false;
+            }
             for req in [false, true] {
                 let who: Vec<String> = new.iter().filter(|r| r.requisition == req)
                     .map(|r| if r.channel.is_empty() { if r.name.is_empty() { "someone".into() } else { r.name.clone() } } else { r.channel.clone() }).collect();
@@ -3052,7 +3108,8 @@ impl App {
                 match which {
                     0 => { ui.label(rich(&format!("✼ {}", this.signals), 14.0, PINK())).on_hover_text(tip("observers' signals since this opened")); }
                     1 => {
-                        if button(ui, &portals_words, true, None)
+                        let b = if this.inbox_new { alert_button(ui, &portals_words, !this.hidden && !ctx.input(|i| i.viewport().minimized.unwrap_or(false))) } else { button(ui, &portals_words, true, None) };
+                        if b
                             .on_hover_text(tip("friends' outstations: issue a key (to send them), answer those requesting one (counted here, looked at every minute), a bulletin to every outstation, or stand one down")).clicked() {
                             this.open_drawer(&ctx, Drawer::Friends);
                         }
@@ -3095,7 +3152,10 @@ impl App {
                     (0.575 + 0.425 * (ui.input(|i| i.time) * std::f64::consts::TAU / 0.5).cos()) as f32
                 };
                 glow(ui.painter(), c, PINK(), a);
-                if !crate::cursor::still() { ui.ctx().request_repaint_after(Duration::from_millis(33)); }
+                // (only while the window can be seen: hidden in the tray or minimised, nothing needs the pulse's 30
+                // redraws a second, and RuneLite gets the room; 11/07/2026)
+                let seen = !self.hidden && !ui.ctx().input(|i| i.viewport().minimized.unwrap_or(false));
+                if !crate::cursor::still() && seen { ui.ctx().request_repaint_after(Duration::from_millis(33)); }
             } else if self.up && self.live && on {
                 glow(ui.painter(), c, TEAL(), 1.0);
             } else {

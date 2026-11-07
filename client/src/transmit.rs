@@ -185,9 +185,9 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
     let (mut allowance, mut allowance_at) = (ceiling, Instant::now());
     let mut over_ceiling = 0u32;
     loop {
-        // the relay's lines: how many watch, or a close
+        // the relay's lines: how many watch, or a close (only those already here: the frames never wait on them)
         loop {
-            match ws.recv() {
+            match ws.try_recv() {
                 Ok(Got::Text(t)) => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                         if let Some(n) = v.pointer("/relay/viewers").and_then(|x| x.as_u64()) {

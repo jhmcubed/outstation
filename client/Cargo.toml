@@ -18,6 +18,8 @@ windows = { version = "0.62", features = [
   # the Start menu shortcut's id and friends' notifications (shortcut.rs, notify.rs; 11/06/2026)
   "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage", "Win32_System_Com_StructuredStorage",
   "Win32_System_Variant", "Foundation", "Data_Xml_Dom", "UI_Notifications",
+  # the capture's own copy texture, kept from frame to frame (capture.rs, read_shrunk; 11/07/2026)
+  "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common",
 ] }
 wasapi = "0.26"
 opus = "0.4"

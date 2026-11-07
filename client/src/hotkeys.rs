@@ -73,7 +73,18 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
             }
             // what Windows has told this thread; the keys looked at again every half second
             let mut msg = MSG::default();
-            for _ in 0..25 {
+            // (asleep till Windows has something for this thread, at most till the half second's up: it had looked
+            // every 20 ms, 50 wake-ups a second for nothing; 11/07/2026)
+            let half = std::time::Instant::now() + Duration::from_millis(500);
+            loop {
+                let left = half.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::MsgWaitForMultipleObjects(
+                        None, false, left.as_millis() as u32, windows::Win32::UI::WindowsAndMessaging::QS_ALLINPUT);
+                }
                 while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
                     if msg.message != WM_HOTKEY {
                         continue;
@@ -104,7 +115,6 @@ pub fn start(settings: Shared, obscured: Arc<AtomicBool>) {
                         _ => {}
                     }
                 }
-                std::thread::sleep(Duration::from_millis(20));
             }
         }
     });
