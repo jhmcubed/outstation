@@ -7,10 +7,11 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 - the title, the cap on viewers, whether viewers may chat and ping, the desk's chat names
 - the chat so far, the poll and the drop guess, the blocks and bans
 - the reports, the stream's summary and each boss's last kill count
-- the version that last transmitted, and the time on air by month
+- the version that last transmitted, the time on air by month, and in all (for invites)
+- the names it has invited
 - messages held for the outstation, and the list of its clips (the clips' files are in R2)
 
-The Directory (one object for the whole relay) keeps the channels handed out, the requests for station keys, the keeper's notice, and the anomalies and requisitions sent to the listening post.
+The Directory (one object for the whole relay) keeps the channels handed out (each with whose invite it came from, if any), the requests for station keys, the keeper's notice, and the anomalies and requisitions sent to the listening post.
 
 It also answers `GET /channels`, the open portals' list, from what each channel has told it (in memory only). A channel tells the Directory its row whenever the row changes: live, the picture, viewers, title, what it's doing. A row the Directory hasn't heard (after it slept), or hasn't heard for 5 minutes, it asks that channel for. So a read costs one request, however many channels there are. Before 11/07/2026, every read asked every channel and woke each one.
 
@@ -33,6 +34,8 @@ curl -X POST -H "Authorization: Bearer <the token>" http://127.0.0.1:8790/admin/
 ```
 
 That answers `{"channel", "key", "code"}`. `npm run check` checks the types.
+
+Each outstation can hand out channels too (invites, since 11/07/2026): three to begin with and one more every 10 hours on air, through `GET`/`POST /invites/<channel>` with its own key (`../docs/protocol.md`, "Invites"). Each channel's row in `GET /admin/channels` says whose invite it came from (`by`, `null` for yours).
 
 ## On Cloudflare
 

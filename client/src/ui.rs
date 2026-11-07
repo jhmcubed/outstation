@@ -89,6 +89,12 @@ fn text_w(ui: &egui::Ui, text: &str, size: f32) -> f32 {
     ui.painter().layout_job(job(text, size, TEXT())).size().x
 }
 
+/// A checkbox with the hand over it (11/07/2026, Jace: "make sure check boxes get the animated lime cursor on hover
+/// over"): egui gives only buttons `interact_cursor`, and the lime cursor is drawn wherever the hand is asked for.
+fn tick(ui: &mut egui::Ui, on: &mut bool, text: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.checkbox(on, text).on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// How wide a checkbox with these words (14 px) is.
 fn check_w(ui: &egui::Ui, text: &str) -> f32 {
     ui.spacing().icon_width + ui.spacing().icon_spacing + text_w(ui, text, 14.0) + 2.0
@@ -1736,22 +1742,22 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ("auto", "the first that works", "Windows Graphics Capture, else PrintWindow, else the screen"),
             ("gpu", "Windows Graphics Capture", "the graphics card's own copy of RuneLite's window: the quickest, and it never needs the window in front"),
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
-        ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
+        tick(ui, &mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
-        ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+        tick(ui, &mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
             .on_hover_text(tip("when RuneLite opens (or is already open as the outstation starts), the outstation transmits by itself; ticked with RuneLite open, within a second. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
         ui.add_enabled_ui(s.auto_live, |ui| {
-            ui.checkbox(&mut s.auto_end, rich("…and go dark when RuneLite closes", 16.0, GREY()))
+            tick(ui, &mut s.auto_end, rich("…and go dark when RuneLite closes", 16.0, GREY()))
                 .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) and the outstation goes dark, so a forgotten one doesn't keep transmitting"));
         });
         if button(ui, "the first-time setup again", true, None).on_hover_text(tip("Dink and Discord, clips, the Start menu: the steps a new outstation goes through, again")).clicked() {
             s.setup_step = Some(0);
         }
-        ui.checkbox(&mut s.ready_check, rich("the station check above the title, while dark", 16.0, GREY()))
+        tick(ui, &mut s.ready_check, rich("the station check above the title, while dark", 16.0, GREY()))
             .on_hover_text(tip("RuneLite open, logged in, the relay answering, Dink heard and the sound's mode, each ticked or not"));
-        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the transmission goes on)", 16.0, GREY()))
+        tick(ui, &mut s.minimize_to_tray, rich("minimising puts it in the tray (the transmission goes on)", 16.0, GREY()))
             .on_hover_text(tip("the window goes to the ✼ by the clock; a click on it brings the window back"));
-        ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
+        tick(ui, &mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
             .on_hover_text(tip("the picture stops at the login screen (your username never shows): RuneLite has to put it in its title for the outstation to tell"));
         ui.horizontal(|ui| {
             ui.label(rich("clips go to:", 16.0, GREY())).on_hover_text(tip("the folder the clip key and \"clip\" save to (empty: Videos\\outstation)"));
@@ -2019,12 +2025,12 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(10.0);
     let mut tell = s.friends_tell;
-    if ui.checkbox(&mut tell, rich("say in the chat when a friend starts transmitting or goes dark", 14.0, GREY())).changed() {
+    if tick(ui, &mut tell, rich("say in the chat when a friend starts transmitting or goes dark", 14.0, GREY())).changed() {
         let _ = app.settings.update(|x| x.friends_tell = tell);
     }
     let mut toast = s.friends_toast;
     let can = crate::shortcut::exists();
-    if ui.checkbox(&mut toast, rich("and a Windows notification when one starts transmitting", 14.0, GREY()))
+    if tick(ui, &mut toast, rich("and a Windows notification when one starts transmitting", 14.0, GREY()))
         .on_hover_text(tip("Windows' own, in the corner and then the notification centre; a click on it opens their outstation")).changed() {
         let _ = app.settings.update(|x| x.friends_toast = toast);
     }
@@ -2072,7 +2078,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         for (i, k) in REPORTS.iter().enumerate() {
             let mut on = s.dink.kind_on(k);
             let colour = if on { TEXT() } else { GREY() };
-            if ui.checkbox(&mut on, rich(&kind_label(k), 16.0, colour)).changed() {
+            if tick(ui, &mut on, rich(&kind_label(k), 16.0, colour)).changed() {
                 s.dink.kinds.insert(k.to_string(), Value::Bool(on));
             }
             if i % 2 == 1 { ui.end_row(); }
@@ -2092,7 +2098,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.label(rich("clips by themselves", 16.0, LIME()));
     ui.horizontal_wrapped(|ui| {
         let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
+        tick(ui, &mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
             .on_hover_text(tip("Dink's post comes, and a few seconds later the tape is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while transmitting: the tape holds what the outstation sent."));
         ui.add(egui::DragValue::new(&mut s.dink.clip_gp).range(0..=2_147_483_647u64).speed(10000.0).suffix(" gp"));
         ui.label(rich("or more", 16.0, GREY()));
@@ -2109,16 +2115,16 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     }
     if s.dink.auto_clip {
         let colour = if s.dink.clips_up { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
+        tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
             .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days; take any down below."));
         if s.dink.clips_up {
             page_clips_ui(app, ui, &s);
         }
         let colour = if s.tape_dark { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.tape_dark, rich("and while dark too (the tape keeps rolling, nothing's sent)", 16.0, colour))
+        tick(ui, &mut s.tape_dark, rich("and while dark too (the tape keeps rolling, nothing's sent)", 16.0, colour))
             .on_hover_text(tip("dark but recording: while you're not transmitting, the outstation still keeps the tape (the same capture, sent nowhere), so a pet or a big drop still saves its clip, to this PC and Discord (never to your Outside page while dark). It uses a little of the PC while RuneLite's open, as transmitting does."));
         let colour = if s.dink.clips_discord { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
+        tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
             .on_hover_text(tip("wherever Dink's post goes in Discord (step 1 above), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
     }
     if serde_json::to_string(&s).unwrap_or_default() != before {
@@ -2233,13 +2239,13 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 s.replay_seconds = replay;
             }
             if s.replay_seconds > 0 {
-                ui.checkbox(&mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
+                tick(ui, &mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
                 if s.dink.auto_clip && !s.clips_mode() {
-                    ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
+                    tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
                         .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
                 }
                 if s.dink.auto_clip {
-                    ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
+                    tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
                         .on_hover_text(tip("wherever Dink's post goes in Discord, its clip follows a few seconds later, playing in the channel."));
                 }
                 // (11/07/2026, Jace: "make sure during the normal outstation set up process there is an option to click to
@@ -2247,7 +2253,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 if !s.clips_mode() {
                     ui.add_space(6.0);
                     let colour = if s.tape_dark { TEXT() } else { GREY() };
-                    ui.checkbox(&mut s.tape_dark, rich("keep recording while dark (not transmitting)", 16.0, colour))
+                    tick(ui, &mut s.tape_dark, rich("keep recording while dark (not transmitting)", 16.0, colour))
                         .on_hover_text(tip("the tape keeps rolling between transmissions, sent nowhere, so a pet or a big drop still saves its clip and posts it to Discord. Never to your Outside page while dark."));
                     ui.label(wrapped("clips still save and post to Discord when you're not live; nothing is sent anywhere else.", 14.0, QUIET(), w));
                 }
@@ -2257,7 +2263,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             ui.label(rich("done", 18.0, LIME()));
             // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
             let clips = s.clips_mode();
-            if !clips { ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+            if !clips { tick(ui, &mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
                 .on_hover_text(tip("from now on, opening RuneLite starts your transmission. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
             if s.auto_live {
                 ui.label(wrapped("RuneLite open now? Then finishing the setup starts transmitting straight away.", 14.0, PINK(), w));
@@ -2483,7 +2489,7 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
         for (i, k) in kinds.iter().enumerate() {
             let mut on = match fw.get(*k) { Some(Value::Bool(b)) => *b, Some(Value::Object(_)) => true, _ => false };
             let colour = if on { TEXT() } else { GREY() };
-            if ui.checkbox(&mut on, rich(&kind_label(k), 16.0, colour)).changed() {
+            if tick(ui, &mut on, rich(&kind_label(k), 16.0, colour)).changed() {
                 let v = match (*k, on) {
                     ("LOOT", true) => json!({"minValue": 1000000, "allow": []}),
                     ("KILL_COUNT", true) => json!({"every": 25, "lapsEvery": 1000, "first": true, "personalBest": true}),
@@ -2519,9 +2525,9 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
         });
         ui.horizontal(|ui| {
             let mut first = k.get("first").and_then(|x| x.as_bool()).unwrap_or(true);
-            if ui.checkbox(&mut first, rich("the first", 16.0, GREY())).changed() { k.insert("first".into(), json!(first)); }
+            if tick(ui, &mut first, rich("the first", 16.0, GREY())).changed() { k.insert("first".into(), json!(first)); }
             let mut pb = k.get("personalBest").and_then(|x| x.as_bool()).unwrap_or(true);
-            if ui.checkbox(&mut pb, rich("personal bests", 16.0, GREY())).changed() { k.insert("personalBest".into(), json!(pb)); }
+            if tick(ui, &mut pb, rich("personal bests", 16.0, GREY())).changed() { k.insert("personalBest".into(), json!(pb)); }
         });
     }
     ui.label(rich("Discord gets Dink's own post, as Dink sent it, screenshot and all. Every kind ticked here goes whole, so keep those notifiers' thresholds in Dink as you want Discord to have them.", 14.0, QUIET()));
@@ -3516,7 +3522,7 @@ impl App {
         match i {
             0 => {
                 let mut talk = s.chat_allowed;
-                if ui.checkbox(&mut talk, rich("observers may chat", 14.0, GREY()))
+                if tick(ui, &mut talk, rich("observers may chat", 14.0, GREY()))
                     .on_hover_text(tip("off: observers' lines go nowhere, and their pages say the chat is off. Your own lines still go out.")).changed() {
                     let _ = self.settings.update(|s| s.chat_allowed = talk);
                 }
@@ -3540,14 +3546,14 @@ impl App {
                 // the mouse pointer in the picture (11/06/2026, Jace: "a toggle to show or hide cursor"): Windows draws it
                 // into the frames itself, so the portal never reads where it is
                 let mut on = s.show_cursor;
-                if ui.checkbox(&mut on, rich(CURSOR_SWITCH, 14.0, GREY()))
+                if tick(ui, &mut on, rich(CURSOR_SWITCH, 14.0, GREY()))
                     .on_hover_text(tip("your mouse pointer in the picture observers see, where it's over RuneLite. Off: it never shows. Windows draws it into each frame (Windows Graphics Capture, the usual way); PrintWindow, the fallback, can't, so there it stays hidden.")).changed() {
                     let _ = self.settings.update(|s| s.show_cursor = on);
                 }
             }
             3 => {
                 let mut st = s.signals;
-                if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY()))
+                if tick(ui, &mut st, rich("✼ on my screen", 14.0, GREY()))
                     .on_hover_text(tip("each observer's ✼ rising over RuneLite. Only on this PC.")).changed() {
                     let _ = self.settings.update(|s| s.signals = st);
                 }
@@ -3555,7 +3561,7 @@ impl App {
             4 => {
                 let mut over = s.game_chat;
                 ui.spacing_mut().item_spacing.x = gap;
-                if ui.checkbox(&mut over, rich("chat over the game", 14.0, GREY()))
+                if tick(ui, &mut over, rich("chat over the game", 14.0, GREY()))
                     .on_hover_text(tip("the newest lines over RuneLite, fading after 20 s. Only on this PC: it's never in the transmission.")).changed() {
                     let _ = self.settings.update(|s| s.game_chat = over);
                 }
@@ -3573,7 +3579,7 @@ impl App {
                 // your own masks: boxes blacked out of every frame before it leaves this PC
                 let mut on = s.masks_on;
                 ui.spacing_mut().item_spacing.x = gap;
-                if ui.checkbox(&mut on, rich(masks, 14.0, GREY()))
+                if tick(ui, &mut on, rich(masks, 14.0, GREY()))
                     .on_hover_text(tip(&format!("boxes blacked out of every frame before it leaves this PC, so what's under them is never sent. The {} key turns them off and on.", win::key_name(&s.mask_key)))).changed() {
                     let _ = self.settings.update(|x| x.masks_on = on);
                 }
@@ -3627,7 +3633,7 @@ impl App {
         let beside = words.as_ref().is_some_and(|(t, _)| check_w(ui, "the monitor") + gap + text_w(ui, t, 14.0) <= ui.available_width());
         let toggle = |ui: &mut egui::Ui, feed_tex: &mut Option<(egui::TextureHandle, Instant)>| {
             let mut on = s.live_view;
-            if ui.checkbox(&mut on, rich("the monitor", 14.0, GREY())).on_hover_text(tip("the outstation as the site gets it, through the relay as an observer's page would (off: not connected at all, so it costs nothing)")).changed() {
+            if tick(ui, &mut on, rich("the monitor", 14.0, GREY())).on_hover_text(tip("the outstation as the site gets it, through the relay as an observer's page would (off: not connected at all, so it costs nothing)")).changed() {
                 let _ = self.settings.update(|x| x.live_view = on);
                 if !on { *feed_tex = None; }
             }
@@ -3968,8 +3974,10 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(rich("open for", 14.0, GREY()));
                     egui::ComboBox::from_id_salt("secs").selected_text(f.seconds.to_string()).show_ui(ui, |ui| {
-                        for s in [30, 60, 90, 120, 180, 300, 600] { ui.selectable_value(&mut f.seconds, s, s.to_string()); }
-                    });
+                        for s in [30, 60, 90, 120, 180, 300, 600] {
+                            ui.selectable_value(&mut f.seconds, s, s.to_string()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        }
+                    }).response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     ui.label(rich("seconds", 14.0, GREY()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "send it out", true, None).clicked() { send = true; }

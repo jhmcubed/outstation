@@ -306,6 +306,103 @@ class Rules(unittest.TestCase):
             self.assertFalse(self.f.wants({"type": kind}), kind)
 
 
+class InviteNumbers(unittest.TestCase):
+    """Invites (11/07/2026): three to begin with and one more every 10 hours on air (relay.invite_numbers; the Worker's
+    inviteNumbers is the same), and the time on air in all that earns them. The shared suite (tests/protocol_test.py,
+    Invites) tests the routes on both relays; ten hours on air can only be tested here."""
+
+    def test_three_to_begin_with_and_one_more_every_ten_hours(self):
+        n = relay.invite_numbers
+        self.assertEqual(n(0, []), {"left": 3, "earned": 3, "used": [], "hours": 0.0, "next_in_s": 36000})
+        self.assertEqual(n(35999.9, ["a", "b", "c"]),
+                         {"left": 0, "earned": 3, "used": ["a", "b", "c"], "hours": 9.9, "next_in_s": 1})
+        self.assertEqual(n(36000, ["a", "b", "c"])["left"], 1)
+        got = n(3 * 36000 + 90, ["a"])
+        self.assertEqual((got["earned"], got["left"], got["hours"], got["next_in_s"]), (6, 5, 30.0, 35910))
+        self.assertEqual(n(0, ["a", "b", "c", "d"])["left"], 0)           # (never below none)
+
+    def test_time_on_air_in_all_counts_every_stretch_and_the_one_going_on(self):
+        ch = relay.Channel("moss", "secret-key")
+        clock = [1000.0]
+        with mock.patch.object(relay.time, "monotonic", lambda: clock[0]):
+            ch.on_air()
+            clock[0] += 3600
+            ch.on_air()                                                     # (a transmitter replaced: the same stretch)
+            clock[0] += 3600
+            ch.off_air()
+            self.assertEqual(ch.seconds_in_all(), 7200)
+            clock[0] += 50000                                               # off air: nothing
+            self.assertEqual(ch.seconds_in_all(), 7200)
+            ch.on_air()
+            clock[0] += 30000
+            self.assertEqual(ch.seconds_in_all(), 37200)                    # (the stretch going on, counted)
+            self.assertEqual(relay.invite_numbers(ch.seconds_in_all(), [])["earned"], 4)
+
+    def test_an_attach_code_reads_as_the_workers(self):
+        code = relay.attach_code("ws://127.0.0.1:8786", "moss", "k3y-k3y-k3y")
+        # (the Worker's attachCode writes compact JSON: this is what it makes of the same three)
+        self.assertEqual(code, "outstation1:eyJyZWxheSI6IndzOi8vMTI3LjAuMC4xOjg3ODYiLCJjaGFubmVsIjoibW9zcyIsImtleSI6ImszeS1r"
+                               "M3ktazN5In0")
+
+
+async def ask(port, method, path, body=None):
+    """(status, JSON or None) of a request with a JSON body, as the outstation client makes one."""
+    data = json.dumps(body).encode() if body is not None else b""
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    w.write(CRLF.join(["%s %s HTTP/1.1" % (method, path), "Host: 127.0.0.1:%d" % port, "Content-Type: application/json",
+                       "Content-Length: %d" % len(data), "", ""]).encode() + data)
+    await w.drain()
+    raw = await r.read()
+    w.close()
+    head, _, got = raw.partition((CRLF * 2).encode())
+    return int(head.split(b" ")[1]), json.loads(got) if got else None
+
+
+class Invites(RelayTest):
+    async def test_hours_on_air_earn_more_invites(self):
+        await self.connect("/transmit/sburb?key=secret-key")           # (claimed: handed out, here)
+        await asyncio.sleep(0.05)
+        self.relay.channels["sburb"].live_all = 36000 + 5               # ten hours on air, and a little
+        status, got = await ask(self.port, "GET", "/invites/sburb?key=secret-key")
+        self.assertEqual((status, got["earned"], got["left"], got["hours"]), (200, 4, 4, 10.0))
+        self.assertTrue(35990 <= got["next_in_s"] <= 35995, got["next_in_s"])
+        lefts = []
+        for name in ("moss", "fern", "lichen", "bog"):
+            status, got = await ask(self.port, "POST", "/invites/sburb", {"key": "secret-key", "player": name})
+            lefts.append((status, got["left"]))
+        self.assertEqual(lefts, [(200, 3), (200, 2), (200, 1), (200, 0)])
+        status, got = await ask(self.port, "POST", "/invites/sburb", {"key": "secret-key", "player": "peat"})
+        self.assertEqual((status, got["error"]), (409, "no invites left: one more every 10 hours on air"))
+        self.assertEqual(self.relay.channels["moss"].by, "sburb")
+
+    async def test_an_invited_name_viewers_were_waiting_on_is_handed_out_and_they_hear_so(self):
+        async def status(c):
+            while True:
+                kind, line = await c.recv()
+                if kind == "text" and line.startswith('{"relay"'):
+                    return json.loads(line)["relay"]
+        await self.connect("/transmit/sburb?key=secret-key")
+        v = await self.connect("/watch/moss")
+        self.assertFalse((await status(v))["set"])
+        status_code, got = await ask(self.port, "POST", "/invites/sburb", {"key": "secret-key", "player": "moss"})
+        self.assertEqual(status_code, 200)
+        while not (await status(v))["set"]:
+            pass
+        tx = await self.connect("/transmit/moss?key=" + got["key"])
+        self.assertTrue((await status(tx))["live"])
+        self.assertEqual(self.relay.channels["moss"].by, "sburb")
+
+    async def test_the_public_side_refuses_invites_even_with_the_key(self):
+        await self.connect("/transmit/sburb?key=secret-key")
+        await asyncio.sleep(0.05)
+        status, _, _ = await get(self.public_port, "/invites/sburb?key=secret-key")
+        self.assertEqual(status, 403)
+        status = await post(self.public_port, "/invites/sburb",
+                            json.dumps({"key": "secret-key", "player": "moss"}).encode(), "application/json")
+        self.assertEqual(status, 403)
+        self.assertNotIn("moss", self.relay.channels)
+
+
 class FakeDiscord:
     """A stand-in webhook: records each post's body and content type."""
 

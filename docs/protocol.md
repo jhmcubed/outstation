@@ -97,7 +97,7 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
 
 ## The stream's summary
 
@@ -141,7 +141,7 @@ The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts o
 `Authorization: Bearer <ADMIN_TOKEN>`:
 - `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off.
 - `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound and desks are cut off. Viewers stay, off air.
-- `GET /admin/channels`: the list, each with `channel`, `since`, `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
+- `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
 
 The attach code (the station key, in the client's words) is `outstation1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up. Keys made before 11/06/2026 start `portal1:`, with the same inside; the client still reads them.
 
@@ -168,6 +168,39 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 - `DELETE /admin/requests/<channel>`: turned down.
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
+
+## Invites (11/07/2026)
+
+Each outstation hands out a few channels of its own, so a friend can bring a friend without the keeper (Jace: "each of my friends being able to pass out a few keys so that way the platform propagates easier", "people earning more invites through streaming"). Both relays.
+
+    GET   /invites/<channel>?key=<key>             200 {"left", "earned", "used": ["moss", …], "hours", "next_in_s"}
+    POST  /invites/<channel>  {"key", "player"}    200 {"channel", "key", "code", "left"}
+
+The numbers:
+- Three to begin with (`INVITES_START`), and one more for every 10 hours on air (`INVITE_EVERY_S`, 36000), counted over the channel's whole life.
+- `earned` is 3 + (seconds on air ÷ 36000, rounded down). `left` is `earned` less the invites used, never below 0. `used` is the names invited, in order.
+- `hours` is the time on air, one decimal, rounded down (so it never says 10.0 before the invite at 10). `next_in_s` is how many more seconds on air until the next one (1 to 36000).
+- The stretch on air going on now counts.
+- On the Worker, a channel from before 11/07/2026 starts from the months it still keeps (the last four). On the Python relay, the count starts when the channel's claimed, and a restart starts it again, as everything there is in memory.
+
+`POST` hands out a channel for `player`, exactly as the keeper's `POST /admin/channels/<channel>` does: a new key, and `code` the attach code (above, "Handing out channels"), which a friend pastes into the client. `left` is what's left after it.
+- `player` is the channel's name: 1 to 12 letters or numbers, lower case, no spaces (the same as `/requests`).
+- An invite is counted only once the new channel has its key, so nothing that fails uses one up. Two posts at once can't both take the last one.
+- The new channel says whose invite it came from (`by`, the inviter's channel name) in `GET /admin/channels` and in `GET /channels`: the register's "established through …'s outstation". A new key from the keeper keeps it.
+- Taking a channel back (`DELETE /admin/channels/<channel>`) doesn't take back the channels it invited, and doesn't give its inviter the invite back.
+- Invites don't touch `/requests`: a request waiting for a name that's then invited shows `given` in the keeper's list.
+
+Refused, each with `{"error": "…"}`:
+- 404 `no outstation called that here`: the channel isn't handed out (on the Python relay: nobody's claimed it).
+- 403: the wrong key (`wrong key for this channel`), or a key under 8 characters. On Cloudflare a wrong key counts towards the wrong-key limit (10 a minute from one address), and past it the reason is `too many wrong keys: try again in a minute`, still 403.
+- 429 `5 invites an hour at most: try again later`: past 5 posts an hour from one outstation (`INVITES_AN_HOUR`). Every post with the right key counts, whatever its answer.
+- 400 `a player's name: 1 to 12 letters or numbers, lower case`, or `that's your own outstation` (and `which outstation?` for a channel in the address that can't be one).
+- 409 `no invites left: one more every 10 hours on air`.
+- 409 `that name has an outstation already`: the name is handed out (on the Python relay: claimed).
+- 503 `the invite didn't go through: try again` (Cloudflare): the new channel couldn't be made. No invite is used.
+- 413 past 4 KB; 405 any other method.
+
+The Python relay refuses both routes on its public side (the Funnel's port), as it refuses transmitting.
 
 ## Clips (11/06/2026)
 
