@@ -1187,14 +1187,16 @@ fn button(ui: &mut egui::Ui, text: &str, small: bool, lit: Option<bool>) -> egui
 
 fn pink_button(ui: &mut egui::Ui, text: &str, pink: bool) -> egui::Response {
     let (colour, edge) = if pink { (PINK(), PINK()) } else { (GREY(), DIM()) };
-    let g = ui.painter().layout_no_wrap(text.to_string(), body(16.0), colour);
+    // (its words as job() lays them out, so a symbol RuneScape's font lacks (▸ ◂) comes from the symbol font, as on
+    // every other button: 11/07/2026, Jace, the pink one's arrow had drawn as a box)
+    let g = ui.painter().layout_job(job(text, 16.0, colour));
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 14.0, 24.0), Sense::click());
     let hover = resp.hovered();
     let pal = theme::pal();
     let fill = if hover { theme::mix(pal.well, pal.teal, 0.3) } else if pink { theme::mix(pal.well, pal.pink, 0.18) } else { pal.well };
     ui.painter().rect_filled(rect, 2.0, fill);
     ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, if hover { TEAL() } else { edge }), egui::StrokeKind::Inside);
-    let g = ui.painter().layout_no_wrap(text.to_string(), body(16.0), if hover { Color32::WHITE } else { colour });
+    let g = ui.painter().layout_job(job(text, 16.0, if hover { Color32::WHITE } else { colour }));
     ui.painter().galley(rect.center() - g.size() / 2.0, g, colour);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
