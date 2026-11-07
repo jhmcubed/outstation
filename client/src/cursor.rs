@@ -16,7 +16,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, CreateDIBSection, DeleteObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
                                     DIB_RGB_COLORS};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, EnumWindows, GetWindowThreadProcessId, SetCursor,
+use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, EnumThreadWindows, SetCursor,
                                               HCURSOR, ICONINFO, WM_SETCURSOR};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -158,15 +158,18 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id
 }
 
 unsafe extern "system" fn each(hwnd: HWND, _l: LPARAM) -> windows::core::BOOL {
-    let mut pid = 0u32;
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == std::process::id() {
-            // (the same id again only updates it: a window already taken in is left as it is)
-            let _ = SetWindowSubclass(hwnd, Some(proc), SUBCLASS_ID, 0);
-            see_through(hwnd);
-        }
+    // (each window once: the subclass stays with it, and a see-through window's look is set when it's first seen)
+    static SEEN: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+    {
+        let mut seen = SEEN.lock().unwrap();
+        if seen.contains(&(hwnd.0 as isize)) { return true.into(); }
+        seen.retain(|h| unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(HWND(*h as _))) }.as_bool());
+        seen.push(hwnd.0 as isize);
     }
+    unsafe {
+        let _ = SetWindowSubclass(hwnd, Some(proc), SUBCLASS_ID, 0);
+    }
+    see_through(hwnd);
     true.into()
 }
 
@@ -194,9 +197,14 @@ fn see_through(hwnd: HWND) {
 }
 
 /// Every window of the portal's own (the main one, and the chat-over-the-game and masks windows as they come)
-/// answers the cursor from here. Cheap; called each frame.
+/// answers the cursor from here. Called each frame, so only this thread's own windows are looked at (all of them
+/// are made here; 11/07/2026: it had gone through every window on the PC each frame, asking each of the program's
+/// own for its title, which waits on whichever thread owns the window). A window is looked at once.
 pub fn adopt() {
-    unsafe { let _ = EnumWindows(Some(each), LPARAM(0)); }
+    unsafe {
+        let me = windows::Win32::System::Threading::GetCurrentThreadId();
+        let _ = EnumThreadWindows(me, Some(each), LPARAM(0));
+    }
 }
 
 /// Windows' "animation effects" switched off (Settings ▸ Accessibility ▸ Visual effects): the portal holds still, as
