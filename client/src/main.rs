@@ -30,6 +30,7 @@ mod dinksetup;
 mod feed;
 mod friendlist;
 mod hotkeys;
+mod invites;
 #[cfg(feature = "station")]
 mod keeper;
 mod net;

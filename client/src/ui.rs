@@ -283,6 +283,7 @@ pub struct App {
     peek_tex: Option<(egui::TextureHandle, String, Instant)>,
     /// the clips on the player's Outside page, as the dink drawer last read them (clipsup.rs)
     page_clips: crate::clipsup::PageClips,
+    invites: crate::invites::Invites,
     /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
     /// the Dink drawer's "the replay buffer ▸": the settings drawer opened at it
@@ -479,7 +480,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1140,6 +1141,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
                     if !r.title.is_empty() { ui.label(rich(&r.title, 14.0, GREY())); }
                     if !r.client.is_empty() { ui.label(rich(&format!("v{}", r.client), 13.0, QUIET())); }
                     if r.live_s > 0 { ui.label(rich(&format!("{} this month", hours(r.live_s)), 13.0, QUIET())); }
+                    if !r.by.is_empty() { ui.label(rich(&format!("through {}", r.by), 13.0, QUIET())).on_hover_text(tip(&format!("established through {}'s outstation (an invite)", r.by))); }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "stand down", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
                         if button(ui, "re-key", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
@@ -1829,6 +1831,67 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
 /// The friends list, as the game's own (friendlist.rs): each friend's name on the left in the order added, their
 /// portal's state on the right, a click on the name for their Outside page, "add friend" and "del friend" below with
 /// the game's prompts, and the chat told when one goes live or off air.
+/// Invites (11/07/2026): a station key for a friend, made here at once from this outstation's invites (3 to begin
+/// with, one more every 10 hours on air); their outstation is "established through" this one. invites.rs.
+fn invites_ui(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let w = ui.available_width();
+    let s = app.settings.get();
+    app.invites.tend(&s, false, { let c = ctx.clone(); move || c.request_repaint() });
+    ui.label(rich("invite a friend", 16.0, LIME()));
+    let status = app.invites.status.lock().unwrap().clone();
+    match &status {
+        None => { ui.label(rich("reading your invites…", 14.0, GREY())); }
+        Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
+        Some(Ok(st)) => {
+            let words = if st.left == 0 { format!("no invites left · {}", crate::invites::next_words(st)) }
+                        else { format!("{} invite{} left · {}", st.left, if st.left == 1 { "" } else { "s" }, crate::invites::next_words(st)) };
+            ui.label(rich(&words, 14.0, if st.left > 0 { TEXT() } else { GREY() }))
+                .on_hover_text(tip(&format!("3 to begin with, one more for every 10 hours on air ({:.1} h so far: {} earned in all). Each one is a station key for a friend, made at once: their outstation is established through yours.", st.hours, st.earned)));
+            if !st.used.is_empty() {
+                ui.label(wrapped(&format!("established through yours: {}", st.used.join(", ")), 14.0, QUIET(), w));
+            }
+            if st.left > 0 {
+                ui.label(wrapped("their player's name, as in game:", 14.0, GREY(), w));
+                let busy = *app.invites.busy.lock().unwrap();
+                ui.horizontal(|ui| {
+                    let r = field(ui, &mut app.invites.name, (w - 110.0).max(120.0), "their name", false);
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if (button(ui, if busy { "making…" } else { "make a key" }, false, None).clicked() || enter) && !busy && !app.invites.name.trim().is_empty() {
+                        let name = app.invites.name.clone();
+                        app.invites.make(&s, &name, { let c = ctx.clone(); move || c.request_repaint() });
+                    }
+                });
+            }
+        }
+    }
+    let made = app.invites.made.lock().unwrap().clone();
+    match made {
+        Some(Ok((ch, code))) => {
+            ui.add_space(4.0);
+            ui.label(wrapped(&format!("{}'s station key, made: send it to them (only to them: it attaches to their channel)", ch), 14.0, LIME(), w));
+            ui.label(wrapped(&code, 13.0, TEXT(), w));
+            ui.horizontal(|ui| {
+                if button(ui, "copy it with the download link", true, None)
+                    .on_hover_text(tip("the key, where the outstation comes from (its GitHub releases, the only official download), and what to do with it")).clicked() {
+                    win::copy_text(&crate::invites::message(&code));
+                    app.note(format!("{}'s key and the download link are on the clipboard", ch));
+                }
+                if button(ui, "copy the key", true, None).clicked() {
+                    win::copy_text(&code);
+                    app.note(format!("{}'s key is on the clipboard", ch));
+                }
+                if button(ui, "done", true, None).clicked() {
+                    *app.invites.made.lock().unwrap() = None;
+                    app.invites.name.clear();
+                }
+            });
+        }
+        Some(Err(e)) => { ui.label(wrapped(&format!("no key: {}", e), 14.0, PINK(), w)); }
+        None => {}
+    }
+}
+
 fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     use crate::friendlist::{State, MOST};
     let ctx = ui.ctx().clone();
@@ -1971,6 +2034,10 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     let all = ui.add(egui::Label::new(rich("every open outstation ↗", 14.0, TEAL())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tip("ghillie.wiki/portals: everyone's open outstations, transmitting ones first"));
     if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
+    if s.attached() {
+        ui.add_space(12.0);
+        invites_ui(app, ui);
+    }
     ui.label(wrapped("a name's state comes from the relay's open outstations, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
 }
 
@@ -2174,10 +2241,15 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 if s.dink.auto_clip {
                     ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
                         .on_hover_text(tip("wherever Dink's post goes in Discord, its clip follows a few seconds later, playing in the channel."));
-                    if !s.clips_mode() {
-                        ui.checkbox(&mut s.tape_dark, rich("and while dark too (clips without transmitting)", 16.0, GREY()))
-                            .on_hover_text(tip("the tape keeps rolling while you're dark, sent nowhere, so clips still save themselves (to this PC and Discord)."));
-                    }
+                }
+                // (11/07/2026, Jace: "make sure during the normal outstation set up process there is an option to click to
+                // keep clips posting/recording while dark": a line of its own, not tucked under the others)
+                if !s.clips_mode() {
+                    ui.add_space(6.0);
+                    let colour = if s.tape_dark { TEXT() } else { GREY() };
+                    ui.checkbox(&mut s.tape_dark, rich("keep recording while dark (not transmitting)", 16.0, colour))
+                        .on_hover_text(tip("the tape keeps rolling between transmissions, sent nowhere, so a pet or a big drop still saves its clip and posts it to Discord. Never to your Outside page while dark."));
+                    ui.label(wrapped("clips still save and post to Discord when you're not live; nothing is sent anywhere else.", 14.0, QUIET(), w));
                 }
             }
         }
