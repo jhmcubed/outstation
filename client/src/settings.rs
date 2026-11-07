@@ -166,6 +166,14 @@ pub struct Settings {
     /// the replay buffer: the last 0 to 30 seconds kept here, for a clip (0 keeps nothing)
     #[serde(default)]
     pub replay_seconds: u32,
+    /// dark but recording (11/07/2026): while dark, the tape keeps rolling (the capture runs, nothing's sent), so clips
+    /// still save themselves, to this PC and Discord; off to begin with
+    #[serde(default)]
+    pub tape_dark: bool,
+    /// clips only (11/07/2026, Jace: an easier route "for people who are only downloading/using the program to record
+    /// automatic clips"): no channel, no key; the window is the tape, Dink and the clips
+    #[serde(default)]
+    pub clips_only: bool,
     /// where clips go (empty: Videos\outstation)
     #[serde(default)]
     pub clip_folder: String,
@@ -280,6 +288,14 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// clips only, and not attached to a channel: the window shows the tape and the clips, not the transmission
+    pub fn clips_mode(&self) -> bool {
+        self.clips_only && !self.attached()
+    }
+    /// the tape kept while dark: asked for, and with some seconds to keep
+    pub fn taping_dark(&self) -> bool {
+        self.tape_dark && self.replay_seconds > 0
+    }
     pub fn attached(&self) -> bool {
         !self.relay.is_empty() && !self.channel.is_empty() && self.key.len() >= 8
     }

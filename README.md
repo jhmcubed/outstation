@@ -50,6 +50,8 @@ A real transmission, as observers see it on Outside (sburb at the Giant Mole, 11
 5. **Your drops and level-ups under it** (if you use [Dink](https://github.com/pajlads/DinkPlugin)): **dink ▸** goes in three steps (the first-time setup does the same). 1: does Dink post to a Discord of yours? If so, the outstation keeps that going as it is (`::dinkexport all` in RuneLite's chat, **read my Dink settings**, `::dinkimport`). 2: the outstation's address goes in Dink's Primary Webhook URLs, and **no Discord address left there**, or Discord gets every post twice. 3: which field reports go out (**default** is everything).
 6. **Log in, then transmit.** Your outstation is at `ghillie.wiki/outside?player=<your name>`. **go dark** stops it.
 
+**Only here for the clips?** On the first screen, **clips only ▸** skips the channel and the key altogether. The outstation keeps a tape of RuneLite (the last 20 seconds or so, in memory, sent nowhere), and when Dink tells of something big (a pet, a new collection log slot, a 99, a big drop) it saves the clip to `Videos\outstation` and sends it to your Discord under Dink's post. The setup that follows has only what clips need: Dink and Discord, the clips, the Start menu. **a channel too ▸** in the window adds a channel later, keeping all of it. With a channel, **dink ▸**, "and while dark too", keeps the tape rolling between transmissions the same way.
+
 ## While you transmit
 
 - **Press Pause before typing a bank PIN.** Observers see static, and the half second before the press is taken back. The sound, if it's on, and the chat carry on. Every key can be changed in the settings.

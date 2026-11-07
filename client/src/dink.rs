@@ -123,9 +123,12 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     }
     // something big (11/06/2026, Jace: "an auto clip when something big drops"): the replay buffer saved a few seconds
     // on, so the clip holds the moment and a little after it
-    if s.dink.auto_clip && s.on_air && s.replay_seconds > 0 {
+    // (while transmitting, or dark with the tape rolling: dark but recording, 11/07/2026)
+    let rolling = (s.on_air && s.attached()) || s.taping_dark();
+    if s.dink.auto_clip && rolling && s.replay_seconds > 0 {
         if let Some(what) = big_moment(&payload, s.dink.clip_gp) {
-            let up = s.dink.clips_up;
+            // (to the Outside page only while transmitting: a clip from while dark goes to this PC and Discord only)
+            let up = s.dink.clips_up && s.on_air && s.attached();
             let to_discord = s.dink.clips_discord && !discord_urls.is_empty();
             went.push(match (up, to_discord) {
                 (true, true) => "a clip, on your Outside page and in Discord too",

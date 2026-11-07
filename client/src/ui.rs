@@ -709,7 +709,9 @@ impl App {
             return if self.started.elapsed().as_secs() < 8 { ("starting the outstation…".into(), GREY()) }
                    else { ("the relay isn't answering (it keeps trying)".into(), GREY()) };
         }
-        if !s.on_air {
+        if !s.on_air && tx.taping {
+            ("dark · the tape's rolling: clips save themselves, nothing's sent".into(), GREY())
+        } else if !s.on_air {
             ("dark · the transmission's ended".into(), GREY())
         } else if self.live && self.open {
             (format!("transmitting · {} observing", self.viewers), PINK())
@@ -2045,6 +2047,9 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         if s.dink.clips_up {
             page_clips_ui(app, ui, &s);
         }
+        let colour = if s.tape_dark { TEXT() } else { GREY() };
+        ui.checkbox(&mut s.tape_dark, rich("and while dark too (the tape keeps rolling, nothing's sent)", 16.0, colour))
+            .on_hover_text(tip("dark but recording: while you're not transmitting, the outstation still keeps the tape (the same capture, sent nowhere), so a pet or a big drop still saves its clip, to this PC and Discord (never to your Outside page while dark). It uses a little of the PC while RuneLite's open, as transmitting does."));
         let colour = if s.dink.clips_discord { TEXT() } else { GREY() };
         ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
             .on_hover_text(tip("wherever Dink's post goes in Discord (step 1 above), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
@@ -2125,14 +2130,21 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
     let mut next: Option<Option<u8>> = None; // (Some(None): finished)
     match step {
         0 => {
-            ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
-            ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+            if s.clips_mode() {
+                ui.label(rich("clips only", 18.0, LIME()));
+                ui.label(wrapped("no channel: nothing is ever sent anywhere but your own Discord, and only the clips you'd want there.", 16.0, TEXT(), w));
+            } else {
+                ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
+                ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+            }
             ui.add_space(8.0);
-            ui.label(wrapped("a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸).", 16.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "clips only: Dink and Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸)." }
+                             else { "a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸)." }, 16.0, GREY(), w));
         }
         1 => {
             ui.label(rich("Dink and Discord", 18.0, LIME()));
-            ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts, for the field reports under your outstation and for clips. If you don't use Dink, skip this and the next step.", 14.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "Dink (a RuneLite plugin) tells the outstation when something big happens, so it knows when to save a clip, and the clip follows Dink's post into your Discord. Without Dink, the clip key (Insert) still saves the last seconds." }
+                             else { "Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts, for the field reports under your outstation and for clips. If you don't use Dink, skip this and the next step." }, 14.0, GREY(), w));
             ui.add_space(6.0);
             ui.label(rich("do you use Dink with Discord too?", 16.0, LIME()));
             discord_step(app, ui, &mut s, st.listening.clone());
@@ -2141,33 +2153,43 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             ui.label(rich("point Dink at the outstation", 18.0, LIME()));
             dink_address_ui(app, ui, &mut s, &st);
             ui.add_space(6.0);
-            ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸, \"3. which field reports go out\", changes that.", 14.0, QUIET(), w));
+            if !s.clips_mode() {
+                ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸, \"3. which field reports go out\", changes that.", 14.0, QUIET(), w));
+            }
         }
         3 => {
             ui.label(rich("clips", 18.0, LIME()));
-            ui.label(wrapped("while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "the outstation keeps a tape: the last few seconds of RuneLite, always rolling, kept in memory and sent nowhere. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }
+                             else { "while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }, 14.0, GREY(), w));
             let mut replay = s.replay_seconds.min(30);
             if bar(ui, "the tape", "s kept", 0, 30, 1, &mut replay, "how many of the last seconds the tape holds, always rolling, for a clip of what just happened (in memory only). 0 holds nothing.") {
                 s.replay_seconds = replay;
             }
             if s.replay_seconds > 0 {
                 ui.checkbox(&mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
-                if s.dink.auto_clip {
+                if s.dink.auto_clip && !s.clips_mode() {
                     ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
                         .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
+                }
+                if s.dink.auto_clip {
                     ui.checkbox(&mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
                         .on_hover_text(tip("wherever Dink's post goes in Discord, its clip follows a few seconds later, playing in the channel."));
+                    if !s.clips_mode() {
+                        ui.checkbox(&mut s.tape_dark, rich("and while dark too (clips without transmitting)", 16.0, GREY()))
+                            .on_hover_text(tip("the tape keeps rolling while you're dark, sent nowhere, so clips still save themselves (to this PC and Discord)."));
+                    }
                 }
             }
         }
         _ => {
             ui.label(rich("done", 18.0, LIME()));
             // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
-            ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+            let clips = s.clips_mode();
+            if !clips { ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
                 .on_hover_text(tip("from now on, opening RuneLite starts your transmission. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
             if s.auto_live {
                 ui.label(wrapped("RuneLite open now? Then finishing the setup starts transmitting straight away.", 14.0, PINK(), w));
-            }
+            } }
             if s.start_menu.is_none() {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(rich("put the outstation in your Start menu?", 16.0, GREY()));
@@ -2184,7 +2206,8 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             }
             ui.add_space(14.0);
             ui.label(rich("then", 16.0, LIME()));
-            ui.label(wrapped("in the main window, transmit starts your transmission and go dark ends it. Pause hides the picture (before a bank PIN). The settings have the rest.", 14.0, GREY(), w));
+            ui.label(wrapped(if clips { "the outstation keeps its tape while RuneLite's open and saves the big moments by themselves. Insert saves the last seconds whenever you like. To transmit too, the window has \"a channel too ▸\"." }
+                             else { "in the main window, transmit starts your transmission and go dark ends it. Pause hides the picture (before a bank PIN). The settings have the rest." }, 14.0, GREY(), w));
         }
     }
     ui.add_space(14.0);
@@ -2521,6 +2544,21 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     ask_section(app, ui);
+    // (11/07/2026, Jace: "an option ... for people who are only downloading/using the program to record automatic clips":
+    // no key, no channel, straight to Dink, Discord and the clips)
+    ui.add_space(14.0);
+    ui.label(rich("only here for the clips?", 16.0, LIME()));
+    ui.label(wrapped("no channel and no key needed: the outstation keeps a tape of RuneLite (sent nowhere), and when Dink tells of something big (a pet, a new collection log slot, a 99, a big drop) it saves the clip to this PC and sends it to your Discord under Dink's post.", 14.0, GREY(), ui.available_width()));
+    if button(ui, "clips only ▸", false, None).on_hover_text(tip("a short setup (Dink, Discord, the clips), then the outstation as a recorder. A channel can be added any time.")).clicked() {
+        let _ = app.settings.update(|s| {
+            s.clips_only = true;
+            s.tape_dark = true;
+            s.replay_seconds = s.replay_seconds.max(20);
+            s.dink.auto_clip = true;
+            s.dink.clips_discord = true;
+            s.setup_step = Some(0);
+        });
+    }
     ui.add_space(14.0);
     egui::CollapsingHeader::new(rich("is it safe for my account?", 16.0, LIME())).id_salt("safe").show(ui, |ui| {
         for line in SAFE {
@@ -2881,7 +2919,7 @@ impl eframe::App for App {
         }
         egui::Panel::top("titlebar").frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 4, top: 2, bottom: 0 }))
             .show_separator_line(false).show(ui, |ui| self.title_bar(ui));
-        if !self.settings.get().attached() {
+        if !self.settings.get().attached() && !self.settings.get().clips_only {
             egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
                 egui::ScrollArea::vertical().id_salt("attach_scroll").auto_shrink([false, false]).show(ui, |ui| attach_screen(self, ui));
             });
@@ -3078,6 +3116,9 @@ impl App {
     }
 
     fn top_inner(&mut self, ui: &mut egui::Ui) {
+        if self.settings.get().clips_mode() {
+            return self.clips_top(ui);
+        }
         let ctx = ui.ctx().clone();
         // (the drawers' buttons right-aligned beside "watching" when they fit; when they don't (a narrow or zoomed
         // window), on a row of their own under it, wrapping, so none runs off the edge)
@@ -3258,6 +3299,73 @@ impl App {
     /// The ready check (11/06/2026), while off air: is RuneLite open, is its title saying who's logged in (when the
     /// picture should stop at the login screen), is the relay answering, has Dink been heard, and the sound's mode.
     /// Each ticked or not, with how to fix it under the hand; "hide" puts it away (settings ▸ more brings it back).
+    /// The window's top with clips only (11/07/2026): no channel, so no transmission; the tape's state, a station
+    /// check for clips, the drawers that matter, and the way to a channel. The chat area under it is the clips' log.
+    fn clips_top(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let s = self.settings.get();
+        ui.horizontal(|ui| {
+            ui.label(rich("clips only", 16.0, LIME()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let s_open = self.drawer == Drawer::Settings;
+                if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
+                let d_open = self.drawer == Drawer::Dink;
+                if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
+                if button(ui, "a channel too ▸", true, None)
+                    .on_hover_text(tip("transmit as well: a station key from the listening post (the first screen again; your clips and Dink stay as they are)")).clicked() {
+                    let _ = self.settings.update(|x| x.clips_only = false);
+                }
+            });
+        });
+        ui.add_space(6.0);
+        let tx = self.tx.status.lock().unwrap().clone();
+        let (text, colour) = if s.replay_seconds == 0 {
+            ("the tape is off: give it some seconds (settings ▸, the tape)".to_string(), PINK())
+        } else if !s.tape_dark {
+            ("the tape isn't rolling: dink ▸, \"and while dark too\"".to_string(), PINK())
+        } else if tx.taping && tx.why.is_none() {
+            (format!("the tape's rolling: the last {} s of RuneLite, kept here, sent nowhere", s.replay_seconds), LIME())
+        } else if tx.taping {
+            (format!("the tape's waiting: {}", tx.why.clone().unwrap_or_default()), GREY())
+        } else {
+            ("starting the tape…".to_string(), GREY())
+        };
+        ui.add(egui::Label::new(rich(&text, 14.0, colour)).wrap());
+        // the station check, for clips: RuneLite, Dink, Discord
+        if self.ready_seen.0.elapsed() > Duration::from_secs(1) {
+            self.ready_seen = (Instant::now(), win::find_window(&s.title).map(|(_, t)| t));
+        }
+        let dink = self.dink.lock().unwrap().clone();
+        let discord = s.forward.get("discord").and_then(|x| x.as_array()).is_some_and(|a| !a.is_empty());
+        let items = [
+            ("RuneLite", Some(self.ready_seen.1.is_some()), "RuneLite's window, found by its title (settings ▸ more)"),
+            ("Dink", if dink.last.is_some() { Some(true) } else if dink.error.is_some() { Some(false) } else { None },
+             "Dink pointed at the outstation (dink ▸, step 2): it tells the outstation when something big happens"),
+            ("Discord", Some(discord), "your Discord set up in dink ▸, step 1: the clips follow Dink's posts there"),
+        ];
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich("station check", 14.0, GREY()));
+            for (words, ok, why) in items {
+                let (mark, colour) = match ok { Some(true) => ("✓", LIME()), Some(false) => ("✗", PINK()), None => ("·", GREY()) };
+                ui.label(rich(&format!("{} {}", mark, words), 14.0, colour)).on_hover_text(tip(why));
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let threshold = if s.dink.clip_gp == 0 { "no drops".to_string() } else { format!("drops worth {} or more", gp(s.dink.clip_gp)) };
+            ui.label(rich(&format!("clips by themselves: pets, new log slots, 99s, {}{}", threshold,
+                                   if s.dink.clips_discord && discord { " · to this PC and Discord" } else { " · to this PC" }), 14.0, GREY()));
+            if button(ui, "clip now", true, None).on_hover_text(tip("the tape saved as a clip (the clip key, Insert, does the same)")).clicked() {
+                crate::clip::save(&s.clip_folder);
+            }
+            if button(ui, "the clips folder", true, None).clicked() {
+                let folder = if s.clip_folder.trim().is_empty() { crate::clip::default_folder() } else { s.clip_folder.clone().into() };
+                let _ = std::fs::create_dir_all(&folder);
+                let _ = std::process::Command::new("explorer").arg(&folder).spawn();
+            }
+        });
+    }
+
     fn ready_row(&mut self, ui: &mut egui::Ui) {
         let s = self.settings.get();
         if !s.ready_check || (s.on_air && self.up && self.live) { return; }
@@ -3583,6 +3691,9 @@ impl App {
     }
 
     fn answer(&mut self, ui: &mut egui::Ui) {
+        if self.settings.get().clips_mode() {
+            return self.foot(ui);
+        }
         // (narrow: the line across the window, the buttons under it)
         let narrow = ui.available_width() < 470.0;
         let mut line: Option<egui::Response> = None;
@@ -3618,8 +3729,12 @@ impl App {
                 crate::clip::save(&self.settings.get().clip_folder);
             }
         });
-        // (11/06/2026, Jace: "make the report bug button easy to find and obvious": pink, on a line of its own at the foot
-        // of the window, always there)
+        self.foot(ui);
+    }
+
+    /// The window's foot: report an anomaly, file a requisition (11/06/2026, Jace: "make the report bug button easy to
+    /// find and obvious": pink, on a line of its own at the foot of the window, always there).
+    fn foot(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         let ctx = ui.ctx().clone();
         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -101,6 +101,8 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 
 **Your internet address.** Every connection shows your internet address (IP) to the server it reaches, as any connection on the internet does: Cloudflare (the relay), GitHub, Discord. The relay doesn't write it down (see [What the relay keeps](#what-the-relay-keeps)).
 
+**Dark, with the tape rolling** ("clips only", or "and while dark too" in dink ▸; 11/07/2026): the outstation takes RuneLite's picture and sound exactly as when transmitting, but keeps them only in memory, the last few seconds, for clips. Nothing goes to the relay. A clip that saves itself goes to your clips folder and, if your Discord gets Dink's posts through the outstation, to Discord under that post, and nowhere else (never your Outside page while dark).
+
 Nothing else leaves your PC. Your settings, your log, your clips folder and your Dink settings stay where they are, unless you copy them somewhere yourself. Your webhook addresses go only to Discord itself. The safety check (below) proves the program has no other address in it.
 
 ## What comes in, and what it can do
