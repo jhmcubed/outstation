@@ -73,6 +73,17 @@ public class KitTest
 	}
 
 	@Test
+	public void heldBackEmptiesWhatTheyCarried()
+	{
+		JsonObject h = Kit.held("wilderness");
+		assertEquals("wilderness", h.get("paused").getAsString());
+		assertEquals(0, h.getAsJsonArray("inv").size());
+		assertEquals(0, h.getAsJsonArray("worn").size());
+		assertEquals(0, h.getAsJsonArray("bag").size());
+		assertTrue(h.get("quiver").isJsonNull());
+	}
+
+	@Test
 	public void theWildernessByItsBounds()
 	{
 		assertTrue(OutsidePlugin.inWilderness(3100, 3530));

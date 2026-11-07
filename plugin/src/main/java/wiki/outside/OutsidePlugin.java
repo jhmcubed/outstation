@@ -178,9 +178,7 @@ public class OutsidePlugin extends Plugin
 			if (!paused)
 			{
 				paused = true;
-				JsonObject p = new JsonObject();
-				p.addProperty("paused", "wilderness");
-				send(p);
+				send(Kit.held("wilderness"));
 			}
 			return;
 		}

@@ -117,6 +117,24 @@ public class Kit
 		return a;
 	}
 
+	/**
+	 * Held back somewhere dangerous: "paused", and what was worn and carried emptied with it, so the relay keeps
+	 * nothing of what they took in (it keeps the last of each field otherwise), nor the vitals and prayers.
+	 */
+	public static JsonObject held(String why)
+	{
+		JsonObject o = new JsonObject();
+		o.addProperty("paused", why);
+		o.add("worn", new JsonArray());
+		o.add("inv", new JsonArray());
+		o.add("bag", new JsonArray());
+		o.add("pouch", new JsonArray());
+		o.add("quiver", JsonNull.INSTANCE);
+		o.add("vitals", new JsonObject());
+		o.add("prayers", new JsonArray());
+		return o;
+	}
+
 	public static JsonArray pair(long a, long b)
 	{
 		JsonArray p = new JsonArray();
