@@ -21,6 +21,12 @@ An outstation on your PC, transmitting your RuneLite to your Outside page on [gh
 
 The first screen; attached and dark, ready to transmit; transmitting to two observers; and what they see on the player's Outside page. (Pictured under Wine, with a screenshot of sburb's RuneLite standing in for the game.)
 
+<p>
+  <img src="docs/pictures/stream.png" width="60%" alt="sburb's real transmission on Outside: the picture, this transmission's Giant Mole kill count (2,367, +15 this transmission) and loot (252k, best a mole skin), and each kill count and loot as it came">
+</p>
+
+A real transmission, as observers see it on Outside (sburb at the Giant Mole, 11/07/2026): the picture, what this transmission has done so far (its kill count and how many this transmission, its loot and the best drop), and each kill count and loot as Dink tells of it.
+
 **Its words.** The window speaks ⊂λ,ｍ⊙'s language. Your **station key** is the code that attaches it to your channel; **transmitting** is live and **dark** is off air; **observers** are your viewers, and **on standby** the ones waiting for a seat; **the tape** is the replay buffer (the last seconds, always rolling); **redactions** are masks; **the monitor** is the small live view of what went out; **field reports** are Dink's posts; **the station check** is the ready check. The keeper **issues** keys, **denies** a request, **re-keys** a channel (a new key; the old one stops working) and **stands one down** (takes it back).
 
 ## In plain words
