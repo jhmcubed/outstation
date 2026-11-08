@@ -46,6 +46,9 @@ SOUND_HOLD = 0.5
 # how long a settling code lasts on the relays under test (11/08/2026: 10 minutes as they're run, shortened here so a code
 # can be seen to expire; a relay already running: whatever it was started with, given here)
 SETTLE_CODE_S = float(os.environ.get("SETTLE_CODE_SECONDS") or (600 if MODE.startswith("ws") else 3))
+# how long a player's square (following, 11/08/2026) shows on GET /channels after it came: 240 s as the relays are run,
+# shortened here so it can be seen to go stale (a relay already running: whatever it was started with, given here)
+WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.startswith("ws") else 4))
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
@@ -90,7 +93,7 @@ def setUpModule():
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
-             "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S],
+             "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
@@ -98,7 +101,7 @@ def setUpModule():
         STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
-                                 "--settle-code-seconds", "%g" % SETTLE_CODE_S],
+                                 "--settle-code-seconds", "%g" % SETTLE_CODE_S, "--where-fresh-seconds", "%g" % WHERE_FRESH_S],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -1801,6 +1804,174 @@ class Game(Base):
         self.assertIsNone(await nothing_game(await self.watch()))
 
 
+class Following(Base):
+    """Following (11/08/2026): the Outside plugin may send "where", the middle of the 128-tile square of the main map the
+    player was in two minutes before, or null. The relay holds it (one every 50 s at most; null whenever it comes), drops
+    it when the plugin goes, logs out or holds for the player's safety, and shows it only on GET /channels, while the
+    channel's live and listed and it came within WHERE_FRESH_S. Never to viewers, lookers or desks, in GET /game or in
+    the Array's events. (The throttle's end and --delay: relay-py/test_relay.py's.)"""
+
+    LUMBRIDGE = {"x": 3264, "y": 3264}
+
+    async def game(self, key=None, channel=None):
+        return await Client().open("%s/game/%s?key=%s&v=0.0.1" % (RELAY, channel or self.ch, key or self.key))
+
+    async def say(self, g, fields):
+        await g.send(json.dumps({"game": fields}))
+
+    async def where(self, channel=None):
+        """This channel's row's "where" on GET /channels, after a moment for the Worker's channel to tell the Directory;
+        (False if it has no row)."""
+        await self.pause(2)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        row = rows.get(channel or self.ch)
+        return False if row is None else row["where"]
+
+    async def live_and_following(self, where=None, code=""):
+        """A transmitter (live) and the plugin, which has said where it is: (the transmitter, the plugin)."""
+        tx = await self.tx(code)
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"where": where or self.LUMBRIDGE})
+        return tx, g
+
+    async def test_a_square_shows_on_the_list_only_while_live(self):
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"where": self.LUMBRIDGE})
+        self.assertIsNone(await self.where())                      # (held, but not on air: not shown)
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        tx.close()
+        await self.pause(2)
+        self.assertIsNone(await self.where())
+        tx = await self.tx()                                       # (on air again within the time: shown again)
+        await next_of(tx, "relay")
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+
+    async def test_it_goes_stale(self):
+        await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await asyncio.sleep(WHERE_FRESH_S + 0.5)
+        self.assertIsNone(await self.where())
+
+    async def test_a_coded_outstation_never_shows_it(self):
+        await self.live_and_following({"x": 1088, "y": 2496}, code="moss")
+        await self.pause(2)
+        got = http("GET", "/channels")[1]["channels"]
+        self.assertNotIn(self.ch, [c["channel"] for c in got])
+        self.assertNotIn({"x": 1088, "y": 2496}, [c["where"] for c in got])
+
+    async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_only_once_live(self):
+        if not WORKER:
+            await self.tx()                    # (relay.py: the inviter's handed out once its first transmitter claims it)
+            await self.pause(2)
+        a = "i" + secrets.token_hex(5)
+        status, got = http("POST", "/invites/" + self.ch, {"key": self.key, "player": a})
+        self.assertEqual(status, 200)
+        self.assertIs(await self.where(a), False)                   # (pending: no row at all)
+        g = await self.game(key=got["key"], channel=a)              # (its key used: taken up)
+        self.clients.append(g)
+        await self.say(g, {"where": self.LUMBRIDGE})
+        self.assertIsNone(await self.where(a))                      # (listed now, but not live)
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, a, got["key"]))
+        self.clients.append(tx)
+        await next_of(tx, "relay")
+        self.assertEqual(await self.where(a), self.LUMBRIDGE)
+
+    async def test_a_bad_square_is_ignored_and_the_rest_of_its_message_still_lands(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        v = await self.watch()
+        await self.pause()
+        bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 960, "y": 3264},
+               {"x": 3264, "y": 3264, "plane": 0}, {"x": 3264}, {"x": "3264", "y": 3264}, {"x": 3264.5, "y": 3264},
+               {"x": True, "y": 3264}, [3264, 3264], "lumbridge", 3264, True]
+        for i, w in enumerate(bad):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)                           # (5 a second at most)
+            await self.say(g, {"world": 300 + i, "where": w})
+            got = await next_of(v, "game")
+            self.assertEqual((sorted(got), got["world"]), (["at", "world"], 300 + i), w)
+        self.assertIsNone(await self.where())
+        await asyncio.sleep(1.0)
+        await self.say(g, {"where": {"x": 3264.0, "y": 2496}})   # (a bad one never counted: this one's taken)
+        self.assertEqual(await self.where(), {"x": 3264, "y": 2496})
+
+    async def test_one_every_50_seconds_and_null_clears_whenever(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"where": {"x": 3136, "y": 3264}})       # (too soon: ignored)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"where": None})
+        self.assertIsNone(await self.where())
+        await self.say(g, {"where": {"x": 3136, "y": 3264}})       # (still too soon after the last one taken)
+        self.assertIsNone(await self.where())
+
+    async def test_logging_out_drops_it(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"off": True})
+        self.assertIsNone(await self.where())
+
+    async def test_holding_for_the_players_safety_drops_it(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"paused": "wilderness", "worn": [], "inv": [], "bag": [], "pouch": [], "quiver": None,
+                           "vitals": {}, "prayers": []})              # (the plugin's Kit.held)
+        self.assertIsNone(await self.where())
+
+    async def test_the_plugin_going_drops_it(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        g.close()
+        v = await self.watch()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        self.assertIsNone(await self.where())
+
+    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
+    async def test_a_new_key_drops_it(self):
+        await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        status, got = admin("POST", "/admin/channels/" + self.ch)
+        self.assertEqual(status, 200)
+        tx = await self.tx(key=got["key"])
+        await next_of(tx, "relay")
+        self.assertIsNone(await self.where())
+
+    async def test_never_to_viewers_lookers_desks_the_read_or_the_arrays_events(self):
+        v, look, d = await self.watch(), await self.connect("watch", "look=1"), await self.desk()
+        tx, g = await self.live_and_following()
+        await self.say(g, {"world": 302, "where": {"x": 3136, "y": 3264}})
+        self.assertEqual(await self.where(), self.LUMBRIDGE)          # (the list has it)
+        late = [await self.watch(), await self.connect("watch", "look=1"), await self.desk(name="late")]
+        for c in [v, look, d] + late:
+            heard = []
+            try:
+                while True:
+                    kind, line = await c.recv(timeout=0.5)
+                    if kind == "text":
+                        heard.append(line)
+            except asyncio.TimeoutError:
+                pass
+            self.assertTrue(any('"game"' in line for line in heard))  # (the game reached it, the world)
+            for line in heard:
+                self.assertNotIn("where", line)
+        self.assertNotIn("where", json.dumps(self.read_game()))
+        with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
+            self.assertNotIn("where", r.read().decode())
+
+    def read_game(self):
+        status, got = http("GET", "/game/%s?code=" % self.ch)
+        self.assertEqual((status, got["game"]["world"]), (200, 302))
+        return got
+
+
 async def nothing_game(c, wait=0.5):
     """The game line someone just come is sent, or None if none comes in `wait` seconds."""
     try:
@@ -1915,6 +2086,100 @@ class Invites(Base):
     async def test_z_past_five_posts_an_hour_wait(self):
         codes = [self.invite("i" + secrets.token_hex(5))[0] for _ in range(6)]
         self.assertEqual(codes, [200, 200, 200, 409, 409, 429])
+
+    # pending (11/08/2026): an invite not taken up yet (its key never used) is left off GET /channels and only counted
+    # under its inviter, for the keys beside it on outside.wiki's globe; never named
+
+    async def open_list(self):
+        """GET /channels as (its rows by channel, its pending counts by inviter, the raw body), after a moment for the
+        Worker's channels to tell the Directory."""
+        await self.pause(2)
+        with urllib.request.urlopen(http_url() + "/channels", timeout=10) as r:
+            raw = r.read().decode()
+        got = json.loads(raw)
+        for p in got["pending"]:
+            self.assertEqual(sorted(p), ["by", "n"])
+        bys = [p["by"] for p in got["pending"]]
+        self.assertEqual(bys, sorted(bys))                                   # (sorted by inviter, each once)
+        self.assertEqual(len(bys), len(set(bys)))
+        return {c["channel"]: c for c in got["channels"]}, {p["by"]: p["n"] for p in got["pending"]}, raw
+
+    async def test_an_invite_not_taken_up_is_counted_under_its_inviter_and_never_named(self):
+        a, b = "i" + secrets.token_hex(5), "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(a)[0], 200)
+        rows, pending, raw = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertIn(self.ch, rows)
+        self.assertNotIn(a, rows)
+        self.assertNotIn(a, raw)                                             # (nowhere in the answer)
+        self.assertEqual(self.invite(b)[0], 200)
+        rows, pending, raw = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 2)
+        for name in (a, b):
+            self.assertNotIn(name, raw)
+
+    async def test_an_invite_taken_up_is_listed_and_no_longer_counted(self):
+        a, b = "i" + secrets.token_hex(5), "i" + secrets.token_hex(5)
+        key_a, key_b = self.invite(a)[1]["key"], self.invite(b)[1]["key"]
+        self.assertEqual((await self.open_list())[1].get(self.ch), 2)
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, a, key_a))   # (the friend's client, attached)
+        self.clients.append(tx)
+        await next_of(tx, "relay")
+        rows, pending, raw = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertEqual((rows[a]["by"], rows[a]["live"]), (self.ch, True))
+        self.assertNotIn(b, raw)
+        self.assertEqual(http("GET", "/invites/%s?key=not-the-key-at-all" % b)[0], 403)   # (a wrong key takes nothing up)
+        self.assertEqual((await self.open_list())[1].get(self.ch), 1)
+        self.assertEqual(http("GET", "/invites/%s?key=%s" % (b, key_b))[0], 200)       # (its key, used for anything)
+        rows, pending, _ = await self.open_list()
+        self.assertNotIn(self.ch, pending)
+        self.assertEqual((rows[b]["by"], rows[b]["live"]), (self.ch, False))
+
+    async def test_a_home_beside_an_invite_not_taken_up_reads_as_the_default_till_it_is(self):
+        a = "i" + secrets.token_hex(5)
+        key_a = self.invite(a)[1]["key"]
+        status, _, got = settle_http("POST", "/settle/%s?key=%s&v=0.9.0" % (self.ch, self.key))
+        self.assertEqual(status, 200, got)
+        status, _, got = settle_http("POST", "/home/" + self.ch, {"code": got["code"], "near": a})
+        self.assertEqual((status, got["home"]), (200, {"near": a}))         # (the owner's own answer says it)
+        rows, pending, raw = await self.open_list()
+        self.assertIsNone(rows[self.ch]["home"])
+        self.assertNotIn(a, raw)
+        self.assertEqual(http("GET", "/invites/%s?key=%s" % (a, key_a))[0], 200)       # (taken up)
+        rows, pending, _ = await self.open_list()
+        self.assertEqual(rows[self.ch]["home"], {"near": a})
+
+    async def test_a_coded_inviters_invites_arent_counted(self):
+        a = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(a)[0], 200)
+        self.assertEqual((await self.open_list())[1].get(self.ch), 1)
+        tx = await self.tx("a-code")                                         # (the inviter: friends only now)
+        await next_of(tx, "relay")
+        rows, pending, raw = await self.open_list()
+        self.assertNotIn(self.ch, rows)
+        self.assertNotIn(self.ch, pending)
+        self.assertNotIn(self.ch, raw)                                       # (nothing said of a hidden outstation)
+        self.assertNotIn(a, raw)
+
+    @unittest.skipUnless(WORKER, "the keeper's own, a new key and taking back: the keeper's, the Worker only")
+    async def test_the_keepers_own_are_listed_as_before_and_a_taken_back_inviters_invites_arent_counted(self):
+        own = "k" + secrets.token_hex(5)
+        self.assertEqual(admin("POST", "/admin/channels/" + own)[0], 200)   # (the keeper's, never used: listed, as ever)
+        a = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(a)[0], 200)
+        rows, pending, _ = await self.open_list()
+        self.assertIsNone(rows[own]["by"])
+        self.assertNotIn(own, pending)
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertEqual(admin("POST", "/admin/channels/" + a)[0], 200)     # (a new key from the keeper: still waiting)
+        rows, pending, _ = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertNotIn(a, rows)
+        self.assertEqual(admin("DELETE", "/admin/channels/" + self.ch)[0], 204)
+        rows, pending, raw = await self.open_list()
+        self.assertNotIn(self.ch, pending)
+        self.assertNotIn(a, raw)
 
 
 def settle_http(method, path, body=None, raw=None):

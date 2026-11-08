@@ -23,7 +23,8 @@
 //   POST   /invites/<channel>  {"key", "player"}              a new channel for that player: {"channel", "key", "code", "left"}
 // The new channel's row in the Directory says whose invite it came from ("by"), in GET /admin/channels and in the open
 // outstations' list (GET /channels); the inviter's channel keeps the names it's invited. Taking a channel back takes
-// nothing back from the channels it invited, or gives its inviter the invite back.
+// nothing back from the channels it invited, or gives its inviter the invite back. Till its key is first used (an invite
+// not taken up yet, 11/08/2026) the open outstations' list leaves it out and counts it under its inviter ("pending").
 //
 // Asking for a portal (11/06/2026), so nobody has to email the keeper for a code:
 //   POST   /requests/<channel>  {"player", "note", "pickup"}   a friend's client asks for that player's channel
@@ -75,6 +76,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
 import { Aether } from "./aether";
 import { type ArrayEvent, ArrayFeed, arrayAnswer, arraySince } from "./array";
+import { WHERE_FRESH_MS } from "./game";
 import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, relayOf } from "./text";
 import { SETTLE_BODY, settleAnswer, settlePreflight } from "./settle";
@@ -204,7 +206,13 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
-   *  missing (or LISTING_CHECK old) is asked. */
+   *  missing (or LISTING_CHECK old) is asked.
+   *  "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
+   *  counted under each inviter, [{"by", "n"}] sorted by "by". Never the invited names (the inviter typed them; the
+   *  friends haven't agreed to anything), and only under an inviter that's on the list itself (no watch code), so
+   *  nothing's said of a hidden outstation.
+   *  "where" (11/08/2026, following; game.ts): the square the plugin last said, {"x", "y"}, only while the channel's live
+   *  and on the list, and only if it came within WHERE_FRESH_MS; else null. Nowhere else. */
   async openPortals(): Promise<Response> {
     const given = await this.givenNames(), names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
     const ask = names.filter((n) => { const l = this.listed.get(n); return !l || now - l.seen > LISTING_CHECK; });
@@ -217,12 +225,26 @@ export class Directory extends DurableObject<Env> {
         if (!had || had.row.at <= row.at) this.listed.set(n, { row, seen: Date.now() });
       } catch { /* (left out this time) */ }
     }));
-    const open = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set && !r.code)
+    // (an invite not taken up: only an invite's channel, which has an inviter, is ever pending)
+    const waits = (r: Listing) => !!r.pending && (given.get(r.channel) ?? null) !== null;
+    const rows = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set);
+    // (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
+    const waiting = new Set(rows.filter(waits).map((r) => r.channel));
+    const homeOf = (h: Listing["home"]) => (h && "near" in h && waiting.has(h.near) ? null : h ?? null);
+    const fresh = (parseFloat(this.env.WHERE_FRESH_SECONDS || "") * 1000) || WHERE_FRESH_MS, at = Date.now();
+    const whereOf = (r: Listing) => (r.live && r.where && at - (r.whereAt || 0) <= fresh ? { x: r.where.x, y: r.where.y } : null);
+    const open = rows.filter((r) => !r.code && !waits(r))
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
                      title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game,
-                     home: r.home ?? null }));
+                     home: homeOf(r.home), where: whereOf(r) }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
-    return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
+    const shown = new Set(open.map((r) => r.channel)), counts = new Map<string, number>();
+    for (const r of rows) {
+      const by = given.get(r.channel) ?? null;
+      if (waits(r) && by !== null && shown.has(by)) counts.set(by, (counts.get(by) || 0) + 1);
+    }
+    const pending = [...counts].map(([by, n]) => ({ by, n })).sort((a, b) => (a.by < b.by ? -1 : a.by > b.by ? 1 : 0));
+    return new Response(JSON.stringify({ channels: open, pending }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
   }
 
   // anomaly reports: "add" (a friend's outstation, its channel already checked by the Worker), "list" and "delete" (the

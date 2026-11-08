@@ -5,6 +5,7 @@
 //   ws(s)://<relay>/game/<channel>?key=<key>&v=<the plugin's version>   {"game": {...fields}}, at most GAME_MESSAGE long,
 //                                                                       GAME_A_SECOND a second
 //   GET <relay>/game/<channel>?code=<watch code>                         {"game": {...}, "at", "connected"}
+// and, apart from the game's fields, "where" (11/08/2026: following; gameWhere, below), only ever on GET /channels.
 //
 // Here: a message's fields checked and cleaned (gameFields), and the state kept from them (GameState): each field
 // replaces the one kept, but "items", a name and a price for each item id, which is merged. channel.ts has the socket,
@@ -97,6 +98,29 @@ export function gameFields(g: unknown): Fields {
     if (Object.keys(items).length) out.items = items;
   }
   return out;
+}
+
+// Following (11/08/2026, Jace approved it with these safeguards): the plugin may send "where", the middle of the 128-tile
+// square of the main map the player was in two minutes before ({"x", "y"}), or null to clear it. It's never one of the
+// game's fields: never kept with them, never sent to viewers, lookers or desks, never in GET /game. The channel holds it
+// in memory only (channel.ts, takeWhere), at most one every WHERE_EVERY_MS (null whenever it comes), and the open
+// outstations' list (GET /channels) shows it while the channel's live and listed and it came within WHERE_FRESH_MS
+// (index.ts; the Worker's WHERE_FRESH_SECONDS shortens it, for tests). relay.py's game_where, the same.
+export const WHERE_SQUARE = 128, WHERE_X = [1024, 4096], WHERE_Y = [2496, 4224];
+export const WHERE_EVERY_MS = 50_000, WHERE_FRESH_MS = 240_000;
+export type Where = { x: number; y: number };
+
+/** A message's "where": {x, y} for a square's middle (each a whole number k*128 + 64, x from 1024 up to 4096, y from
+ *  2496 up to 4224, and nothing else in it), null to clear it, or undefined for anything else (none, or not its shape:
+ *  ignored, and the rest of the message taken as ever). */
+export function gameWhere(g: unknown): Where | null | undefined {
+  if (!isObj(g) || !("where" in g)) return undefined;
+  const w = g.where;
+  if (w === null) return null;
+  if (!isObj(w) || Object.keys(w).length !== 2) return undefined;
+  const ok = (v: unknown, [lo, hi]: number[]) =>
+    typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi && v % WHERE_SQUARE === WHERE_SQUARE / 2;
+  return ok(w.x, WHERE_X) && ok(w.y, WHERE_Y) ? { x: w.x as number, y: w.y as number } : undefined;
 }
 
 const itemLen = (i: string, e: Item) => pyjson(i).length + 2 + pyjson(e).length;

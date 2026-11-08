@@ -105,7 +105,13 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); this list is the only place it's ever shown. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+
+`pending` (11/08/2026, for outside.wiki's globe: a key beside an inviter for each invite still waiting) counts the invites not taken up yet: one entry per inviter with any, `n` how many, sorted by `by`; `[]` for none. Readers from before it ignore it.
+- An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips, invites or settling. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
+- Never the invited channel's name: the inviter typed it, and the friend hasn't agreed to anything. So an outstation settled beside one (`home` `{"near"}`, below, "Settling") shows `home` `null` here till it's taken up, then `{"near"}` again (the keeper's list and the owner's own `GET /settle` and `POST /home` still say the outstation chosen).
+- Only under an inviter that's in `channels` itself: an inviter with a watch code (or, on Cloudflare, one taken back) has its invites counted nowhere, so nothing's said of a hidden outstation.
+- Only an invite's channel is ever pending. The keeper's own (`by` `null`) are listed from the moment they're handed out, as before, and a new key from the keeper leaves a channel as it was. On Cloudflare, channels invited before 11/08/2026 count as taken up.
 
 ## The stream's summary
 
@@ -195,6 +201,7 @@ The numbers:
 - `player` is the channel's name: 1 to 12 letters or numbers, lower case, no spaces (the same as `/requests`).
 - An invite is counted only once the new channel has its key, so nothing that fails uses one up. Two posts at once can't both take the last one.
 - The new channel says whose invite it came from (`by`, the inviter's channel name) in `GET /admin/channels` and in `GET /channels`: the register's "established through …'s outstation". A new key from the keeper keeps it.
+- Till its key is first used (taken up), `GET /channels` leaves the new channel out and only counts it under its inviter (`pending`, above, "The open outstations").
 - Taking a channel back (`DELETE /admin/channels/<channel>`) doesn't take back the channels it invited, and doesn't give its inviter the invite back.
 - Invites don't touch `/requests`: a request waiting for a name that's then invited shows `given` in the keeper's list.
 
@@ -239,6 +246,7 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `quiver`: `[item id, how many]` or `null`
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
+- `where` (11/08/2026, following): not one of the game's fields, and never kept or sent with them (below, "Following").
 
 Each field given replaces the one kept, whole; `items` is merged instead (a name and a price for each id). Checked
 loosely:
@@ -256,6 +264,28 @@ The limits:
 - A message that changed something goes on to seated viewers, lookers and desks as `{"game": {...the fields given, less anything left out, "at": <ms>}}`. One that changed nothing goes nowhere.
 - Someone just come (a viewer as it takes its seat, a looker, a desk) gets `{"game": {...the whole state kept, "at": <ms, when it last changed>}}`, if there's any. A viewer in line for a seat gets it once seated, as it does frames.
 - The status line's `game` (above, "Viewers"), and each row of `GET /channels`: whether a game socket is connected now.
+
+**Following** (11/08/2026, Jace approved it with these safeguards). With the plugin's following on, it sends where the
+player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle of a 128-tile square of the main map,
+at most once a minute, and the same square again every 3 minutes while it stays put. `{"game": {"where": null}}` clears
+it: sent at once on going into the Wilderness, a PvP area or world, Deadman or an instance, and when following's
+switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
+`Channel.take_where`).
+- A `where` that isn't `null` must be an object with exactly `x` and `y`, each a whole number `k*128 + 64`, `x` from
+  1024 up to (not including) 4096 and `y` from 2496 up to 4224. Anything else is ignored, and the rest of the message
+  is taken as ever.
+- The relay takes one every 50 seconds at most; one sooner is ignored (a `where` that was ignored for its shape doesn't
+  count). `null` is taken whenever it comes.
+- It's dropped when the game socket closes (with no newer one connected), when the plugin sends `"off": true` (logged
+  out) or a `paused` that's a string (held for the player's safety: the plugin's `Kit.held`), whatever `where` that
+  message holds; and on Cloudflare when the keeper gives the channel a new key or takes it back. On the Python relay a
+  `where` that `--delay` held back isn't taken once the plugin's gone.
+- It's held in memory only, with when it came, never in storage: a channel's object that sleeps (Cloudflare), or a
+  restart, forgets it, and the plugin says it again within 3 minutes.
+- It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live and on that list (no
+  watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
+  Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
+  desks, the whole state someone just come gets, `GET /game`, the Array's events, the aether or the keeper's list.
 
 **The read:** `GET /game/<channel>?code=<watch code>`, for a page while the outstation's dark:
 - 200 `{"game": {...the whole state}, "at": <ms, when it last changed>, "connected": bool}`

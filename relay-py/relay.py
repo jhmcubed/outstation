@@ -80,7 +80,9 @@ starts every count again, as it forgets every channel).
     GET   http://HOST:PORT/invites/<channel>?key=<secret>          {"left", "earned", "used", "hours", "next_in_s"}
     POST  http://HOST:PORT/invites/<channel>  {"key", "player"}     {"channel", "key", "code", "left"}
   The new channel is claimed with a new key, and the code attaches a client to it; GET /channels says whose invite
-  each channel came from ("by"). The public side refuses both.
+  each channel came from ("by"). Till its key is first used (an invite not taken up yet, 11/08/2026) GET /channels
+  leaves it out and only counts it under its inviter ("pending": [{"by", "n"}], never its name). The public side
+  refuses both.
 
 The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin, a RuneLite plugin of our own, sends the player's
 live game state (vitals, skills, what's worn and carried, prayers, item names and prices) and Outside draws it beside the
@@ -92,6 +94,11 @@ transmission and the chat, live, and as last known while dark.
   desks as {"game": {...the fields, "at"}}, and someone just come gets the whole of it. The status line's "game" says
   whether one is connected. Kept in memory, as everything here, while the relay runs.
     read:      GET http://HOST:PORT/game/<channel>?code=<watch code>    {"game": {...}, "at", "connected"}
+  Following (11/08/2026): apart from the game's fields, "where", the middle of the 128-tile square the player was in two
+  minutes before ({"x", "y"}), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
+  whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
+  and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
+  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read.
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
 
 The aether (11/07/2026, Jace: "a global chat... reminds me of IRC and AOL Instant Messenger. i want this to feel like a
@@ -174,6 +181,11 @@ GAME_MESSAGE, GAME_KEPT, GAME_ITEMS, GAME_A_SECOND = 64 * 1024, 192 * 1024, 3000
 GAME_INT = 2 ** 31 - 1            # the most any number in the game holds (a Java int: RuneLite's)
 GAME_SKILL = re.compile(r"[A-Za-z][A-Za-z _-]{0,23}")     # a skill's name (fullmatch)
 GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the dictionary has it (fullmatch)
+# following (11/08/2026; docs/protocol.md "The game"; the Worker's game.ts, the same): "where" is the middle of a
+# WHERE_SQUARE-tile square of the main map (x from WHERE_X[0] up to WHERE_X[1], y the same with WHERE_Y), taken at most
+# one every WHERE_EVERY_S, and shown on GET /channels for WHERE_FRESH_S after it came (the relay's where_fresh_s,
+# --where-fresh-seconds)
+WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096), (2496, 4224), 50, 240
 # the aether (11/07/2026; docs/protocol.md "The aether"): one room for every outstation and visitor. A line at most
 # AETHER_ROWS rows of AETHER_WIDTH characters (so 960 in all); one from someone every AETHER_EVERY ms at most, and
 # AETHER_A_MINUTE a minute; the last AETHER_KEPT kept (and handed to whoever joins), the last AETHER_READ in GET /aether;
@@ -432,6 +444,7 @@ def key_refusal(ch, key):
         return "403 Forbidden", "a transmit key needs at least 8 characters"
     if not hmac.compare_digest(key.encode("utf-8", "surrogatepass"), ch.key.encode("utf-8", "surrogatepass")):
         return "403 Forbidden", "wrong key for this channel"
+    ch.key_used()
     return None
 
 
@@ -581,6 +594,29 @@ def game_fields(g):
                 items[k] = [one_line(v[0], 60), game_whole(v[1])]
         if items:
             out["items"] = items
+    return out
+
+
+def game_where(g):
+    """A {"game"} message's "where" (following, 11/08/2026): {"x", "y"} for a square's middle (each a whole number
+    k*128 + 64, x from 1024 up to 4096, y from 2496 up to 4224, and nothing else in it), None to clear it (null), or
+    _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). Never one of
+    the game's fields (game_fields leaves it out). The Worker's gameWhere, the same."""
+    if not isinstance(g, dict) or "where" not in g:
+        return _BAD
+    w = g["where"]
+    if w is None:
+        return None
+    if not isinstance(w, dict) or len(w) != 2:
+        return _BAD
+    out = {}
+    for k, (lo, hi) in (("x", WHERE_X), ("y", WHERE_Y)):
+        v = w.get(k)
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)                                   # (3136.0 is 3136, as JavaScript reads it)
+        if not isinstance(v, int) or isinstance(v, bool) or not lo <= v < hi or v % WHERE_SQUARE != WHERE_SQUARE // 2:
+            return _BAD
+        out[k] = v
     return out
 
 
@@ -969,10 +1005,19 @@ class Channel:
         self.invited = []
         self.invite_posts = []       # when it last posted for an invite, for INVITES_AN_HOUR
         self.by = None
+        # an invite not taken up yet (11/08/2026): made by another outstation's invite, its key never used since. Till
+        # it is, GET /channels leaves it out and only counts it under its inviter ("pending"): the inviter typed the
+        # name, and the friend hasn't agreed to anything. The first right key, from anything, takes it up (key_used).
+        self.pending = False
         # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
         # streams and the plugin's going: a page shows the last of it while the player's away)
         self.gamer = None
         self.game = Game()
+        # following (11/08/2026; game_where): the square the plugin last said, when it came, and when the last one was
+        # taken (for WHERE_EVERY_S), by time.monotonic(); in memory, as everything here
+        self.where = None
+        self.where_at = None
+        self.where_took = None
         # settling (11/08/2026): where it stands on outside.wiki's globe ({"lon", "lat"} or {"near"}; None: beside its
         # inviter), when that last changed (ms), and the app's one-time code for the page ({"code", "expires", "used"})
         self.home = None
@@ -1017,12 +1062,30 @@ class Channel:
             return
         if not isinstance(m, dict) or not isinstance(m.get("game"), dict):
             return
-        got = self.game.apply(game_fields(m["game"]))
+        fields = game_fields(m["game"])
+        self.take_where(game_where(m["game"]), fields)
+        got = self.game.apply(fields)       # (never "where": game_fields leaves it out)
         if got is None:
             return
         line = json.dumps({"game": dict(got, at=self.game.at)})
         for v in list(self.viewers) + list(self.lookers) + list(self.desks):
             v.send_nowait(line)
+
+    def take_where(self, w, fields):
+        """Following (game_where): a message's "where" taken (one every WHERE_EVERY_S at most; more are ignored), or the
+        one held dropped (null, whenever it comes). Logged out ({"off": true}) or held for the player's safety
+        ({"paused": "wilderness"}), it's dropped, whatever the message says of it; and nothing's taken while no plugin's
+        connected (a message --delay held back, let go after it went). Only GET /channels hears of it."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or w is None:
+            self.drop_where()
+            return
+        now = time.monotonic()
+        if w is _BAD or self.gamer is None or (self.where_took is not None and now - self.where_took < WHERE_EVERY_S):
+            return
+        self.where, self.where_at, self.where_took = w, now, now
+
+    def drop_where(self):
+        self.where = self.where_at = None
 
     def on_air(self):
         """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
@@ -1056,9 +1119,14 @@ class Channel:
             v.send_nowait(line)
 
     def listed(self):
-        """Whether it's on the open outstations' list (GET /channels): claimed, with no watch code. The Array's events
-        come only from a channel listed (and live)."""
-        return self.key is not None and not self.code
+        """Whether it's on the open outstations' list (GET /channels): claimed, with no watch code, and not an invite
+        still waiting to be taken up. The Array's events come only from a channel listed (and live)."""
+        return self.key is not None and not self.code and not self.pending
+
+    def key_used(self):
+        """Its key's been used, rightly (a socket, Dink, clips, invites or settling): an invite not taken up yet is
+        taken up, and on the open outstations' list from now on (the Worker's checkKey, the same)."""
+        self.pending = False
 
     def doing(self):
         """What the stream's at now, for the open portals: the boss of the last kill count and its count."""
@@ -1334,9 +1402,10 @@ def too_old(v, min_client):
 
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
-                 settle_code_s=SETTLE_CODE_S):
+                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S):
         self.delay = delay
         self.settle_code_s = settle_code_s  # how long a settling code lasts (SETTLE_CODE_S; tests shorten it)
+        self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
         self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
@@ -1488,6 +1557,7 @@ class Relay:
         elif ch.key != key:
             await sock.close(4003, "wrong key for this channel")
             return
+        ch.key_used()
         if ch.sender is not None:
             await ch.sender.close(4000, "replaced by a newer transmitter")
         ch.sender, ch.code, ch.state = sock, code, "open"
@@ -1679,6 +1749,7 @@ class Relay:
         elif ch.key != key:
             await sock.close(4003, "wrong key for this channel")
             return None
+        ch.key_used()
         return ch
 
     async def desk(self, sock, name, key, host_name):
@@ -1903,19 +1974,35 @@ class Relay:
         finally:
             if ch.gamer is sock:
                 ch.gamer = None
+                ch.drop_where()              # (following: only while the plugin's connected)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
 
     async def channel_list(self, writer):
         """The open portals (11/05/2026, Jace: "a page ... that shows all active connected public portals"): every channel
         that's set up and has no watch code, live ones first, with whether each is live. Anyone may read it (the
-        public side too); a channel with a watch code is never listed."""
+        public side too); a channel with a watch code is never listed.
+        "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
+        counted under each inviter, [{"by", "n"}] sorted by "by" (the Worker's openPortals, the same). Never the
+        invited names, and only under an inviter that's on the list itself, so nothing's said of a hidden outstation.
+        "where" (11/08/2026, following; game_where): the square the plugin last said, only while the channel's live and
+        listed, and only if it came within where_fresh_s; else null. Nowhere else."""
+        # (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
+        waiting = {ch.name for ch in self.channels.values() if ch.key is not None and ch.pending}
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
-                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None, "home": ch.home}
+                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
+                 "home": None if isinstance(ch.home, dict) and ch.home.get("near") in waiting else ch.home,
+                 "where": dict(ch.where) if ch.where is not None and ch.sender is not None
+                          and time.monotonic() - ch.where_at <= self.where_fresh_s else None}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
-        body = json.dumps({"channels": rows}).encode()
+        shown, counts = {r["channel"] for r in rows}, {}
+        for ch in self.channels.values():
+            if ch.key is not None and ch.pending and ch.by is not None and ch.by in shown:
+                counts[ch.by] = counts.get(ch.by, 0) + 1
+        pending = [{"by": by, "n": n} for by, n in sorted(counts.items())]
+        body = json.dumps({"channels": rows, "pending": pending}).encode()
         writer.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
                       "Access-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" % len(body)).encode() + body)
         try:
@@ -2159,6 +2246,7 @@ class Relay:
             other.key = new_key       # (a channel only viewers were waiting on: now it's handed out, and they hear so)
             other.tell_viewers()
         other.by = name
+        other.pending = True          # (not taken up till its key's used: counted under this one, never named)
         ch.invited.append(player)
         self.log("invite    %s  -> %s" % (name, player))
         code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
@@ -2345,6 +2433,7 @@ class Relay:
                 # kept for good, or let go again
                 if ch is None or ch.key is None or q.get("key", "") != ch.key:
                     return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+                ch.key_used()
                 clips = self.clip_list(name)
                 c = next((c for c in clips if c["id"] == path[2]), None)
                 if c is None:
@@ -2363,6 +2452,7 @@ class Relay:
             if method == "DELETE" and CLIP_ID.match(path[2]):
                 if ch is None or ch.key is None or q.get("key", "") != ch.key:
                     return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+                ch.key_used()
                 clips = self.clip_list(name)
                 c = next((c for c in clips if c["id"] == path[2]), None)
                 if c is None:
@@ -2378,6 +2468,7 @@ class Relay:
             return await answer("405 Method Not Allowed")
         if ch is None or ch.key is None or len(q.get("key", "")) < 8 or q.get("key", "") != ch.key:
             return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+        ch.key_used()
         try:
             n = int(headers.get("content-length", "0") or 0)
         except ValueError:
@@ -2465,6 +2556,7 @@ class Relay:
             ch.key = key
         elif ch.key != key:
             return await answer("403 Forbidden")
+        ch.key_used()
         content_type = headers.get("content-type", "")
         payload = dink_payload(content_type, body)
         # (Dink posts each event once to each address it lists: listed twice, every event came twice, to the portal and
@@ -2822,10 +2914,11 @@ def dink_report(p):
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
-                settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S):
+                settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S,
+                where_fresh_s=WHERE_FRESH_S):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes)."""
-    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s)
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -2874,6 +2967,9 @@ def main(argv=None):
                     help="the keeper's token (16 characters at least) for the aether's keeper routes; none refuses them")
     ap.add_argument("--settle-code-seconds", type=float, default=SETTLE_CODE_S,
                     help="how long a settling code for the globe page lasts (%d; shorter for tests)" % SETTLE_CODE_S)
+    ap.add_argument("--where-fresh-seconds", type=float, default=WHERE_FRESH_S,
+                    help="how long a player's square shows on the open outstations' list after it came (%d; shorter "
+                         "for tests)" % WHERE_FRESH_S)
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -2884,7 +2980,8 @@ def main(argv=None):
     try:
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
-                          clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds))
+                          clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds,
+                          where_fresh_s=a.where_fresh_seconds))
     except KeyboardInterrupt:
         pass
 

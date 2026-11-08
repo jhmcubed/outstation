@@ -21,7 +21,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
-import { type Fields, GameState, gameFields, GAME_A_SECOND, GAME_MESSAGE } from "./game";
+import { type Fields, GameState, gameFields, gameWhere, GAME_A_SECOND, GAME_MESSAGE, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
 import { type Home, type SettleCode, SETTLE_CODE, SETTLE_CODE_MS, SETTLE_EVERY_MS, settleAnswer, settleCode, settleWanted } from "./settle";
 
@@ -42,6 +42,7 @@ export interface Env {
   CLIPS_DAYS?: string; // and for how long (30 days)
   CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
   SETTLE_CODE_SECONDS?: string; // (tests) how long a settling code lasts (settle.ts's SETTLE_CODE_MS: 600)
+  WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -108,6 +109,8 @@ export interface Listing {
   live?: boolean; open?: boolean; static?: boolean; viewers?: number; title?: string; doing?: { boss: string; kc: number } | null;
   game?: boolean; // (the Outside plugin's connected, 11/07/2026)
   home?: Home | null; // (where it stands on outside.wiki's globe, 11/08/2026: settle.ts)
+  pending?: boolean; // (an invite nobody's taken up yet, 11/08/2026: not listed, only counted under its inviter)
+  where?: Where; whereAt?: number; // (following, 11/08/2026: only while live, and when it came; the Directory says if it's fresh)
 }
 
 interface Att {
@@ -174,6 +177,11 @@ interface Meta {
   home?: Home | null; // where it stands on outside.wiki's globe (settle.ts, 11/08/2026): null or none, beside its inviter
   homeAt?: number; // when the home last changed (ms): the next change is SETTLE_EVERY_MS after it
   settle?: SettleCode; // the app's one-time code for the globe page (only its SHA-256), while it lasts
+  // an invite not taken up yet (11/08/2026): handed out by another outstation's invite, and its key never used since.
+  // Until it is, the open outstations' list leaves it out and only counts it under its inviter ("pending"): the
+  // inviter typed the name, and the friend hasn't agreed to anything. The first right key, from anything (a socket,
+  // Dink, clips, invites, settling), takes it up. A new key from the keeper leaves it as it was; taking it back forgets it.
+  pending?: boolean;
 }
 
 // One field report into a stream's summary (relay-py's fold, the same): what the stream's done so far, from Dink's numbers.
@@ -256,6 +264,11 @@ export class Channel extends DurableObject<Env> {
   gameTimer: ReturnType<typeof setTimeout> | null = null;
   gameSavedAt = 0;
   gameDirty = false;
+  // following (11/08/2026; game.ts, gameWhere): the square the plugin last said, when it came, and when the last one was
+  // taken (for WHERE_EVERY_MS). In memory only, never saved: a sleep forgets it, and the plugin says it again.
+  where: Where | null = null;
+  whereAt = 0;
+  whereTook = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -384,11 +397,13 @@ export class Channel extends DurableObject<Env> {
   /** This channel's row in the open portals' list (GET /channels): the same as it was read from /_status before. */
   listing(): Listing {
     const set = this.meta.keyHash !== null, code = !!this.meta.code, at = Date.now();
+    if (set && this.meta.pending) return { channel: this.name, set, code, at, pending: true }; // (only counted: its inviter's)
     if (!set || code) return { channel: this.name, set, code, at }; // (not listed: nothing more to tell)
     const live = this.live();
     return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
-             doing: this.doing(), game: this.sockets("game").length > 0, home: this.meta.home ?? null };
+             doing: this.doing(), game: this.sockets("game").length > 0, home: this.meta.home ?? null,
+             ...(live && this.where ? { where: this.where, whereAt: this.whereAt } : {}) };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -504,6 +519,12 @@ export class Channel extends DurableObject<Env> {
       tries.push(now);
       this.wrong.set(ip, tries);
       return [4003, "wrong key for this channel"];
+    }
+    if (this.meta.pending) {
+      // (an invite taken up: the friend has the key. On the open outstations' list from now on, no longer counted)
+      delete this.meta.pending;
+      this.saveMeta();
+      this.tellListing();
     }
     return null;
   }
@@ -778,11 +799,32 @@ export class Channel extends DurableObject<Env> {
     let m: any;
     try { m = JSON.parse(msg); } catch { return; }
     if (!m || typeof m !== "object" || Array.isArray(m) || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) return;
-    const got = this.game.apply(gameFields(m.game));
+    const fields = gameFields(m.game);
+    this.takeWhere(gameWhere(m.game), fields, now);
+    const got = this.game.apply(fields); // (never "where": gameFields leaves it out)
     if (!got) return;
     const line = pyjson({ game: { ...got, at: this.game.at } });
     for (const v of [...this.seated(), ...this.sockets("look"), ...this.sockets("desk")]) this.send(v, line);
     this.saveGameSoon();
+  }
+
+  /** Following (game.ts, gameWhere): a message's "where" taken (one every WHERE_EVERY_MS at most; more are ignored), or
+   *  the one held dropped (null, whenever it comes). Logged out ({"off": true}) or held for the player's safety
+   *  ({"paused": "wilderness"}), it's dropped, whatever the message says of it. Only the open outstations' list hears
+   *  of it (listing). */
+  takeWhere(w: Where | null | undefined, fields: Fields, now: number) {
+    if (fields.off === true || typeof fields.paused === "string" || w === null) return this.dropWhere();
+    if (!w || now - this.whereTook < WHERE_EVERY_MS) return;
+    this.where = w;
+    this.whereAt = this.whereTook = now;
+    this.tellListing();
+  }
+
+  dropWhere() {
+    if (!this.where) return;
+    this.where = null;
+    this.whereAt = 0;
+    this.tellListing();
   }
 
   /** The game state into storage, at most once every GAME_SAVE while messages come: soon after the first, then a minute
@@ -807,6 +849,8 @@ export class Channel extends DurableObject<Env> {
 
   /** Forgotten (a new key from the keeper, or the channel taken back). */
   clearGame() {
+    this.dropWhere(); // (following: the new key's holder starts with none)
+    this.whereTook = 0;
     if (this.gameTimer) clearTimeout(this.gameTimer);
     this.gameTimer = null;
     this.gameDirty = false;
@@ -883,6 +927,7 @@ export class Channel extends DurableObject<Env> {
     } else if (a.role === "game") {
       if (!this.sockets("game").length) {
         this.saveGame(); // (the last of it, for a page while the player's away)
+        this.dropWhere(); // (following: only while the plugin's connected)
         this.tellViewers();
       }
     }
@@ -1642,6 +1687,7 @@ export class Channel extends DurableObject<Env> {
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);
     delete this.meta.settle; // (a settling code the old key got: it's not the new key's; the home stays, as "by" does)
+    if (onlyNew) this.meta.pending = true; // (an invite's: not taken up till its key's used; the keeper's leaves it as it was)
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel has a new key");
@@ -1656,6 +1702,7 @@ export class Channel extends DurableObject<Env> {
     delete this.meta.home; // (settling: its home, when it changed, and any code, forgotten)
     delete this.meta.homeAt;
     delete this.meta.settle;
+    delete this.meta.pending; // (handed out again later, it's pending only if an invite hands it out)
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel was taken back");

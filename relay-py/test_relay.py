@@ -484,6 +484,44 @@ class Invites(RelayTest):
         self.assertTrue((await status(tx))["live"])
         self.assertEqual(self.relay.channels["moss"].by, "sburb")
 
+    async def test_an_invite_is_pending_till_its_key_is_used_for_anything(self):
+        # (11/08/2026: tests/protocol_test.py's take it up with a transmitter and GET /invites; here a desk and Dink,
+        # each with a key check of its own, and the public side's list)
+        async def lists(port=None):
+            status, got = await ask(port or self.port, "GET", "/channels")
+            self.assertEqual(status, 200)
+            return {c["channel"] for c in got["channels"]}, {p["by"]: p["n"] for p in got["pending"]}
+        async def status_of(c):
+            st = None
+            while True:
+                try:
+                    kind, line = await c.recv(0.2)
+                except asyncio.TimeoutError:
+                    return st
+                if kind == "text" and line.startswith('{"relay"'):
+                    st = json.loads(line)["relay"]
+        await self.connect("/transmit/sburb?key=secret-key")
+        await asyncio.sleep(0.05)
+        v = await self.connect("/watch/moss")                       # (a viewer waiting on a name, then invited)
+        keys = {}
+        for name in ("moss", "fern", "bog"):
+            status, got = await ask(self.port, "POST", "/invites/sburb", {"key": "secret-key", "player": name})
+            self.assertEqual(status, 200)
+            keys[name] = got["key"]
+        for port in (self.port, self.public_port):
+            self.assertEqual(await lists(port), ({"sburb"}, {"sburb": 3}))
+        self.assertTrue(self.relay.channels["moss"].pending)
+        bad = await self.connect("/desk/moss?key=not-the-key-at-all")
+        self.assertEqual(await bad.recv_close(), ("close", 4003))
+        self.assertEqual((await lists())[1], {"sburb": 3})        # (a wrong key takes nothing up)
+        await self.connect("/desk/moss?key=" + keys["moss"])
+        await asyncio.sleep(0.05)
+        self.assertEqual(await lists(), ({"sburb", "moss"}, {"sburb": 2}))
+        body, ct = multipart({"type": "LEVEL", "content": "fern levelled", "extra": {}})
+        self.assertEqual(await post(self.port, "/dink/fern?key=" + keys["fern"], body, ct), 204)
+        self.assertEqual(await lists(), ({"sburb", "moss", "fern"}, {"sburb": 1}))
+        self.assertTrue((await status_of(v))["set"])               # (the viewer waiting on moss: it's there now)
+
     async def test_the_public_side_refuses_invites_even_with_the_key(self):
         await self.connect("/transmit/sburb?key=secret-key")
         await asyncio.sleep(0.05)
@@ -493,6 +531,66 @@ class Invites(RelayTest):
                             json.dumps({"key": "secret-key", "player": "moss"}).encode(), "application/json")
         self.assertEqual(status, 403)
         self.assertNotIn("moss", self.relay.channels)
+
+
+class FollowingWords(unittest.TestCase):
+    """Following's "where" (11/08/2026; game_where): a 128-tile square's middle on the main map, null, or ignored."""
+
+    def test_a_squares_middle_is_taken_and_anything_else_is_not(self):
+        W = relay.game_where
+        self.assertEqual(W({"where": {"x": 3264, "y": 3264}}), {"x": 3264, "y": 3264})
+        self.assertEqual(W({"where": {"y": 2496, "x": 1088}}), {"x": 1088, "y": 2496})        # (the corners)
+        self.assertEqual(W({"where": {"x": 4032, "y": 4160}}), {"x": 4032, "y": 4160})
+        self.assertEqual(W({"where": {"x": 3264.0, "y": 3264}}), {"x": 3264, "y": 3264})    # (as JavaScript reads it)
+        self.assertIsNone(W({"where": None}))
+        for g in ({}, {"world": 302}, None, [], {"where": {"x": 1024, "y": 3264}}, {"where": {"x": 960, "y": 3264}},
+                  {"where": {"x": 4160, "y": 3264}}, {"where": {"x": 3264, "y": 2368}}, {"where": {"x": 3264, "y": 4224}},
+                  {"where": {"x": 3264, "y": 4288}}, {"where": {"x": 3265, "y": 3264}}, {"where": {"x": 3264.5, "y": 3264}},
+                  {"where": {"x": True, "y": 3264}}, {"where": {"x": "3264", "y": 3264}}, {"where": {"x": 3264}},
+                  {"where": {"x": 3264, "y": 3264, "plane": 0}}, {"where": [3264, 3264]}, {"where": "lumbridge"},
+                  {"where": 3264}, {"where": True}):
+            self.assertIs(W(g), relay._BAD, g)
+        self.assertNotIn("where", relay.game_fields({"world": 302, "where": {"x": 3264, "y": 3264}}))   # (never kept)
+
+
+class Following(RelayTest):
+    async def listed_where(self):
+        status, got = await ask(self.port, "GET", "/channels")
+        return {c["channel"]: c for c in got["channels"]}["sburb"]["where"]
+
+    async def test_a_new_square_is_taken_once_50_seconds_have_gone(self):
+        await self.connect("/transmit/sburb?key=secret-key")
+        g = await self.connect("/game/sburb?key=secret-key&v=0.0.1")
+        await g.send(json.dumps({"game": {"where": {"x": 3264, "y": 3264}}}))
+        await asyncio.sleep(0.05)
+        await g.send(json.dumps({"game": {"where": {"x": 3136, "y": 3264}}}))
+        await asyncio.sleep(0.05)
+        self.assertEqual(await self.listed_where(), {"x": 3264, "y": 3264})    # (too soon)
+        self.relay.channels["sburb"].where_took -= 50                           # (50 seconds on)
+        await g.send(json.dumps({"game": {"where": {"x": 3136, "y": 3264}}}))
+        await asyncio.sleep(0.05)
+        self.assertEqual(await self.listed_where(), {"x": 3136, "y": 3264})
+        self.relay.channels["sburb"].where_at -= relay.WHERE_FRESH_S + 1      # (240 seconds on: stale)
+        self.assertIsNone(await self.listed_where())
+
+
+class FollowingDelayed(RelayTest):
+    delay = 0.4
+
+    async def test_a_square_held_back_by_the_delay_isnt_taken_once_the_plugin_has_gone(self):
+        await self.connect("/transmit/sburb?key=secret-key")
+        g = await self.connect("/game/sburb?key=secret-key&v=0.0.1")
+        await g.send(json.dumps({"game": {"where": {"x": 3264, "y": 3264}}}))
+        await asyncio.sleep(0.6)
+        self.assertEqual((await ask(self.port, "GET", "/channels"))[1]["channels"][0]["where"], {"x": 3264, "y": 3264})
+        self.relay.channels["sburb"].where_took -= 50
+        await g.send(json.dumps({"game": {"where": {"x": 3136, "y": 3264}}}))
+        g.close()                                                    # (gone before the delay lets it go)
+        await asyncio.sleep(0.6)
+        ch = self.relay.channels["sburb"]
+        self.assertIsNone(ch.gamer)
+        self.assertIsNone(ch.where)
+        self.assertIsNone((await ask(self.port, "GET", "/channels"))[1]["channels"][0]["where"])
 
 
 class FakeDiscord:
