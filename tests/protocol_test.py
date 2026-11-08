@@ -1890,7 +1890,8 @@ class Following(Base):
         await self.pause()
         bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 960, "y": 3264},
                {"x": 3264, "y": 3264, "plane": 0}, {"x": 3264}, {"x": "3264", "y": 3264}, {"x": 3264.5, "y": 3264},
-               {"x": True, "y": 3264}, [3264, 3264], "lumbridge", 3264, True]
+               {"x": True, "y": 3264}, [3264, 3264], "lumbridge", 3264, True,
+               {"x": 2368, "y": 4544}, {"x": 2496, "y": 4416}, {"x": 2368, "y": 4288}]   # (Zanaris's neighbours: off the map)
         for i, w in enumerate(bad):
             if i and i % 4 == 0:
                 await asyncio.sleep(1.0)                           # (5 a second at most)
@@ -1901,6 +1902,12 @@ class Following(Base):
         await asyncio.sleep(1.0)
         await self.say(g, {"where": {"x": 3264.0, "y": 2496}})   # (a bad one never counted: this one's taken)
         self.assertEqual(await self.where(), {"x": 3264, "y": 2496})
+
+    async def test_zanaris_is_one_place_and_shows(self):
+        # (11/08/2026, Jace: "if someone goes to zanaris through a fairy ring on Gielinor make sure it shows their
+        # location as being on Zanaris": the plugin sends any tile there as this, which the globe draws on its moon)
+        await self.live_and_following({"x": 2368, "y": 4416})
+        self.assertEqual(await self.where(), {"x": 2368, "y": 4416})
 
     async def test_one_every_50_seconds_and_null_clears_whenever(self):
         tx, g = await self.live_and_following()
