@@ -175,4 +175,62 @@ public class FollowTest
 		walk(f, clock, 119_000, 3212, 3424, true, sends);
 		assertEquals(1, sends[0]);
 	}
+
+	@Test
+	public void theWorldGoesWithTheSquareFromTheSameMoment()
+	{
+		// ("and my world", 11/08/2026: the world they were on two minutes ago, with the square from then)
+		Follow f = new Follow();
+		long[] clock = {0};
+		JsonObject last = null;
+		for (long end = 121_000; clock[0] < end; clock[0] += TICK)
+		{
+			JsonObject o = f.tick(clock[0], 3222, 3218, clock[0] < 60_000 ? 302 : 330, true);
+			last = o == null ? last : o;
+		}
+		assertNotNull(last);
+		JsonObject w = last.getAsJsonObject("where");
+		assertEquals(3, w.size());
+		assertEquals(3264, w.get("x").getAsInt());
+		assertEquals(302, w.get("world").getAsInt());
+		// (a hop is a new place: it goes once the minute's up, two minutes after it)
+		int[] sends = {0};
+		JsonObject o = null;
+		for (long end = clock[0] + 60_000; clock[0] < end; clock[0] += TICK)
+		{
+			JsonObject got = f.tick(clock[0], 3222, 3218, 330, true);
+			if (got != null)
+			{
+				o = got;
+				sends[0]++;
+			}
+		}
+		assertEquals(1, sends[0]);
+		assertEquals(330, o.getAsJsonObject("where").get("world").getAsInt());
+	}
+
+	@Test
+	public void theWorldNeverGoesAloneOrFromAnywhereDangerous()
+	{
+		Follow f = new Follow();
+		long[] clock = {0};
+		int[] sends = {0};
+		// (off the map: nothing, the world included)
+		for (long end = 300_000; clock[0] < end; clock[0] += TICK)
+		{
+			assertNull(f.tick(clock[0], 3260, 6100, 302, true));
+		}
+		for (long end = clock[0] + 121_000; clock[0] < end; clock[0] += TICK)
+		{
+			if (f.tick(clock[0], 3222, 3218, 302, true) != null)
+			{
+				sends[0]++;
+			}
+		}
+		assertEquals(1, sends[0]);
+		// (a PvP world: cleared at once, square and world together)
+		JsonObject o = f.tick(clock[0], 3222, 3218, 325, false);
+		assertNotNull(o);
+		assertTrue(o.get("where").isJsonNull());
+	}
 }

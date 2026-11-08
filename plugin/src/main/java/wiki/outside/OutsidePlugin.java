@@ -6,27 +6,38 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.google.inject.Provides;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
+import net.runelite.api.Actor;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.EnumComposition;
 import net.runelite.api.EnumID;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
+import net.runelite.api.GameObject;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.NPC;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
 import net.runelite.api.Skill;
 import net.runelite.api.WorldType;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.GameObjectDespawned;
+import net.runelite.api.events.GameObjectSpawned;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
@@ -51,8 +62,11 @@ import org.slf4j.LoggerFactory;
  * Outside (11/07/2026): what you wear and carry, your looting bag, rune pouch and quiver, your skills, hitpoints,
  * prayer, run and special, sent to your outstation's channel on the relay (docs/protocol.md, "The game"), where your
  * Outside page draws them live beside your transmission and its chat, and keeps the last of them while you're away.
- * Nothing else is read or sent: no screen, no chat, no position, no bank. Each game tick, only what changed goes
+ * Nothing else is read or sent: no screen, no chat, no tile, no bank, nothing of other players. Each game tick, only what changed goes
  * (vitals alone at most every few seconds), with each new item's name and price once.
+ * For outside.wiki's globe, each off to begin with (11/08/2026): following (Follow), and the world with it; what
+ * they're doing (Activity, through Behind); the shooting stars they find (Stars). Each only ever the player's own, or
+ * a world object; never another player's.
  */
 @PluginDescriptor(
 	name = "Outside",
@@ -96,6 +110,19 @@ public class OutsidePlugin extends Plugin
 	private final Kit kit = new Kit();
 	/** following, likewise only on the client's thread */
 	private final Follow follow = new Follow();
+	/** "and my world" as it was last tick (switched off: what was sent with the world goes at once) */
+	private boolean followWorld;
+	/** what they're doing (11/08/2026), and it two minutes behind; likewise only on the client's thread */
+	private final Activity activity = new Activity();
+	private final Behind doing = new Behind("activity");
+	/** shooting stars (11/08/2026): what's to report, the stars in the scene (tile -> tier), and those that went this
+	 *  tick while logged in (a hop or a new scene clears both first, so neither counts as gone); the client's thread */
+	private final Stars stars = new Stars();
+	private final Map<WorldPoint, Integer> starsHere = new HashMap<>();
+	private final List<WorldPoint> starsWent = new ArrayList<>();
+	/** worlds where nothing goes to the globe: PvP of any kind, Deadman, high risk, Last Man Standing */
+	private static final EnumSet<WorldType> RISKY = EnumSet.of(WorldType.PVP, WorldType.DEADMAN, WorldType.HIGH_RISK,
+		WorldType.BOUNTY, WorldType.PVP_ARENA, WorldType.LAST_MAN_STANDING);
 	private volatile boolean resend;
 	/** sending held while somewhere dangerous (the Wilderness, a PvP world), and said so once */
 	private boolean paused;
@@ -150,9 +177,21 @@ public class OutsidePlugin extends Plugin
 	{
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
-			// (logged out: the relay drops the area with the rest; next time, the two minutes start again)
+			// (logged out: the relay drops the area and the activity with the rest; next time, the two minutes start
+			// again; the stars not reported yet are forgotten)
 			follow.forget();
 			follow.clear();
+			doing.forget();
+			doing.clear();
+			activity.forget();
+			stars.forget();
+		}
+		if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING
+			|| e.getGameState() == GameState.LOADING)
+		{
+			// (a new scene: its stars are seen again as it loads; one that went with the old one isn't gone)
+			starsHere.clear();
+			starsWent.clear();
 		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN && open)
 		{
@@ -179,10 +218,15 @@ public class OutsidePlugin extends Plugin
 			resend = false;
 			kit.forget();
 			follow.again();
+			doing.again();
 		}
-		// (following: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
+		// (the globe's: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
 		// somewhere dangerous clears it at once, before anything else)
-		JsonObject where = follow();
+		boolean safe = globeSafe();
+		long ms = System.currentTimeMillis();
+		JsonObject where = follow(ms, safe);
+		JsonObject what = activity(ms, safe);
+		look(ms, safe);
 		if (!open)
 		{
 			return;
@@ -190,6 +234,15 @@ public class OutsidePlugin extends Plugin
 		if (where != null)
 		{
 			send(where);
+		}
+		if (what != null)
+		{
+			send(what);
+		}
+		JsonObject star = config.stars() ? stars.due(ms) : null;
+		if (star != null)
+		{
+			send(star);
 		}
 		// (somewhere dangerous: nothing more goes till they're out, unless they've said otherwise, so nobody
 		// watching their page sees what they risk)
@@ -359,9 +412,13 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** Following's tick (Follow): what to send, or null. Off, what was sent goes once and nothing's kept. */
-	private JsonObject follow()
+	private JsonObject follow(long now, boolean safe)
 	{
-		if (!config.follow())
+		// ("and my world" switched off: what went with the world goes at once, and the two minutes start again)
+		boolean world = config.followWorld();
+		boolean wasWorld = followWorld;
+		followWorld = world;
+		if (!config.follow() || (wasWorld && !world))
 		{
 			JsonObject gone = follow.clear();
 			follow.forget();
@@ -373,8 +430,150 @@ public class OutsidePlugin extends Plugin
 		{
 			return null;
 		}
-		boolean safe = !dangerous() && !client.getTopLevelWorldView().isInstance();
-		return follow.tick(System.currentTimeMillis(), at.getX(), at.getY(), safe);
+		return follow.tick(now, at.getX(), at.getY(), world ? client.getWorld() : 0, safe);
+	}
+
+	/** The activity's tick (Activity, two minutes behind through Behind): what to send, or null. Off, what was sent
+	 *  goes once and nothing's kept. */
+	private JsonObject activity(long now, boolean safe)
+	{
+		if (!config.activity())
+		{
+			JsonObject gone = doing.clear();
+			doing.forget();
+			activity.forget();
+			return gone;
+		}
+		return doing.tick(now, activity.now(now), safe);
+	}
+
+	/** The stars in the scene this tick, and those that went while they watched, into Stars. Off, nothing's kept. */
+	private void look(long now, boolean safe)
+	{
+		if (!config.stars())
+		{
+			stars.forget();
+			starsWent.clear();
+			return;
+		}
+		int world = client.getWorld();
+		for (WorldPoint p : starsWent)
+		{
+			if (!starsHere.containsKey(p))
+			{
+				stars.gone(now, world, p.getX(), p.getY());
+			}
+		}
+		starsWent.clear();
+		for (Map.Entry<WorldPoint, Integer> e : starsHere.entrySet())
+		{
+			WorldPoint p = e.getKey();
+			stars.see(now, world, p.getX(), p.getY(), e.getValue(), safe && !inWilderness(p.getX(), p.getY()));
+		}
+	}
+
+	@Subscribe
+	public void onGameObjectSpawned(GameObjectSpawned e)
+	{
+		GameObject o = e.getGameObject();
+		int tier = Stars.tier(o.getId());
+		if (tier > 0)
+		{
+			starsHere.put(o.getWorldLocation(), tier);
+		}
+	}
+
+	@Subscribe
+	public void onGameObjectDespawned(GameObjectDespawned e)
+	{
+		GameObject o = e.getGameObject();
+		if (Stars.tier(o.getId()) == 0)
+		{
+			return;
+		}
+		WorldPoint p = o.getWorldLocation();
+		starsHere.remove(p);
+		// (gone while logged in, near enough to have seen it go: mined out, or a tier mined down, which spawns the
+		// next tier on the same tile this tick and so isn't gone)
+		Player me = client.getLocalPlayer();
+		if (client.getGameState() == GameState.LOGGED_IN && me != null && me.getWorldLocation().distanceTo(p) <= 32)
+		{
+			starsWent.add(p);
+		}
+	}
+
+	/** Their own experience (the activity's skilling). */
+	@Subscribe
+	public void onStatChanged(StatChanged e)
+	{
+		if (config.activity())
+		{
+			activity.xp(System.currentTimeMillis(), e.getSkill().getName(), e.getXp());
+		}
+	}
+
+	/** A hit in their own fight: theirs on an NPC, or one on them (the activity's fighting, and which boss). */
+	@Subscribe
+	public void onHitsplatApplied(HitsplatApplied e)
+	{
+		if (!config.activity())
+		{
+			return;
+		}
+		Player me = client.getLocalPlayer();
+		Actor who = e.getActor();
+		if (me == null || who == null)
+		{
+			return;
+		}
+		if (who == me)
+		{
+			activity.hit(System.currentTimeMillis(), foe(me));
+		}
+		else if (who instanceof NPC && e.getHitsplat().isMine())
+		{
+			activity.hit(System.currentTimeMillis(), who.getName());
+		}
+	}
+
+	/** The NPC in a fight with them: the one they're attacking, or one attacking them (a boss first); null if none. */
+	private String foe(Player me)
+	{
+		Actor target = me.getInteracting();
+		if (target instanceof NPC)
+		{
+			return target.getName();
+		}
+		String any = null;
+		for (NPC n : client.getTopLevelWorldView().npcs())
+		{
+			if (n.getInteracting() == me && n.getName() != null)
+			{
+				if (Activity.BOSSES.containsKey(n.getName()))
+				{
+					return n.getName();
+				}
+				any = n.getName();
+			}
+		}
+		return any;
+	}
+
+	/** Safe for the globe's features: not somewhere dangerous, not in an instance, not on a risky world. */
+	private boolean globeSafe()
+	{
+		if (dangerous() || client.getTopLevelWorldView().isInstance())
+		{
+			return false;
+		}
+		for (WorldType t : client.getWorldType())
+		{
+			if (RISKY.contains(t))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/** In the Wilderness, a PvP area, or on a PvP or Deadman world (read here, never sent). */

@@ -100,4 +100,56 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+
+	@ConfigItem(
+		keyName = "followWorld",
+		name = "And my world",
+		description = "Off (to begin with). On, with following on too, the world you were on two minutes ago goes with"
+			+ " the square, so the globe can show which world your light's on. Never on a PvP, Deadman or other"
+			+ " dangerous world, and never without following.",
+		warning = "On, the world you were on two minutes ago goes with the rough area (a square of the map about 128"
+			+ " tiles a side), so anyone who opens outside.wiki's globe while your outstation's transmitting can see which"
+			+ " world and roughly where you were two minutes before.",
+		position = 7
+	)
+	default boolean followWorld()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "activity",
+		name = "What I'm doing, on the globe",
+		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe shows what you were doing"
+			+ " two minutes ago, only as one word: skilling (and which skill), a boss (and which), fighting, or idle."
+			+ " At most once a minute, while your outstation's transmitting. Never in the Wilderness, a PvP area, on a"
+			+ " PvP or Deadman world or in an instance: there, what was sent is cleared at once. It doesn't need"
+			+ " following on.",
+		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss and which, fighting, or"
+			+ " idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
+			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while your outstation's"
+			+ " transmitting.",
+		position = 8
+	)
+	default boolean activity()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "stars",
+		name = "Shooting stars I find",
+		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
+			+ " its size, its world and the rough area it's in (a square about 128 tiles a side), two minutes late, with"
+			+ " nobody's name on it. Never one in the Wilderness, or seen from a PvP area or world, Deadman or an"
+			+ " instance.",
+		warning = "On, each shooting star you see (its size, world and rough area, two minutes late) goes to your"
+			+ " outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it to"
+			+ " anyone on outside.wiki's list of stars, without your name.",
+		position = 9
+	)
+	default boolean stars()
+	{
+		return false;
+	}
 }

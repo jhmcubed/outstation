@@ -1,9 +1,6 @@
 package wiki.outside;
 
-import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
-import java.util.ArrayDeque;
-import java.util.Deque;
 
 /**
  * Following (11/08/2026, Jace: "add plugin following with those safeguards"): while it's on, the rough area the player
@@ -18,11 +15,13 @@ import java.util.Deque;
  * </ul>
  * Off by default (OutsideConfig.follow), and the relay shows it only while their outstation's transmitting and open.
  * The client's thread calls tick() each game tick with where the player is; what it gives back, if anything, is sent.
+ * With "and my world" on too (OutsideConfig.followWorld, 11/08/2026), the world they were on goes with the square.
+ * The timing and the clearing are Behind's (11/08/2026), shared with the activity.
  */
 class Follow
 {
 	static final int SQUARE = 128;
-	static final long BEHIND_MS = 120_000, EVERY_MS = 60_000, AGAIN_MS = 180_000;
+	static final long BEHIND_MS = Behind.BEHIND_MS, EVERY_MS = Behind.EVERY_MS, AGAIN_MS = Behind.AGAIN_MS;
 	/** the main map's bounds (the surface; an underground area is 6400 tiles north of what's above it) */
 	static final int X0 = 1024, X1 = 4096, Y0 = 2496, Y1 = 4224, UNDER = 6400;
 	/** Zanaris (Jace, 11/08/2026: shown on the globe's moon), as one place whatever its tile: the fairy rings and the
@@ -30,96 +29,54 @@ class Follow
 	static final int ZX0 = 2368, ZX1 = 2496, ZY0 = 4352, ZY1 = 4480;
 	static final int[] ZANARIS = {2368, 4416};
 
-	private final Deque<long[]> seen = new ArrayDeque<>(); // [when, x, y], x < 0 for somewhere it mustn't say
-	private long sentAt = -1;
-	private int[] sent = null;
-	private boolean cleared = true;
+	/** the two minutes behind, the minute between, the clearing (Behind: the activity keeps the same ones) */
+	private final Behind behind = new Behind("where");
 
-	/**
-	 * A tick: where the player is (x, y on the map; safe false somewhere dangerous or in an instance). Gives what to send
-	 * ({"where": {"x", "y"}} or {"where": null}), or null for nothing now.
-	 */
+	/** A tick, without the world (OutsideConfig.followWorld off). */
 	JsonObject tick(long now, int x, int y, boolean safe)
 	{
+		return tick(now, x, y, 0, safe);
+	}
+
+	/**
+	 * A tick: where the player is (x, y on the map; safe false somewhere dangerous or in an instance), and the world
+	 * they're on (0 to leave it out: "and my world", 11/08/2026, is off). Gives what to send ({"where": {"x", "y"}},
+	 * with "world" when it's given, or {"where": null}), or null for nothing now. The world is part of the place, so
+	 * the square and the world that go are always from the same moment, two minutes ago.
+	 */
+	JsonObject tick(long now, int x, int y, int world, boolean safe)
+	{
 		int[] sq = safe ? square(x, y) : null;
-		seen.addLast(new long[]{now, sq == null ? -1 : sq[0], sq == null ? -1 : sq[1]});
-		while (seen.size() > 1 && now - seen.peekFirst()[0] > BEHIND_MS + 2 * EVERY_MS)
+		JsonObject w = null;
+		if (sq != null)
 		{
-			seen.removeFirst();
-		}
-		// (somewhere it mustn't say: what was sent goes at once)
-		if (sq == null && !safe)
-		{
-			return clear();
-		}
-		if (sentAt >= 0 && now - sentAt < EVERY_MS)
-		{
-			return null;
-		}
-		// where they were two minutes ago (the newest look at least that old)
-		long[] then = null;
-		for (long[] s : seen)
-		{
-			if (now - s[0] >= BEHIND_MS)
+			w = new JsonObject();
+			w.addProperty("x", sq[0]);
+			w.addProperty("y", sq[1]);
+			if (world > 0)
 			{
-				then = s;
+				w.addProperty("world", world);
 			}
 		}
-		if (then == null || then[1] < 0)
-		{
-			return null;
-		}
-		// (anywhere dangerous since then: wait till they've been clear of it the whole two minutes)
-		for (long[] s : seen)
-		{
-			if (s[0] >= then[0] && s[1] < 0)
-			{
-				return null;
-			}
-		}
-		int[] at = {(int) then[1], (int) then[2]};
-		if (sent != null && sent[0] == at[0] && sent[1] == at[1] && now - sentAt < AGAIN_MS)
-		{
-			return null;
-		}
-		sent = at;
-		sentAt = now;
-		cleared = false;
-		JsonObject w = new JsonObject(), out = new JsonObject();
-		w.addProperty("x", at[0]);
-		w.addProperty("y", at[1]);
-		out.add("where", w);
-		return out;
+		return behind.tick(now, w, safe);
 	}
 
 	/** Following turned off, or the connection's new: what was sent goes (once). */
 	JsonObject clear()
 	{
-		if (cleared)
-		{
-			return null;
-		}
-		cleared = true;
-		sent = null;
-		sentAt = -1;
-		JsonObject out = new JsonObject();
-		out.add("where", JsonNull.INSTANCE);
-		return out;
+		return behind.clear();
 	}
 
 	/** A new connection: the relay may not have it, so the next one due goes even if it's the same square. */
 	void again()
 	{
-		sent = null;
-		sentAt = -1;
+		behind.again();
 	}
 
 	/** Forget everything (following turned off): nothing old is sent once it's on again. */
 	void forget()
 	{
-		seen.clear();
-		sent = null;
-		sentAt = -1;
+		behind.forget();
 	}
 
 	/** The middle of the square a point's in, on the main map, or Zanaris as one place; null anywhere else. */
