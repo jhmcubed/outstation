@@ -108,3 +108,31 @@ impl Socket {
 
 /// The waits between tries when the relay can't be reached (capture.py's 2, 5, 10, 30 s).
 pub const WAITS: [u64; 4] = [2, 5, 10, 30];
+
+/// Where a transmission's messages go: the relay, or only the tape (11/07/2026, dark but recording: the same capture,
+/// the same frames and sound, kept in the replay buffer for clips and sent nowhere).
+pub enum Out {
+    Relay(Socket),
+    Tape,
+}
+
+impl Out {
+    pub fn try_recv(&mut self) -> Result<Got, String> {
+        match self { Out::Relay(s) => s.try_recv(), Out::Tape => Ok(Got::Nothing) }
+    }
+    pub fn recv(&mut self) -> Result<Got, String> {
+        match self { Out::Relay(s) => s.recv(), Out::Tape => Ok(Got::Nothing) }
+    }
+    pub fn binary(&mut self, b: Vec<u8>) -> Result<(), String> {
+        match self { Out::Relay(s) => s.binary(b), Out::Tape => Ok(()) }
+    }
+    pub fn text(&mut self, t: &str) -> Result<(), String> {
+        match self { Out::Relay(s) => s.text(t), Out::Tape => Ok(()) }
+    }
+    pub fn close(&mut self) {
+        if let Out::Relay(s) = self { s.close() }
+    }
+    pub fn taping(&self) -> bool {
+        matches!(self, Out::Tape)
+    }
+}

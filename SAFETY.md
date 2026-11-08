@@ -38,6 +38,7 @@ Everything drawn in RuneLite's game area goes out while you're live. The outstat
 - **The game's chat:** other players' names, private messages, your clan's chat. Black out the chat box (**redact**) if you'd rather not show it.
 - **RuneLite's overlays** on the game area (a plugin's boxes, timers, names over players) are part of the picture. RuneLite's side panel and title bar aren't.
 - **Your bank PIN:** press Pause first.
+- **The chat, if you put it there** ("chat in the picture", off to begin with; 11/07/2026): the chat over the game drawn into each frame on your PC, as it sits over the game, so observers and your clips see it. It's your viewers' names and lines, which are in the chat on Outside anyway.
 
 **Windows over RuneLite** (a browser, Discord, the outstation's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The monitor in the outstation's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more. And if the outstation can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
 
@@ -87,6 +88,15 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 - a random code your PC keeps, to collect the answer
 - While the request waits, the outstation asks the same relay every 20 seconds whether he's answered.
 
+**To your relay, for invites** (friends ▸, "invite a friend"; 11/07/2026), only while the drawer's open:
+- your channel and its key, to read how many invites are left (on opening it, then at most every 30 seconds)
+- when you press **make a key**: the name you typed for your friend, with your channel and key
+- The station key that comes back is only shown to you and copied when you press copy. You send it on yourself.
+
+**To your relay, to settle on the globe** (settings ▸ more, "choose where it stands on the globe…"; 11/08/2026), only when you press it: your channel and its key, for a one-time code (good for 10 minutes, once). Then your browser opens outside.wiki's globe with your channel's name and that code, never the key, and you choose there. What you choose (a place, rounded, or an outstation to stand beside) is public on the relay's list of open outstations.
+
+**To the aether** (the chat's "the aether" tab; 11/07/2026), only once you open it: your channel and its key, to join under your channel's name, then each line you send there. Everyone in the aether sees your lines, and the relay keeps the room's last 100 lines.
+
 **For your friends list** (friends ▸), while anyone's on it, to your relay (Jace's, before you're attached):
 - a request for the relay's list of open outstations, every minute (every 20 seconds while the list is open). Nothing about you or your list goes with it: the names are matched on your PC.
 - With the hand over a live friend's name, it watches their outstation through the relay for a small picture of it, the way the outstations page does: not counted as watching, and stopped when the hand moves away.
@@ -94,11 +104,16 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 **To your Discord,** only if you set the outstation to pass Dink's posts on (dink ▸, "do you use Dink with Discord too?"):
 - each post just as Dink made it, its embed and screenshot included
 - to your own webhook addresses, by the rules taken from your Dink settings, so your Discord gets what it got before
+- and, while you're transmitting with the tape on, the clip of a big moment (a pet, a new log slot, a 99, a big drop) a few seconds later, under that same post and only where it went: a copy of what you transmitted round that moment (up to 17 s, at most 768 px wide, under 8 MB), the same copy your Outside page would get. dink ▸, "and send them to Discord, under Dink's post", turns it off (11/07/2026).
 - Nowhere else ever gets a screenshot.
 
 **To GitHub,** once on opening (settings ▸ more turns it off): "is there a newer version?". Nothing about you goes with it.
 
+**From the Outside plugin in RuneLite** (a separate plugin, only if you install it and give it your station key; 11/07/2026), to your relay while you're logged in: what you wear and carry, your looting bag (once you've looked in it), rune pouch and quiver, your hitpoints, prayer, run and special and the prayers you have on, each skill's level and experience, your name, world and account type, and each of those items' name and price. With "Follow me on the globe" switched on (off to begin with; 11/08/2026), the rough area you were in two minutes ago too: a square of the map about 128 tiles a side, at most once a minute, never in the Wilderness, a PvP area, on a PvP or Deadman world or in an instance (going into one clears it at once). Never your screen, your chat, the tile you're on, your bank, or anything you type. [plugin/README.md](plugin/README.md) has it all.
+
 **Your internet address.** Every connection shows your internet address (IP) to the server it reaches, as any connection on the internet does: Cloudflare (the relay), GitHub, Discord. The relay doesn't write it down (see [What the relay keeps](#what-the-relay-keeps)).
+
+**Dark, with the tape rolling** ("clips only", or "and while dark too" in dink ▸; 11/07/2026): the outstation takes RuneLite's picture and sound exactly as when transmitting, but keeps them only in memory, the last few seconds, for clips. Nothing goes to the relay. A clip that saves itself goes to your clips folder and, if your Discord gets Dink's posts through the outstation, to Discord under that post, and nowhere else (never your Outside page while dark).
 
 Nothing else leaves your PC. Your settings, your log, your clips folder and your Dink settings stay where they are, unless you copy them somewhere yourself. Your webhook addresses go only to Discord itself. The safety check (below) proves the program has no other address in it.
 
@@ -107,7 +122,7 @@ Nothing else leaves your PC. Your settings, your log, your clips folder and your
 Here's everything the outstation hears back, and what it does with each. All of it is words and numbers the outstation shows, or pictures it draws in its own windows. None of it is run, opened, or passed to RuneLite.
 
 **From your viewers,** through the relay, which limits each line: one line at most 300 characters, its control characters taken out, 20 lines in 10 seconds:
-- **Chat lines:** shown in the chat as text, and over the game if "chat over the game" is on. A web address in a line is only text: the outstation never opens it. The outstation's taskbar button blinks when a viewer writes while it's behind other windows.
+- **Chat lines:** shown in the chat as text, and over the game if "chat over the game" is on (fading out after the settings' time), and drawn into the picture if "chat in the picture" is. A web address in a line is only text: the outstation never opens it. The outstation's taskbar button blinks when a viewer writes while it's behind other windows.
 - **Pings** (a viewer pointing at a spot, one every half second at most): a line in the chat, and, with "pings: the site + my screen", a ring over RuneLite in the outstation's own see-through window.
 - **✼ signals:** counted, and a ✼ floats over the game, with "✼ on my screen" on.
 - **Votes and drop guesses:** the counts.
@@ -197,7 +212,9 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 
 Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps.
 
-**What's public:** while your channel has no watch code, the relay's list of open outstations (on the outstations page) shows that it's there, whether it's live, how many watch, its title, and the boss and kill count it's on while it's live. A watch code takes it off the list.
+**What's public:** while your channel has no watch code, the relay's list of open outstations (on the outstations page) shows that it's there, whether it's live, how many watch, its title, the boss and kill count it's on while it's live, and where you've settled it on outside.wiki's globe, if you have (a spot on the map of Gielinor, rounded to two decimals, or the outstation you chose to stand beside). With following on, it also shows the square you were in two minutes before (its middle), only while you're live and only for 4 minutes after the plugin last said it. A watch code takes it off the list.
+
+While it's live with no watch code, the relay's feed of what's happening across the Array (outside.wiki's front page, 11/08/2026) also shows, under your channel's name and as each comes from Dink: a kill (the boss and its count), a level (the skill and level), a pet (its name), a drop worth 1,000,000 coins or more (its best item and its value), a collection log slot (the item) and a clue (its tier and count). Nothing that comes while you're dark, or while you have a watch code, ever goes on it.
 
 **Messages between outstations** (your friends list's "message"):
 - A message waiting for an outstation that's closed is kept until that outstation next opens: who it's from (their channel and chat name), their words and when. At most 20, each for a week.
@@ -215,6 +232,18 @@ Your picture and sound are passed on as they come and never written down. Only t
 A viewer's address (IP) isn't written down, and the relay never learns their name in the game or anything about their account.
 
 **Anomalies and requisitions** (only those you send): your words, the name you chat under, the version, the station log for an anomaly, your channel if it checked out, and when. At most 50, each for 30 days, until Jace reads it and takes it off. The address one came from is held in memory for an hour (5 an hour from one place).
+
+**Invites** (11/07/2026): how many each outstation has used and the names it invited, its time on air in all (invites are earned from it), and, for an outstation established through an invite, whose invite it was. That last one's public, on the relay's list of open outstations. So is how many of your invites haven't been taken up yet (11/08/2026, a key beside you on outside.wiki's globe for each), only a count and only while your channel's on that list. The names you invited never are: an invited outstation isn't on the list until its key is first used.
+
+**The Outside plugin's game** (only if you use the plugin; 11/07/2026): the last of what it sent (what you wore and carried, your looting bag, rune pouch and quiver, your vitals, prayers and skills, your name, world and account type, and the names and prices of those items), so your page shows it while you're away. Saved at most once a minute while it changes, and when the plugin disconnects. Your page shows it to anyone who opens it, as your transmission. Taken away when your channel is.
+
+**Following** (only with the plugin's "Follow me on the globe" on; 11/08/2026): the last square of the map the plugin said you were in two minutes before (its middle, a square about 128 tiles a side), and when it came. In memory only, never saved: a restart of the relay forgets it. The relay takes one every 50 seconds at most and ignores the rest. It's dropped when the plugin disconnects, when you log out, when the plugin holds back for your safety (the Wilderness, a PvP area or world), when the plugin clears it (somewhere dangerous, an instance, or following switched off), and when your channel is taken away or given a new key. It never goes to your page's viewers, its game panel, the Array's feed or the aether.
+
+**Settling** (11/08/2026; only if you settle): where your outstation stands on outside.wiki's globe, the spot you chose (rounded to two decimals) or the outstation you chose to stand beside, and when you last moved it (you can move it once a week). That's public, on the list of open outstations (above). To settle, your outstation trades its key for a one-time code that works for 10 minutes and only once, and opens the globe page with only that code: the key never goes to the page. The relay keeps the code (on Jace's relay only its SHA-256) until it's used, runs out or is replaced. Taken away when your channel is.
+
+**The Array's events** (11/08/2026): the feed above, the last 500 from every outstation together (each one's channel, what it was and when), and when each outstation's last few came (10 a minute at most from one). In memory only, never written down: gone when the relay restarts, and on Cloudflare whenever that part of the relay is put to sleep.
+
+**The aether** (everyone's room; 11/07/2026): its last 100 lines (each one's name, words and when, and for a visitor the random number their browser made, which a ban holds on to), and who's banned from it. A visitor's address isn't written down.
 
 **Asking for an outstation:**
 - the name and note you typed, and the SHA-256 of your outstation's pickup code

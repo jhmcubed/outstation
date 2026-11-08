@@ -6,14 +6,29 @@
 // must outlive a sleep (the key's hash, the watch code, the chat so far, the poll, the blocks, the reports)
 // is in the object's own storage; each socket's own state is in its attachment. While a channel is live its
 // frames keep it awake, so the last frame lives in memory only.
+//
+// The game (11/07/2026; game.ts, docs/protocol.md "The game"): the Outside plugin's socket (/game/<channel>?key=), one at
+// a time, its fields kept and what changed passed to seated viewers, lookers and desks; saved at most once a minute while
+// messages come, and as it closes, so a page shows the last of it while the player's away.
+//
+// The Array's events (11/08/2026; array.ts, docs/protocol.md "The Array's events"): what each field report adds (a kill,
+// a level, a pet, a big drop, a log slot, a clue), told to the Directory only while the channel's live and listed.
+//
+// Settling (11/08/2026; settle.ts, docs/protocol.md "Settling"): where the outstation stands on outside.wiki's globe (its
+// home), chosen by its owner with a one-time code the app trades its key for; kept in the meta, and in its row of
+// GET /channels.
 
 import { DurableObject } from "cloudflare:workers";
-import { dinkReport, oneLine, pyjson } from "./text";
+import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
+import { type Fields, GameState, gameFields, gameWhere, GAME_A_SECOND, GAME_MESSAGE, type Where, WHERE_EVERY_MS } from "./game";
+import { arrayEvents } from "./array";
+import { type Home, type SettleCode, SETTLE_CODE, SETTLE_CODE_MS, SETTLE_EVERY_MS, settleAnswer, settleCode, settleWanted } from "./settle";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
   DIRECTORY: DurableObjectNamespace;
+  AETHER: DurableObjectNamespace; // the aether (aether.ts, 11/07/2026): one room for every outstation and visitor
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
@@ -26,6 +41,8 @@ export interface Env {
   CLIPS_MOST?: string; // a channel's clips at most (20)
   CLIPS_DAYS?: string; // and for how long (30 days)
   CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
+  SETTLE_CODE_SECONDS?: string; // (tests) how long a settling code lasts (settle.ts's SETTLE_CODE_MS: 600)
+  WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -49,6 +66,20 @@ const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused 
 // for it till its portal next opens (relay.py's DMS_KEPT, DMS_DAYS, DMS_A_MINUTE)
 const DMS_KEPT = 20, DMS_DAYS = 7, DMS_A_MINUTE = 20;
 interface Dm { from: string; name: string; text: string; at: number }
+// invites (11/07/2026, Jace: "each of my friends being able to pass out a few keys so that way the platform propagates
+// easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
+// begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (relay.py's, the same)
+export const INVITES_START = 3, INVITE_EVERY_S = 36_000, INVITES_AN_HOUR = 5;
+// a channel asked for or invited: a player's name as the page has it (lower case, no spaces)
+export const PLAYER = /^[a-z0-9]{1,12}$/;
+
+/** An outstation's invites, from its time on air in all (seconds) and the names it's invited (relay.py's
+ *  invite_numbers, the same). hours: one decimal, rounded down, so it never says 10.0 before the invite at 10. */
+export function inviteNumbers(seconds: number, used: string[]) {
+  const s = Math.max(0, Math.floor(seconds)), earned = INVITES_START + Math.floor(s / INVITE_EVERY_S);
+  return { left: Math.max(0, earned - used.length), earned, used, hours: Math.floor(s / 360) / 10,
+           next_in_s: INVITE_EVERY_S - (s % INVITE_EVERY_S) };
+}
 const OPEN = 1; // WebSocket.OPEN
 // Flow control: a viewer says {"got": <binary bytes received so far>} about once a second, and past this much
 // sent and not yet acknowledged it's sent no more frames or sound until it catches up. (Cloudflare's server side
@@ -64,8 +95,11 @@ const LOOK_READS = 128 * 1024;
 const LISTING_WAIT = 50;
 // the acknowledged rate (tellUpload's "acked") over this long: pages acknowledge every 1-3 s since 11/07/2026
 const ACKED_OVER = 5000;
+// the game state (11/07/2026) into storage at most this often while the plugin's messages come (one a message would be
+// up to 18,000 rows written an hour), and as its socket closes
+const GAME_SAVE = 60_000;
 
-type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "refused";
+type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "game" | "refused";
 
 interface Flow { sent: number; got: number; at: number }
 
@@ -73,6 +107,10 @@ interface Flow { sent: number; got: number; at: number }
 export interface Listing {
   channel: string; set: boolean; code: boolean; at: number;
   live?: boolean; open?: boolean; static?: boolean; viewers?: number; title?: string; doing?: { boss: string; kc: number } | null;
+  game?: boolean; // (the Outside plugin's connected, 11/07/2026)
+  home?: Home | null; // (where it stands on outside.wiki's globe, 11/08/2026: settle.ts)
+  pending?: boolean; // (an invite nobody's taken up yet, 11/08/2026: not listed, only counted under its inviter)
+  where?: Where; whereAt?: number; // (following, 11/08/2026: only while live, and when it came; the Directory says if it's fresh)
 }
 
 interface Att {
@@ -130,10 +168,20 @@ interface Meta {
   liveSince?: number; // when this stretch on air began (ms), while it lasts
   liveSeen?: number; // the last moment it was seen on air (saved about once a minute), for a stretch that ended unseen
   liveMs?: Record<string, number>; // time on air by month ("2026-11"), the last few months, for the keeper's bill
+  liveAll?: number; // time on air in all, in seconds, the stretch going on now not included (11/07/2026: invites)
+  invited?: string[]; // the channels this one has invited, in order (11/07/2026)
   summary?: Summary | null; // this stream's summary (fold): the readings the same for everyone, and the recap off air
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
+  home?: Home | null; // where it stands on outside.wiki's globe (settle.ts, 11/08/2026): null or none, beside its inviter
+  homeAt?: number; // when the home last changed (ms): the next change is SETTLE_EVERY_MS after it
+  settle?: SettleCode; // the app's one-time code for the globe page (only its SHA-256), while it lasts
+  // an invite not taken up yet (11/08/2026): handed out by another outstation's invite, and its key never used since.
+  // Until it is, the open outstations' list leaves it out and only counts it under its inviter ("pending"): the
+  // inviter typed the name, and the friend hasn't agreed to anything. The first right key, from anything (a socket,
+  // Dink, clips, invites, settling), takes it up. A new key from the keeper leaves it as it was; taking it back forgets it.
+  pending?: boolean;
 }
 
 // One field report into a stream's summary (relay-py's fold, the same): what the stream's done so far, from Dink's numbers.
@@ -209,11 +257,23 @@ export class Channel extends DurableObject<Env> {
   listingRow = ""; // the row last told to the Directory (tellListing)
   listingTimer: ReturnType<typeof setTimeout> | null = null;
   directory: DurableObjectStub | null = null; // (one stub, so what's told arrives in the order it was told)
+  // the game (11/07/2026): what the Outside plugin last sent (kept through a sleep: saveGame), and when each game
+  // socket's last messages were read (GAME_A_SECOND; in memory: a sleep forgets, which only loosens it)
+  game = new GameState();
+  gameReads = new WeakMap<WebSocket, number[]>();
+  gameTimer: ReturnType<typeof setTimeout> | null = null;
+  gameSavedAt = 0;
+  gameDirty = false;
+  // following (11/08/2026; game.ts, gameWhere): the square the plugin last said, when it came, and when the last one was
+  // taken (for WHERE_EVERY_MS). In memory only, never saved: a sleep forgets it, and the plugin says it again.
+  where: Where | null = null;
+  whereAt = 0;
+  whereTook = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess"]);
+      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game"]);
       this.guess = (got.get("guess") as Guess) || null;
       this.name = (got.get("name") as string) || "";
       this.meta = (got.get("meta") as Meta) || {
@@ -223,6 +283,7 @@ export class Channel extends DurableObject<Env> {
       this.chat = (got.get("chat") as [number, string][]) || [];
       this.poll = (got.get("poll") as Poll) || null;
       this.reports = (got.get("reports") as string[]) || [];
+      this.game = new GameState(got.get("game") as { kept: Fields; at: number } | undefined);
     });
   }
 
@@ -312,6 +373,7 @@ export class Channel extends DurableObject<Env> {
       pings: !this.meta.pingsOff,
       chat: !this.meta.chatOff,
       title: this.meta.title || "",
+      game: this.sockets("game").length > 0, // (the Outside plugin's connected, 11/07/2026)
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
@@ -335,11 +397,13 @@ export class Channel extends DurableObject<Env> {
   /** This channel's row in the open portals' list (GET /channels): the same as it was read from /_status before. */
   listing(): Listing {
     const set = this.meta.keyHash !== null, code = !!this.meta.code, at = Date.now();
+    if (set && this.meta.pending) return { channel: this.name, set, code, at, pending: true }; // (only counted: its inviter's)
     if (!set || code) return { channel: this.name, set, code, at }; // (not listed: nothing more to tell)
     const live = this.live();
     return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
-             doing: this.doing() };
+             doing: this.doing(), game: this.sockets("game").length > 0, home: this.meta.home ?? null,
+             ...(live && this.where ? { where: this.where, whereAt: this.whereAt } : {}) };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -356,6 +420,18 @@ export class Channel extends DurableObject<Env> {
       this.ctx.waitUntil(this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) })
         .then((r) => { if (!r.ok) this.listingRow = ""; }, () => { this.listingRow = ""; })); // (told again at the next change)
     }, LISTING_WAIT);
+  }
+
+  /** A field report's events (array.ts) told to the Directory, for the Array's feed (11/08/2026): only while this
+   *  channel's live and listed (handed out, no watch code: on GET /channels), so a dark or coded outstation's reports
+   *  never show. The Directory keeps them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
+  tellArray(report: unknown) {
+    if (!this.name || !this.live() || this.meta.keyHash === null || this.meta.code) return;
+    const events = arrayEvents(report);
+    if (!events.length) return;
+    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+    this.ctx.waitUntil(this.directory.fetch("https://dir/array", { method: "PUT", body: JSON.stringify({ channel: this.name, events }) })
+      .then(() => undefined, () => undefined)); // (one lost is one less "+1")
   }
 
   /** Who's watching, for the desk (11/05/2026, Jace: "add viewer list"): each viewer's number, the name it gave in
@@ -392,6 +468,8 @@ export class Channel extends DurableObject<Env> {
     if (this.lastFrame && this.live()) this.sendBinary(ws, this.lastFrame); // (off air, no old frame)
     for (const r of this.reports) this.send(ws, r);
     if (this.meta.summary) this.send(ws, this.summaryLine());
+    const game = this.game.wholeLine();
+    if (game) this.send(ws, game);
     this.lateJoiner(ws, "watch");
   }
 
@@ -442,6 +520,12 @@ export class Channel extends DurableObject<Env> {
       this.wrong.set(ip, tries);
       return [4003, "wrong key for this channel"];
     }
+    if (this.meta.pending) {
+      // (an invite taken up: the friend has the key. On the open outstations' list from now on, no longer counted)
+      delete this.meta.pending;
+      this.saveMeta();
+      this.tellListing();
+    }
     return null;
   }
 
@@ -463,13 +547,14 @@ export class Channel extends DurableObject<Env> {
     let [, role] = url.pathname.split("/");
     if (role === "watch" && q.get("look") === "1") role = "look";
 
-    if (role === "_mint") return this.mint();
+    if (role === "_mint") return this.mint(q.get("new") === "1");
     if (role === "_status") {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
                              viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "",
-                             live_s: this.secondsThisMonth(), doing: this.doing() });
+                             live_s: this.secondsThisMonth(), doing: this.doing(), home: this.meta.home ?? null,
+                             homeAt: this.meta.homeAt ?? null });
     }
     if (role === "_listing") return Response.json(this.listing()); // (the Directory, for a row it hasn't been told)
     if (role === "_revoke") return this.revoke();
@@ -482,15 +567,22 @@ export class Channel extends DurableObject<Env> {
     if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
     // (an anomaly report's channel and key, checked: index.ts's /reports)
     if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
+    // (an outstation joining the aether, aether.ts: its key checked as its desk's would be, and why not if not)
+    if (role === "_key") return Response.json({ no: await this.checkKey(q.get("key") || "", ip) });
     if (role === "_dm") return this.takeDm(request);
+    if (role === "_invites") return this.invites(request, q, ip);
+    if (role === "_settle") return this.settle(request, q, ip);
+    if (role === "_home") return this.home(request);
+    if (role === "_game") return this.readGame(q);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
 
     // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
-    // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit)
+    // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit). The game's v= is the
+    // Outside plugin's own version, which MIN_CLIENT never looks at.
     const min = this.env.MIN_CLIENT || "";
     const no: [number, string] | null = role === "watch" || role === "look" ? null
-      : tooOld(q.get("v"), min) ? [4026, `this outstation is too old for the relay: ${min} or newer is needed`]
+      : role !== "game" && tooOld(q.get("v"), min) ? [4026, `this outstation is too old for the relay: ${min} or newer is needed`]
       : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
@@ -512,6 +604,8 @@ export class Channel extends DurableObject<Env> {
         this.openDesk(ws, a, q.get("name") || "");
         await this.tellNotice(ws);
         await this.tellDms(ws);
+      } else if (role === "game") {
+        this.openGame(ws);
       } else {
         this.openSound(ws);
       }
@@ -582,6 +676,8 @@ export class Channel extends DurableObject<Env> {
     a.lookAt = 0;
     this.keep(ws, a);
     this.send(ws, this.status());
+    const game = this.game.wholeLine();
+    if (game) this.send(ws, game);
   }
 
   openDesk(ws: WebSocket, a: Att, hostName: string) {
@@ -594,6 +690,8 @@ export class Channel extends DurableObject<Env> {
     }
     this.send(ws, this.status());
     this.lateJoiner(ws, "desk");
+    const game = this.game.wholeLine();
+    if (game) this.send(ws, game);
     this.send(ws, this.bannedLine());
     this.send(ws, this.viewerList());
   }
@@ -680,6 +778,94 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
+  // the game (11/07/2026; game.ts): the Outside plugin's socket, one at a time, a newer one replacing the older
+
+  openGame(ws: WebSocket) {
+    for (const old of this.sockets("game")) {
+      if (old !== ws) this.close(old, 4000, "replaced by a newer game");
+    }
+    this.tellViewers(); // (the status line's "game")
+  }
+
+  /** A {"game"} message: GAME_A_SECOND a second at most and GAME_MESSAGE long at most (the rest dropped, with no
+   *  answer), into the kept state, and what it changed on to seated viewers, lookers and desks. */
+  fromGame(ws: WebSocket, msg: string) {
+    if (ws.readyState !== OPEN) return; // (one replaced, or cut off by a new key: what it still had on the way)
+    const now = Date.now(), read = (this.gameReads.get(ws) || []).filter((t) => now - t < 1000);
+    this.gameReads.set(ws, read);
+    if (read.length >= GAME_A_SECOND) return;
+    read.push(now);
+    if (msg.length > GAME_MESSAGE) return;
+    let m: any;
+    try { m = JSON.parse(msg); } catch { return; }
+    if (!m || typeof m !== "object" || Array.isArray(m) || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) return;
+    const fields = gameFields(m.game);
+    this.takeWhere(gameWhere(m.game), fields, now);
+    const got = this.game.apply(fields); // (never "where": gameFields leaves it out)
+    if (!got) return;
+    const line = pyjson({ game: { ...got, at: this.game.at } });
+    for (const v of [...this.seated(), ...this.sockets("look"), ...this.sockets("desk")]) this.send(v, line);
+    this.saveGameSoon();
+  }
+
+  /** Following (game.ts, gameWhere): a message's "where" taken (one every WHERE_EVERY_MS at most; more are ignored), or
+   *  the one held dropped (null, whenever it comes). Logged out ({"off": true}) or held for the player's safety
+   *  ({"paused": "wilderness"}), it's dropped, whatever the message says of it. Only the open outstations' list hears
+   *  of it (listing). */
+  takeWhere(w: Where | null | undefined, fields: Fields, now: number) {
+    if (fields.off === true || typeof fields.paused === "string" || w === null) return this.dropWhere();
+    if (!w || now - this.whereTook < WHERE_EVERY_MS) return;
+    this.where = w;
+    this.whereAt = this.whereTook = now;
+    this.tellListing();
+  }
+
+  dropWhere() {
+    if (!this.where) return;
+    this.where = null;
+    this.whereAt = 0;
+    this.tellListing();
+  }
+
+  /** The game state into storage, at most once every GAME_SAVE while messages come: soon after the first, then a minute
+   *  after the last save. (A timer waiting should keep the object from hibernating, so a sleep loses nothing since the
+   *  last save; if it doesn't, or the object's evicted by a deploy or a restart, at most that minute is lost.) */
+  saveGameSoon() {
+    this.gameDirty = true;
+    if (this.gameTimer) return;
+    this.gameTimer = setTimeout(() => { this.gameTimer = null; this.saveGame(); },
+                                Math.max(0, this.gameSavedAt + GAME_SAVE - Date.now()));
+  }
+
+  /** Saved now, if anything's changed since the last time (and as the game socket closes). */
+  saveGame() {
+    if (this.gameTimer) clearTimeout(this.gameTimer);
+    this.gameTimer = null;
+    if (!this.gameDirty) return;
+    this.gameDirty = false;
+    this.gameSavedAt = Date.now();
+    this.ctx.storage.put("game", { kept: this.game.kept, at: this.game.at });
+  }
+
+  /** Forgotten (a new key from the keeper, or the channel taken back). */
+  clearGame() {
+    this.dropWhere(); // (following: the new key's holder starts with none)
+    this.whereTook = 0;
+    if (this.gameTimer) clearTimeout(this.gameTimer);
+    this.gameTimer = null;
+    this.gameDirty = false;
+    this.game = new GameState();
+    this.ctx.storage.delete("game");
+  }
+
+  /** GET /game/<channel>?code= (index.ts): the game state kept, for a page while the outstation's dark, and whether the
+   *  plugin's connected now; the watch code needed when the channel has one, as watching. */
+  readGame(q: URLSearchParams): Response {
+    if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+    if (this.game.empty) return json({ error: "no game state for that outstation" }, 404);
+    return json({ game: this.game.kept, at: this.game.at, connected: this.sockets("game").length > 0 });
+  }
+
   // messages
 
   // (not async: nothing here waits, and a frame needn't make a promise)
@@ -697,7 +883,9 @@ export class Channel extends DurableObject<Env> {
     } else if (a.role === "desk") {
       if (typeof msg === "string") this.fromDesk(a.host || this.name, msg, ws);
     } else if (a.role === "sound") this.fromSound(msg);
-    else if (a.role === "look" && typeof msg === "string" && msg.length <= VIEWER_TEXT) {
+    else if (a.role === "game") {
+      if (typeof msg === "string") this.fromGame(ws, msg);
+    } else if (a.role === "look" && typeof msg === "string" && msg.length <= VIEWER_TEXT) {
       let m: any;
       try { m = JSON.parse(msg); } catch { return; }
       if (m && typeof m.look === "object" && m.look) {
@@ -736,17 +924,41 @@ export class Channel extends DurableObject<Env> {
         this.saveMeta();
         for (const v of this.seated()) this.send(v, this.meta.soundInfo);
       }
+    } else if (a.role === "game") {
+      if (!this.sockets("game").length) {
+        this.saveGame(); // (the last of it, for a page while the player's away)
+        this.dropWhere(); // (following: only while the plugin's connected)
+        this.tellViewers();
+      }
     }
   }
 
-  /** Time on air from `from` to `to` (ms) into its month's count, keeping the last four months. */
+  /** Time on air from `from` to `to` (ms) into its month's count, keeping the last four months, and into the count of
+   *  it all (11/07/2026, for invites). */
   addLive(from: number, to: number) {
     if (to <= from) return;
+    const before = this.lifetime(); // (first: a channel from before starts from the months it keeps, this one not yet in)
     const month = new Date(to).toISOString().slice(0, 7);
     const all = this.meta.liveMs || {};
     all[month] = (all[month] || 0) + (to - from);
     for (const m of Object.keys(all).sort().slice(0, -4)) delete all[m];
     this.meta.liveMs = all;
+    this.meta.liveAll = before + (to - from) / 1000;
+  }
+
+  /** Seconds on air in all, the stretch going on now not included. A channel from before it was counted (11/07/2026)
+   *  starts from the months it still keeps, the first time it's asked. */
+  lifetime(): number {
+    if (this.meta.liveAll === undefined) {
+      this.meta.liveAll = Object.values(this.meta.liveMs || {}).reduce((a, b) => a + b, 0) / 1000;
+      this.saveMeta();
+    }
+    return this.meta.liveAll;
+  }
+
+  /** Seconds on air in all, the stretch going on now included. */
+  secondsInAll(): number {
+    return this.lifetime() + (this.meta.liveSince && this.live() ? (Date.now() - this.meta.liveSince) / 1000 : 0);
   }
 
   /** Seconds on air this month (UTC), the stretch going on now included. */
@@ -789,10 +1001,13 @@ export class Channel extends DurableObject<Env> {
       this.reports.push(msg);
       this.reports = this.reports.slice(-REPORTS_KEPT);
       this.ctx.storage.put("reports", this.reports);
+      let report: unknown = null;
+      try { report = JSON.parse(msg).report; } catch { /* not a report after all */ }
       if (this.meta.summary) {
-        try { summed = fold(this.meta.summary, JSON.parse(msg).report); } catch { /* not a report after all */ }
+        try { summed = fold(this.meta.summary, report); } catch { /* not one it can read */ }
         if (summed) this.saveMeta();
       }
+      this.tellArray(report);
     } else if (typeof msg === "string") {
       this.lastData = msg;
       if (msg.startsWith('{"state"')) {
@@ -1301,26 +1516,198 @@ export class Channel extends DurableObject<Env> {
     return json({ id: clip.id }, 201);
   }
 
+  // Invites (11/07/2026; docs/protocol.md, "Invites"): this outstation hands out channels of its own, as the keeper does
+  // (index.ts's mint, the same steps), INVITES_START to begin with and one more every INVITE_EVERY_S on air.
+  //   GET  ?key=              {"left", "earned", "used", "hours", "next_in_s"}
+  //   POST {"key", "player"}  {"channel", "key", "code", "left"}: a new channel for that player, its row in the
+  //                           Directory saying it came from this one ("by")
+  // An invite is counted only once the new channel has its key, so nothing that fails loses one. While one's being made
+  // its name is held here (inviting), so two posts at once can't both take the last invite: this object handles one
+  // request at a time, but another can come in while this one waits on the Directory or the new channel.
+
+  invitePosts: number[] = []; // when this outstation last posted for an invite (in memory: a sleep forgets, which only loosens it)
+  inviting = new Set<string>();
+
+  async invites(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    if (request.method !== "GET" && request.method !== "POST") return new Response(null, { status: 405 });
+    const body = request.method === "POST" ? ((await request.json().catch(() => null)) as { key?: unknown; player?: unknown } | null) : null;
+    const key = request.method === "GET" ? q.get("key") || "" : typeof body?.key === "string" ? body.key : "";
+    const no = await this.keyRefusal(key, ip);
+    if (no) return json({ error: no[1] }, no[0]);
+    const used = () => this.meta.invited || [];
+    if (request.method === "GET") return json(inviteNumbers(this.secondsInAll(), used()));
+    const now = Date.now();
+    this.invitePosts = this.invitePosts.filter((t) => now - t < 3_600_000);
+    if (this.invitePosts.length >= INVITES_AN_HOUR) return json({ error: `${INVITES_AN_HOUR} invites an hour at most: try again later` }, 429);
+    this.invitePosts.push(now);
+    const player = typeof body?.player === "string" ? body.player : "";
+    if (!PLAYER.test(player)) return json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, 400);
+    if (player === this.name.toLowerCase()) return json({ error: "that's your own outstation" }, 400);
+    if (inviteNumbers(this.secondsInAll(), used()).left - this.inviting.size <= 0) {
+      return json({ error: `no invites left: one more every ${INVITE_EVERY_S / 3600} hours on air` }, 409);
+    }
+    const taken = () => json({ error: "that name has an outstation already" }, 409);
+    if (this.inviting.has(player)) return taken();
+    this.inviting.add(player);
+    try {
+      const dir = (this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory")));
+      const row = "https://dir/?name=" + encodeURIComponent(player);
+      // the name in the Directory first (only if nobody has it), then the new channel's key; the row taken back if the
+      // key can't be made
+      const r = await dir.fetch(row + "&by=" + encodeURIComponent(this.name), { method: "PUT" });
+      if (r.status === 409) return taken();
+      if (!r.ok) return json({ error: "the invite didn't go through: try again" }, 503);
+      let minted: Response | null = null;
+      try {
+        minted = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(player))
+          .fetch(new Request(new URL("/_mint?new=1", request.url).toString(), { method: "POST", headers: { "x-channel": player } }));
+      } catch { /* (below) */ }
+      const got = minted && minted.ok ? ((await minted.json()) as { key?: string }) : null;
+      if (!got?.key) {
+        await dir.fetch(row, { method: "DELETE" }).catch(() => null);
+        return minted?.status === 409 ? taken() : json({ error: "the invite didn't go through: try again" }, 503);
+      }
+      this.meta.invited = [...used(), player];
+      this.saveMeta();
+      return json({ channel: player, key: got.key, code: attachCode(relayOf(request.url), player, got.key),
+                    left: inviteNumbers(this.secondsInAll(), used()).left });
+    } finally {
+      this.inviting.delete(player);
+    }
+  }
+
+  /** Why an HTTP route's key won't do for this channel, as [its status, its reason], or null: the invites' check, and
+   *  settling's. 404 for a channel nobody's handed out; 403 for a key under 8 characters, the wrong key, or past the
+   *  wrong-key limit (checkKey's reasons). */
+  async keyRefusal(key: string, ip: string): Promise<[number, string] | null> {
+    if (this.meta.keyHash === null) return [404, "no outstation called that here"];
+    const no = await this.checkKey(key, ip);
+    return no ? [403, no[1]] : null;
+  }
+
+  // Settling (11/08/2026; settle.ts, docs/protocol.md "Settling"): where this outstation stands on outside.wiki's globe.
+  //   POST /settle ?key=     the app's: its key for a one-time code, {"code", "expires"}; asking again replaces it
+  //   GET  /settle ?code=    the page's: {"channel", "home", "next"}; the code isn't used up
+  //   POST /home   {"code", ...}   the page settles: {"home", "next"}, the code used up
+
+  /** Why a settling code won't do (a 403's reason), or null. h: the SHA-256 of the code given (null: not a code). */
+  codeRefusal(h: string | null): string | null {
+    const s = this.meta.settle;
+    if (!s || h === null || s.hash !== h) return "wrong code: open settling again from your outstation";
+    if (s.used) return "that code's been used: open settling again from your outstation";
+    if (Date.now() >= s.expires) return "that code has expired: open settling again from your outstation";
+    return null;
+  }
+
+  /** When the home may next change (ms), or null for now: SETTLE_EVERY_MS after the last change (the first is free). */
+  settleNext(): number | null {
+    const at = this.meta.homeAt;
+    return at !== undefined && Date.now() < at + SETTLE_EVERY_MS ? at + SETTLE_EVERY_MS : null;
+  }
+
+  async settle(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (request.method === "POST") {
+      const no = await this.keyRefusal(q.get("key") || "", ip);
+      if (no) return settleAnswer({ error: no[1] }, no[0], false);
+      const code = settleCode(), life = (parseFloat(this.env.SETTLE_CODE_SECONDS || "") * 1000) || SETTLE_CODE_MS;
+      const expires = Date.now() + life;
+      this.meta.settle = { hash: await this.hash(code), expires };
+      this.saveMeta();
+      return settleAnswer({ code, expires }, 200, false);
+    }
+    const raw = q.get("code") || "";
+    const no = this.codeRefusal(SETTLE_CODE.test(raw) ? await this.hash(raw) : null);
+    if (no) return settleAnswer({ error: no }, 403, true);
+    return settleAnswer({ channel: this.name, home: this.meta.home ?? null, next: this.settleNext() }, 200, true);
+  }
+
+  async home(request: Request): Promise<Response> {
+    let body: unknown = null;
+    try { body = JSON.parse(await request.text()); } catch { /* (settleWanted says so) */ }
+    const raw = body && typeof body === "object" && typeof (body as { code?: unknown }).code === "string" ? (body as { code: string }).code : "";
+    const h = SETTLE_CODE.test(raw) ? await this.hash(raw) : null;
+    let no = this.codeRefusal(h);
+    if (no) return settleAnswer({ error: no }, 403, true);
+    const wanted = settleWanted(body);
+    if ("error" in wanted) return settleAnswer({ error: wanted.error }, 400, true);
+    const home = wanted.home;
+    if (home && "near" in home) {
+      if (home.near === this.name) return settleAnswer({ error: "that's your own outstation" }, 400, true);
+      let given: boolean;
+      try {
+        this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+        const r = await this.directory.fetch("https://dir/given?name=" + encodeURIComponent(home.near));
+        given = ((await r.json()) as { given: boolean }).given === true;
+      } catch {
+        return settleAnswer({ error: "the relay couldn't look for that outstation just then: try again" }, 503, true);
+      }
+      if (!given) return settleAnswer({ error: "no outstation called that here" }, 400, true);
+      // (asked again: another settle with this code may have come in while the Directory was asked)
+      if ((no = this.codeRefusal(h))) return settleAnswer({ error: no }, 403, true);
+    }
+    // a settle that changes nothing (the same place, the same outstation, or clear with none) isn't a change: it's let
+    // through whenever it comes, and the next change is no later for it
+    const same = JSON.stringify(home) === JSON.stringify(this.meta.home ?? null);
+    const next = this.settleNext();
+    if (!same && next !== null) {
+      return settleAnswer({ error: `one move every ${SETTLE_EVERY_MS / 86_400_000} days: try again later`, next }, 429, true);
+    }
+    this.meta.settle!.used = true;
+    if (!same) {
+      this.meta.home = home;
+      this.meta.homeAt = Date.now();
+    }
+    this.saveMeta();
+    if (!same) await this.tellListingNow();
+    return settleAnswer({ home: this.meta.home ?? null, next: this.settleNext() }, 200, true);
+  }
+
+  /** This channel's row told to the Directory now, and waited for (a settle: so GET /channels has the new home by the
+   *  time the page's answered). tellListing's, without its wait. */
+  async tellListingNow() {
+    if (!this.name) return;
+    const row = this.listing();
+    this.listingRow = JSON.stringify({ ...row, at: 0 });
+    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+    try {
+      const r = await this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) });
+      if (!r.ok) this.listingRow = "";
+    } catch {
+      this.listingRow = ""; // (told again at the next change; and the Directory asks a row it hasn't had in a while)
+    }
+  }
+
   // Jace's admin (index.ts checks the admin token before it reaches here)
 
-  async mint(): Promise<Response> {
+  // (onlyNew: an invite's, which never takes a channel that has a key already, whatever the Directory says)
+  async mint(onlyNew = false): Promise<Response> {
+    if (onlyNew && this.meta.keyHash !== null) return json({ error: "that name has an outstation already" }, 409);
     const bytes = crypto.getRandomValues(new Uint8Array(18));
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);
+    delete this.meta.settle; // (a settling code the old key got: it's not the new key's; the home stays, as "by" does)
+    if (onlyNew) this.meta.pending = true; // (an invite's: not taken up till its key's used; the keeper's leaves it as it was)
     this.saveMeta();
-    for (const role of ["transmit", "desk", "sound"] as Role[]) {
+    for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel has a new key");
     }
+    this.clearGame(); // (whoever has the new key starts with none)
     this.offAir();
     return Response.json({ key });
   }
 
   async revoke(): Promise<Response> {
     this.meta.keyHash = null;
+    delete this.meta.home; // (settling: its home, when it changed, and any code, forgotten)
+    delete this.meta.homeAt;
+    delete this.meta.settle;
+    delete this.meta.pending; // (handed out again later, it's pending only if an invite hands it out)
     this.saveMeta();
-    for (const role of ["transmit", "desk", "sound"] as Role[]) {
+    for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel was taken back");
     }
+    this.clearGame();
     this.offAir();
     return new Response(null, { status: 204 });
   }

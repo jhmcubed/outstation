@@ -45,6 +45,7 @@ const PINGS: [(u8, &str, &str); 3] = [
 ];
 const EDGE: f32 = 6.0;
 const CURSOR_SWITCH: &str = "my cursor in the picture";
+const CHAT_SWITCH: &str = "chat in the picture";
 
 fn body(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Proportional) }
 fn title_font(size: f32) -> FontId { FontId::new(size, egui::FontFamily::Name("title".into())) }
@@ -87,6 +88,12 @@ fn rich(text: &str, size: f32, colour: Color32) -> egui::WidgetText {
 /// How wide words are, laid out in one line.
 fn text_w(ui: &egui::Ui, text: &str, size: f32) -> f32 {
     ui.painter().layout_job(job(text, size, TEXT())).size().x
+}
+
+/// A checkbox with the hand over it (11/07/2026, Jace: "make sure check boxes get the animated lime cursor on hover
+/// over"): egui gives only buttons `interact_cursor`, and the lime cursor is drawn wherever the hand is asked for.
+fn tick(ui: &mut egui::Ui, on: &mut bool, text: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.checkbox(on, text).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// How wide a checkbox with these words (14 px) is.
@@ -191,6 +198,8 @@ struct SettingsPanel {
     status: (String, Color32),
     /// scroll to the replay buffer as it's next drawn (the Dink drawer's "the replay buffer ▸")
     find_replay: bool,
+    /// when the chat over the game's size or fade last changed here: sample lines over the game for a few seconds
+    sample_chat: Option<Instant>,
     listening: Option<usize>,
 }
 
@@ -242,6 +251,17 @@ pub struct App {
     guess_form: Option<(String, String)>,
     banned: Vec<(i64, String)>,
     over: Vec<OverLine>,
+    /// when the last ping and ✼ came: their windows stay a few seconds after (LINGER), so a burst makes one window
+    /// something came that flashes the taskbar button (once, after what came is read: drain)
+    flash_wanted: bool,
+    /// the aether: one room for every outstation and visitor (aether.rs), joined when its tab's first opened
+    aether: crate::aether::Aether,
+    /// the Outside plugin (RuneLite) connected to this channel, as the relay last said (None: not said yet)
+    plugin_on: Option<bool>,
+    pings_last: Option<Instant>,
+    /// the moving box put where the chat sits, once as moving starts (it's dragged from there)
+    moving_placed: bool,
+    stars_last: Option<Instant>,
     history_until: Instant,
     moving_chat: bool,
     zoom: f32,
@@ -283,6 +303,7 @@ pub struct App {
     peek_tex: Option<(egui::TextureHandle, String, Instant)>,
     /// the clips on the player's Outside page, as the dink drawer last read them (clipsup.rs)
     page_clips: crate::clipsup::PageClips,
+    invites: crate::invites::Invites,
     /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
     /// the Dink drawer's "the replay buffer ▸": the settings drawer opened at it
@@ -472,14 +493,14 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -554,7 +575,7 @@ impl App {
             }
             t.lines.push(DmLine { mine: false, text, when, note: false });
             if !open { t.unread += 1; }
-            win::flash(TITLE);
+            self.flash_wanted = true;
         } else if let Some(d) = m.get("dm_sent") {
             let (to, text) = (s(d, "to"), s(d, "text"));
             let when = local_hhmm(d.get("at").and_then(|x| x.as_i64()).unwrap_or(0));
@@ -588,6 +609,10 @@ impl App {
                 In::Stopped(why) => self.desk_stopped = Some(why),
             }
         }
+        // (the taskbar button flashed once for whatever came, not once a line)
+        if std::mem::take(&mut self.flash_wanted) {
+            win::flash(TITLE);
+        }
         while let Ok(e) = self.tray_rx.try_recv() {
             self.tray_event(ctx, e);
         }
@@ -613,6 +638,8 @@ impl App {
         }
         if let Some(r) = m.get("relay") {
             self.live = r.get("live").and_then(|x| x.as_bool()).unwrap_or(false);
+            // (the Outside plugin connected to this channel now: the relay says so with every status line; 11/07/2026)
+            self.plugin_on = r.get("game").and_then(|x| x.as_bool());
             self.viewers = r.get("viewers").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             self.open = r.get("open").and_then(|x| x.as_bool()).unwrap_or(false);
             self.static_on = r.get("static").and_then(|x| x.as_bool()).unwrap_or(false);
@@ -634,9 +661,10 @@ impl App {
                 self.over.push(OverLine { at: Instant::now(), name: c.get("name").and_then(|x| x.as_str()).unwrap_or("").into(),
                                           text: c.get("text").and_then(|x| x.as_str()).unwrap_or("").into(), host });
                 if self.over.len() > 7 { self.over.remove(0); }
-            }
-            if !host {
-                win::flash(TITLE);
+                // (a new line flashes the taskbar button; the chat so far, handed over on connecting, doesn't)
+                if !host {
+                    self.flash_wanted = true;
+                }
             }
         } else if let Some(id) = m.get("unsay").and_then(|x| x.as_i64()) {
             for l in self.lines.iter_mut().filter(|l| l.id == Some(id)) { l.hidden = true; }
@@ -652,6 +680,7 @@ impl App {
             if self.settings.get().signals && self.stars.len() < 60 {
                 let who = sg.get("who").and_then(|x| x.as_u64()).unwrap_or(0) as f32;
                 let x = 0.25 + ((who * 0.618 + self.signals as f32 * 0.137) % 1.0) * 0.5;
+                self.stars_last = Some(Instant::now());
                 self.stars.push(Star { at: Instant::now(), x, name: sg.get("name").and_then(|x| x.as_str()).unwrap_or("").into() });
             }
         } else if let Some(g) = m.get("guess") {
@@ -675,6 +704,7 @@ impl App {
             if self.settings.get().pings {
                 if let Some((l, t, r, b)) = frame_rect(&self.settings.get()) {
                     let (x, y) = (p.get("x").and_then(|x| x.as_f64()).unwrap_or(0.5), p.get("y").and_then(|x| x.as_f64()).unwrap_or(0.5));
+                    self.pings_last = Some(Instant::now());
                     self.pings.push(Ping { at: Instant::now(), x: (l as f64 + (r - l) as f64 * x) as f32,
                                            y: (t as f64 + (b - t) as f64 * y) as f32, name });
                 }
@@ -709,7 +739,9 @@ impl App {
             return if self.started.elapsed().as_secs() < 8 { ("starting the outstation…".into(), GREY()) }
                    else { ("the relay isn't answering (it keeps trying)".into(), GREY()) };
         }
-        if !s.on_air {
+        if !s.on_air && tx.taping {
+            ("dark · the tape's rolling: clips save themselves, nothing's sent".into(), GREY())
+        } else if !s.on_air {
             ("dark · the transmission's ended".into(), GREY())
         } else if self.live && self.open {
             (format!("transmitting · {} observing", self.viewers), PINK())
@@ -1138,6 +1170,7 @@ fn friends_drawer(app: &mut App, ui: &mut egui::Ui) {
                     if !r.title.is_empty() { ui.label(rich(&r.title, 14.0, GREY())); }
                     if !r.client.is_empty() { ui.label(rich(&format!("v{}", r.client), 13.0, QUIET())); }
                     if r.live_s > 0 { ui.label(rich(&format!("{} this month", hours(r.live_s)), 13.0, QUIET())); }
+                    if !r.by.is_empty() { ui.label(rich(&format!("through {}", r.by), 13.0, QUIET())).on_hover_text(tip(&format!("established through {}'s outstation (an invite)", r.by))); }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "stand down", true, None).clicked() { app.keeper.confirm = Some((true, r.channel.clone())); }
                         if button(ui, "re-key", true, None).clicked() { app.keeper.confirm = Some((false, r.channel.clone())); }
@@ -1412,7 +1445,7 @@ impl SettingsPanel {
         let saved = (s.fps.clamp(1, 60), s.width.clamp(192, 1536), s.quality.clamp(10, 95), s.max_viewers.clamp(1, 20));
         let mut p = SettingsPanel { fps: saved.0, width: saved.1, quality: saved.2, viewers: saved.3, saved,
                                     sample: None, sample_note: String::new(), taking: Arc::new(Mutex::new(None)),
-                                    shown: None, status: (String::new(), QUIET()), listening: None, find_replay: false };
+                                    shown: None, status: (String::new(), QUIET()), listening: None, find_replay: false, sample_chat: None };
         p.take_sample(s);
         p
     }
@@ -1602,7 +1635,40 @@ impl SettingsPanel {
         let mut chat = s.chat_size.round() as u32;
         if bar(ui, "the chat's text", "px", 10, 40, 1, &mut chat, "the size of the chat's words in this window") { let _ = settings.update(|x| x.chat_size = chat as f32); }
         let mut over = s.game_chat_size.round() as u32;
-        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over, "the size of the words over RuneLite") { let _ = settings.update(|x| x.game_chat_size = over as f32); }
+        if bar(ui, "the chat over the game", "px", 10, 48, 1, &mut over, "the size of the words over RuneLite (and in the picture, with \"chat in the picture\")") {
+            let _ = settings.update(|x| x.game_chat_size = over as f32);
+            self.sample_chat = Some(Instant::now());
+        }
+        // (how big that is: a line as it'll be over the game, here, and for a few seconds over the game itself;
+        // 11/07/2026, Jace: "give some sample text to show big the text will actually be")
+        {
+            let size = s.game_chat_size.clamp(10.0, 48.0);
+            let (name, words, host) = sample_lines(&s).remove(1);
+            let mut j = egui::text::LayoutJob::default();
+            append(&mut j, &name, size, if host { LIME() } else { CYAN() }, false);
+            append(&mut j, &format!("  {}", words), size, Color32::from_rgb(0xf0, 0xf0, 0xf0), false);
+            j.wrap.max_width = ui.available_width() - 16.0;
+            let g = ui.painter().layout_job(j);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), g.size().y + 12.0), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(0x2a, 0x30, 0x22));
+            let at = rect.left_top() + Vec2::new(8.0, 6.0);
+            let mut shadow = egui::text::LayoutJob::default();
+            append(&mut shadow, &format!("{}  {}", name, words), size, Color32::from_rgb(10, 10, 10), false);
+            shadow.wrap.max_width = ui.available_width() - 16.0;
+            let gs = ui.painter().layout_job(shadow);
+            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
+                ui.painter().galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
+            }
+            ui.painter().galley(at, g, Color32::WHITE);
+        }
+        let mut fade = s.game_chat_fade.min(120);
+        if bar(ui, "the chat over the game fades after", "s", 0, 120, 5, &mut fade,
+               "how long a line stays lit over the game before it fades out (and in the picture). 0: it stays until newer lines push it off.") {
+            let _ = settings.update(|x| x.game_chat_fade = fade);
+        }
+        if fade == 0 {
+            ui.label(rich("(0: lines never fade; the newest 7 stay)", 14.0, QUIET()));
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(rich("this window's size:", 16.0, LIME())).on_hover_text(tip("everything in this window, bigger or smaller: its words, buttons and boxes"));
             let now = (s.ui_scale * 100.0).round() as u32;
@@ -1732,22 +1798,22 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ("auto", "the first that works", "Windows Graphics Capture, else PrintWindow, else the screen"),
             ("gpu", "Windows Graphics Capture", "the graphics card's own copy of RuneLite's window: the quickest, and it never needs the window in front"),
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
-        ui.checkbox(&mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
+        tick(ui, &mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
-        ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+        tick(ui, &mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
             .on_hover_text(tip("when RuneLite opens (or is already open as the outstation starts), the outstation transmits by itself; ticked with RuneLite open, within a second. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
         ui.add_enabled_ui(s.auto_live, |ui| {
-            ui.checkbox(&mut s.auto_end, rich("…and go dark when RuneLite closes", 16.0, GREY()))
+            tick(ui, &mut s.auto_end, rich("…and go dark when RuneLite closes", 16.0, GREY()))
                 .on_hover_text(tip("RuneLite gone for 30 s (time for it to restart after an update) and the outstation goes dark, so a forgotten one doesn't keep transmitting"));
         });
         if button(ui, "the first-time setup again", true, None).on_hover_text(tip("Dink and Discord, clips, the Start menu: the steps a new outstation goes through, again")).clicked() {
             s.setup_step = Some(0);
         }
-        ui.checkbox(&mut s.ready_check, rich("the station check above the title, while dark", 16.0, GREY()))
+        tick(ui, &mut s.ready_check, rich("the station check above the title, while dark", 16.0, GREY()))
             .on_hover_text(tip("RuneLite open, logged in, the relay answering, Dink heard and the sound's mode, each ticked or not"));
-        ui.checkbox(&mut s.minimize_to_tray, rich("minimising puts it in the tray (the transmission goes on)", 16.0, GREY()))
+        tick(ui, &mut s.minimize_to_tray, rich("minimising puts it in the tray (the transmission goes on)", 16.0, GREY()))
             .on_hover_text(tip("the window goes to the ✼ by the clock; a click on it brings the window back"));
-        ui.checkbox(&mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
+        tick(ui, &mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
             .on_hover_text(tip("the picture stops at the login screen (your username never shows): RuneLite has to put it in its title for the outstation to tell"));
         ui.horizontal(|ui| {
             ui.label(rich("clips go to:", 16.0, GREY())).on_hover_text(tip("the folder the clip key and \"clip\" save to (empty: Videos\\outstation)"));
@@ -1779,6 +1845,39 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             field(ui, &mut s.code, 140.0, "", false);
         });
         ui.label(rich(&format!("relay {} · channel {}", s.relay, s.channel), 14.0, QUIET()));
+        // (for the Outside plugin's settings, 11/07/2026: the key it attached with, made again)
+        if s.attached() {
+            ui.horizontal_wrapped(|ui| {
+                if button(ui, "copy my station key", true, None)
+                    .on_hover_text(tip("for the Outside plugin in RuneLite (its settings, \"Station key\"): what you wear and carry, live on your Outside page. It's this outstation's key: give it to nobody else.")).clicked() {
+                    win::copy_text(&crate::settings::make_attach(&s.relay, &s.channel, &s.key));
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("key copied"), Instant::now()));
+                }
+                let copied = ui.ctx().data(|d| d.get_temp::<Instant>(egui::Id::unique("key copied"))).is_some_and(|t| t.elapsed() < Duration::from_secs(4));
+                if copied {
+                    ui.label(rich("on the clipboard: paste it into the Outside plugin's settings in RuneLite", 14.0, LIME()));
+                    ui.ctx().request_repaint_after(Duration::from_millis(500));
+                } else {
+                    ui.label(rich("for the Outside plugin (RuneLite)", 14.0, QUIET()));
+                }
+            });
+        }
+        // (where it stands on outside.wiki's globe, 11/08/2026: settle.rs; the key goes only to the relay)
+        if s.attached() {
+            ui.horizontal_wrapped(|ui| {
+                let busy = crate::settle::busy();
+                if button(ui, if busy { "asking the relay…" } else { "choose where it stands on the globe…" }, !busy, None)
+                    .on_hover_text(tip("outside.wiki's globe of Gielinor: by default your outstation stands beside whoever invited you. Choose a place of your own, or an outstation to stand beside. Opens the globe in your browser with a code good for 10 minutes; your key stays here. After the first, it can move once a week.")).clicked() {
+                    let ctx = ui.ctx().clone();
+                    crate::settle::begin(&s, move || ctx.request_repaint());
+                }
+                match crate::settle::status() {
+                    Some((at, Ok(_))) if at.elapsed() < Duration::from_secs(600) => { ui.label(rich("the globe's open in your browser: choose there within 10 minutes", 14.0, LIME())); }
+                    Some((at, Err(why))) if at.elapsed() < Duration::from_secs(120) => { ui.label(rich(&why, 14.0, PINK())); }
+                    _ => { ui.label(rich("on outside.wiki's globe", 14.0, QUIET())); }
+                }
+            });
+        }
         let detach = button(ui, "attach another station key…", true, None).clicked();
         if detach {
             s.key.clear();
@@ -1827,6 +1926,67 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
 /// The friends list, as the game's own (friendlist.rs): each friend's name on the left in the order added, their
 /// portal's state on the right, a click on the name for their Outside page, "add friend" and "del friend" below with
 /// the game's prompts, and the chat told when one goes live or off air.
+/// Invites (11/07/2026): a station key for a friend, made here at once from this outstation's invites (3 to begin
+/// with, one more every 10 hours on air); their outstation is "established through" this one. invites.rs.
+fn invites_ui(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let w = ui.available_width();
+    let s = app.settings.get();
+    app.invites.tend(&s, false, { let c = ctx.clone(); move || c.request_repaint() });
+    ui.label(rich("invite a friend", 16.0, LIME()));
+    let status = app.invites.status.lock().unwrap().clone();
+    match &status {
+        None => { ui.label(rich("reading your invites…", 14.0, GREY())); }
+        Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
+        Some(Ok(st)) => {
+            let words = if st.left == 0 { format!("no invites left · {}", crate::invites::next_words(st)) }
+                        else { format!("{} invite{} left · {}", st.left, if st.left == 1 { "" } else { "s" }, crate::invites::next_words(st)) };
+            ui.label(rich(&words, 14.0, if st.left > 0 { TEXT() } else { GREY() }))
+                .on_hover_text(tip(&format!("3 to begin with, one more for every 10 hours on air ({:.1} h so far: {} earned in all). Each one is a station key for a friend, made at once: their outstation is established through yours.", st.hours, st.earned)));
+            if !st.used.is_empty() {
+                ui.label(wrapped(&format!("established through yours: {}", st.used.join(", ")), 14.0, QUIET(), w));
+            }
+            if st.left > 0 {
+                ui.label(wrapped("their player's name, as in game:", 14.0, GREY(), w));
+                let busy = *app.invites.busy.lock().unwrap();
+                ui.horizontal(|ui| {
+                    let r = field(ui, &mut app.invites.name, (w - 110.0).max(120.0), "their name", false);
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if (button(ui, if busy { "making…" } else { "make a key" }, false, None).clicked() || enter) && !busy && !app.invites.name.trim().is_empty() {
+                        let name = app.invites.name.clone();
+                        app.invites.make(&s, &name, { let c = ctx.clone(); move || c.request_repaint() });
+                    }
+                });
+            }
+        }
+    }
+    let made = app.invites.made.lock().unwrap().clone();
+    match made {
+        Some(Ok((ch, code))) => {
+            ui.add_space(4.0);
+            ui.label(wrapped(&format!("{}'s station key, made: send it to them (only to them: it attaches to their channel)", ch), 14.0, LIME(), w));
+            ui.label(wrapped(&code, 13.0, TEXT(), w));
+            ui.horizontal(|ui| {
+                if button(ui, "copy it with the download link", true, None)
+                    .on_hover_text(tip("the key, where the outstation comes from (its GitHub releases, the only official download), and what to do with it")).clicked() {
+                    win::copy_text(&crate::invites::message(&code));
+                    app.note(format!("{}'s key and the download link are on the clipboard", ch));
+                }
+                if button(ui, "copy the key", true, None).clicked() {
+                    win::copy_text(&code);
+                    app.note(format!("{}'s key is on the clipboard", ch));
+                }
+                if button(ui, "done", true, None).clicked() {
+                    *app.invites.made.lock().unwrap() = None;
+                    app.invites.name.clear();
+                }
+            });
+        }
+        Some(Err(e)) => { ui.label(wrapped(&format!("no key: {}", e), 14.0, PINK(), w)); }
+        None => {}
+    }
+}
+
 fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     use crate::friendlist::{State, MOST};
     let ctx = ui.ctx().clone();
@@ -1952,14 +2112,15 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     if let Some(e) = app.friendlist.trouble() {
         ui.label(wrapped(&e, 14.0, PINK(), ui.available_width()));
     }
+    ui.label(wrapped("a name's state comes from the relay's open outstations, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
     ui.add_space(10.0);
     let mut tell = s.friends_tell;
-    if ui.checkbox(&mut tell, rich("say in the chat when a friend starts transmitting or goes dark", 14.0, GREY())).changed() {
+    if tick(ui, &mut tell, rich("say in the chat when a friend starts transmitting or goes dark", 14.0, GREY())).changed() {
         let _ = app.settings.update(|x| x.friends_tell = tell);
     }
     let mut toast = s.friends_toast;
     let can = crate::shortcut::exists();
-    if ui.checkbox(&mut toast, rich("and a Windows notification when one starts transmitting", 14.0, GREY()))
+    if tick(ui, &mut toast, rich("and a Windows notification when one starts transmitting", 14.0, GREY()))
         .on_hover_text(tip("Windows' own, in the corner and then the notification centre; a click on it opens their outstation")).changed() {
         let _ = app.settings.update(|x| x.friends_toast = toast);
     }
@@ -1969,7 +2130,13 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
     let all = ui.add(egui::Label::new(rich("every open outstation ↗", 14.0, TEAL())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tip("ghillie.wiki/portals: everyone's open outstations, transmitting ones first"));
     if all.clicked() { win::open_page("https://ghillie.wiki/portals"); }
-    ui.label(wrapped("a name's state comes from the relay's open outstations, read every 20 s while this is open and every minute otherwise. right-click a name to message them or delete them.", 13.0, QUIET(), ui.available_width()));
+    // the invites under a line of their own, so the friends list's notes above are plainly the list's (11/07/2026)
+    if s.attached() {
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(6.0);
+        invites_ui(app, ui);
+    }
 }
 
 // ---- the dink drawer ----
@@ -2003,7 +2170,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         for (i, k) in REPORTS.iter().enumerate() {
             let mut on = s.dink.kind_on(k);
             let colour = if on { TEXT() } else { GREY() };
-            if ui.checkbox(&mut on, rich(&kind_label(k), 16.0, colour)).changed() {
+            if tick(ui, &mut on, rich(&kind_label(k), 16.0, colour)).changed() {
                 s.dink.kinds.insert(k.to_string(), Value::Bool(on));
             }
             if i % 2 == 1 { ui.end_row(); }
@@ -2023,8 +2190,8 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     ui.label(rich("clips by themselves", 16.0, LIME()));
     ui.horizontal_wrapped(|ui| {
         let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
-            .on_hover_text(tip("Dink's post comes, and a few seconds later the tape is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. Only while transmitting: the tape holds what the outstation sent."));
+        tick(ui, &mut s.dink.auto_clip, rich("save a clip when something big comes: a pet, a new collection log slot, a 99, or a drop worth", 16.0, colour))
+            .on_hover_text(tip("Dink's post comes, and a few seconds later the tape is saved as a clip named for it (\"clip … pet vorki.mp4\"), into the clips folder. While transmitting, or while dark with \"and while dark too\" on (the tape rolls then too, sent nowhere)."));
         ui.add(egui::DragValue::new(&mut s.dink.clip_gp).range(0..=2_147_483_647u64).speed(10000.0).suffix(" gp"));
         ui.label(rich("or more", 16.0, GREY()));
     });
@@ -2040,11 +2207,17 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     }
     if s.dink.auto_clip {
         let colour = if s.dink.clips_up { TEXT() } else { GREY() };
-        ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
-            .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days; take any down below."));
+        tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
+            .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days, and up to 3 can be filed for good (never pushed out, never too old); file them or take any down below."));
         if s.dink.clips_up {
             page_clips_ui(app, ui, &s);
         }
+        let colour = if s.tape_dark { TEXT() } else { GREY() };
+        tick(ui, &mut s.tape_dark, rich("and while dark too (the tape keeps rolling, nothing's sent)", 16.0, colour))
+            .on_hover_text(tip("dark but recording: while you're not transmitting, the outstation still keeps the tape (the same capture, sent nowhere), so a pet or a big drop still saves its clip, to this PC and Discord (never to your Outside page while dark). It uses a little of the PC while RuneLite's open, as transmitting does."));
+        let colour = if s.dink.clips_discord { TEXT() } else { GREY() };
+        tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
+            .on_hover_text(tip("wherever Dink's post goes in Discord (step 1 above), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
     }
     if serde_json::to_string(&s).unwrap_or_default() != before {
         let _ = app.settings.update(|x| *x = s);
@@ -2122,14 +2295,21 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
     let mut next: Option<Option<u8>> = None; // (Some(None): finished)
     match step {
         0 => {
-            ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
-            ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+            if s.clips_mode() {
+                ui.label(rich("clips only", 18.0, LIME()));
+                ui.label(wrapped("no channel: nothing is ever sent anywhere but your own Discord, and only the clips you'd want there.", 16.0, TEXT(), w));
+            } else {
+                ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
+                ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+            }
             ui.add_space(8.0);
-            ui.label(wrapped("a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸).", 16.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "clips only: Dink and Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸)." }
+                             else { "a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸)." }, 16.0, GREY(), w));
         }
         1 => {
             ui.label(rich("Dink and Discord", 18.0, LIME()));
-            ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts, for the field reports under your outstation and for clips. If you don't use Dink, skip this and the next step.", 14.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "Dink (a RuneLite plugin) tells the outstation when something big happens, so it knows when to save a clip, and the clip follows Dink's post into your Discord. Without Dink, the clip key (Insert) still saves the last seconds." }
+                             else { "Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts, for the field reports under your outstation and for clips. If you don't use Dink, skip this and the next step." }, 14.0, GREY(), w));
             ui.add_space(6.0);
             ui.label(rich("do you use Dink with Discord too?", 16.0, LIME()));
             discord_step(app, ui, &mut s, st.listening.clone());
@@ -2138,31 +2318,48 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             ui.label(rich("point Dink at the outstation", 18.0, LIME()));
             dink_address_ui(app, ui, &mut s, &st);
             ui.add_space(6.0);
-            ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸, \"3. which field reports go out\", changes that.", 14.0, QUIET(), w));
+            if !s.clips_mode() {
+                ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸, \"3. which field reports go out\", changes that.", 14.0, QUIET(), w));
+            }
         }
         3 => {
             ui.label(rich("clips", 18.0, LIME()));
-            ui.label(wrapped("while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop.", 14.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "the outstation keeps a tape: the last few seconds of RuneLite, always rolling, kept in memory and sent nowhere. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }
+                             else { "while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }, 14.0, GREY(), w));
             let mut replay = s.replay_seconds.min(30);
             if bar(ui, "the tape", "s kept", 0, 30, 1, &mut replay, "how many of the last seconds the tape holds, always rolling, for a clip of what just happened (in memory only). 0 holds nothing.") {
                 s.replay_seconds = replay;
             }
             if s.replay_seconds > 0 {
-                ui.checkbox(&mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
-                if s.dink.auto_clip {
-                    ui.checkbox(&mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
+                tick(ui, &mut s.dink.auto_clip, rich("save a clip by itself when something big comes (with Dink)", 16.0, GREY()));
+                if s.dink.auto_clip && !s.clips_mode() {
+                    tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
                         .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
+                }
+                if s.dink.auto_clip {
+                    tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
+                        .on_hover_text(tip("wherever Dink's post goes in Discord, its clip follows a few seconds later, playing in the channel."));
+                }
+                // (11/07/2026, Jace: "make sure during the normal outstation set up process there is an option to click to
+                // keep clips posting/recording while dark": a line of its own, not tucked under the others)
+                if !s.clips_mode() {
+                    ui.add_space(6.0);
+                    let colour = if s.tape_dark { TEXT() } else { GREY() };
+                    tick(ui, &mut s.tape_dark, rich("keep recording while dark (not transmitting)", 16.0, colour))
+                        .on_hover_text(tip("the tape keeps rolling between transmissions, sent nowhere, so a pet or a big drop still saves its clip and posts it to Discord. Never to your Outside page while dark."));
+                    ui.label(wrapped("clips still save and post to Discord when you're not live; nothing is sent anywhere else.", 14.0, QUIET(), w));
                 }
             }
         }
         _ => {
             ui.label(rich("done", 18.0, LIME()));
             // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
-            ui.checkbox(&mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
+            let clips = s.clips_mode();
+            if !clips { tick(ui, &mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
                 .on_hover_text(tip("from now on, opening RuneLite starts your transmission. If you press go dark while RuneLite's open, the outstation stays dark: it only transmits again the next time RuneLite opens."));
             if s.auto_live {
                 ui.label(wrapped("RuneLite open now? Then finishing the setup starts transmitting straight away.", 14.0, PINK(), w));
-            }
+            } }
             if s.start_menu.is_none() {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(rich("put the outstation in your Start menu?", 16.0, GREY()));
@@ -2179,7 +2376,8 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             }
             ui.add_space(14.0);
             ui.label(rich("then", 16.0, LIME()));
-            ui.label(wrapped("in the main window, transmit starts your transmission and go dark ends it. Pause hides the picture (before a bank PIN). The settings have the rest.", 14.0, GREY(), w));
+            ui.label(wrapped(if clips { "the outstation keeps its tape while RuneLite's open and saves the big moments by themselves. Insert saves the last seconds whenever you like. To transmit too, the window has \"a channel too ▸\"." }
+                             else { "in the main window, transmit starts your transmission and go dark ends it. Pause hides the picture (before a bank PIN). The settings have the rest." }, 14.0, GREY(), w));
         }
     }
     ui.add_space(14.0);
@@ -2383,7 +2581,7 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
         for (i, k) in kinds.iter().enumerate() {
             let mut on = match fw.get(*k) { Some(Value::Bool(b)) => *b, Some(Value::Object(_)) => true, _ => false };
             let colour = if on { TEXT() } else { GREY() };
-            if ui.checkbox(&mut on, rich(&kind_label(k), 16.0, colour)).changed() {
+            if tick(ui, &mut on, rich(&kind_label(k), 16.0, colour)).changed() {
                 let v = match (*k, on) {
                     ("LOOT", true) => json!({"minValue": 1000000, "allow": []}),
                     ("KILL_COUNT", true) => json!({"every": 25, "lapsEvery": 1000, "first": true, "personalBest": true}),
@@ -2419,9 +2617,9 @@ fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
         });
         ui.horizontal(|ui| {
             let mut first = k.get("first").and_then(|x| x.as_bool()).unwrap_or(true);
-            if ui.checkbox(&mut first, rich("the first", 16.0, GREY())).changed() { k.insert("first".into(), json!(first)); }
+            if tick(ui, &mut first, rich("the first", 16.0, GREY())).changed() { k.insert("first".into(), json!(first)); }
             let mut pb = k.get("personalBest").and_then(|x| x.as_bool()).unwrap_or(true);
-            if ui.checkbox(&mut pb, rich("personal bests", 16.0, GREY())).changed() { k.insert("personalBest".into(), json!(pb)); }
+            if tick(ui, &mut pb, rich("personal bests", 16.0, GREY())).changed() { k.insert("personalBest".into(), json!(pb)); }
         });
     }
     ui.label(rich("Discord gets Dink's own post, as Dink sent it, screenshot and all. Every kind ticked here goes whole, so keep those notifiers' thresholds in Dink as you want Discord to have them.", 14.0, QUIET()));
@@ -2516,6 +2714,21 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     ask_section(app, ui);
+    // (11/07/2026, Jace: "an option ... for people who are only downloading/using the program to record automatic clips":
+    // no key, no channel, straight to Dink, Discord and the clips)
+    ui.add_space(14.0);
+    ui.label(rich("only here for the clips?", 16.0, LIME()));
+    ui.label(wrapped("no channel and no key needed: the outstation keeps a tape of RuneLite (sent nowhere), and when Dink tells of something big (a pet, a new collection log slot, a 99, a big drop) it saves the clip to this PC and sends it to your Discord under Dink's post.", 14.0, GREY(), ui.available_width()));
+    if button(ui, "clips only ▸", false, None).on_hover_text(tip("a short setup (Dink, Discord, the clips), then the outstation as a recorder. A channel can be added any time.")).clicked() {
+        let _ = app.settings.update(|s| {
+            s.clips_only = true;
+            s.tape_dark = true;
+            s.replay_seconds = s.replay_seconds.max(20);
+            s.dink.auto_clip = true;
+            s.dink.clips_discord = true;
+            s.setup_step = Some(0);
+        });
+    }
     ui.add_space(14.0);
     egui::CollapsingHeader::new(rich("is it safe for my account?", 16.0, LIME())).id_salt("safe").show(ui, |ui| {
         for line in SAFE {
@@ -2728,8 +2941,12 @@ impl eframe::App for App {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        crate::stuck::begin("the frame: the settings read again");
         self.settings.refresh();
+        crate::stuck::at("the frame: what came from the relay");
         self.drain(ctx);
+        self.aether.drain(self.tab.as_deref() == Some(crate::aether::TAB));
+        crate::stuck::at("the frame: requests, notes, the station's inbox");
         // a request for a portal, looked at again while it waits; answered yes, it attaches by itself
         let c = ctx.clone();
         self.asker.tend(self.settings.clone(), self.asked_attached.clone(), move || c.request_repaint());
@@ -2764,6 +2981,7 @@ impl eframe::App for App {
                 if let Some(line) = crate::keeper::anomaly_line(&who, req) { self.note(line); }
             }
         }
+        crate::stuck::at("the frame: transmitting by itself (the station's relay)");
         if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
             #[cfg(feature = "station")]
             self.station_relay();
@@ -2788,6 +3006,7 @@ impl eframe::App for App {
         if let Some(ch) = came {
             self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at ghillie.wiki/outside?player={}", ch, ch));
         }
+        crate::stuck::at("the frame: the tray");
         self.sync_tray(ctx);
         #[allow(unused_mut)]
         let mut into_tray = false;
@@ -2825,6 +3044,7 @@ impl eframe::App for App {
             self.hidden = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+        crate::stuck::at("the frame: the look and the size");
         // the look (the tint, anyone's own colours), whenever they change
         {
             let st = self.settings.get();
@@ -2839,11 +3059,17 @@ impl eframe::App for App {
             self.zoom = scale;
             ctx.set_zoom_factor(scale);
         }
-        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game 20 s, then dim, then gone
+        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
         self.pings.retain(|p| p.at.elapsed() < Duration::from_millis(640));
         self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
-        self.over.retain(|l| l.at.elapsed() < Duration::from_millis(21_500));
-        let busy = !self.pings.is_empty() || !self.stars.is_empty();
+        let fade = self.settings.get().game_chat_fade;
+        if fade > 0 {
+            self.over.retain(|l| over_alpha(l.at.elapsed().as_secs_f32(), fade) > 0.0);
+        }
+        let fading = fade > 0 && self.over.iter().any(|l| l.at.elapsed().as_secs_f32() >= fade as f32);
+        crate::stuck::at("the frame: the chat in the picture (RuneLite's window looked for)");
+        self.chat_in_picture(&ctx);
+        let busy = !self.pings.is_empty() || !self.stars.is_empty() || fading;
         // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
         // in wakes the window at once; 11/07/2026)
         let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
@@ -2864,6 +3090,7 @@ impl eframe::App for App {
             && !self.asking_close && !listening && !self.moving_chat && !self.editing_masks && self.friendlist.prompt.is_none() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        crate::stuck::at("the window: the title bar");
         let frame = egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(12, 10));
         // the window's own frame (11/05/2026, Jace: "a complete custom gui"): its title bar, its edges, its border.
         // Its whole area filled first, so no corner or margin is ever see-through to what's behind.
@@ -2876,7 +3103,7 @@ impl eframe::App for App {
         }
         egui::Panel::top("titlebar").frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 4, top: 2, bottom: 0 }))
             .show_separator_line(false).show(ui, |ui| self.title_bar(ui));
-        if !self.settings.get().attached() {
+        if !self.settings.get().attached() && !self.settings.get().clips_only {
             egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
                 egui::ScrollArea::vertical().id_salt("attach_scroll").auto_shrink([false, false]).show(ui, |ui| attach_screen(self, ui));
             });
@@ -2884,6 +3111,7 @@ impl eframe::App for App {
             self.frame_done(&ctx);
             return;
         }
+        crate::stuck::at("the window: the first-time setup");
         if let Some(step) = self.settings.get().setup_step {
             egui::CentralPanel::no_frame().frame(frame).show(ui, |ui| {
                 egui::ScrollArea::vertical().id_salt("setup_scroll").auto_shrink([false, false]).show(ui, |ui| setup_screen(self, ui, step));
@@ -2892,13 +3120,14 @@ impl eframe::App for App {
             self.frame_done(&ctx);
             return;
         }
+        crate::stuck::at("the window: the drawer");
         if self.drawer != Drawer::None {
             // (a plate of its own, as jute's sections are)
             let pal = theme::pal();
             // (the panel itself filled to its edges, the plate drawn inside it: 11/05/2026, a plate as the panel's own
             // frame had left its margin and its rounded corners unpainted, and the window is see-through there)
             let _ = pal;
-            egui::Panel::right("drawer").exact_size(DRAWER_W).show_separator_line(false)
+            egui::Panel::right("drawer").exact_size(DRAWER_W).resizable(false).show_separator_line(false)
                 .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 0, right: 8, top: 2, bottom: 10 })).show(ui, |ui| {
                 let at = ui.painter().add(egui::Shape::Noop);
                 let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
@@ -2926,11 +3155,14 @@ impl eframe::App for App {
             self.open_drawer(&ctx, Drawer::Settings);
             if let Some(p) = &mut self.panel { p.find_replay = true; }
         }
+        crate::stuck::at("the window: the controls (the station check, the monitor)");
         egui::Panel::top("top").show_separator_line(false)
             // (its top 2 in, the answer row's bottom 10 in: the drawer's plate keeps the same lines, 11/05/2026)
             .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 8, right: 8, top: 2, bottom: 6 })).show(ui, |ui| self.top(ui));
+        crate::stuck::at("the window: the chat's answer box");
         egui::Panel::bottom("answer").show_separator_line(false)
             .frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 10 })).show(ui, |ui| self.answer(ui));
+        crate::stuck::at("the window: the chat");
         egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(ABYSS()).inner_margin(egui::Margin::symmetric(10, 0))).show(ui, |ui| {
             self.viewers_ui(ui);
             self.poll_ui(ui);
@@ -3028,6 +3260,7 @@ impl App {
 
     /// After everything's drawn: the edges' resize (the hand pressed on one), the border, and the cursor.
     fn frame_done(&mut self, ctx: &egui::Context) {
+        crate::stuck::at("the window: its edges, and the cursor");
         use egui::viewport::ResizeDirection as D;
         if let Some(d) = self.edge {
             ctx.set_cursor_icon(match d {
@@ -3046,6 +3279,7 @@ impl App {
         }
         crate::cursor::adopt();
         crate::cursor::follow(ctx, crate::cursor::still());
+        crate::stuck::end();
     }
 
     /// The stream's plate: who's watching, the drawers, the live light and going live, the upload, the live view,
@@ -3073,6 +3307,9 @@ impl App {
     }
 
     fn top_inner(&mut self, ui: &mut egui::Ui) {
+        if self.settings.get().clips_mode() {
+            return self.clips_top(ui);
+        }
         let ctx = ui.ctx().clone();
         // (the drawers' buttons right-aligned beside "watching" when they fit; when they don't (a narrow or zoomed
         // window), on a row of their own under it, wrapping, so none runs off the edge)
@@ -3237,6 +3474,7 @@ impl App {
             check_w(ui, "chat over the game") + gap + button_w(ui, if self.moving_chat { "done" } else { "move it" }),
             check_w(ui, &masks) + gap + button_w(ui, if self.editing_masks { "done" } else { "redact" }),
             check_w(ui, CURSOR_SWITCH),
+            check_w(ui, CHAT_SWITCH),
         ];
         let _ = small;
         let pieces: Vec<usize> = (0..widths.len()).filter(|i| *i != 2).collect();
@@ -3253,6 +3491,73 @@ impl App {
     /// The ready check (11/06/2026), while off air: is RuneLite open, is its title saying who's logged in (when the
     /// picture should stop at the login screen), is the relay answering, has Dink been heard, and the sound's mode.
     /// Each ticked or not, with how to fix it under the hand; "hide" puts it away (settings ▸ more brings it back).
+    /// The window's top with clips only (11/07/2026): no channel, so no transmission; the tape's state, a station
+    /// check for clips, the drawers that matter, and the way to a channel. The chat area under it is the clips' log.
+    fn clips_top(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let s = self.settings.get();
+        ui.horizontal(|ui| {
+            ui.label(rich("clips only", 16.0, LIME()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let s_open = self.drawer == Drawer::Settings;
+                if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
+                let d_open = self.drawer == Drawer::Dink;
+                if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
+                if button(ui, "a channel too ▸", true, None)
+                    .on_hover_text(tip("transmit as well: a station key from the listening post (the first screen again; your clips and Dink stay as they are)")).clicked() {
+                    let _ = self.settings.update(|x| x.clips_only = false);
+                }
+            });
+        });
+        ui.add_space(6.0);
+        let tx = self.tx.status.lock().unwrap().clone();
+        let (text, colour) = if s.replay_seconds == 0 {
+            ("the tape is off: give it some seconds (settings ▸, the tape)".to_string(), PINK())
+        } else if !s.tape_dark {
+            ("the tape isn't rolling: dink ▸, \"and while dark too\"".to_string(), PINK())
+        } else if tx.taping && tx.why.is_none() {
+            (format!("the tape's rolling: the last {} s of RuneLite, kept here, sent nowhere", s.replay_seconds), LIME())
+        } else if tx.taping {
+            (format!("the tape's waiting: {}", tx.why.clone().unwrap_or_default()), GREY())
+        } else {
+            ("starting the tape…".to_string(), GREY())
+        };
+        ui.add(egui::Label::new(rich(&text, 14.0, colour)).wrap());
+        // the station check, for clips: RuneLite, Dink, Discord
+        if self.ready_seen.0.elapsed() > Duration::from_secs(1) {
+            self.ready_seen = (Instant::now(), win::find_window(&s.title).map(|(_, t)| t));
+        }
+        let dink = self.dink.lock().unwrap().clone();
+        let discord = s.forward.get("discord").and_then(|x| x.as_array()).is_some_and(|a| !a.is_empty());
+        let items = [
+            ("RuneLite", Some(self.ready_seen.1.is_some()), "RuneLite's window, found by its title (settings ▸ more)"),
+            ("Dink", if dink.last.is_some() { Some(true) } else if dink.error.is_some() { Some(false) } else { None },
+             "Dink pointed at the outstation (dink ▸, step 2): it tells the outstation when something big happens"),
+            ("Discord", Some(discord), "your Discord set up in dink ▸, step 1: the clips follow Dink's posts there"),
+        ];
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich("station check", 14.0, GREY()));
+            for (words, ok, why) in items {
+                let (mark, colour) = match ok { Some(true) => ("✓", LIME()), Some(false) => ("✗", PINK()), None => ("·", GREY()) };
+                ui.label(rich(&format!("{} {}", mark, words), 14.0, colour)).on_hover_text(tip(why));
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let threshold = if s.dink.clip_gp == 0 { "no drops".to_string() } else { format!("drops worth {} or more", gp(s.dink.clip_gp)) };
+            ui.label(rich(&format!("clips by themselves: pets, new log slots, 99s, {}{}", threshold,
+                                   if s.dink.clips_discord && discord { " · to this PC and Discord" } else { " · to this PC" }), 14.0, GREY()));
+            if button(ui, "clip now", true, None).on_hover_text(tip("the tape saved as a clip (the clip key, Insert, does the same)")).clicked() {
+                crate::clip::save(&s.clip_folder);
+            }
+            if button(ui, "the clips folder", true, None).clicked() {
+                let folder = if s.clip_folder.trim().is_empty() { crate::clip::default_folder() } else { s.clip_folder.clone().into() };
+                let _ = std::fs::create_dir_all(&folder);
+                let _ = std::process::Command::new("explorer").arg(&folder).spawn();
+            }
+        });
+    }
+
     fn ready_row(&mut self, ui: &mut egui::Ui) {
         let s = self.settings.get();
         if !s.ready_check || (s.on_air && self.up && self.live) { return; }
@@ -3278,6 +3583,12 @@ impl App {
             (Some((kind, at, _)), _, _) => ("Dink".into(), Some(true), format!("heard from Dink {} ago ({})", ago(at.elapsed()), kind)),
             (None, _, Some(e)) => ("Dink".into(), Some(false), format!("Dink can't reach the outstation: {}", e)),
             _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (only for drops and level-ups under your outstation)".into()),
+        });
+        // the Outside plugin (11/07/2026): optional, so a dot till it's there
+        items.push(if self.plugin_on == Some(true) {
+            ("Outside plugin".into(), Some(true), "connected: what you wear and carry is live on your Outside page".into())
+        } else {
+            ("Outside plugin".into(), None, "optional: the Outside plugin for RuneLite puts what you wear and carry, live, on your Outside page. In its settings, paste your station key (settings ▸ more: \"copy my station key\")".into())
         });
         let sound = match s.sound.as_str() { "game" => "the game", "all" => "game + desktop", _ => "off" };
         items.push((format!("sound: {}", sound), None, "the sound row below: off, the game, or game + desktop (never a microphone)".into()));
@@ -3331,7 +3642,7 @@ impl App {
         match i {
             0 => {
                 let mut talk = s.chat_allowed;
-                if ui.checkbox(&mut talk, rich("observers may chat", 14.0, GREY()))
+                if tick(ui, &mut talk, rich("observers may chat", 14.0, GREY()))
                     .on_hover_text(tip("off: observers' lines go nowhere, and their pages say the chat is off. Your own lines still go out.")).changed() {
                     let _ = self.settings.update(|s| s.chat_allowed = talk);
                 }
@@ -3355,14 +3666,14 @@ impl App {
                 // the mouse pointer in the picture (11/06/2026, Jace: "a toggle to show or hide cursor"): Windows draws it
                 // into the frames itself, so the portal never reads where it is
                 let mut on = s.show_cursor;
-                if ui.checkbox(&mut on, rich(CURSOR_SWITCH, 14.0, GREY()))
+                if tick(ui, &mut on, rich(CURSOR_SWITCH, 14.0, GREY()))
                     .on_hover_text(tip("your mouse pointer in the picture observers see, where it's over RuneLite. Off: it never shows. Windows draws it into each frame (Windows Graphics Capture, the usual way); PrintWindow, the fallback, can't, so there it stays hidden.")).changed() {
                     let _ = self.settings.update(|s| s.show_cursor = on);
                 }
             }
             3 => {
                 let mut st = s.signals;
-                if ui.checkbox(&mut st, rich("✼ on my screen", 14.0, GREY()))
+                if tick(ui, &mut st, rich("✼ on my screen", 14.0, GREY()))
                     .on_hover_text(tip("each observer's ✼ rising over RuneLite. Only on this PC.")).changed() {
                     let _ = self.settings.update(|s| s.signals = st);
                 }
@@ -3370,8 +3681,8 @@ impl App {
             4 => {
                 let mut over = s.game_chat;
                 ui.spacing_mut().item_spacing.x = gap;
-                if ui.checkbox(&mut over, rich("chat over the game", 14.0, GREY()))
-                    .on_hover_text(tip("the newest lines over RuneLite, fading after 20 s. Only on this PC: it's never in the transmission.")).changed() {
+                if tick(ui, &mut over, rich("chat over the game", 14.0, GREY()))
+                    .on_hover_text(tip("the newest lines over RuneLite, fading out after a time (settings, \"text and size\"). Only on this PC, unless \"chat in the picture\" is on.")).changed() {
                     let _ = self.settings.update(|s| s.game_chat = over);
                 }
                 if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat))
@@ -3384,11 +3695,19 @@ impl App {
                 }
                 ui.spacing_mut().item_spacing.x = gap + 4.0;
             }
+            7 => {
+                // the chat in the picture (11/07/2026, Jace: "add a toggle to capture chat on the broadcast screen")
+                let mut on = s.chat_in_picture;
+                if tick(ui, &mut on, rich(CHAT_SWITCH, 14.0, GREY()))
+                    .on_hover_text(tip("the chat over the game drawn into the picture observers see (and your clips), where it sits over the game, as big, fading the same: \"move it\" and the settings' size place it. Drawn on this PC into each frame. Off: the chat stays beside the picture on Outside, as now.")).changed() {
+                    let _ = self.settings.update(|s| s.chat_in_picture = on);
+                }
+            }
             _ => {
                 // your own masks: boxes blacked out of every frame before it leaves this PC
                 let mut on = s.masks_on;
                 ui.spacing_mut().item_spacing.x = gap;
-                if ui.checkbox(&mut on, rich(masks, 14.0, GREY()))
+                if tick(ui, &mut on, rich(masks, 14.0, GREY()))
                     .on_hover_text(tip(&format!("boxes blacked out of every frame before it leaves this PC, so what's under them is never sent. The {} key turns them off and on.", win::key_name(&s.mask_key)))).changed() {
                     let _ = self.settings.update(|x| x.masks_on = on);
                 }
@@ -3442,7 +3761,7 @@ impl App {
         let beside = words.as_ref().is_some_and(|(t, _)| check_w(ui, "the monitor") + gap + text_w(ui, t, 14.0) <= ui.available_width());
         let toggle = |ui: &mut egui::Ui, feed_tex: &mut Option<(egui::TextureHandle, Instant)>| {
             let mut on = s.live_view;
-            if ui.checkbox(&mut on, rich("the monitor", 14.0, GREY())).on_hover_text(tip("the outstation as the site gets it, through the relay as an observer's page would (off: not connected at all, so it costs nothing)")).changed() {
+            if tick(ui, &mut on, rich("the monitor", 14.0, GREY())).on_hover_text(tip("the outstation as the site gets it, through the relay as an observer's page would (off: not connected at all, so it costs nothing)")).changed() {
                 let _ = self.settings.update(|x| x.live_view = on);
                 if !on { *feed_tex = None; }
             }
@@ -3469,13 +3788,54 @@ impl App {
         }
     }
 
+    /// The aether's room (11/07/2026): who's there, and its lines, each name lit (lime an outstation, cyan a visitor)
+    /// with its time, and its rows in a fixed-width font so ASCII art keeps its shape.
+    fn aether_ui(&mut self, ui: &mut egui::Ui) {
+        let size = self.settings.get().chat_size.clamp(10.0, 40.0);
+        let mono = FontId::new(size * 0.9, egui::FontFamily::Monospace);
+        let head = if !self.aether.up() { "the aether: reaching the relay…".to_string() }
+                   else { format!("the aether · {} here", self.aether.here) };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(rich(&head, 14.0, GREY()));
+            if let Some(n) = self.aether.note.clone().filter(|n| !n.is_empty()) {
+                ui.label(rich(&n, 14.0, PINK()));
+            }
+        });
+        egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            egui::ScrollArea::both().id_salt("aether").stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                if self.aether.lines.is_empty() {
+                    ui.label(wrapped("✼ the aether: everyone's room, every outstation's and everyone on Outside. Say something, or draw something: a line can be several rows (Shift+Enter), and keeps its shape.", size, GREY(), ui.available_width()));
+                }
+                for l in &self.aether.lines {
+                    let mut head = egui::text::LayoutJob::default();
+                    append(&mut head, &l.name, size, if l.outstation { LIME() } else { CYAN() }, false);
+                    append(&mut head, &format!("  {}", local_hhmm(l.at)), size * 0.8, WHEN(), false);
+                    ui.label(head);
+                    ui.add(egui::Label::new(egui::RichText::new(&l.text).font(mono.clone()).color(TEXT())).extend());
+                    ui.add_space(4.0);
+                }
+            });
+        });
+    }
+
     /// The chat box's tabs: the stream's chat, and a conversation with each portal that's messaged (or been messaged).
     fn chat_tabs(&mut self, ui: &mut egui::Ui) {
-        if self.threads.is_empty() { self.tab = None; return; }
         let mut close: Option<String> = None;
+        let ctx = ui.ctx().clone();
         ui.horizontal_wrapped(|ui| {
             if button(ui, "transmission chat", true, Some(self.tab.is_none())).on_hover_text(tip("your transmission's chat: what observers say, and your lines to them")).clicked() {
                 self.tab = None;
+            }
+            // the aether (11/07/2026): everyone's room, joined when it's first opened
+            let on = self.tab.as_deref() == Some(crate::aether::TAB);
+            let words = if self.aether.unread > 0 && !on { format!("the aether ({})", self.aether.unread) } else { "the aether".to_string() };
+            if button(ui, &words, true, Some(on))
+                .on_hover_text(tip("the aether: one room for every outstation and everyone on Outside. Lines of several rows keep their shape (ASCII art): Shift+Enter starts a new row. Nothing here reaches your transmission's chat.")).clicked() {
+                self.tab = Some(crate::aether::TAB.to_string());
+                self.aether.unread = 0;
+                let c = ctx.clone();
+                self.aether.start(self.settings.clone(), move || c.request_repaint());
             }
             for t in &mut self.threads {
                 let on = self.tab.as_deref() == Some(t.channel.as_str());
@@ -3499,6 +3859,10 @@ impl App {
         let mut act: Option<Value> = None;
         let mut notes = Vec::new();
         self.chat_tabs(ui);
+        if self.tab.as_deref() == Some(crate::aether::TAB) {
+            self.aether_ui(ui);
+            return;
+        }
         if let Some(ch) = self.tab.clone() {
             let size = self.settings.get().chat_size.clamp(10.0, 40.0);
             let me = self.settings.get().host_name();
@@ -3578,6 +3942,36 @@ impl App {
     }
 
     fn answer(&mut self, ui: &mut egui::Ui) {
+        if self.settings.get().clips_mode() {
+            return self.foot(ui);
+        }
+        // (the aether's tab open: a line of several rows, Enter sends it, Shift+Enter starts a new row)
+        if self.tab.as_deref() == Some(crate::aether::TAB) {
+            let size = self.settings.get().chat_size.clamp(10.0, 40.0);
+            let mut send = false;
+            ui.horizontal(|ui| {
+                let w = ui.available_width() - 70.0;
+                let r = ui.add(egui::TextEdit::multiline(&mut self.entry).desired_width(w.max(80.0)).desired_rows(1)
+                    .font(FontId::new(size * 0.9, egui::FontFamily::Monospace))
+                    .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter)))
+                    .hint_text(rich("into the aether (Shift+Enter: a new row)", 14.0, WHEN())));
+                if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift) { send = true; }
+                if button(ui, "send", false, None).clicked() { send = true; }
+                if send { r.request_focus(); }
+            });
+            if send {
+                let text = crate::aether::tidy(&self.entry);
+                if !text.is_empty() {
+                    if self.aether.say(&text) { self.entry.clear(); }
+                    else if self.aether.slow_until.is_some_and(|t| Instant::now() < t) { self.note("the aether: too soon, a line every 2 seconds"); }
+                    else { self.note("not sent: the aether isn't answering"); }
+                } else {
+                    self.entry = self.entry.trim().to_string();
+                }
+            }
+            self.foot(ui);
+            return;
+        }
         // (narrow: the line across the window, the buttons under it)
         let narrow = ui.available_width() < 470.0;
         let mut line: Option<egui::Response> = None;
@@ -3613,8 +4007,12 @@ impl App {
                 crate::clip::save(&self.settings.get().clip_folder);
             }
         });
-        // (11/06/2026, Jace: "make the report bug button easy to find and obvious": pink, on a line of its own at the foot
-        // of the window, always there)
+        self.foot(ui);
+    }
+
+    /// The window's foot: report an anomaly, file a requisition (11/06/2026, Jace: "make the report bug button easy to
+    /// find and obvious": pink, on a line of its own at the foot of the window, always there).
+    fn foot(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         let ctx = ui.ctx().clone();
         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3776,8 +4174,10 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(rich("open for", 14.0, GREY()));
                     egui::ComboBox::from_id_salt("secs").selected_text(f.seconds.to_string()).show_ui(ui, |ui| {
-                        for s in [30, 60, 90, 120, 180, 300, 600] { ui.selectable_value(&mut f.seconds, s, s.to_string()); }
-                    });
+                        for s in [30, 60, 90, 120, 180, 300, 600] {
+                            ui.selectable_value(&mut f.seconds, s, s.to_string()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        }
+                    }).response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     ui.label(rich("seconds", 14.0, GREY()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "send it out", true, None).clicked() { send = true; }
@@ -3863,31 +4263,37 @@ impl App {
     /// see-through window clicks pass through; "move it" makes it a box to drag, "done" or Enter keeps it there.
     fn over_ui(&mut self, ctx: &egui::Context) {
         let s = self.settings.get();
-        if !s.game_chat && !self.moving_chat {
+        // (a size just changed in the settings: two lines to show how big, for a few seconds; 11/07/2026, Jace:
+        // "there is no indicator of the size of the actual text")
+        let sample = self.panel.as_ref().and_then(|p| p.sample_chat).is_some_and(|at| at.elapsed() < Duration::from_secs(4));
+        if !s.game_chat && !self.moving_chat && !sample {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&s) else { return };
-        if self.over.is_empty() && !self.moving_chat {
+        if self.over.is_empty() && !self.moving_chat && !sample {
             return;
         }
         let ppp = ctx.pixels_per_point();
-        let (wide, tall) = (560.0 / ppp * (s.game_chat_size / 20.0).max(0.6), 210.0 / ppp * (s.game_chat_size / 20.0).max(0.6));
-        let (gx, gy) = match s.game_chat_at {
-            Some([fx, fy]) => (l as f32 + fx as f32 * (r - l) as f32, t as f32 + fy as f32 * (b - t) as f32),
-            None => (l as f32 + 12.0, t as f32 + 40.0),
-        };
-        // (kept on the game: never off its right or bottom edge)
-        let x = gx.min((r as f32 - wide * ppp).max(l as f32));
-        let y = gy.min((b as f32 - tall * ppp).max(t as f32));
+        let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
         let moving = self.moving_chat;
         let mut builder = egui::ViewportBuilder::default().with_title("outstation ✼ chat over the game").with_decorations(false)
             .with_transparent(true).with_always_on_top().with_mouse_passthrough(!moving).with_taskbar(false)
             .with_resizable(false).with_inner_size(Vec2::new(wide, tall));
         if !moving {
             builder = builder.with_position(egui::pos2(x / ppp, y / ppp)).with_active(false);
+            self.moving_placed = false;
+        } else if !self.moving_placed {
+            // (where the chat sits, as moving starts: made new, the box had come up at the screen's corner)
+            builder = builder.with_position(egui::pos2(x / ppp, y / ppp));
+            self.moving_placed = true;
         }
         let size = s.game_chat_size.clamp(10.0, 48.0);
-        let lines: Vec<(f32, String, String, bool)> = self.over.iter().map(|o| (o.at.elapsed().as_secs_f32(), o.name.clone(), o.text.clone(), o.host)).collect();
+        let lines: Vec<(f32, String, String, bool)> = if self.over.is_empty() && (sample || moving) {
+            sample_lines(&s).into_iter().map(|(n, w, h)| (0.0, n, w, h)).collect()
+        } else {
+            self.over.iter().map(|o| (o.at.elapsed().as_secs_f32(), o.name.clone(), o.text.clone(), o.host)).collect()
+        };
+        let fade = s.game_chat_fade;
         let mut done = false;
         let mut put: Option<(f32, f32)> = None;
         let id = egui::ViewportId::from_hash_of("over the game");
@@ -3897,14 +4303,16 @@ impl App {
             if moving {
                 p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
                 p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
-                p.text(rect.center() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
-                p.text(rect.center() + Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
+                // (the words at the top, and the lines at the bottom as they'll be, at their size)
+                p.text(egui::pos2(rect.center().x, rect.top() + 18.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
+                p.text(egui::pos2(rect.center().x, rect.top() + 38.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
+                draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 84.0);
                 let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
                 if resp.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 // its own "done" (11/07/2026: over RuneLite and above everything, it could cover the window's own)
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.center().y + 40.0), Vec2::new(90.0, 28.0)))
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 62.0), Vec2::new(90.0, 28.0)))
                     .layout(egui::Layout::left_to_right(egui::Align::Center)));
                 if button(&mut child, "done", false, Some(true)).clicked() { done = true; }
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) { done = true; }
@@ -3913,26 +4321,7 @@ impl App {
                 }
                 return;
             }
-            // newest at the bottom, each with a dark rim; lit, then dim after 20 s, then gone
-            let mut yy = rect.bottom() - 6.0;
-            for (age, name, text, host) in lines.iter().rev() {
-                let (cn, ct) = if *age < 20.0 { (if *host { LIME() } else { CYAN() }, Color32::from_rgb(0xf0, 0xf0, 0xf0)) } else { (theme::pal().lime_dim, Color32::from_rgb(0x6a, 0x6a, 0x6a)) };
-                let mut j = egui::text::LayoutJob::default();
-                append(&mut j, name, size, cn, false);
-                append(&mut j, &format!("  {}", text), size, ct, false);
-                j.wrap.max_width = rect.width() - 16.0;
-                let mut shadow = j.clone();
-                for sec in shadow.sections.iter_mut() { sec.format.color = Color32::from_rgb(10, 10, 10); }
-                let g = ui.painter().layout_job(j);
-                let gs = ui.painter().layout_job(shadow);
-                let at = egui::pos2(rect.left() + 8.0, yy - g.size().y);
-                for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
-                    p.galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
-                }
-                yy -= g.size().y + 4.0;
-                p.galley(at, g, ct);
-                if yy < rect.top() + 10.0 { break; }
-            }
+            draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 10.0);
             crate::cursor::follow(ui.ctx(), crate::cursor::still());
         });
         if moving {
@@ -4053,7 +4442,7 @@ impl App {
     /// Each ✼ a viewer sends, rising over RuneLite with their name (as many as they like), in one see-through window
     /// over the game that clicks pass through.
     fn stars_ui(&mut self, ctx: &egui::Context) {
-        if self.stars.is_empty() {
+        if self.stars.is_empty() && !self.stars_last.is_some_and(|t| t.elapsed() < LINGER) {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
@@ -4083,14 +4472,38 @@ impl App {
         });
     }
 
+    /// The chat in the picture (11/07/2026): what's over the game, told to the capture to draw into each frame
+    /// (chatpic.rs), where it sits and as big; nothing while it's off or there's no chat.
+    fn chat_in_picture(&self, ctx: &egui::Context) {
+        let s = self.settings.get();
+        if !s.chat_in_picture || self.over.is_empty() {
+            crate::chatpic::set(None);
+            return;
+        }
+        let Some((l, t, r, b)) = frame_rect(&s) else { crate::chatpic::set(None); return };
+        let ppp = ctx.pixels_per_point();
+        let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
+        let (gw, gh) = ((r - l).max(1) as f32, (b - t).max(1) as f32);
+        let lines = self.over.iter().map(|o| {
+            let c = if o.host { LIME() } else { CYAN() };
+            crate::chatpic::Line { name: o.name.clone(), text: o.text.clone(), name_rgb: [c.r(), c.g(), c.b()],
+                                   alpha: over_alpha(o.at.elapsed().as_secs_f32(), s.game_chat_fade) }
+        }).collect();
+        crate::chatpic::set(Some(crate::chatpic::Plan {
+            fx: (x - l as f32) / gw, fy: (y - t as f32) / gh, w_pt: wide, h_pt: tall,
+            size_pt: s.game_chat_size.clamp(10.0, 48.0), pt: ppp / gw, lines,
+        }));
+    }
+
     /// A ring that grows over the spot, with the viewer's name, in a see-through window that clicks pass through.
     fn pings_ui(&mut self, ctx: &egui::Context) {
+        crate::stuck::at("the windows over RuneLite (pings, ✼, the chat over the game, redactions)");
         self.over_ui(ctx);
         self.stars_ui(ctx);
         self.masks_ui(ctx);
         // (11/07/2026: all of them in one window over the game, as the ✼s are; a window for each ping had Windows
         // making and dropping windows several a second, and one it wouldn't give stopped the outstation)
-        if self.pings.is_empty() {
+        if self.pings.is_empty() && !self.pings_last.is_some_and(|t| t.elapsed() < LINGER) {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
@@ -4131,6 +4544,72 @@ impl App {
     }
 }
 
+/// How long the pings' and the ✼s' window stays, empty, after the last one: a burst of them is one window, made once
+/// (each new window is a moment of Windows making it; 11/07/2026).
+const LINGER: Duration = Duration::from_secs(3);
+
+/// How long a line over the game takes to fade out, once its time's up (in 6 steps, the dither's way).
+const OVER_FADE_S: f32 = 1.2;
+
+/// How lit a line over the game is at this age (1 lit, 0 gone), with the settings' "fades after" (0: never).
+fn over_alpha(age: f32, fade: u32) -> f32 {
+    let fade = fade as f32;
+    if fade <= 0.0 || age < fade {
+        1.0
+    } else if crate::cursor::still() {
+        0.0
+    } else {
+        let k = ((age - fade) / OVER_FADE_S).min(1.0);
+        1.0 - (k * 6.0).floor() / 6.0
+    }
+}
+
+/// Where the chat over the game sits: its top-left on the screen (in Windows' pixels) and its size (in points), kept
+/// on the game, never off its right or bottom edge. The same for the chat in the picture (chatpic.rs).
+fn over_place(s: &Settings, (l, t, r, b): (i32, i32, i32, i32), ppp: f32) -> (f32, f32, f32, f32) {
+    let k = (s.game_chat_size / 20.0).max(0.6);
+    let (wide, tall) = (560.0 / ppp * k, 210.0 / ppp * k);
+    let (gx, gy) = match s.game_chat_at {
+        Some([fx, fy]) => (l as f32 + fx as f32 * (r - l) as f32, t as f32 + fy as f32 * (b - t) as f32),
+        None => (l as f32 + 12.0, t as f32 + 40.0),
+    };
+    (gx.min((r as f32 - wide * ppp).max(l as f32)), gy.min((b as f32 - tall * ppp).max(t as f32)), wide, tall)
+}
+
+/// Two lines to show the chat's size by (one of yours, one an observer's), when there's no chat yet.
+fn sample_lines(s: &Settings) -> Vec<(String, String, bool)> {
+    let me = if s.chat_name.trim().is_empty() { s.channel.clone() } else { s.chat_name.trim().to_string() };
+    vec![("observer".into(), "the chat over the game, this big".into(), false),
+         (if me.is_empty() { "you".into() } else { me }, "and a line of yours".into(), true)]
+}
+
+/// The lines over the game: newest at the bottom, each with a dark rim, lit, then fading out after the settings'
+/// time; none above `ceiling`.
+fn draw_over_lines(ui: &egui::Ui, rect: egui::Rect, lines: &[(f32, String, String, bool)], size: f32, fade: u32, ceiling: f32) {
+    let p = ui.painter();
+    let mut yy = rect.bottom() - 6.0;
+    for (age, name, text, host) in lines.iter().rev() {
+        let a = over_alpha(*age, fade);
+        if a <= 0.0 { continue; }
+        let (cn, ct) = ((if *host { LIME() } else { CYAN() }).gamma_multiply(a), Color32::from_rgb(0xf0, 0xf0, 0xf0).gamma_multiply(a));
+        let mut j = egui::text::LayoutJob::default();
+        append(&mut j, name, size, cn, false);
+        append(&mut j, &format!("  {}", text), size, ct, false);
+        j.wrap.max_width = rect.width() - 16.0;
+        let mut shadow = j.clone();
+        for sec in shadow.sections.iter_mut() { sec.format.color = Color32::from_rgb(10, 10, 10).gamma_multiply(a); }
+        let g = ui.painter().layout_job(j);
+        let gs = ui.painter().layout_job(shadow);
+        let at = egui::pos2(rect.left() + 8.0, yy - g.size().y);
+        if at.y < ceiling { break; }
+        for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (2.0, 2.0)] {
+            p.galley(at + Vec2::new(dx, dy), gs.clone(), Color32::BLACK);
+        }
+        yy -= g.size().y + 4.0;
+        p.galley(at, g, ct);
+    }
+}
+
 /// One of the see-through windows over RuneLite, drawn now (egui's immediate viewport). If Windows won't give it its
 /// window this frame (egui then stops with "the user callback was never called"), that's caught and written down,
 /// and the window is left a few seconds before it's tried again: the rest of the outstation carries on (11/07/2026).
@@ -4142,10 +4621,38 @@ fn overlay(ctx: &egui::Context, id: egui::ViewportId, builder: egui::ViewportBui
     if RESTING.with(|r| r.borrow().get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(3))) {
         return;
     }
+    // (Windows' frame off it at the very start of its first frame, before it's drawn and shown on the screen's next
+    // refresh: taken off after, at the end of the window's frame, a new one's border and shadow had shown for that
+    // moment; 11/07/2026, Jace: "when clicks appear on my screen i can sometimes see their border for a split second")
+    let mut f = f;
+    let f = move |ui: &mut egui::Ui, class: egui::ViewportClass| {
+        crate::cursor::adopt();
+        f(ui, class)
+    };
     crate::crash::quiet(true);
     let went = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.show_viewport_immediate(id, builder, f)));
     crate::crash::quiet(false);
     if went.is_err() {
         RESTING.with(|r| { r.borrow_mut().insert(id, Instant::now()); });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_over_the_game_stays_lit_then_fades_in_steps() {
+        assert_eq!(over_alpha(0.0, 20), 1.0);
+        assert_eq!(over_alpha(19.9, 20), 1.0);
+        // (0: never fades)
+        assert_eq!(over_alpha(500.0, 0), 1.0);
+        if !crate::cursor::still() {
+            let a = over_alpha(20.5, 20);
+            assert!(a > 0.0 && a < 1.0, "{}", a);
+            // (in sixths: the dither's way)
+            assert!(((a * 6.0).round() - a * 6.0).abs() < 1e-4);
+        }
+        assert_eq!(over_alpha(20.0 + OVER_FADE_S, 20), 0.0);
     }
 }

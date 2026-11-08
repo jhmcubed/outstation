@@ -24,6 +24,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,8 +39,16 @@ ADMIN = os.environ.get("ADMIN_TOKEN") or "test-admin-" + secrets.token_hex(12)
 ASKS_AN_HOUR = 12    # (the Worker's own is 3: the tests all ask from one address)
 REPORTS_AN_HOUR = 8  # (the Worker's own is 5)
 MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.0")
+# the aether's keeper (11/07/2026): the Worker's ADMIN_TOKEN, and relay-py's --admin-token (given it here)
+AETHER_KEEPER = WORKER or MODE == "python"
 SAY_BURST = 20
 SOUND_HOLD = 0.5
+# how long a settling code lasts on the relays under test (11/08/2026: 10 minutes as they're run, shortened here so a code
+# can be seen to expire; a relay already running: whatever it was started with, given here)
+SETTLE_CODE_S = float(os.environ.get("SETTLE_CODE_SECONDS") or (600 if MODE.startswith("ws") else 3))
+# how long a player's square (following, 11/08/2026) shows on GET /channels after it came: 240 s as the relays are run,
+# shortened here so it can be seen to go stale (a relay already running: whatever it was started with, given here)
+WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.startswith("ws") else 4))
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
@@ -83,14 +92,16 @@ def setUpModule():
         PROC = subprocess.Popen(
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
-             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR)],
+             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
+             "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
     else:
         STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE],
+                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
+                                 "--settle-code-seconds", "%g" % SETTLE_CODE_S, "--where-fresh-seconds", "%g" % WHERE_FRESH_S],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -1145,6 +1156,218 @@ class Summary(ReportData):
         self.assertNotIn("ended", back)
 
 
+def array_read(query=""):
+    """(status, headers, JSON or None) of GET /array/events, as outside.wiki's front page reads it."""
+    try:
+        with urllib.request.urlopen(http_url() + "/array/events" + query, timeout=10) as r:
+            return r.status, r.headers, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, e.headers, json.loads(raw) if raw else None
+        except ValueError:
+            return e.code, e.headers, None
+
+
+def array_since(since):
+    """Every event after the cursor, page by page."""
+    out = []
+    while True:
+        status, _, body = array_read("?since=%d" % since)
+        if status != 200:
+            raise AssertionError("GET /array/events: %s" % status)
+        if not body["events"]:
+            return out
+        out += body["events"]
+        since = body["next"]
+
+
+SKILLS = ["Attack", "Strength", "Defence", "Ranged", "Prayer", "Magic", "Runecraft", "Hitpoints", "Crafting", "Mining",
+          "Smithing", "Fishing"]
+
+
+class ArrayEvents(Base):
+    """The Array's events (11/08/2026): what's happening across the open outstations, for outside.wiki's front page (an
+    outstation's icon pops "+1"). Only a live outstation on GET /channels (no watch code) makes them; one channel adds
+    10 a minute at most."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual(status, 200)
+        self.since = body["next"]                                           # (what came before this test: left out)
+
+    async def dink(self, payload, ch=None, key=None):
+        self.assertEqual(await post("/dink/%s?key=%s" % (ch or self.ch, key or self.key), json.dumps(payload).encode(),
+                                    "application/json"), 204)
+
+    async def mine(self, n=0, wait=3.0, ch=None):
+        """This channel's events since the test began, oldest first: as soon as n have come, or after `wait` seconds."""
+        end = time.monotonic() + wait
+        while True:
+            got = [e for e in await asyncio.to_thread(array_since, self.since) if e["channel"] == (ch or self.ch)]
+            if (n and len(got) >= n) or time.monotonic() >= end:
+                return got
+            await asyncio.sleep(0.05)
+
+    async def none_of_mine(self):
+        self.assertEqual(await self.mine(wait=self.settle * 5), [])
+
+    @staticmethod
+    def what(events):
+        return [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in events]
+
+    async def other(self):
+        """Another channel of this test's, and its key (handed out on the Worker; claimed by its transmitter here)."""
+        ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+            self.assertEqual(status, 200)
+            return ch, got["key"]
+        return ch, "secret-key-" + secrets.token_hex(4)
+
+    async def test_a_live_open_outstations_reports_become_events(self):
+        await self.tx()
+        await self.pause()
+        began = time.time() * 1000
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412,
+                         "isPersonalBest": True, "party": ["someone else"]}})
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Ranged": 92, "Hitpoints": 90},
+                         "allSkills": {"Ranged": 92, "Hitpoints": 90}}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC", "items": [
+            {"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000},
+            {"id": 22006, "name": "Skeletal visage", "quantity": 1, "priceEach": 1200000}]}})         # (1,206,000: in)
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC", "items": [
+            {"id": 536, "name": "Dragon bones", "quantity": 300, "priceEach": 3333}]}})              # (999,900: under)
+        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage", "itemId": 11286,
+                         "completedEntries": 812, "totalEntries": 1568, "dropperName": "someone"}})
+        await self.dink({"type": "CLUE", "content": "", "extra": {"clueType": "Hard", "numberCompleted": 150}})
+        await self.dink({"type": "PET", "content": "", "extra": {}})                                  # (no name given)
+        await self.dink({"type": "QUEST", "content": "", "extra": {"questName": "Dragon Slayer II"}})   # (not one of them)
+        got = await self.mine(8)
+        self.assertEqual(self.what(got), [
+            {"kind": "kill", "boss": "Vorkath", "kc": 412},
+            {"kind": "level", "skill": "Ranged", "level": 92},
+            {"kind": "level", "skill": "Hitpoints", "level": 90},
+            {"kind": "pet", "name": "Vorki"},
+            {"kind": "loot", "name": "Skeletal visage", "value": 1206000},
+            {"kind": "clog", "name": "Draconic visage"},
+            {"kind": "clue", "tier": "Hard", "count": 150},
+            {"kind": "pet"},
+        ])
+        self.assertEqual(list(got[0]), ["id", "at", "channel", "kind", "boss", "kc"])
+        ids = [e["id"] for e in got]
+        self.assertEqual(ids, sorted(set(ids)))                                # (each its own, going up)
+        for e in got:
+            self.assertEqual(e["channel"], self.ch)
+            self.assertTrue(began - 5000 <= e["at"] <= time.time() * 1000 + 5000, e["at"])
+        self.assertEqual(await self.mine(wait=self.settle * 4), got)            # (and nothing more: the quest, the small drop)
+
+    async def test_a_report_from_the_transmitter_counts_too_its_numbers_and_names_checked(self):
+        tx = await self.tx()
+        await self.pause()
+        for data in ({"pet": "Vorki"}, {"boss": "Zulrah " + "z" * 80, "count": 5.0},
+                     {"skills": {"Attack": "99", "Magic": -1, "Prayer": True, "  ": 5, "9": 9, "Strength": 99}},
+                     {"value": 2 ** 53, "items": []}, {"value": 1000000, "items": [{"name": "Coins", "quantity": 1000000, "price": 1}]}):
+            kind = {"pet": "PET", "boss": "KILL_COUNT", "skills": "LEVEL", "value": "LOOT"}[next(iter(data))]
+            await tx.send(json.dumps({"report": {"type": kind, "text": "", "at": 1, "data": data}}))
+        await tx.send(json.dumps({"report": "not one"}))
+        got = await self.mine(4)
+        self.assertEqual(self.what(got), [
+            {"kind": "pet", "name": "Vorki"},
+            {"kind": "kill", "boss": ("Zulrah " + "z" * 80)[:60], "kc": 5},     # (a name cut to 60; 5.0 is 5)
+            {"kind": "level", "skill": "Strength", "level": 99},              # (only a skill's name, and a whole number)
+            {"kind": "loot", "name": "Coins", "value": 1000000},             # (1,000,000 is enough; 2^53 isn't a number)
+        ])
+
+    async def test_since_moves_on_and_a_read_without_it_has_the_last_fifty(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Zulrah", "count": 1}})
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Zulrah", "count": 2}})
+        first, second = await self.mine(2)
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % first["id"])
+        self.assertEqual((status, body), (200, {"events": [second], "next": second["id"]}))
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % second["id"])
+        self.assertEqual((status, body), (200, {"events": [], "next": second["id"]}))
+        # (a cursor past the newest, from a relay that's started again with its clock behind: next is the newest)
+        self.assertEqual((await asyncio.to_thread(array_read, "?since=9007199254740991"))[2],
+                         {"events": [], "next": second["id"]})
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual((status, body["events"][-1], body["next"]), (200, second, second["id"]))
+        self.assertLessEqual(len(body["events"]), 50)
+        self.assertEqual([e["id"] for e in body["events"]], sorted(e["id"] for e in body["events"]))
+        for bad in ("abc", "-1", "1.5", "99999999999999999", "9007199254740992"):
+            status, _, body = await asyncio.to_thread(array_read, "?since=" + bad)
+            self.assertEqual((status, sorted(body)), (400, ["error"]), bad)
+
+    async def test_a_page_is_a_hundred_at_most_and_a_report_adds_ten_at_most(self):
+        # eleven outstations, each levelling twelve skills at once: ten each, and the first hundred in one read
+        chans = [(self.ch, self.key)] + [await self.other() for _ in range(10)]
+        for ch, key in chans:
+            self.clients.append(await Client().open("%s/transmit/%s?key=%s" % (RELAY, ch, key)))
+        await self.pause(2)
+        for ch, key in chans:
+            await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 50 for s in SKILLS}}}, ch, key)
+        end = time.monotonic() + 5
+        while len([e for e in await asyncio.to_thread(array_since, self.since) if e["channel"] in dict(chans)]) < 110:
+            self.assertLess(time.monotonic(), end, "the 110 events didn't all come")
+            await asyncio.sleep(0.1)
+        status, _, page = await asyncio.to_thread(array_read, "?since=%d" % self.since)
+        self.assertEqual(len(page["events"]), 100)
+        self.assertEqual(page["next"], page["events"][-1]["id"])
+        rest = await asyncio.to_thread(array_since, page["next"])
+        ours = [e for e in page["events"] + rest if e["channel"] in dict(chans)]
+        self.assertEqual(len(ours), 110)
+        for ch, _ in chans:
+            self.assertEqual([e["skill"] for e in ours if e["channel"] == ch], SKILLS[:10])
+        self.assertEqual(len((await asyncio.to_thread(array_read))[2]["events"]), 50)
+
+    async def test_one_outstation_adds_ten_a_minute_at_most(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 60 for s in SKILLS[:8]}}})
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 7}})
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 61 for s in SKILLS[8:11]}}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        await self.mine(10)
+        got = await self.mine(wait=self.settle * 5)
+        self.assertEqual(len(got), 10)
+        self.assertEqual(self.what(got[-2:]), [{"kind": "kill", "boss": "Vorkath", "kc": 7},
+                                               {"kind": "level", "skill": SKILLS[8], "level": 61}])
+
+    async def test_a_dark_outstations_reports_never_show(self):
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 9}})   # (never on air)
+        tx = await self.tx()
+        await self.pause(2)
+        tx.close()
+        await self.pause(4)
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})                     # (gone dark)
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})
+        await self.none_of_mine()
+
+    async def test_a_watch_coded_outstations_reports_never_show(self):
+        await self.tx("a-code")
+        await self.pause(2)
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 9}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC", "items": [
+            {"name": "Skeletal visage", "quantity": 1, "priceEach": 1200000}]}})
+        await self.none_of_mine()
+
+    async def test_any_page_may_read_it_and_only_read_it(self):
+        status, headers, body = await asyncio.to_thread(array_read)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"), "*")
+        self.assertEqual(headers.get("Cache-Control"), "no-cache")
+        self.assertIn("application/json", headers.get("Content-Type"))
+        self.assertEqual(sorted(body), ["events", "next"])
+        self.assertIsInstance(body["next"], int)
+        for method in ("POST", "PUT", "DELETE"):
+            self.assertEqual(http(method, "/array/events")[0], 405, method)
+
+
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64       # (only its first bytes are looked at)
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
@@ -1408,6 +1631,1064 @@ class Flow(Base):
         await self.pause()
         await tx.send(frame)
         self.assertEqual((await v.recv_data())[0], "binary")
+
+
+class Game(Base):
+    """The game (11/07/2026): the Outside plugin, a RuneLite plugin of our own, sends the player's live game state on a
+    socket of its own. Each field replaces the one kept but "items", which is merged; what changed reaches seated
+    viewers, lookers and desks, and someone just come gets the whole of it; GET /game reads it while the outstation's
+    dark. (The checking of each field, the dictionary's most and the kept state's most: relay-py/test_relay.py's.)"""
+
+    STATE = {"name": "Sburb", "world": 302, "type": "NORMAL", "off": False, "paused": False,
+             "vitals": {"hp": [80, 99], "prayer": [43, 70], "run": 100, "spec": 50},
+             "skills": {"Attack": [99, 112, 13034431], "Hitpoints": [99, 99, 13034431]},
+             "worn": [[1163, 1]] + [None] * 13, "inv": [[385, 12]] + [None] * 27, "bag": None,
+             "pouch": [[560, 1000], [565, 2000], [9075, 400]], "quiver": [11212, 120], "prayers": ["PIETY"],
+             "items": {"385": ["Shark", 870], "1163": ["Rune full helm", 21000]}}
+
+    async def game(self, key=None):
+        """A game socket, saying a version older than any MIN_CLIENT: the plugin's versions are its own."""
+        return await self.connect("game", "key=%s&v=0.0.1" % (key or self.key))
+
+    def read(self, code="", channel=None):
+        return http("GET", "/game/%s?code=%s" % (channel or self.ch, code))
+
+    async def test_the_right_key_connects_whatever_its_version_and_a_wrong_or_short_one_is_refused(self):
+        v = await self.watch()
+        self.assertFalse((await next_of(v, "relay"))["game"])
+        await self.game()
+        while not (await next_of(v, "relay"))["game"]:
+            pass
+        wrong = await self.game(key="wrong-key-" + secrets.token_hex(3))
+        self.assertEqual(await wrong.recv_close(), ("close", 4003))
+        short = await self.game(key="short")
+        self.assertEqual(await short.recv_close(), ("close", 4001))
+
+    async def test_what_changed_reaches_viewers_lookers_and_desks_and_someone_just_come_gets_it_all(self):
+        g = await self.game()
+        v, look, d = await self.watch(), await self.connect("watch", "look=1"), await self.desk()
+        await self.pause()
+        t0 = time.time() * 1000
+        await g.send(json.dumps({"game": self.STATE}))
+        for c in (v, look, d):
+            got = await next_of(c, "game")
+            self.assertLess(abs(got.pop("at") - t0), 60000)
+            self.assertEqual(got, self.STATE)
+        await g.send(json.dumps({"game": {"vitals": {"hp": [70, 99], "prayer": [40, 70], "run": 98, "spec": 50}}}))
+        got = await next_of(v, "game")
+        self.assertEqual(sorted(got), ["at", "vitals"])                   # (only what was sent)
+        for late in (await self.watch(), await self.connect("watch", "look=1"), await self.desk(name="late")):
+            whole = await next_of(late, "game")
+            self.assertEqual((whole["vitals"]["hp"], whole["inv"], whole["at"]), ([70, 99], self.STATE["inv"], got["at"]))
+
+    async def test_items_merge_while_every_other_field_is_replaced_whole(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        await g.send(json.dumps({"game": {"inv": [[385, 1]] + [None] * 27, "items": {"385": ["Shark", 870]}, "off": True,
+                                          "paused": "  wilderness\n"}}))
+        await g.send(json.dumps({"game": {"inv": [None] * 27 + [[2434, 4]],
+                                          "items": {"2434": ["Prayer potion(4)", 9000], "385": ["Shark", 900]}}}))
+        await next_of(v, "game")
+        self.assertEqual((await next_of(v, "game"))["items"], {"385": ["Shark", 900], "2434": ["Prayer potion(4)", 9000]})
+        whole = await next_of(await self.watch(), "game")
+        self.assertEqual(whole["inv"], [None] * 27 + [[2434, 4]])
+        self.assertEqual(whole["items"], {"385": ["Shark", 900], "2434": ["Prayer potion(4)", 9000]})
+        self.assertEqual((whole["off"], whole["paused"]), (True, "wilderness"))   # (a message without them: as they were)
+        await g.send(json.dumps({"game": {"off": False, "paused": False}}))
+        got = await next_of(v, "game")
+        self.assertEqual((got["off"], got["paused"]), (False, False))
+        self.assertEqual(self.read()[1]["game"]["paused"], False)
+        await g.send(json.dumps({"game": {"off": False, "paused": True}}))   # (nothing changed, true isn't its shape)
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "game", timeout=0.5)
+
+    async def test_a_second_game_socket_replaces_the_first(self):
+        old = await self.game()
+        await self.pause()
+        new = await self.game()
+        self.assertEqual(await old.recv_close(), ("close", 4000))
+        v = await self.watch()
+        self.assertTrue((await next_of(v, "relay"))["game"])
+        await new.send(json.dumps({"game": {"world": 420}}))
+        self.assertEqual((await next_of(v, "game"))["world"], 420)
+
+    async def test_the_read_gives_the_last_of_it_and_whether_the_plugin_is_connected(self):
+        status, got = self.read()
+        self.assertEqual((status, got["error"]), (404, "no game state for that outstation"))
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        await g.send(json.dumps({"game": {"name": "Sburb", "world": 302}}))
+        at = (await next_of(v, "game"))["at"]
+        status, got = self.read()
+        self.assertEqual((status, got), (200, {"game": {"name": "Sburb", "world": 302}, "at": at, "connected": True}))
+        g.close()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        status, got = self.read()
+        self.assertEqual((status, got["game"]["world"], got["connected"]), (200, 302, False))   # (while the player's away)
+        self.assertEqual(self.read(channel="none" + secrets.token_hex(4))[0], 404)
+
+    async def test_a_coded_outstations_game_needs_its_code(self):
+        await self.tx("moss")
+        g = await self.game()
+        v = await self.watch("moss")
+        await self.pause()
+        await g.send(json.dumps({"game": {"world": 302}}))
+        await next_of(v, "game")
+        self.assertEqual([self.read(code)[0] for code in ("lichen", "")], [403, 403])
+        self.assertEqual(self.read("moss")[1]["game"], {"world": 302})
+
+    async def test_the_status_line_and_the_open_outstations_say_whether_its_connected(self):
+        def row():
+            return {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}[self.ch]
+        v = await self.watch()
+        self.assertFalse((await next_of(v, "relay"))["game"])
+        g = await self.game()
+        while not (await next_of(v, "relay"))["game"]:
+            pass
+        await self.pause(2)
+        self.assertTrue(row()["game"])
+        g.close()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        await self.pause(2)
+        self.assertFalse(row()["game"])
+
+    async def test_too_big_unknown_and_wrong_shaped_fields_are_ignored(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        big = json.dumps({"game": {"name": "Big", "prayers": ["x" * 40] * 2000}})
+        self.assertGreater(len(big), 64 * 1024)
+        await g.send(big)
+        await g.send(json.dumps({"game": {"name": "  Sburb\n ", "world": "302", "inv": "full", "worn": [[1, 1]] * 15,
+                                          "secret": "kept?", "vitals": {"hp": [10, 99], "mood": "fine", "run": 140}}}))
+        got = await next_of(v, "game")                       # (the first: the big one never came)
+        got.pop("at")
+        self.assertEqual(got, {"name": "Sburb", "vitals": {"hp": [10, 99]}})
+        self.assertEqual(self.read()[1]["game"], {"name": "Sburb", "vitals": {"hp": [10, 99]}})
+        await g.send(json.dumps({"something": {"world": 302}}))     # (not a game message at all)
+        await g.send(json.dumps({"game": {"secret": 1}}))           # (nothing known in it)
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "game", timeout=0.5)
+
+    async def test_more_than_five_a_second_are_dropped(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        for i in range(8):
+            await g.send(json.dumps({"game": {"world": 300 + i}}))
+        worlds = []
+        try:
+            while True:
+                worlds.append((await next_of(v, "game", timeout=0.6))["world"])
+        except asyncio.TimeoutError:
+            pass
+        self.assertEqual(worlds, [300, 301, 302, 303, 304])
+        await asyncio.sleep(1.0)
+        await g.send(json.dumps({"game": {"world": 399}}))
+        self.assertEqual((await next_of(v, "game"))["world"], 399)
+
+    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
+    async def test_a_new_key_cuts_the_game_off_and_forgets_it(self):
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        await g.send(json.dumps({"game": {"world": 302}}))
+        await next_of(v, "game")
+        self.assertEqual(admin("POST", "/admin/channels/" + self.ch)[0], 200)
+        self.assertEqual(await g.recv_close(), ("close", 4003))
+        self.assertEqual(self.read()[0], 404)
+        self.assertIsNone(await nothing_game(await self.watch()))
+
+
+class Following(Base):
+    """Following (11/08/2026): the Outside plugin may send "where", the middle of the 128-tile square of the main map the
+    player was in two minutes before, or null. The relay holds it (one every 50 s at most; null whenever it comes), drops
+    it when the plugin goes, logs out or holds for the player's safety, and shows it only on GET /channels, while the
+    channel's live and listed and it came within WHERE_FRESH_S. Never to viewers, lookers or desks, in GET /game or in
+    the Array's events. (The throttle's end and --delay: relay-py/test_relay.py's.)"""
+
+    LUMBRIDGE = {"x": 3264, "y": 3264}
+
+    async def game(self, key=None, channel=None):
+        return await Client().open("%s/game/%s?key=%s&v=0.0.1" % (RELAY, channel or self.ch, key or self.key))
+
+    async def say(self, g, fields):
+        await g.send(json.dumps({"game": fields}))
+
+    async def where(self, channel=None):
+        """This channel's row's "where" on GET /channels, after a moment for the Worker's channel to tell the Directory;
+        (False if it has no row)."""
+        await self.pause(2)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        row = rows.get(channel or self.ch)
+        return False if row is None else row["where"]
+
+    async def live_and_following(self, where=None, code=""):
+        """A transmitter (live) and the plugin, which has said where it is: (the transmitter, the plugin)."""
+        tx = await self.tx(code)
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"where": where or self.LUMBRIDGE})
+        return tx, g
+
+    async def test_a_square_shows_on_the_list_only_while_live(self):
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"where": self.LUMBRIDGE})
+        self.assertIsNone(await self.where())                      # (held, but not on air: not shown)
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        tx.close()
+        await self.pause(2)
+        self.assertIsNone(await self.where())
+        tx = await self.tx()                                       # (on air again within the time: shown again)
+        await next_of(tx, "relay")
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+
+    async def test_it_goes_stale(self):
+        await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await asyncio.sleep(WHERE_FRESH_S + 0.5)
+        self.assertIsNone(await self.where())
+
+    async def test_a_coded_outstation_never_shows_it(self):
+        await self.live_and_following({"x": 1088, "y": 2496}, code="moss")
+        await self.pause(2)
+        got = http("GET", "/channels")[1]["channels"]
+        self.assertNotIn(self.ch, [c["channel"] for c in got])
+        self.assertNotIn({"x": 1088, "y": 2496}, [c["where"] for c in got])
+
+    async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_only_once_live(self):
+        if not WORKER:
+            await self.tx()                    # (relay.py: the inviter's handed out once its first transmitter claims it)
+            await self.pause(2)
+        a = "i" + secrets.token_hex(5)
+        status, got = http("POST", "/invites/" + self.ch, {"key": self.key, "player": a})
+        self.assertEqual(status, 200)
+        self.assertIs(await self.where(a), False)                   # (pending: no row at all)
+        g = await self.game(key=got["key"], channel=a)              # (its key used: taken up)
+        self.clients.append(g)
+        await self.say(g, {"where": self.LUMBRIDGE})
+        self.assertIsNone(await self.where(a))                      # (listed now, but not live)
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, a, got["key"]))
+        self.clients.append(tx)
+        await next_of(tx, "relay")
+        self.assertEqual(await self.where(a), self.LUMBRIDGE)
+
+    async def test_a_bad_square_is_ignored_and_the_rest_of_its_message_still_lands(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        v = await self.watch()
+        await self.pause()
+        bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 960, "y": 3264},
+               {"x": 3264, "y": 3264, "plane": 0}, {"x": 3264}, {"x": "3264", "y": 3264}, {"x": 3264.5, "y": 3264},
+               {"x": True, "y": 3264}, [3264, 3264], "lumbridge", 3264, True]
+        for i, w in enumerate(bad):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)                           # (5 a second at most)
+            await self.say(g, {"world": 300 + i, "where": w})
+            got = await next_of(v, "game")
+            self.assertEqual((sorted(got), got["world"]), (["at", "world"], 300 + i), w)
+        self.assertIsNone(await self.where())
+        await asyncio.sleep(1.0)
+        await self.say(g, {"where": {"x": 3264.0, "y": 2496}})   # (a bad one never counted: this one's taken)
+        self.assertEqual(await self.where(), {"x": 3264, "y": 2496})
+
+    async def test_one_every_50_seconds_and_null_clears_whenever(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"where": {"x": 3136, "y": 3264}})       # (too soon: ignored)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"where": None})
+        self.assertIsNone(await self.where())
+        await self.say(g, {"where": {"x": 3136, "y": 3264}})       # (still too soon after the last one taken)
+        self.assertIsNone(await self.where())
+
+    async def test_logging_out_drops_it(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"off": True})
+        self.assertIsNone(await self.where())
+
+    async def test_holding_for_the_players_safety_drops_it(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        await self.say(g, {"paused": "wilderness", "worn": [], "inv": [], "bag": [], "pouch": [], "quiver": None,
+                           "vitals": {}, "prayers": []})              # (the plugin's Kit.held)
+        self.assertIsNone(await self.where())
+
+    async def test_the_plugin_going_drops_it(self):
+        tx, g = await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        g.close()
+        v = await self.watch()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        self.assertIsNone(await self.where())
+
+    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
+    async def test_a_new_key_drops_it(self):
+        await self.live_and_following()
+        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        status, got = admin("POST", "/admin/channels/" + self.ch)
+        self.assertEqual(status, 200)
+        tx = await self.tx(key=got["key"])
+        await next_of(tx, "relay")
+        self.assertIsNone(await self.where())
+
+    async def test_never_to_viewers_lookers_desks_the_read_or_the_arrays_events(self):
+        v, look, d = await self.watch(), await self.connect("watch", "look=1"), await self.desk()
+        tx, g = await self.live_and_following()
+        await self.say(g, {"world": 302, "where": {"x": 3136, "y": 3264}})
+        self.assertEqual(await self.where(), self.LUMBRIDGE)          # (the list has it)
+        late = [await self.watch(), await self.connect("watch", "look=1"), await self.desk(name="late")]
+        for c in [v, look, d] + late:
+            heard = []
+            try:
+                while True:
+                    kind, line = await c.recv(timeout=0.5)
+                    if kind == "text":
+                        heard.append(line)
+            except asyncio.TimeoutError:
+                pass
+            self.assertTrue(any('"game"' in line for line in heard))  # (the game reached it, the world)
+            for line in heard:
+                self.assertNotIn("where", line)
+        self.assertNotIn("where", json.dumps(self.read_game()))
+        with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
+            self.assertNotIn("where", r.read().decode())
+
+    def read_game(self):
+        status, got = http("GET", "/game/%s?code=" % self.ch)
+        self.assertEqual((status, got["game"]["world"]), (200, 302))
+        return got
+
+
+async def nothing_game(c, wait=0.5):
+    """The game line someone just come is sent, or None if none comes in `wait` seconds."""
+    try:
+        return await next_of(c, "game", timeout=wait)
+    except asyncio.TimeoutError:
+        return None
+
+
+class Invites(Base):
+    """An outstation's invites (11/07/2026): it hands out channels of its own, three to begin with and one more every 10
+    hours on air (the earning is relay-py/test_relay.py's: ten hours on air can't be waited for here). An invite's code
+    attaches a client as the keeper's does, and the new channel says whose invite it came from."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        if not WORKER:
+            tx = await self.tx()           # (relay.py: a channel is handed out once its first transmitter claims it)
+            await next_of(tx, "relay")
+            tx.close()
+            await self.pause(2)
+
+    def status(self, key=None):
+        return http("GET", "/invites/%s?key=%s" % (self.ch, key or self.key))
+
+    def invite(self, player, key=None):
+        return http("POST", "/invites/" + self.ch, {"key": key or self.key, "player": player})
+
+    async def given(self, name):
+        """A name with an outstation already: handed out by the keeper (the Worker), or claimed (relay.py)."""
+        if WORKER:
+            self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
+        else:
+            c = await Client().open("%s/transmit/%s?key=its-own-key-%s" % (RELAY, name, secrets.token_hex(3)))
+            self.clients.append(c)
+            await next_of(c, "relay")
+
+    async def test_a_new_outstation_has_three_and_has_used_none(self):
+        status, got = self.status()
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(got), ["earned", "hours", "left", "next_in_s", "used"])
+        self.assertEqual((got["left"], got["earned"], got["used"], got["hours"]), (3, 3, [], 0))
+        self.assertTrue(35990 <= got["next_in_s"] <= 36000, got["next_in_s"])
+
+    async def test_an_invite_is_a_station_key_for_a_new_channel_that_says_whose_it_was(self):
+        name = "i" + secrets.token_hex(5)
+        status, got = self.invite(name)
+        self.assertEqual(status, 200)
+        self.assertEqual((got["channel"], got["left"]), (name, 2))
+        self.assertTrue(got["code"].startswith("outstation1:"))
+        raw = got["code"][len("outstation1:"):]
+        info = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        self.assertEqual(info, {"relay": RELAY, "channel": name, "key": got["key"]})
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, info["key"]))
+        self.clients.append(tx)
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+        status, st = self.status()
+        self.assertEqual((status, st["left"], st["used"]), (200, 2, [name]))
+        await self.pause(2)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        self.assertEqual(rows[name]["by"], self.ch)
+        self.assertIsNone(rows[self.ch]["by"])
+        if WORKER:
+            kept = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}
+            self.assertEqual(kept[name]["by"], self.ch)
+            self.assertIsNone(kept[self.ch]["by"])                  # (the keeper's own)
+
+    async def test_a_name_with_an_outstation_already_isnt_invited(self):
+        other = "i" + secrets.token_hex(5)
+        await self.given(other)
+        status, got = self.invite(other)
+        self.assertEqual((status, got["error"]), (409, "that name has an outstation already"))
+        name = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(name)[0], 200)
+        self.assertEqual(self.invite(name)[0], 409)                   # (it has one now: this invite's)
+        self.assertEqual(self.status()[1]["used"], [name])            # (nothing refused was counted)
+
+    async def test_the_wrong_key_and_a_channel_nobody_has_are_refused(self):
+        self.assertEqual(self.status(key="not-the-key-at-all")[0], 403)
+        status, got = self.invite("i" + secrets.token_hex(5), key="not-the-key-at-all")
+        self.assertEqual(status, 403)
+        self.assertTrue(got["error"])
+        self.assertEqual(self.status()[1]["left"], 3)
+        self.assertEqual(http("GET", "/invites/none%s?key=%s" % (secrets.token_hex(4), self.key))[0], 404)
+
+    async def test_three_to_begin_with_and_then_none_left(self):
+        names = ["i" + secrets.token_hex(5) for _ in range(4)]
+        self.assertEqual([self.invite(n)[1].get("left") for n in names[:3]], [2, 1, 0])
+        status, got = self.invite(names[3])
+        self.assertEqual((status, got["error"]), (409, "no invites left: one more every 10 hours on air"))
+        got = self.status()[1]
+        self.assertEqual((got["left"], got["earned"], got["used"]), (0, 3, names[:3]))
+
+    async def test_your_own_name_and_names_that_arent_a_players_are_refused(self):
+        got = {name: self.invite(name) for name in (self.ch, "Moss", "moss man", "thirteenchars")}
+        self.assertEqual([status for status, _ in got.values()], [400] * 4)
+        self.assertEqual(got[self.ch][1]["error"], "that's your own outstation")
+        self.assertEqual(self.status()[1]["used"], [])
+
+    @unittest.skipUnless(WORKER, "a new key and taking back: the keeper's, the Worker only")
+    async def test_a_new_key_keeps_whose_invite_it_was_and_taking_back_takes_nothing_back(self):
+        name = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(name)[0], 200)
+        self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)   # (the keeper's new key for it)
+        self.assertEqual({c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[name]["by"], self.ch)
+        self.assertEqual(admin("DELETE", "/admin/channels/" + name)[0], 204)
+        self.assertEqual(self.status()[1]["used"], [name])                  # (the invite stays spent)
+        other = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(other)[0], 200)
+        self.assertEqual(admin("DELETE", "/admin/channels/" + self.ch)[0], 204)
+        self.assertEqual({c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[other]["by"], self.ch)
+
+    async def test_z_past_five_posts_an_hour_wait(self):
+        codes = [self.invite("i" + secrets.token_hex(5))[0] for _ in range(6)]
+        self.assertEqual(codes, [200, 200, 200, 409, 409, 429])
+
+    # pending (11/08/2026): an invite not taken up yet (its key never used) is left off GET /channels and only counted
+    # under its inviter, for the keys beside it on outside.wiki's globe; never named
+
+    async def open_list(self):
+        """GET /channels as (its rows by channel, its pending counts by inviter, the raw body), after a moment for the
+        Worker's channels to tell the Directory."""
+        await self.pause(2)
+        with urllib.request.urlopen(http_url() + "/channels", timeout=10) as r:
+            raw = r.read().decode()
+        got = json.loads(raw)
+        for p in got["pending"]:
+            self.assertEqual(sorted(p), ["by", "n"])
+        bys = [p["by"] for p in got["pending"]]
+        self.assertEqual(bys, sorted(bys))                                   # (sorted by inviter, each once)
+        self.assertEqual(len(bys), len(set(bys)))
+        return {c["channel"]: c for c in got["channels"]}, {p["by"]: p["n"] for p in got["pending"]}, raw
+
+    async def test_an_invite_not_taken_up_is_counted_under_its_inviter_and_never_named(self):
+        a, b = "i" + secrets.token_hex(5), "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(a)[0], 200)
+        rows, pending, raw = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertIn(self.ch, rows)
+        self.assertNotIn(a, rows)
+        self.assertNotIn(a, raw)                                             # (nowhere in the answer)
+        self.assertEqual(self.invite(b)[0], 200)
+        rows, pending, raw = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 2)
+        for name in (a, b):
+            self.assertNotIn(name, raw)
+
+    async def test_an_invite_taken_up_is_listed_and_no_longer_counted(self):
+        a, b = "i" + secrets.token_hex(5), "i" + secrets.token_hex(5)
+        key_a, key_b = self.invite(a)[1]["key"], self.invite(b)[1]["key"]
+        self.assertEqual((await self.open_list())[1].get(self.ch), 2)
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, a, key_a))   # (the friend's client, attached)
+        self.clients.append(tx)
+        await next_of(tx, "relay")
+        rows, pending, raw = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertEqual((rows[a]["by"], rows[a]["live"]), (self.ch, True))
+        self.assertNotIn(b, raw)
+        self.assertEqual(http("GET", "/invites/%s?key=not-the-key-at-all" % b)[0], 403)   # (a wrong key takes nothing up)
+        self.assertEqual((await self.open_list())[1].get(self.ch), 1)
+        self.assertEqual(http("GET", "/invites/%s?key=%s" % (b, key_b))[0], 200)       # (its key, used for anything)
+        rows, pending, _ = await self.open_list()
+        self.assertNotIn(self.ch, pending)
+        self.assertEqual((rows[b]["by"], rows[b]["live"]), (self.ch, False))
+
+    async def test_a_home_beside_an_invite_not_taken_up_reads_as_the_default_till_it_is(self):
+        a = "i" + secrets.token_hex(5)
+        key_a = self.invite(a)[1]["key"]
+        status, _, got = settle_http("POST", "/settle/%s?key=%s&v=0.9.0" % (self.ch, self.key))
+        self.assertEqual(status, 200, got)
+        status, _, got = settle_http("POST", "/home/" + self.ch, {"code": got["code"], "near": a})
+        self.assertEqual((status, got["home"]), (200, {"near": a}))         # (the owner's own answer says it)
+        rows, pending, raw = await self.open_list()
+        self.assertIsNone(rows[self.ch]["home"])
+        self.assertNotIn(a, raw)
+        self.assertEqual(http("GET", "/invites/%s?key=%s" % (a, key_a))[0], 200)       # (taken up)
+        rows, pending, _ = await self.open_list()
+        self.assertEqual(rows[self.ch]["home"], {"near": a})
+
+    async def test_a_coded_inviters_invites_arent_counted(self):
+        a = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(a)[0], 200)
+        self.assertEqual((await self.open_list())[1].get(self.ch), 1)
+        tx = await self.tx("a-code")                                         # (the inviter: friends only now)
+        await next_of(tx, "relay")
+        rows, pending, raw = await self.open_list()
+        self.assertNotIn(self.ch, rows)
+        self.assertNotIn(self.ch, pending)
+        self.assertNotIn(self.ch, raw)                                       # (nothing said of a hidden outstation)
+        self.assertNotIn(a, raw)
+
+    @unittest.skipUnless(WORKER, "the keeper's own, a new key and taking back: the keeper's, the Worker only")
+    async def test_the_keepers_own_are_listed_as_before_and_a_taken_back_inviters_invites_arent_counted(self):
+        own = "k" + secrets.token_hex(5)
+        self.assertEqual(admin("POST", "/admin/channels/" + own)[0], 200)   # (the keeper's, never used: listed, as ever)
+        a = "i" + secrets.token_hex(5)
+        self.assertEqual(self.invite(a)[0], 200)
+        rows, pending, _ = await self.open_list()
+        self.assertIsNone(rows[own]["by"])
+        self.assertNotIn(own, pending)
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertEqual(admin("POST", "/admin/channels/" + a)[0], 200)     # (a new key from the keeper: still waiting)
+        rows, pending, _ = await self.open_list()
+        self.assertEqual(pending.get(self.ch), 1)
+        self.assertNotIn(a, rows)
+        self.assertEqual(admin("DELETE", "/admin/channels/" + self.ch)[0], 204)
+        rows, pending, raw = await self.open_list()
+        self.assertNotIn(self.ch, pending)
+        self.assertNotIn(a, raw)
+
+
+def settle_http(method, path, body=None, raw=None):
+    """(status, headers, JSON or None) from settling's routes, as the outstation app or the globe page calls them."""
+    data = raw if raw is not None else json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    req = urllib.request.Request(http_url() + path, method=method, data=data,
+                                 headers={"Content-Type": "application/json"} if data else {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            got = r.read()
+            return r.status, r.headers, json.loads(got) if got else None
+    except urllib.error.HTTPError as e:
+        got = e.read()
+        try:
+            return e.code, e.headers, json.loads(got) if got else None
+        except ValueError:
+            return e.code, e.headers, None
+
+
+SETTLE_CORS = {"access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
+               "access-control-allow-headers": "content-type"}
+WEEK_MS = 7 * 86400 * 1000
+
+
+class Settling(Base):
+    """Settling (11/08/2026): where an outstation stands on outside.wiki's globe. The app trades its key for a one-time
+    code (POST /settle), the globe page checks it (GET /settle) and settles with it, once (POST /home): a place, beside an
+    outstation, or back to the default. The first change is free, then one every 7 days; the home shows in GET /channels.
+    A code lasts SETTLE_CODE_S here (10 minutes on a relay as it's run). The 7 days are the relays' own: what's after
+    them is relay-py/test_relay.py's."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        if not WORKER:
+            await self.claim(self.ch, self.key)    # (relay.py: a channel is handed out once its first transmitter claims it)
+
+    async def claim(self, ch, key):
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, ch, key))
+        await next_of(tx, "relay")
+        tx.close()
+        await self.pause(2)
+
+    async def other(self):
+        """Another outstation and its key: handed out by the keeper (the Worker), or claimed (relay.py)."""
+        ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+            self.assertEqual(status, 200)
+            return ch, got["key"]
+        key = "secret-key-" + secrets.token_hex(4)
+        await self.claim(ch, key)
+        return ch, key
+
+    def code(self, key=None, ch=None):
+        """The app's ask: (status, headers, answer)."""
+        return settle_http("POST", "/settle/%s?key=%s&v=0.9.0" % (ch or self.ch, key or self.key))
+
+    def fresh(self, key=None, ch=None):
+        status, _, got = self.code(key, ch)
+        self.assertEqual(status, 200, got)
+        return got["code"]
+
+    def check(self, code, ch=None):
+        return settle_http("GET", "/settle/%s?code=%s" % (ch or self.ch, urllib.parse.quote(code)))
+
+    def home(self, body, ch=None):
+        """The page's settle: (status, headers, answer). (Not settle: Base's settle is a time.)"""
+        return settle_http("POST", "/home/" + (ch or self.ch), body)
+
+    def cors(self, headers):
+        return {k: headers.get(k) for k in SETTLE_CORS}
+
+    async def test_the_key_gets_a_code_the_page_can_check_without_using_it_up(self):
+        before = time.time() * 1000
+        status, h, got = self.code()
+        after = time.time() * 1000
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(got), ["code", "expires"])
+        self.assertRegex(got["code"], r"^[a-z0-9]{12}$")
+        life = SETTLE_CODE_S * 1000
+        self.assertTrue(before + life - 2000 <= got["expires"] <= after + life + 2000, got["expires"] - before)
+        self.assertIsNone(h.get("access-control-allow-origin"))              # (the app's: no page may read it)
+        for _ in range(2):
+            status, h, st = self.check(got["code"])
+            self.assertEqual((status, st), (200, {"channel": self.ch, "home": None, "next": None}))
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        self.assertNotEqual(self.fresh(), got["code"])
+
+    async def test_a_bad_key_and_a_channel_nobody_has_are_refused(self):
+        status, h, got = self.code(key="not-the-key-at-all")
+        self.assertEqual((status, got["error"]), (403, "wrong key for this channel"))
+        self.assertIsNone(h.get("access-control-allow-origin"))
+        status, _, got = self.code(key="short")
+        self.assertEqual((status, got["error"]), (403, "a transmit key needs at least 8 characters"))
+        status, _, got = self.code(ch="none" + secrets.token_hex(4))
+        self.assertEqual((status, got["error"]), (404, "no outstation called that here"))
+        status, _, got = self.code(ch="not%20one")
+        self.assertEqual((status, got["error"]), (400, "which outstation?"))
+        self.assertEqual(self.check(self.fresh())[0], 200)                   # (the right key still does)
+
+    @unittest.skipUnless(WORKER, "the wrong-key limit: the Worker only")
+    async def test_past_ten_wrong_keys_a_minute_even_the_right_one_waits(self):
+        self.assertEqual([self.code(key="wrong-key-%s" % secrets.token_hex(3))[0] for _ in range(10)], [403] * 10)
+        status, _, got = self.code()
+        self.assertEqual((status, got["error"]), (403, "too many wrong keys: try again in a minute"))
+
+    async def test_a_wrong_or_replaced_code_is_refused(self):
+        first = self.fresh()
+        for bad in ("abcdefghijkl" if first != "abcdefghijkl" else "bcdefghijklm", "", "short", first.upper(),
+                    first + "x"):
+            status, h, got = self.check(bad)
+            self.assertEqual((status, got["error"]), (403, "wrong code: open settling again from your outstation"), bad)
+            self.assertEqual(self.cors(h), SETTLE_CORS)
+        second = self.fresh()                                                # (asked again: the first stops working)
+        self.assertEqual(self.check(first)[0], 403)
+        self.assertEqual(self.home({"code": first, "lon": 1, "lat": 1})[0], 403)
+        self.assertEqual(self.check(second)[0], 200)
+        self.assertEqual(self.check(second, ch="none" + secrets.token_hex(4))[0], 403)   # (not that channel's)
+        other, key = await self.other()
+        self.assertEqual(self.check(second, ch=other)[0], 403)
+        self.assertEqual(self.check(self.fresh(key, other), ch=other)[0], 200)   # (each channel has its own)
+        self.assertEqual(self.check(second)[0], 200)
+
+    @unittest.skipIf(SETTLE_CODE_S > 10, "a relay already running keeps its codes ten minutes")
+    async def test_an_expired_code_is_refused(self):
+        code = self.fresh()
+        self.assertEqual(self.check(code)[0], 200)
+        await asyncio.sleep(SETTLE_CODE_S + 0.3)
+        status, _, got = self.check(code)
+        self.assertEqual((status, got["error"]), (403, "that code has expired: open settling again from your outstation"))
+        self.assertEqual(self.home({"code": code, "lon": 10, "lat": 10})[0], 403)
+        self.assertEqual(self.home({"code": self.fresh(), "lon": 10, "lat": 10})[0], 200)   # (a new one does)
+
+    async def test_a_place_is_kept_to_two_decimals_and_the_code_used_up(self):
+        code = self.fresh()
+        before = time.time() * 1000
+        status, h, got = self.home({"code": code, "lon": -122.4567, "lat": 0.125})
+        after = time.time() * 1000
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(got), ["home", "next"])
+        self.assertEqual(got["home"], {"lon": -122.46, "lat": 0.13})          # (a half goes up, as JavaScript rounds)
+        self.assertTrue(before + WEEK_MS - 2000 <= got["next"] <= after + WEEK_MS + 2000)
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        status, _, again = self.check(code)
+        self.assertEqual((status, again["error"]), (403, "that code's been used: open settling again from your outstation"))
+        self.assertEqual(self.home({"code": code, "lon": 1, "lat": 1})[0], 403)
+        status, _, st = self.check(self.fresh())
+        self.assertEqual((status, st), (200, {"channel": self.ch, "home": {"lon": -122.46, "lat": 0.13}, "next": got["next"]}))
+
+    async def test_the_first_change_is_free_then_one_every_seven_days_and_a_clear_counts(self):
+        status, _, got = self.home({"code": self.fresh(), "clear": True})    # (no home to clear: nothing changes)
+        self.assertEqual((status, got), (200, {"home": None, "next": None}))
+        status, _, first = self.home({"code": self.fresh(), "lon": 10, "lat": 20})    # (so this is still the first)
+        self.assertEqual((status, first["home"]), (200, {"lon": 10, "lat": 20}))
+        code = self.fresh()
+        status, h, got = self.home({"code": code, "lon": 11, "lat": 20})
+        self.assertEqual((status, got["next"], got["error"]), (429, first["next"], "one move every 7 days: try again later"))
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        status, _, got = self.home({"code": code, "clear": True})
+        self.assertEqual((status, got["next"]), (429, first["next"]))
+        other, _ = await self.other()
+        self.assertEqual(self.home({"code": code, "near": other})[0], 429)
+        self.assertEqual(self.check(code)[2]["next"], first["next"])          # (refused: the code's still good)
+        status, _, got = self.home({"code": code, "lon": 10.001, "lat": 19.999})    # (the same place: no change)
+        self.assertEqual((status, got), (200, {"home": {"lon": 10, "lat": 20}, "next": first["next"]}))
+        self.assertEqual(self.check(code)[0], 403)
+
+    async def test_beside_an_outstation_and_the_home_in_the_open_outstations(self):
+        other, key = await self.other()
+        third, _ = await self.other()
+        status, h, got = self.home({"code": self.fresh(), "near": other})
+        self.assertEqual((status, got["home"]), (200, {"near": other}))
+        self.assertEqual(self.home({"code": self.fresh(key, other), "lon": -45.5, "lat": 60.25}, ch=other)[0], 200)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        self.assertEqual(rows[self.ch]["home"], {"near": other})
+        self.assertEqual(rows[other]["home"], {"lon": -45.5, "lat": 60.25})
+        self.assertIsNone(rows[third]["home"])
+        status, _, st = self.check(self.fresh())
+        self.assertEqual(st["home"], {"near": other})
+
+    async def test_bad_places_and_outstations_are_refused_and_leave_the_code(self):
+        code = self.fresh()
+        place, one = "lon is a number from -180 to 180", "one of a place (lon and lat), an outstation (near) or clear"
+        for body, why in [({"lon": 180.01, "lat": 0}, place), ({"lon": -181, "lat": 0}, place),
+                          ({"lon": "12", "lat": 0}, place), ({"lon": True, "lat": 0}, place),
+                          ({"lon": None, "lat": 0}, place), ({"lat": 0}, place), ({"lon": 1e400, "lat": 0}, place),
+                          ({"lon": 0, "lat": 85.5}, "lat is a number from -85 to 85"),
+                          ({"lon": 0, "lat": -86}, "lat is a number from -85 to 85"),
+                          ({"lon": 0}, "lat is a number from -85 to 85"),
+                          ({"near": "none" + secrets.token_hex(4)}, "no outstation called that here"),
+                          ({"near": "not one"}, "no outstation called that here"),
+                          ({"near": 12}, "no outstation called that here"),
+                          ({"near": self.ch}, "that's your own outstation"),
+                          ({}, one), ({"lon": 0, "lat": 0, "near": self.ch}, one), ({"clear": True, "lat": 0}, one),
+                          ({"clear": False}, "clear is true"), ({"clear": 1}, "clear is true")]:
+            raw = json.dumps(dict(body, code=code)).replace("Infinity", "1e400").encode()
+            status, h, got = settle_http("POST", "/home/" + self.ch, raw=raw)
+            self.assertEqual((status, got and got.get("error")), (400, why), body)
+            self.assertEqual(self.cors(h), SETTLE_CORS)
+        for raw in (b"not json", b'["a", "list"]', b'{"lon": 1, "lat": 2}', b""):     # (no code in any of them)
+            self.assertEqual(settle_http("POST", "/home/" + self.ch, raw=raw)[0], 403, raw)
+        self.assertEqual(self.check(code)[0], 200)                            # (none of them used it up)
+        status, _, got = self.home({"code": code, "lon": 180, "lat": -85})   # (the edges are in)
+        self.assertEqual((status, got["home"]), (200, {"lon": 180, "lat": -85}))
+
+    async def test_the_pages_routes_answer_its_preflight_and_any_page_may_read_them(self):
+        for path in ("/settle/" + self.ch, "/home/" + self.ch):
+            status, h, _ = settle_http("OPTIONS", path)
+            self.assertEqual((status, self.cors(h)), (204, SETTLE_CORS), path)
+        code = self.fresh()
+        answers = [self.check(code), self.check("wrongwrongwr"), self.home({"code": code, "lon": 999, "lat": 0}),
+                   self.home({"code": "wrongwrongwr", "lon": 0, "lat": 0}), self.home({"code": code, "lon": 1, "lat": 2}),
+                   settle_http("PUT", "/home/" + self.ch, {"code": code}), settle_http("GET", "/home/" + self.ch),
+                   settle_http("DELETE", "/settle/" + self.ch), self.check(code, ch="not%20one")]
+        self.assertEqual([a[0] for a in answers], [200, 403, 400, 403, 200, 405, 405, 405, 400])
+        for status, h, _ in answers:
+            self.assertEqual(self.cors(h), SETTLE_CORS, status)
+        for status, h, _ in (self.code(), self.code(key="not-the-key-at-all")):    # (the app's: none)
+            self.assertIsNone(h.get("access-control-allow-origin"), status)
+
+    async def test_a_body_past_2_kb_is_refused(self):
+        code = self.fresh()
+        body = {"code": code, "lon": 1, "lat": 2, "pad": ""}
+        body["pad"] = "x" * (2049 - len(json.dumps(body)))
+        status, h, got = settle_http("POST", "/home/" + self.ch, raw=json.dumps(body).encode())
+        self.assertEqual((status, got["error"]), (413, "a settle is 2 KB at most"))
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        body["pad"] = body["pad"][1:]                                          # (2,048 bytes: read)
+        self.assertEqual(len(json.dumps(body).encode()), 2048)
+        status, _, got = self.home(body)
+        self.assertEqual((status, got["home"]), (200, {"lon": 1, "lat": 2}))
+
+    @unittest.skipUnless(WORKER, "a new key and taking back: the keeper's, the Worker only")
+    async def test_a_new_key_keeps_the_home_and_taking_back_forgets_it_and_the_code(self):
+        before = time.time() * 1000
+        self.assertEqual(self.home({"code": self.fresh(), "lon": 5, "lat": 6})[0], 200)
+        row = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]
+        self.assertEqual(row["home"], {"lon": 5, "lat": 6})
+        self.assertTrue(before - 2000 <= row["homeAt"] <= time.time() * 1000 + 2000)
+        waiting = self.fresh()
+        status, got = admin("POST", "/admin/channels/" + self.ch)           # (a new key: the old key's code goes)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.check(waiting)[0], 403)
+        self.assertEqual(self.check(self.fresh(got["key"]))[2]["home"], {"lon": 5, "lat": 6})
+        waiting = self.fresh(got["key"])
+        self.assertEqual(admin("DELETE", "/admin/channels/" + self.ch)[0], 204)
+        self.assertEqual(self.check(waiting)[0], 403)
+        self.assertEqual(self.code(key=got["key"])[0], 404)
+        status, got = admin("POST", "/admin/channels/" + self.ch)           # (handed out again: from nothing)
+        self.assertEqual(self.check(self.fresh(got["key"]))[2], {"channel": self.ch, "home": None, "next": None})
+        row = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]
+        self.assertEqual((row["home"], row["homeAt"]), (None, None))
+
+
+class Aether(Base):
+    """The aether (11/07/2026): one room for every outstation and visitor on the relay, IRC's way. A visitor joins with a
+    name and a device id, an outstation with its channel and key; a line may be several rows (ASCII art); the keeper
+    takes lines back and bans. The room is the relay's one, shared by every test, so each test gives each visitor a
+    device of its own and finds its own lines by their words. (The cleaning and the rate in full, 15 a minute among
+    them: relay-py/test_relay.py's AetherWords and AetherRate.)"""
+
+    async def visitor(self, name=None, device=None, extra=""):
+        """A visitor's socket (its .name and .device as it gave them)."""
+        name = name or "v" + secrets.token_hex(4)
+        device = device or secrets.token_hex(16)
+        c = await Client().open("%s/aether?name=%s&device=%s%s" % (RELAY, urllib.parse.quote(name), urllib.parse.quote(device), extra))
+        self.clients.append(c)
+        c.name, c.device = name, device
+        return c
+
+    async def station(self, key=None, v=""):
+        """This test's outstation in the aether, under its channel."""
+        c = await Client().open("%s/aether?channel=%s&key=%s%s" % (RELAY, self.ch, key or self.key, "&v=" + v if v else ""))
+        self.clients.append(c)
+        return c
+
+    @staticmethod
+    def words():
+        return "words " + secrets.token_hex(6)
+
+    async def say(self, c, text):
+        await c.send(json.dumps({"say": text}))
+
+    async def lines(self, c, wait=0.6):
+        """The words of every aether line that comes in `wait` seconds."""
+        got = []
+        try:
+            while True:
+                got.append((await next_of(c, "aether", timeout=wait))["text"])
+        except asyncio.TimeoutError:
+            return got
+
+    async def test_a_visitor_joins_to_the_room_so_far_and_how_many_are_here(self):
+        a = await self.visitor()
+        self.assertIsInstance(await next_of(a, "aether_so_far"), list)
+        self.assertGreaterEqual(await next_of(a, "aether_here"), 1)
+        text = self.words()
+        await self.say(a, text)
+        await next_of(a, "aether")
+        b = await self.visitor()
+        so_far = await next_of(b, "aether_so_far")
+        self.assertLessEqual(len(so_far), 100)
+        self.assertEqual(so_far[-1]["text"], text)
+        self.assertEqual(sorted(so_far[-1]), ["at", "from", "id", "name", "text"])     # (never a device)
+        self.assertGreaterEqual(await next_of(b, "aether_here"), 2)
+        end = time.monotonic() + 5                       # (everyone else hears it too, at most every 2 s)
+        while await next_of(a, "aether_here", timeout=max(0.1, end - time.monotonic())) < 2:
+            pass
+
+    async def test_a_line_reaches_everyone_with_its_name_and_when(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        text, t0 = self.words(), time.time() * 1000
+        await self.say(a, text)
+        for c in (a, b):
+            line = await next_of(c, "aether")
+            self.assertEqual(sorted(line), ["at", "from", "id", "name", "text"])
+            self.assertEqual((line["text"], line["name"], line["from"]), (text, a.name, "visitor"))
+            self.assertLess(abs(line["at"] - t0), 60000)
+        text2 = self.words()
+        await self.say(b, text2)
+        self.assertGreater((await next_of(a, "aether"))["id"], line["id"])
+
+    async def test_ascii_art_keeps_its_rows_twelve_of_eighty_at_most(self):
+        # (more rows are cut to 12, a longer row to 80: cut, not refused; empty rows at the ends and trailing spaces go)
+        a = await self.visitor()
+        tag = secrets.token_hex(4)
+        art = ["", "   ", "  /\\_/\\   ", " ( o.o ) " + tag, "x" * 81] + ["row %d" % i for i in range(3, 14)] + ["", "  "]
+        await self.say(a, "\n".join(art))
+        want = ["  /\\_/\\", " ( o.o ) " + tag, "x" * 80] + ["row %d" % i for i in range(3, 12)]
+        self.assertEqual((await next_of(a, "aether"))["text"].split("\n"), want)
+
+    async def test_control_characters_go_and_a_line_of_nothing_is_ignored(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        await self.say(a, "\x01\x02 \n \t\n\u200b")      # (nothing, once cleaned: ignored, and not counted)
+        await a.send(json.dumps({"say": 5}))
+        await a.send(json.dumps({"something": "else"}))
+        tag = secrets.token_hex(4)
+        await self.say(a, "a\x07b\tc\u202ed\r\ne " + tag + "\x85")
+        self.assertEqual((await next_of(b, "aether"))["text"], "abcd\ne " + tag)
+        self.assertEqual(await self.lines(b), [])
+
+    async def test_a_second_line_within_two_seconds_waits_and_a_reconnect_doesnt_start_again(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        first, second = self.words(), self.words()
+        await self.say(a, first)
+        await self.say(a, second)
+        wait = await next_of(a, "aether_slow")
+        self.assertTrue(0 < wait <= 2, wait)
+        self.assertEqual(await self.lines(b), [first])
+        again = await self.visitor(name=a.name, device=a.device)       # (the same device: its count goes on)
+        await next_of(again, "aether_so_far")
+        await self.say(again, self.words())
+        self.assertTrue(0 < await next_of(again, "aether_slow") <= 2)
+        await asyncio.sleep(2.1)
+        third = self.words()
+        await self.say(again, third)
+        self.assertEqual(await self.lines(b), [third])
+
+    async def test_an_outstation_joins_with_its_key_and_speaks_under_its_channel(self):
+        s = await self.station()
+        self.assertIsInstance(await next_of(s, "aether_so_far"), list)
+        b = await self.visitor()
+        await next_of(b, "aether_so_far")
+        text = self.words()
+        await self.say(s, text)
+        line = await next_of(b, "aether")
+        self.assertEqual((line["text"], line["name"], line["from"]), (text, self.ch, "outstation"))
+
+    async def test_a_wrong_or_short_key_is_refused_as_a_desks_would_be(self):
+        if not WORKER:
+            await next_of(await self.station(), "aether_so_far")       # (relay.py: the first key claims it, as a desk's)
+        wrong = await self.station(key="wrong-key-" + secrets.token_hex(3))
+        self.assertEqual(await wrong.recv_close(), ("close", 4003))
+        short = await self.station(key="short")
+        self.assertEqual(await short.recv_close(), ("close", 4001))
+
+    @unittest.skipUnless(WORKER, "channels handed out by the keeper: the Worker only")
+    async def test_an_outstation_nobody_handed_out_is_refused(self):
+        c = await Client().open("%s/aether?channel=free%s&key=some-key-at-all" % (RELAY, secrets.token_hex(4)))
+        self.clients.append(c)
+        self.assertEqual(await c.recv_close(), ("close", 4003))
+
+    @unittest.skipUnless(MIN_CLIENT, "the relay under test lets every version in (MIN_CLIENT not given)")
+    async def test_an_older_outstation_is_turned_away_and_a_visitor_needs_no_version(self):
+        old = await self.station(v="0.0.1")
+        self.assertEqual(await old.recv_close(), ("close", 4026))
+        self.assertIn(MIN_CLIENT, old.reason)
+        v = await self.visitor(extra="&v=0.0.1")
+        self.assertIsInstance(await next_of(v, "aether_so_far"), list)
+        new = await self.station(v=MIN_CLIENT)
+        self.assertIsInstance(await next_of(new, "aether_so_far"), list)
+
+    async def test_a_visitor_cant_take_an_outstations_name_whatever_its_case_and_spaces(self):
+        if not WORKER:
+            await next_of(await self.station(), "aether_so_far")       # (relay.py: claimed)
+        taken = await self.visitor(name=self.ch[:4].upper() + " " + self.ch[4:])
+        self.assertEqual(await taken.recv_close(), ("close", 4009))
+        self.assertIn("belongs to an outstation", taken.reason)
+        free = await self.visitor(name=self.ch + "x")
+        self.assertIsInstance(await next_of(free, "aether_so_far"), list)
+
+    async def test_a_name_or_device_the_aether_cant_take_is_refused(self):
+        for name, device in (("moss!", None), ("x" * 21, None), ("   ", None), ("moss\u00e9", None), ("moss", "short"),
+                             ("moss", "has space " + secrets.token_hex(4))):
+            c = await self.visitor(name=name, device=device)
+            self.assertEqual(await c.recv_close(), ("close", 4002), (name, device))
+        tidy = await self.visitor(name="  moss   fern ")
+        await next_of(tidy, "aether_so_far")
+        await self.say(tidy, self.words())
+        self.assertEqual((await next_of(tidy, "aether"))["name"], "moss fern")
+
+    async def test_the_read_shows_the_room_before_joining(self):
+        a = await self.visitor()
+        text = self.words()
+        await self.say(a, text)
+        await next_of(a, "aether")
+
+        def read():
+            with urllib.request.urlopen(http_url() + "/aether", timeout=10) as r:
+                self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+                return json.load(r)
+        got = await asyncio.to_thread(read)
+        self.assertEqual(sorted(got), ["here", "lines"])
+        self.assertLessEqual(len(got["lines"]), 30)
+        self.assertEqual(got["lines"][-1]["text"], text)
+        self.assertEqual(sorted(got["lines"][-1]), ["at", "from", "id", "name", "text"])
+        self.assertGreaterEqual(got["here"], 1)
+        self.assertEqual(http("POST", "/aether", {"say": "x"})[0], 405)
+
+    async def test_nothing_crosses_between_the_aether_and_a_channel(self):
+        await self.tx()
+        v, d = await self.watch(), await self.desk()
+        s = await self.station()
+        await next_of(s, "aether_so_far")
+        await self.pause(2)
+        await self.say(s, self.words())
+        await next_of(s, "aether")
+        for c in (v, d):
+            with self.assertRaises(asyncio.TimeoutError):
+                await next_of(c, "chat", timeout=0.5)
+        other = self.words()
+        await d.send(json.dumps({"say": other}))
+        await v.send(json.dumps({"say": other + " too"}))
+        self.assertEqual((await next_of(v, "chat"))["text"], other)
+        self.assertEqual(await self.lines(s), [])
+
+    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
+    async def test_the_keeper_takes_a_line_back_off_everyones_page(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        text = self.words()
+        await self.say(a, text)
+        line = await next_of(b, "aether")
+        status, got = admin("GET", "/admin/aether")
+        self.assertEqual(status, 200)
+        kept = {x["id"]: x for x in got["lines"]}[line["id"]]
+        self.assertEqual((kept["text"], kept["who"]), (text, "device:" + a.device))
+        self.assertEqual(admin_json("POST", "/admin/aether/unsay", {"id": line["id"]}), (200, {"unsaid": [line["id"]]}))
+        self.assertEqual(await next_of(b, "aether_unsay"), line["id"])
+        self.assertNotIn(line["id"], [x["id"] for x in http("GET", "/aether")[1]["lines"]])
+        late = await self.visitor()
+        self.assertNotIn(line["id"], [x["id"] for x in await next_of(late, "aether_so_far")])
+        self.assertEqual(admin_json("POST", "/admin/aether/unsay", {"id": line["id"]})[0], 404)
+
+    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
+    async def test_the_keeper_bans_a_visitor_by_its_device_and_takes_back_all_its_lines(self):
+        a, b = await self.visitor(), await self.visitor()
+        await next_of(b, "aether_so_far")
+        await self.say(a, self.words())
+        first = await next_of(b, "aether")
+        await asyncio.sleep(2.1)
+        await self.say(a, self.words())
+        second = await next_of(b, "aether")
+        status, got = admin_json("POST", "/admin/aether/ban", {"id": second["id"]})
+        self.assertEqual((status, got), (200, {"banned": "device:" + a.device, "unsaid": [first["id"], second["id"]]}))
+        self.assertEqual([await next_of(b, "aether_unsay"), await next_of(b, "aether_unsay")], [first["id"], second["id"]])
+        self.assertEqual(await a.recv_close(), ("close", 4033))
+        again = await self.visitor(name="another name", device=a.device)
+        self.assertEqual(await again.recv_close(), ("close", 4033))
+        bans = {x["who"]: x for x in admin("GET", "/admin/aether")[1]["bans"]}
+        self.assertEqual(bans["device:" + a.device]["name"], a.name)
+        self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "device:" + a.device})[0], 200)
+        back = await self.visitor(device=a.device)
+        self.assertIsInstance(await next_of(back, "aether_so_far"), list)
+        self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "device:" + a.device})[0], 404)
+
+    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
+    async def test_the_keeper_bans_an_outstation_by_its_channel(self):
+        s = await self.station()
+        await next_of(s, "aether_so_far")
+        await self.say(s, self.words())
+        line = await next_of(s, "aether")
+        self.assertEqual(admin_json("POST", "/admin/aether/ban", {"id": line["id"]})[1]["banned"], "channel:" + self.ch)
+        self.assertEqual(await s.recv_close(), ("close", 4033))
+        again = await self.station()
+        self.assertEqual(await again.recv_close(), ("close", 4033))
+        self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "channel:" + self.ch})[0], 200)
+        self.assertIsInstance(await next_of(await self.station(), "aether_so_far"), list)
+
+    async def test_the_keepers_routes_need_the_token(self):
+        for method, path in (("GET", "/admin/aether"), ("POST", "/admin/aether/unsay"), ("POST", "/admin/aether/ban")):
+            req = urllib.request.Request(http_url() + path, method=method, data=b'{"id": 1}' if method == "POST" else None,
+                                         headers={"Authorization": "Bearer not-the-token-at-all"})
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(req, timeout=10)
+            self.assertEqual(e.exception.code, 403, path)
 
 
 @unittest.skipUnless(WORKER, "channels handed out by an owner: the Worker only")

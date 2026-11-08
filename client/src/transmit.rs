@@ -1,7 +1,7 @@
 //! The capture's own loop: frames to the relay's transmit socket (capture.py's run(); parity lines 5-11, 13).
 
 use crate::capture::{self, Gpu, Grabber, Options, HOLD_BACK, MAX_FPS, SHARED_CEILING_MBIT};
-use crate::net::{Got, Socket, WAITS};
+use crate::net::{Got, Out, Socket, WAITS};
 use crate::settings::Shared;
 use crate::win::WindowCache;
 use std::collections::VecDeque;
@@ -23,6 +23,8 @@ pub struct Status {
     pub note: String,
     /// stopped for good (4000, 4001, 4003, 4026) until the settings change
     pub stopped: Option<String>,
+    /// dark but recording: the tape rolling while dark, nothing sent
+    pub taping: bool,
 }
 
 pub struct Transmit {
@@ -83,6 +85,21 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
         settings.refresh();
         let s = settings.get();
         let who = (s.relay.clone(), s.channel.clone(), s.key.clone());
+        // dark but recording (11/07/2026): dark (or with no channel at all), the tape still rolls if asked: the same
+        // capture, nothing sent, the frames only into the replay buffer for clips
+        if (!s.on_air || !s.attached()) && s.taping_dark() {
+            if !told_off && s.attached() {
+                log("off air: the stream's ended (go live from the outstation's window)");
+                told_off = true;
+            }
+            log("dark, the tape rolling: clips only, nothing sent");
+            say(&status, |st| { st.connected = false; st.viewers = 0; st.taping = true; st.why = Some("off air".into());
+                                st.note = "dark · the tape's rolling (clips only, nothing sent)".into(); });
+            let ended = live(&settings, &status, &paused, &mut Out::Tape, &mut gpu, &mut gdi);
+            say(&status, |st| { st.taping = false; st.fps = 0.0; });
+            log(&format!("the tape stopped: {}", ended));
+            continue;
+        }
         if stopped_for.as_ref().is_some_and(|x| *x == who) || !s.attached() {
             say(&status, |st| { st.connected = false; if !s.attached() { st.why = Some("not attached".into()); } });
             std::thread::sleep(Duration::from_millis(500));
@@ -106,7 +123,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
             told_off = false;
         }
         let url = s.socket_url("transmit", &format!("key={}&code={}", crate::settings::enc(&s.key), crate::settings::enc(&s.code)));
-        let mut ws = match Socket::open(&url) {
+        let ws = match Socket::open(&url) {
             Ok(ws) => ws,
             Err(e) => {
                 let wait = WAITS[failures.min(WAITS.len() - 1)];
@@ -121,6 +138,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
         failures = 0;
         log(&format!("transmitting on {} as {} (the Pause key pauses)", s.relay, s.channel));
         say(&status, |st| { st.connected = true; st.note = "transmitting".into(); });
+        let mut ws = Out::Relay(ws);
         let closed = live(&settings, &status, &paused, &mut ws, &mut gpu, &mut gdi);
         ws.close();
         log(&format!("off air: {}", closed));
@@ -166,8 +184,9 @@ fn sleep_unless_changed(settings: &Shared, who: &(String, String, String), secs:
 }
 
 /// One connection's life: frames out, the status lines in. Why it ended.
-fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>, ws: &mut Socket, gpu: &mut Gpu,
+fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>, ws: &mut Out, gpu: &mut Gpu,
         gdi: &mut Grabber) -> String {
+    let taping = ws.taping();
     let first = settings.get();
     let who = (first.relay.clone(), first.channel.clone(), first.key.clone(), first.code.clone());
     let mut windows = WindowCache::new(&first.title);
@@ -180,7 +199,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
     let mut last_refresh = Instant::now();
     // the shared relay's ceiling (capture.rs, SHARED_CEILING_MBIT): bytes allowed, refilled as time passes, at most a
     // second's worth saved up; a frame that would overdraw it waits for the next one
-    let shared = first.relay.starts_with("wss://");
+    let shared = first.relay.starts_with("wss://") && !taping;
     let ceiling = SHARED_CEILING_MBIT * 1e6 / 8.0;
     let (mut allowance, mut allowance_at) = (ceiling, Instant::now());
     let mut over_ceiling = 0u32;
@@ -208,11 +227,21 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         }
         let s = settings.get();
         crate::clip::set_seconds(s.replay_seconds);
-        if !s.on_air {
-            return "the stream ended".into();
-        }
-        if (s.relay.clone(), s.channel.clone(), s.key.clone(), s.code.clone()) != who {
-            return "the settings changed".into();
+        if taping {
+            // (the tape, while dark: it gives way the moment the outstation transmits, or the tape's turned off)
+            if s.on_air && s.attached() {
+                return "going live".into();
+            }
+            if !s.taping_dark() {
+                return "the tape's off".into();
+            }
+        } else {
+            if !s.on_air {
+                return "the stream ended".into();
+            }
+            if (s.relay.clone(), s.channel.clone(), s.key.clone(), s.code.clone()) != who {
+                return "the settings changed".into();
+            }
         }
         if windows.prefix != s.title {
             windows = WindowCache::new(&s.title);
@@ -248,8 +277,9 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                             allowance -= jpeg.len() as f64;
                             held.push_back((Instant::now(), jpeg));
                         }
-                        // a small copy now and then, for lookers only (held back and gated like the rest)
-                        if last_thumb.elapsed().as_secs_f64() >= capture::THUMB_EVERY {
+                        // a small copy now and then, for lookers only (held back and gated like the rest; none on the
+                        // tape, which has no lookers)
+                        if !taping && last_thumb.elapsed().as_secs_f64() >= capture::THUMB_EVERY {
                             held.push_back((Instant::now(), img.thumb(capture::number(&img))));
                             last_thumb = Instant::now();
                         }
@@ -277,7 +307,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         // (static: the static key, which viewers see as static, the sound still going; shut: anything else)
         let state = match &why { None => "open", Some(w) if w == capture::STATIC_WHY => "static", _ => "shut" };
         // (on a change at once; else every 5 s as a reminder: each line counts against the relay's requests)
-        if state != last_state || last_state_at.elapsed().as_secs_f64() > 5.0 {
+        if !taping && (state != last_state || last_state_at.elapsed().as_secs_f64() > 5.0) {
             if let Err(e) = ws.text(&format!("{{\"state\": \"{}\"}}", state)) {
                 return e;
             }
@@ -285,7 +315,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             last_state_at = Instant::now();
         }
         say(status, |st| st.why = why.clone());
-        if last_print.elapsed().as_secs_f64() > 5.0 {
+        if last_print.elapsed().as_secs_f64() > if taping { 60.0 } else { 5.0 } {
             let span = last_print.elapsed().as_secs_f64();
             let viewers = status.lock().unwrap().viewers;
             let note = if sent > 0 {
@@ -294,7 +324,8 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                 let over = if over_ceiling > 0 {
                     format!(" ({} skipped for the shared relay's {:.0} Mbit/s ceiling: a lower width or quality keeps them)", over_ceiling, SHARED_CEILING_MBIT)
                 } else { String::new() };
-                format!("live: {:.1} frames a second, {:.0} KB a frame, {} watching{}", f, k, viewers, over)
+                if taping { format!("the tape: {:.1} frames a second, {:.0} KB a frame, nothing sent", f, k) }
+                else { format!("live: {:.1} frames a second, {:.0} KB a frame, {} watching{}", f, k, viewers, over) }
             } else if let Some(w) = &why {
                 say(status, |st| { st.fps = 0.0; });
                 format!("shut: {}; {} watching", w, viewers)

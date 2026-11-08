@@ -8,7 +8,7 @@
 //! them): 1 the game, 2 everything else.
 
 use crate::clock;
-use crate::net::{Got, Socket, WAITS};
+use crate::net::{Got, Out, Socket, WAITS};
 use crate::settings::Shared;
 use crate::win;
 use std::collections::{BTreeMap, VecDeque};
@@ -69,13 +69,18 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
     let mut last_note = String::new();
     loop {
         let s = settings.get();
-        if !s.attached() || !s.on_air {
+        // (dark but recording: the sound onto the tape too, nothing sent; 11/07/2026)
+        let taping = (!s.attached() || !s.on_air) && s.taping_dark();
+        if (!s.attached() || !s.on_air) && !taping {
             for (_, b) in std::mem::take(&mut buses) { b.stop(); }
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
         let who = (s.relay.clone(), s.channel.clone(), s.key.clone());
-        let mut ws = match Socket::open(&s.socket_url("sound", &format!("key={}", crate::settings::enc(&s.key)))) {
+        let opened = if taping { Ok(Out::Tape) } else {
+            Socket::open(&s.socket_url("sound", &format!("key={}", crate::settings::enc(&s.key)))).map(Out::Relay)
+        };
+        let mut ws = match opened {
             Ok(ws) => ws,
             Err(e) => {
                 let wait = WAITS[failures.min(WAITS.len() - 1)];
@@ -90,7 +95,11 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
         let (mut told, mut told_at) = (String::new(), Instant::now() - Duration::from_secs(10));
         let why = loop {
             let s = settings.get();
-            if !s.on_air || (s.relay.clone(), s.channel.clone(), s.key.clone()) != who {
+            if taping {
+                if (s.on_air && s.attached()) || !s.taping_dark() {
+                    break "the tape gave way".to_string();
+                }
+            } else if !s.on_air || (s.relay.clone(), s.channel.clone(), s.key.clone()) != who {
                 break "the stream ended".to_string();
             }
             let mode = mode_of(&s.sound);
@@ -171,6 +180,11 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
             while { let s = settings.get(); (s.relay.clone(), s.channel.clone(), s.key.clone()) == who } {
                 std::thread::sleep(Duration::from_millis(500));
             }
+            continue;
+        }
+        if taping {
+            // (the tape gave way to a transmission, or was turned off: at once, no wait)
+            while rx.try_recv().is_ok() {}
             continue;
         }
         crate::transmit::log(&format!("sound: the relay went ({}); again in 2 s", why));

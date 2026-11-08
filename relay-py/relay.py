@@ -73,15 +73,80 @@ The client's version (11/06/2026): outstation's client adds v=<its version> to t
 sound addresses. With --min-client set, a client that says an older version is turned away with 4026 and
 the oldest version allowed in the reason, so it can say where to get a newer one instead of trying again.
 A connection that says no version (ghillie's Python portal, which predates it) is let in as before.
+
+Invites (11/07/2026; docs/protocol.md "Invites"): an outstation hands out channels of its own, INVITES_START to begin
+with and one more every INVITE_EVERY_S (10 hours) on air, counted from when it was claimed (in memory: a restart
+starts every count again, as it forgets every channel).
+    GET   http://HOST:PORT/invites/<channel>?key=<secret>          {"left", "earned", "used", "hours", "next_in_s"}
+    POST  http://HOST:PORT/invites/<channel>  {"key", "player"}     {"channel", "key", "code", "left"}
+  The new channel is claimed with a new key, and the code attaches a client to it; GET /channels says whose invite
+  each channel came from ("by"). Till its key is first used (an invite not taken up yet, 11/08/2026) GET /channels
+  leaves it out and only counts it under its inviter ("pending": [{"by", "n"}], never its name). The public side
+  refuses both.
+
+The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin, a RuneLite plugin of our own, sends the player's
+live game state (vitals, skills, what's worn and carried, prayers, item names and prices) and Outside draws it beside the
+transmission and the chat, live, and as last known while dark.
+    game:      ws://HOST:PORT/game/<channel>?key=<secret>&v=<the plugin's version>
+  The same key as transmitting (--min-client never applies: the plugin has versions of its own); one at a time, a newer
+  one replacing the older (4000). It sends {"game": {...fields}}, GAME_MESSAGE long at most, GAME_A_SECOND a second.
+  Each field replaces the one kept, but "items", which is merged; what changed goes on to seated viewers, lookers and
+  desks as {"game": {...the fields, "at"}}, and someone just come gets the whole of it. The status line's "game" says
+  whether one is connected. Kept in memory, as everything here, while the relay runs.
+    read:      GET http://HOST:PORT/game/<channel>?code=<watch code>    {"game": {...}, "at", "connected"}
+  Following (11/08/2026): apart from the game's fields, "where", the middle of the 128-tile square the player was in two
+  minutes before ({"x", "y"}), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
+  whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
+  and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
+  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read.
+  The public side allows the read (it's what viewers see anyway) and refuses the game socket.
+
+The aether (11/07/2026, Jace: "a global chat... reminds me of IRC and AOL Instant Messenger. i want this to feel like a
+real network people are joining"; docs/protocol.md "The aether"; the Worker's aether.ts, the same): one room for every
+outstation and every visitor on the relay.
+    aether:    ws://HOST:PORT/aether?name=<name>&device=<random id>               a visitor
+               ws://HOST:PORT/aether?channel=<channel>&key=<secret>&v=<version>   an outstation (its key as its desk's)
+  Either sends {"say": text}: a line of up to AETHER_ROWS rows of AETHER_WIDTH characters (ASCII art keeps its shape),
+  one every 2 s and 15 a minute from someone at most (past that, only they hear {"aether_slow": seconds}). Everyone hears
+  {"aether": {"id", "name", "text", "from", "at"}}; whoever joins, the last AETHER_KEPT lines ({"aether_so_far"}) and how
+  many are here ({"aether_here"}, told to all at most every 2 s as it changes). A visitor's name may not be a claimed
+  channel's (4009). Nothing crosses between the aether and any channel, and --delay doesn't hold it back.
+    read:      GET http://HOST:PORT/aether                                         {"lines": [the last 30], "here"}
+    keeper:    GET /admin/aether; POST /admin/aether/unsay {"id"}, /ban {"id"}, /unban {"who"}
+  The keeper's routes need --admin-token (Authorization: Bearer <it>); without one they're refused. The public side lets
+  visitors in and allows the read, and refuses an outstation's socket and the keeper's routes.
+
+The Array's events (11/08/2026; docs/protocol.md "The Array's events"; the Worker's array.ts, the same): what's
+happening across the open outstations, for outside.wiki's front page (each outstation's icon pops "+1").
+    read:      GET http://HOST:PORT/array/events?since=<cursor>      {"events": [...], "next": <cursor>}
+  Each event is {"id", "at", "channel", "kind", ...}: a kill, a level (one a skill), a pet, a drop worth 1,000,000 or
+  more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
+  GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
+  public side allows the read.
+
+Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): where an outstation stands on
+outside.wiki's globe of Gielinor (by default beside whoever invited it), chosen by its owner. The app trades its key for a
+one-time code, opens the globe page with only that, and the page settles with it, so the key never reaches a page.
+    code:      POST http://HOST:PORT/settle/<channel>?key=<secret>&v=<version>    {"code", "expires"}
+    check:     GET  http://HOST:PORT/settle/<channel>?code=<code>                 {"channel", "home", "next"}
+    settle:    POST http://HOST:PORT/home/<channel>  {"code", "lon", "lat"} | {"code", "near"} | {"code", "clear": true}
+                                                                                   {"home", "next"}
+  A code lasts SETTLE_CODE_S (--settle-code-seconds, for tests), one at a time, and one settle uses it up. The first
+  change is free; after it, one every SETTLE_EVERY_S. GET /channels' rows carry each one's home. The page's two (and their
+  preflights, OPTIONS) carry CORS and are allowed on the public side; the app's POST /settle is refused there, as invites
+  are.
 """
 
 import argparse
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
+import math
 import os
 import re
+import secrets
 import struct
 import sys
 import time
@@ -103,6 +168,56 @@ CLIPS_MOST, CLIPS_DAYS, CLIPS_AN_HOUR = 20, 30, 30
 # messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
 # for it till its portal next opens (at most DMS_KEPT, DMS_DAYS each); a portal may send DMS_A_MINUTE a minute
 DMS_KEPT, DMS_DAYS, DMS_A_MINUTE = 20, 7, 20
+# invites (11/07/2026, Jace: "each of my friends being able to pass out a few keys so that way the platform propagates
+# easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
+# begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (the Worker's, the same)
+INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
+PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
+# the game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's socket. A message at most GAME_MESSAGE long, and
+# GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as JSON (a message that would take it past is
+# ignored), its dictionary of item names and prices at most GAME_ITEMS ids (past that, new ones are ignored). The
+# Worker's, the same.
+GAME_MESSAGE, GAME_KEPT, GAME_ITEMS, GAME_A_SECOND = 64 * 1024, 192 * 1024, 3000, 5
+GAME_INT = 2 ** 31 - 1            # the most any number in the game holds (a Java int: RuneLite's)
+GAME_SKILL = re.compile(r"[A-Za-z][A-Za-z _-]{0,23}")     # a skill's name (fullmatch)
+GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the dictionary has it (fullmatch)
+# following (11/08/2026; docs/protocol.md "The game"; the Worker's game.ts, the same): "where" is the middle of a
+# WHERE_SQUARE-tile square of the main map (x from WHERE_X[0] up to WHERE_X[1], y the same with WHERE_Y), taken at most
+# one every WHERE_EVERY_S, and shown on GET /channels for WHERE_FRESH_S after it came (the relay's where_fresh_s,
+# --where-fresh-seconds)
+WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096), (2496, 4224), 50, 240
+# the aether (11/07/2026; docs/protocol.md "The aether"): one room for every outstation and visitor. A line at most
+# AETHER_ROWS rows of AETHER_WIDTH characters (so 960 in all); one from someone every AETHER_EVERY ms at most, and
+# AETHER_A_MINUTE a minute; the last AETHER_KEPT kept (and handed to whoever joins), the last AETHER_READ in GET /aether;
+# who's here told to everyone at most every AETHER_HERE_EVERY seconds; a socket's message past AETHER_MESSAGE thrown away
+# unread. The Worker's (aether.ts, text.ts), the same.
+AETHER_ROWS, AETHER_WIDTH, AETHER_KEPT, AETHER_READ = 12, 80, 100, 30
+AETHER_EVERY, AETHER_A_MINUTE, AETHER_HERE_EVERY, AETHER_MESSAGE = 2000, 15, 2.0, 8192
+# control characters but the newline (C1's too), and the direction and zero-width ones: taken out, not made spaces
+AETHER_CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# a row's trailing spaces: Unicode's spaces (Zs), written out so both relays trim the same ones
+AETHER_TRAILING = re.compile(r"[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$")
+AETHER_NAME = re.compile(r"[A-Za-z0-9_. -]{1,20}")        # a visitor's name, its spaces tidied (fullmatch)
+AETHER_DEVICE = re.compile(r"[\x21-\x7e]{8,64}")           # a visitor's device id: printable, no spaces (fullmatch)
+CHANNEL_NAME = re.compile(r"[A-Za-z0-9_.~-]{1,64}")       # a channel (fullmatch)
+# the Array's events (11/08/2026; docs/protocol.md "The Array's events"; the Worker's array.ts, the same): what's
+# happening across the open outstations, for outside.wiki's front page. The last ARRAY_KEPT kept, in memory; one channel
+# adds ARRAY_A_MINUTE a minute at most (the rest are dropped); a read without since has the last ARRAY_LATEST, one with
+# since at most ARRAY_PAGE after it; a drop goes in only when it's worth ARRAY_LOOT or more; a name in an event is
+# ARRAY_WORD characters at most (Dink's are cut to 60 already); a number, 0 to SAFE_INT (as JavaScript holds one exactly)
+ARRAY_KEPT, ARRAY_A_MINUTE, ARRAY_LATEST, ARRAY_PAGE, ARRAY_LOOT, ARRAY_WORD = 500, 10, 50, 100, 1_000_000, 60
+SAFE_INT = 2 ** 53 - 1
+ARRAY_CURSOR = re.compile(r"[0-9]{1,16}")                  # since, as next gave it (fullmatch; SAFE_INT at most)
+# settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): a code lasts SETTLE_CODE_S (the
+# relay's settle_code_s, --settle-code-seconds), and after the first change a home may change once every SETTLE_EVERY_S;
+# a POST's body at most SETTLE_BODY bytes; a place's lon within ±SETTLE_LON, its lat within ±SETTLE_LAT
+SETTLE_CODE_S, SETTLE_EVERY_S, SETTLE_BODY, SETTLE_LON, SETTLE_LAT = 600, 7 * 86400, 2048, 180, 85
+SETTLE_CODE = re.compile(r"[a-z0-9]{12}")                  # a code, as the app was given it (fullmatch)
+SETTLE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+SETTLE_SHAPE = "a settle is JSON: a code, and a place (lon and lat), an outstation (near) or clear"
+# the page's answers on another origin (GET /settle, POST /home and their preflights); the app's POST /settle has none
+SETTLE_CORS = ("Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+               "Access-Control-Allow-Headers: content-type\r\n")
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -304,9 +419,544 @@ def fold(summary, report):
     return True
 
 
+def invite_numbers(seconds, used):
+    """An outstation's invites, from its time on air in all (seconds) and the names it's invited (the Worker's
+    inviteNumbers, the same). hours: one decimal, rounded down, so it never says 10.0 before the invite at 10."""
+    s = max(0, int(seconds))
+    earned = INVITES_START + s // INVITE_EVERY_S
+    return {"left": max(0, earned - len(used)), "earned": earned, "used": list(used), "hours": (s // 360) / 10,
+            "next_in_s": INVITE_EVERY_S - s % INVITE_EVERY_S}
+
+
+def attach_code(relay, channel, key):
+    """The attach code (the station key): "outstation1:" and base64url JSON {"relay", "channel", "key"} (the Worker's
+    attachCode, the same)."""
+    raw = json.dumps({"relay": relay, "channel": channel, "key": key}, separators=(",", ":")).encode()
+    return "outstation1:" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def key_refusal(ch, key):
+    """Why an HTTP route's key won't do for this channel, as (its status, its reason), or None: the invites' check, and
+    settling's (the Worker's keyRefusal). Not claimed, 404; a key under 8 characters or the wrong one, 403."""
+    if ch is None or ch.key is None:
+        return "404 Not Found", "no outstation called that here"
+    if not isinstance(key, str) or len(key) < 8:
+        return "403 Forbidden", "a transmit key needs at least 8 characters"
+    if not hmac.compare_digest(key.encode("utf-8", "surrogatepass"), ch.key.encode("utf-8", "surrogatepass")):
+        return "403 Forbidden", "wrong key for this channel"
+    ch.key_used()
+    return None
+
+
+# Settling (11/08/2026; docs/protocol.md "Settling"): what a settle asks for, checked. The Worker's settle.ts, the same.
+
+def settle_code():
+    """A new code: 12 characters from [a-z0-9], about 62 bits (not to be guessed in its ten minutes)."""
+    return "".join(secrets.choice(SETTLE_ALPHABET) for _ in range(12))
+
+
+def two_places(x):
+    """Two decimals, as the Worker's twoPlaces (JavaScript's Math.round: a half goes towards +infinity, where Python's
+    round goes to the even one), so both relays keep the same number."""
+    y = x * 100
+    r = math.floor(y)
+    return (r + 1 if y - r >= 0.5 else r) / 100
+
+
+def settle_wanted(body):
+    """What a POST /home body asks for: ("home", the home or None for back to the default), or ("error", why not: a
+    400's reason). Exactly one of a place (lon, lat), near or clear; anything else in the body is left alone. A near is
+    only looked at for its shape here: whether it's an outstation, and not this one, is Relay.settle's to ask."""
+    if not isinstance(body, dict):
+        return "error", SETTLE_SHAPE
+    place, near, clear = "lon" in body or "lat" in body, "near" in body, "clear" in body
+    if place + near + clear != 1:
+        return "error", "one of a place (lon and lat), an outstation (near) or clear"
+    if clear:
+        return ("home", None) if body["clear"] is True else ("error", "clear is true")
+    if near:
+        n = body["near"]
+        return ("home", {"near": n}) if isinstance(n, str) and CHANNEL_NAME.fullmatch(n) else \
+            ("error", "no outstation called that here")
+
+    def in_range(v, most):
+        # (NaN and the infinities are never within it; a whole number too long for a float is compared as it is)
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and -most <= v <= most
+    if not in_range(body.get("lon"), SETTLE_LON):
+        return "error", "lon is a number from -%d to %d" % (SETTLE_LON, SETTLE_LON)
+    if not in_range(body.get("lat"), SETTLE_LAT):
+        return "error", "lat is a number from -%d to %d" % (SETTLE_LAT, SETTLE_LAT)
+    return "home", {"lon": two_places(body["lon"]), "lat": two_places(body["lat"])}
+
+
+async def read_body(reader, headers, most):
+    """A request's body, or None when it's past most bytes. ValueError (or IncompleteReadError): one that can't be read."""
+    if headers.get("transfer-encoding", "").lower() == "chunked":
+        raw = await read_chunked(reader)
+    else:
+        n = int(headers.get("content-length", "0") or 0)
+        if n > most:
+            if n <= 16 * most:
+                await reader.readexactly(n)   # (read and dropped, so a reset doesn't take the answer with it)
+            return None
+        raw = await reader.readexactly(n)
+    return raw if len(raw) <= most else None
+
+
+# The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's fields checked, and kept. The Worker's
+# gameFields and GameState (channel.ts), the same.
+
+_BAD = object()                   # (a field, or a part of one, that isn't its shape)
+
+
+class GameText(str):
+    """A game socket's message held back by --delay (Relay.game): taken into the kept state when it's let go."""
+
+
+def no_constant(name):
+    """NaN and Infinity aren't JSON (the Worker's JSON.parse refuses them): a message with one is ignored."""
+    raise ValueError(name)
+
+
+def game_whole(v, most=GAME_INT):
+    """A whole number from 0 to most (5.0 counts as 5), or None."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= most else None
+
+
+def game_pair(v):
+    """[a, b], two whole numbers (an item and how many; a vital now and at most), or _BAD."""
+    if isinstance(v, list) and len(v) == 2:
+        a, b = game_whole(v[0]), game_whole(v[1])
+        if a is not None and b is not None:
+            return [a, b]
+    return _BAD
+
+
+def game_slots(v, most):
+    """At most `most` slots, each [item, how many] or null (empty), or _BAD."""
+    if not isinstance(v, list) or len(v) > most:
+        return _BAD
+    out = [None if s is None else game_pair(s) for s in v]
+    return _BAD if any(s is _BAD for s in out) else out
+
+
+def game_fields(g):
+    """A {"game"} message's fields as they're kept: each known field checked and cleaned (its words one line, its numbers
+    whole), one that isn't its shape left out, and unknown ones left out. Always in this order, whatever order they
+    came in, so both relays write them out the same; "items" in id order (the Worker's objects keep number-like keys
+    so)."""
+    out = {}
+    if not isinstance(g, dict):
+        return out
+    if isinstance(g.get("name"), str):
+        out["name"] = one_line(g["name"], 12)
+    if game_whole(g.get("world")) is not None:
+        out["world"] = game_whole(g["world"])
+    if isinstance(g.get("type"), str):
+        out["type"] = one_line(g["type"], 40)
+    if isinstance(g.get("off"), bool):
+        out["off"] = g["off"]
+    if g.get("paused") is False or isinstance(g.get("paused"), str):
+        # (why it's stopped sending what's worn and carried, for the player's safety: "wilderness"; false, carrying on)
+        out["paused"] = False if g["paused"] is False else one_line(g["paused"], 32)
+    if isinstance(g.get("vitals"), dict):
+        v, vitals = g["vitals"], {}
+        for k in ("hp", "prayer"):
+            if game_pair(v.get(k)) is not _BAD:
+                vitals[k] = game_pair(v[k])
+        for k in ("run", "spec"):
+            if game_whole(v.get(k), 100) is not None:
+                vitals[k] = game_whole(v[k], 100)
+        out["vitals"] = vitals
+    if isinstance(g.get("skills"), dict):
+        out["skills"] = {k: [game_whole(x) for x in v] for k, v in g["skills"].items()
+                         if GAME_SKILL.fullmatch(k) and isinstance(v, list) and len(v) == 3
+                         and all(game_whole(x) is not None for x in v)}
+    for k, most in (("worn", 14), ("inv", 28), ("bag", 28), ("pouch", 8)):
+        if k in g:
+            s = None if g[k] is None and k == "bag" else game_slots(g[k], most)   # (the bag: null, not known yet)
+            if s is not _BAD:
+                out[k] = s
+    if "quiver" in g:
+        s = None if g["quiver"] is None else game_pair(g["quiver"])
+        if s is not _BAD:
+            out["quiver"] = s
+    p = g.get("prayers")
+    if isinstance(p, list) and len(p) <= 64 and all(isinstance(x, str) for x in p):
+        out["prayers"] = [one_line(x, 40) for x in p]
+    if isinstance(g.get("items"), dict):
+        items = {}
+        for k in sorted((k for k in g["items"] if GAME_ID.fullmatch(k) and int(k) <= GAME_INT), key=int):
+            v = g["items"][k]
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and game_whole(v[1]) is not None:
+                items[k] = [one_line(v[0], 60), game_whole(v[1])]
+        if items:
+            out["items"] = items
+    return out
+
+
+def game_where(g):
+    """A {"game"} message's "where" (following, 11/08/2026): {"x", "y"} for a square's middle (each a whole number
+    k*128 + 64, x from 1024 up to 4096, y from 2496 up to 4224, and nothing else in it), None to clear it (null), or
+    _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). Never one of
+    the game's fields (game_fields leaves it out). The Worker's gameWhere, the same."""
+    if not isinstance(g, dict) or "where" not in g:
+        return _BAD
+    w = g["where"]
+    if w is None:
+        return None
+    if not isinstance(w, dict) or len(w) != 2:
+        return _BAD
+    out = {}
+    for k, (lo, hi) in (("x", WHERE_X), ("y", WHERE_Y)):
+        v = w.get(k)
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)                                   # (3136.0 is 3136, as JavaScript reads it)
+        if not isinstance(v, int) or isinstance(v, bool) or not lo <= v < hi or v % WHERE_SQUARE != WHERE_SQUARE // 2:
+            return _BAD
+        out[k] = v
+    return out
+
+
+class Game:
+    """A channel's game state: each field as the plugin last sent it, and "items" merged (a name and a price for each
+    item id it's been told of, GAME_ITEMS ids at most). Its length as JSON is kept as it changes, so a message that
+    would take it past GAME_KEPT is found without writing the whole of it out each time."""
+
+    ITEMS = len('"items": {}')
+
+    def __init__(self):
+        self.kept = {}
+        self.at = 0                  # when it last changed (ms)
+        self.lens = {}               # each field's length in the kept state's JSON, as '"field": value'
+        self.item_lens = {}          # each item's, as '"id": [name, price]'
+        self.items_body = 0          # those summed
+
+    def size(self, lens=None):
+        """The kept state's length as JSON (json.dumps's; the Worker's pyjson writes the same)."""
+        lens = self.lens if lens is None else lens
+        return 2 + sum(lens.values()) + 2 * max(0, len(lens) - 1)
+
+    @staticmethod
+    def item_len(i, e):
+        return len(json.dumps(i)) + 2 + len(json.dumps(e))
+
+    def apply(self, fields, now=None):
+        """A message's fields (game_fields) taken in. What goes on to viewers: the fields given (items: those not
+        ignored), or None when nothing changed or when it would take the kept state past GAME_KEPT (then none of it is
+        kept)."""
+        changed, out, lens = False, {}, dict(self.lens)
+        for k, v in fields.items():
+            if k != "items":
+                line = json.dumps(v)
+                changed = changed or k not in self.kept or line != json.dumps(self.kept[k])
+                lens[k] = len(json.dumps(k)) + 2 + len(line)
+                out[k] = v
+        have = self.kept.get("items", {})
+        items, new_lens, body, n = {}, {}, self.items_body, len(have)
+        for i, e in fields.get("items", {}).items():
+            if i not in have:
+                if n >= GAME_ITEMS:
+                    continue             # (the dictionary's full: a new id is ignored)
+                n += 1
+                changed = True
+            elif e != have[i]:
+                changed = True
+            new_lens[i] = self.item_len(i, e)
+            body += new_lens[i] - self.item_lens.get(i, 0)
+            items[i] = e
+        if items:
+            lens["items"] = self.ITEMS + body + 2 * (n - 1)
+        if not changed or self.size(lens) > GAME_KEPT:
+            return None
+        self.kept.update(out)
+        if items:
+            self.kept.setdefault("items", {}).update(items)
+            self.item_lens.update(new_lens)
+            self.items_body = body
+            out["items"] = items
+        self.lens = lens
+        self.at = int(time.time() * 1000) if now is None else now
+        return out
+
+
+# The Array's events (11/08/2026, Jace: each outstation on outside.wiki's front page should look alive, its icon popping
+# "+1" as it gets a kill, a level, a pet, a big drop, a log slot or a clue; docs/protocol.md "The Array's events"): what
+# each field report adds (array_events), and the feed that keeps the last of them (ArrayFeed). A channel adds a report's
+# events only while it's live and listed (Channel.deliver), so a dark or coded outstation's reports never show. The
+# Worker's arrayEvents and ArrayFeed (array.ts), the same.
+
+def array_whole(v):
+    """A number an event may carry: a whole one, 0 to SAFE_INT, or None. 5.0 is 5 (the Worker can't tell them apart)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and 0 <= v <= SAFE_INT else None
+
+
+def array_word(v):
+    """A name an event may carry: one line, ARRAY_WORD characters at most, or None."""
+    return one_line(v, ARRAY_WORD) or None
+
+
+def array_events(report):
+    """What one field report adds to the Array's events, each {"kind", ...} (its id, time and channel are the feed's),
+    from the report's type and the numbers it carries (its data, as fold reads them): a kill (the boss and its count),
+    a level for each skill levelled, a pet (its name if Dink gave one), a drop worth ARRAY_LOOT or more (the best item's
+    name and the drop's whole value), a collection log slot (the item) and a clue (its tier and how many, if given).
+    Anything else adds nothing."""
+    if not isinstance(report, dict):
+        return []
+    d = report.get("data") if isinstance(report.get("data"), dict) else {}
+    kind = report.get("type")
+
+    def given(e):
+        return {k: v for k, v in e.items() if v is not None}
+    if kind == "KILL_COUNT":
+        boss, kc = array_word(d.get("boss")), array_whole(d.get("count"))
+        return [{"kind": "kill", "boss": boss, "kc": kc}] if boss and kc is not None else []
+    if kind == "LEVEL":
+        skills = d.get("skills") if isinstance(d.get("skills"), dict) else {}
+        out = []
+        for k, v in skills.items():
+            skill, level = array_word(k), array_whole(v)
+            if skill and GAME_SKILL.fullmatch(skill) and level is not None:
+                out.append({"kind": "level", "skill": skill, "level": level})
+        return out
+    if kind == "PET":
+        return [given({"kind": "pet", "name": array_word(d.get("pet"))})]
+    if kind == "LOOT":
+        value = array_whole(d.get("value"))
+        if value is None or value < ARRAY_LOOT:
+            return []
+        name, most = None, -1
+        for i in d.get("items") if isinstance(d.get("items"), list) else []:
+            if not isinstance(i, dict):
+                continue
+            n, worth = array_word(i.get("name")), (array_whole(i.get("quantity")) or 0) * (array_whole(i.get("price")) or 0)
+            if n and worth > most:
+                name, most = n, worth
+        return [given({"kind": "loot", "name": name, "value": value})]
+    if kind == "COLLECTION":
+        return [given({"kind": "clog", "name": array_word(d.get("item"))})]
+    if kind == "CLUE":
+        return [given({"kind": "clue", "tier": array_word(d.get("tier")), "count": array_whole(d.get("count"))})]
+    return []
+
+
+class ArrayFeed:
+    """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory only.
+    An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
+    keep going up after a restart and a page's cursor (since) still works."""
+
+    def __init__(self, now=None):
+        self.events = deque(maxlen=ARRAY_KEPT)
+        self.last = int(time.time() * 1000) if now is None else now   # the newest id given, or when the feed began
+        self.recent = {}             # a channel -> when (ms) its events of the last minute came, for ARRAY_A_MINUTE
+
+    def add(self, channel, events, now=None):
+        """A channel's events into the feed, as many as ARRAY_A_MINUTE leaves room for (the rest dropped); those kept."""
+        now = int(time.time() * 1000) if now is None else now
+        for c in [c for c, t in self.recent.items() if now - t[-1] >= 60000]:
+            del self.recent[c]
+        times = [t for t in self.recent.get(channel, []) if now - t < 60000]
+        added = []
+        for e in events:
+            if len(times) >= ARRAY_A_MINUTE:
+                break
+            times.append(now)
+            self.last = max(now, self.last + 1)
+            added.append(dict({"id": self.last, "at": now, "channel": channel}, **e))
+        self.events.extend(added)
+        if times:
+            self.recent[channel] = times
+        return added
+
+    def read(self, since=None):
+        """GET /array/events: without since the last ARRAY_LATEST, with it the first ARRAY_PAGE after it; next, the
+        cursor for the next read (the last event's id, or with none, since, or the newest id when since is past it)."""
+        if since is None:
+            got = list(self.events)[-ARRAY_LATEST:]
+        else:
+            got = [e for e in self.events if e["id"] > since][:ARRAY_PAGE]
+        if got:
+            nxt = got[-1]["id"]
+        else:
+            nxt = self.last if since is None else min(since, self.last)
+        return {"events": got, "next": nxt}
+
+
+# The aether (11/07/2026; docs/protocol.md "The aether"): a line cleaned row by row (it may be ASCII art, so it isn't made
+# one line), a visitor's name, and the rate. The Worker's aetherText, aetherName, channelForm, aetherRecent and
+# aetherWait (text.ts), the same.
+
+def aether_text(text):
+    """A line for the aether, or "" (ignored): its control characters taken out (but the newlines between its rows),
+    each row cut to AETHER_WIDTH characters and its trailing spaces trimmed, the empty rows at its start and end dropped,
+    and its first AETHER_ROWS rows kept. A row's leading spaces stay (the art's shape). Characters are code points, as
+    the Worker counts them."""
+    if not isinstance(text, str):
+        return ""
+    rows = [AETHER_TRAILING.sub("", r[:AETHER_WIDTH]) for r in AETHER_CONTROL.sub("", text).split("\n")]
+    a, b = 0, len(rows)
+    while a < b and not rows[a]:
+        a += 1
+    while b > a and not rows[b - 1]:
+        b -= 1
+    kept = rows[a:b][:AETHER_ROWS]
+    while kept and not kept[-1]:
+        kept.pop()
+    return "\n".join(kept)
+
+
+def aether_name(name):
+    """A visitor's name in the aether, or "" (refused): runs of spaces made one and its ends trimmed, then 1 to 20
+    letters, digits, spaces, "_", "-" or "." (ASCII only, so no name can pass for another by its look)."""
+    if not isinstance(name, str):
+        return ""
+    s = re.sub(" +", " ", name).strip(" ")
+    return s if AETHER_NAME.fullmatch(s) else ""
+
+
+def channel_form(name):
+    """A name as a channel would have it: lower case, no spaces (a visitor's may not be an outstation's, so)."""
+    return name.lower().replace(" ", "")
+
+
+def aether_recent(times, now):
+    """The times (ms, oldest first) of someone's last lines in the aether, kept to the last minute's AETHER_A_MINUTE."""
+    return [t for t in times if now - t < 60000][-AETHER_A_MINUTE:]
+
+
+def aether_wait(times, now):
+    """How long someone must wait before a line goes (seconds, rounded up to a tenth), or 0 when it may go now: a line
+    every AETHER_EVERY ms at most, and AETHER_A_MINUTE in a minute. times: their last lines' (aether_recent), in ms."""
+    until = 0
+    if times and now - times[-1] < AETHER_EVERY:
+        until = times[-1] + AETHER_EVERY
+    minute = [t for t in times if now - t < 60000]
+    if len(minute) >= AETHER_A_MINUTE:
+        until = max(until, minute[-AETHER_A_MINUTE] + 60000)
+    if until <= now:
+        return 0
+    wait = math.ceil((until - now) / 100) / 10
+    return int(wait) if wait == int(wait) else wait      # (2, not 2.0: as the Worker writes it)
+
+
+class Aether:
+    """The aether's room (the Worker's aether.ts, the same): who's here, the last AETHER_KEPT lines, the bans, and the
+    times of each one's last lines. In memory, as everything here, while the relay runs. Each socket in it has .aether,
+    {"from", "name", "who"}: who is "device:<id>" for a visitor and "channel:<name>" for an outstation, what a ban holds
+    on to and what the rate's counted by (so a reconnect doesn't start it again)."""
+
+    def __init__(self):
+        self.socks = set()
+        self.lines = deque(maxlen=AETHER_KEPT)   # each {"id", "name", "text", "from", "at", "who"}
+        self.next_id = 0
+        self.bans = {}                           # who -> {"who", "name", "at"}
+        self.said = {}                           # who -> their last lines' times (ms; aether_recent)
+        self.here_sent, self.here_at, self.here_timer = None, 0.0, None
+
+    @staticmethod
+    def public(line):
+        """A line as everyone sees it: never who wrote it (a device, a channel), only the name."""
+        return {k: line[k] for k in ("id", "name", "text", "from", "at")}
+
+    def count(self):
+        """How many are here: each visitor's device and each outstation once, however many sockets it has open."""
+        return len({s.aether["who"] for s in self.socks})
+
+    def broadcast(self, line):
+        for s in list(self.socks):
+            s.send_nowait(line)
+
+    def here_changed(self, joiner=None):
+        """Who's here changed (or someone just came: joiner): everyone's told the count at most every
+        AETHER_HERE_EVERY, the last change waiting its turn; whoever just came hears it at once. (One told a count the
+        others weren't means everyone's told at the next turn, even if the count's back to what they were told by then.)"""
+        n, now = self.count(), time.monotonic()
+        if n != self.here_sent and now - self.here_at >= AETHER_HERE_EVERY:
+            return self.tell_here()
+        if joiner is not None:
+            joiner.send_nowait(json.dumps({"aether_here": n}))
+            if n != self.here_sent:
+                self.here_sent = None
+        if n != self.here_sent and self.here_timer is None:
+            self.here_timer = asyncio.get_running_loop().call_later(
+                max(0.0, self.here_at + AETHER_HERE_EVERY - now), self.tell_here)
+
+    def tell_here(self):
+        if self.here_timer is not None:
+            self.here_timer.cancel()
+        self.here_timer = None
+        n = self.count()
+        if n == self.here_sent:
+            return
+        self.here_sent, self.here_at = n, time.monotonic()
+        self.broadcast(json.dumps({"aether_here": n}))
+
+    def take(self, sock, msg):
+        """A message from a socket in the room: a {"say"} line, cleaned (aether_text), to everyone here, unless its
+        sender's last line was under AETHER_EVERY ago or it's said AETHER_A_MINUTE this minute (then only it hears
+        {"aether_slow": seconds}, and the line goes nowhere). Anything else is thrown away."""
+        if sock not in self.socks:
+            return                           # (banned: its socket's on its way out)
+        try:
+            m = json.loads(msg)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(m, dict) or "say" not in m:
+            return
+        text = aether_text(m["say"])
+        if not text:
+            return
+        now, who = int(time.monotonic() * 1000), sock.aether["who"]
+        times = aether_recent(self.said.get(who, []), now)
+        wait = aether_wait(times, now)
+        if wait:
+            sock.send_nowait(json.dumps({"aether_slow": wait}))
+            return
+        self.said[who] = (times + [now])[-AETHER_A_MINUTE:]
+        if len(self.said) > 1000:
+            self.said = {k: t for k, t in self.said.items() if aether_recent(t, now)}
+        self.next_id += 1
+        line = {"id": self.next_id, "name": sock.aether["name"], "text": text, "from": sock.aether["from"],
+                "at": int(time.time() * 1000), "who": who}
+        self.lines.append(line)
+        self.broadcast(json.dumps({"aether": self.public(line)}))
+
+    def unsay(self, ids):
+        """Lines taken back off everyone's page (the keeper's), each told {"aether_unsay": id}."""
+        gone = set(ids)
+        self.lines = deque((l for l in self.lines if l["id"] not in gone), maxlen=AETHER_KEPT)
+        for i in ids:
+            self.broadcast(json.dumps({"aether_unsay": i}))
+
+    def ban(self, line):
+        """Whoever wrote this line banned (by its device or its channel): every line of theirs kept taken back, and
+        their sockets closed (4033). The ids taken back."""
+        who = line["who"]
+        self.bans[who] = {"who": who, "name": line["name"], "at": int(time.time() * 1000)}
+        gone = [l["id"] for l in self.lines if l["who"] == who]
+        self.unsay(gone)
+        for s in [s for s in self.socks if s.aether["who"] == who]:
+            self.socks.discard(s)
+            asyncio.ensure_future(s.close(4033, "banned from the aether"))
+        self.here_changed()
+        return gone
+
+    def read(self):
+        """GET /aether's: the last AETHER_READ lines as everyone sees them, and how many are here."""
+        return {"lines": [self.public(l) for l in list(self.lines)[-AETHER_READ:]], "here": self.count()}
+
+
 class Channel:
-    def __init__(self, name, key):
+    def __init__(self, name, key, array=None):
         self.name, self.key = name, key
+        self.array = array           # the relay's ArrayFeed: this channel's events go in while it's live and listed
         self.code = ""
         self.sender = None
         self.viewers = set()
@@ -348,9 +998,94 @@ class Channel:
         self.dms = []                # messages to this portal held till its desk opens (send_dm)
         self.dms_sent = []           # when this portal sent its last messages, for DMS_A_MINUTE
         self.summary = None          # this stream's summary (fold): {"since", "ended", "boss", "kc", "loot", ...}
+        # invites (11/07/2026): time on air in all (in memory, as everything here), the names it's invited, and whose
+        # invite it came from (None: claimed by its first transmitter)
+        self.live_all = 0.0          # seconds on air in all, the stretch going on now not included
+        self.live_since = None       # when this stretch on air began (time.monotonic()), while it lasts
+        self.invited = []
+        self.invite_posts = []       # when it last posted for an invite, for INVITES_AN_HOUR
+        self.by = None
+        # an invite not taken up yet (11/08/2026): made by another outstation's invite, its key never used since. Till
+        # it is, GET /channels leaves it out and only counts it under its inviter ("pending"): the inviter typed the
+        # name, and the friend hasn't agreed to anything. The first right key, from anything, takes it up (key_used).
+        self.pending = False
+        # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
+        # streams and the plugin's going: a page shows the last of it while the player's away)
+        self.gamer = None
+        self.game = Game()
+        # following (11/08/2026; game_where): the square the plugin last said, when it came, and when the last one was
+        # taken (for WHERE_EVERY_S), by time.monotonic(); in memory, as everything here
+        self.where = None
+        self.where_at = None
+        self.where_took = None
+        # settling (11/08/2026): where it stands on outside.wiki's globe ({"lon", "lat"} or {"near"}; None: beside its
+        # inviter), when that last changed (ms), and the app's one-time code for the page ({"code", "expires", "used"})
+        self.home = None
+        self.home_at = None
+        self.settle = None
+
+    def settle_refusal(self, code):
+        """Why a settling code won't do (a 403's reason), or None."""
+        s = self.settle
+        if s is None or not isinstance(code, str) or not SETTLE_CODE.fullmatch(code) \
+                or not hmac.compare_digest(code, s["code"]):
+            return "wrong code: open settling again from your outstation"
+        if s["used"]:
+            return "that code's been used: open settling again from your outstation"
+        if time.time() * 1000 >= s["expires"]:
+            return "that code has expired: open settling again from your outstation"
+        return None
+
+    def settle_next(self):
+        """When the home may next change (ms), or None for now: SETTLE_EVERY_S after the last change (the first is free)."""
+        if self.home_at is not None and time.time() * 1000 < self.home_at + SETTLE_EVERY_S * 1000:
+            return self.home_at + SETTLE_EVERY_S * 1000
+        return None
+
+    def seconds_in_all(self):
+        """Seconds on air in all, the stretch going on now included (for invites)."""
+        return self.live_all + (time.monotonic() - self.live_since if self.live_since is not None else 0.0)
 
     def summary_line(self):
         return json.dumps({"summary": self.summary})
+
+    def game_line(self):
+        """The whole game state, for someone just come (a seat, a desk, a looker); None while there's none."""
+        return json.dumps({"game": dict(self.game.kept, at=self.game.at)}) if self.game.kept else None
+
+    def take_game(self, msg):
+        """A message from the game socket (Relay.game) into the kept state, and what it changed on to the seated
+        viewers, the lookers and the desks."""
+        try:
+            m = json.loads(msg, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(m, dict) or not isinstance(m.get("game"), dict):
+            return
+        fields = game_fields(m["game"])
+        self.take_where(game_where(m["game"]), fields)
+        got = self.game.apply(fields)       # (never "where": game_fields leaves it out)
+        if got is None:
+            return
+        line = json.dumps({"game": dict(got, at=self.game.at)})
+        for v in list(self.viewers) + list(self.lookers) + list(self.desks):
+            v.send_nowait(line)
+
+    def take_where(self, w, fields):
+        """Following (game_where): a message's "where" taken (one every WHERE_EVERY_S at most; more are ignored), or the
+        one held dropped (null, whenever it comes). Logged out ({"off": true}) or held for the player's safety
+        ({"paused": "wilderness"}), it's dropped, whatever the message says of it; and nothing's taken while no plugin's
+        connected (a message --delay held back, let go after it went). Only GET /channels hears of it."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or w is None:
+            self.drop_where()
+            return
+        now = time.monotonic()
+        if w is _BAD or self.gamer is None or (self.where_took is not None and now - self.where_took < WHERE_EVERY_S):
+            return
+        self.where, self.where_at, self.where_took = w, now, now
+
+    def drop_where(self):
+        self.where = self.where_at = None
 
     def on_air(self):
         """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
@@ -360,8 +1095,13 @@ class Channel:
         else:
             self.summary.pop("ended", None)
         self.tell_summary()
+        if self.live_since is None:  # (a transmitter replacing another: the same stretch goes on)
+            self.live_since = time.monotonic()
 
     def off_air(self):
+        if self.live_since is not None:
+            self.live_all += time.monotonic() - self.live_since
+            self.live_since = None
         if self.summary is not None:
             self.summary["ended"] = int(time.time() * 1000)
             self.tell_summary()
@@ -377,6 +1117,16 @@ class Channel:
         line = self.summary_line()
         for v in list(self.viewers) + list(self.desks) + list(self.lookers):
             v.send_nowait(line)
+
+    def listed(self):
+        """Whether it's on the open outstations' list (GET /channels): claimed, with no watch code, and not an invite
+        still waiting to be taken up. The Array's events come only from a channel listed (and live)."""
+        return self.key is not None and not self.code and not self.pending
+
+    def key_used(self):
+        """Its key's been used, rightly (a socket, Dink, clips, invites or settling): an invite not taken up yet is
+        taken up, and on the open outstations' list from now on (the Worker's checkKey, the same)."""
+        self.pending = False
 
     def doing(self):
         """What the stream's at now, for the open portals: the boss of the last kill count and its count."""
@@ -394,7 +1144,7 @@ class Channel:
               "open": self.sender is not None and self.state == "open",
               "static": self.sender is not None and self.state == "static",
               "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on,     # (set: someone has claimed it; Outside says "no portal here yet" when not)
-              "title": self.title}
+              "title": self.title, "game": self.gamer is not None}     # (game: the Outside plugin's connected, 11/07/2026)
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -446,6 +1196,8 @@ class Channel:
             sock.send_nowait(r)
         if self.summary is not None:
             sock.send_nowait(self.summary_line())
+        if self.game.kept:
+            sock.send_nowait(self.game_line())
         self.late_joiner(sock)
 
     def seat_waiting(self, cap):
@@ -458,6 +1210,8 @@ class Channel:
         return moved
 
     def deliver(self, msg):
+        if isinstance(msg, GameText):
+            return self.take_game(msg)       # (the game's, held back by the delay: Relay.game)
         # a small frame (11/05/2026: the open portals' tiles, the listening post, the client's live view): for lookers
         # only, never a viewer, and never the last frame a newcomer gets
         if isinstance(msg, (bytes, bytearray)) and len(msg) > 8 and msg[4:6] == b"TH":
@@ -470,14 +1224,25 @@ class Channel:
             return
         if isinstance(msg, str) and msg.startswith('{"report"'):
             self.reports.append(msg)
-            if self.summary is not None:
+            try:
+                report = json.loads(msg).get("report")
+            except (ValueError, RecursionError):
+                report = None
+            # (a malformed report folds to nothing rather than dropping the connection, as the Worker does)
+            try:
+                summed = self.summary is not None and fold(self.summary, report)
+            except (TypeError, ValueError, AttributeError, KeyError):
+                summed = False
+            if summed:
+                # (after the report itself has gone to viewers, below)
+                asyncio.get_event_loop().call_soon(self.tell_summary)
+            if self.array is not None and self.sender is not None and self.listed():
+                # the Array's events (11/08/2026): only while it's live and on the open outstations' list, so a dark
+                # or coded outstation's reports never show (with --delay, as the report reaches viewers)
                 try:
-                    changed = fold(self.summary, json.loads(msg).get("report"))
-                except ValueError:
-                    changed = False
-                if changed:
-                    # (after the report itself has gone to viewers, below)
-                    asyncio.get_event_loop().call_soon(self.tell_summary)
+                    self.array.add(self.name, array_events(report))
+                except (TypeError, ValueError, AttributeError, KeyError):
+                    pass
         elif isinstance(msg, str):
             self.last_data = msg
             if msg.startswith('{"state"'):
@@ -636,8 +1401,14 @@ def too_old(v, min_client):
 
 
 class Relay:
-    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None):
+    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
+                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S):
         self.delay = delay
+        self.settle_code_s = settle_code_s  # how long a settling code lasts (SETTLE_CODE_S; tests shorten it)
+        self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
+        self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
+        self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
+        self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
         self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
         # how many may watch a channel at once (0: no limit). Each viewer gets their own copy
@@ -662,7 +1433,7 @@ class Relay:
         await self.handle(reader, writer, public=True)
 
     async def handle(self, reader, writer, public=False):
-        """public: the port the internet reaches (Tailscale Funnel): the page and watching only."""
+        """public: the port the internet reaches (Tailscale Funnel): the page, watching and reading only."""
         try:
             request = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
         except Exception:
@@ -683,8 +1454,20 @@ class Relay:
         url = urlsplit(target)
         path = [unquote(p) for p in url.path.split("/") if p]
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
-        if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch"))):
-            # from the internet: no transmitting and no Dink posts, whatever key comes with them
+        aether = path == ["aether"]
+        if aether:
+            # (a blank one kept: "channel=" is an outstation's, as on the Worker)
+            q = {k: v[0] for k, v in parse_qs(url.query, keep_blank_values=True).items()}
+        visitor = aether and "channel" not in q
+        settling = len(path) == 2 and path[0] in ("settle", "home") and not key
+        # (the globe page's: GET /settle, POST /home and their preflights)
+        settling_page = settling and (method == "OPTIONS" or method == ("GET" if path[0] == "settle" else "POST"))
+        if public and not settling_page and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch") and not visitor)
+                                             or (path and path[0] in ("invites", "admin"))):
+            # from the internet: no transmitting, no Dink posts, no invites, no settling code for a key (POST /settle),
+            # no game socket, no outstation in the aether and none of the keeper's routes, whatever key comes with them
+            # (the game's read, GET /game, the aether's read, a visitor in the aether, the Array's events and the globe
+            # page's settling with a code are let through: what anyone on Outside may do anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -695,14 +1478,33 @@ class Relay:
         if method == "POST" and len(path) == 2 and path[0] == "dink":
             await self.dink(reader, writer, headers, path[1], q.get("key", ""))
             return
+        if len(path) == 2 and path[0] == "invites" and not key:
+            await self.invites(reader, writer, method, headers, path[1], q)
+            return
+        if settling:
+            await self.settle(reader, writer, method, headers, path, q)
+            return
         if method == "GET" and not key and url.path == "/channels":
             await self.channel_list(writer)
+            return
+        if len(path) == 2 and path[0] == "game" and not key:
+            await self.game_read(writer, method, path[1], q)
+            return
+        if aether and not key:
+            await self.aether_read(writer, method)
+            return
+        if path == ["array", "events"] and not key:
+            await self.array_read(writer, method, q)
+            return
+        if path[:2] == ["admin", "aether"] and not key:
+            await self.aether_keeper(reader, writer, method, headers, path)
             return
         if method in ("GET", "HEAD") and not key:
             await self.page(writer, url.path, method == "HEAD")
             return
-        if method != "GET" or not key or len(path) != 2 or path[0] not in ("transmit", "watch", "desk", "sound") \
-                or not (1 <= len(path[1]) <= 64):
+        if (method != "GET" or not key or len(path) != 2 or path[0] not in ("transmit", "watch", "desk", "sound", "game")
+                or not (1 <= len(path[1]) <= 64)) \
+                and not (aether and method == "GET" and ("channel" not in q or CHANNEL_NAME.fullmatch(q["channel"]))):
             writer.write(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -712,6 +1514,14 @@ class Relay:
                       "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
         await writer.drain()
         sock = Socket(reader, writer)
+        if aether:
+            try:
+                await self.aether_socket(sock, q)
+            except (Closed, asyncio.IncompleteReadError, ConnectionError):
+                pass
+            finally:
+                await sock.close()
+            return
         role, name = path
         try:
             if role in CLIENT_ROLES and too_old(q.get("v"), self.min_client):
@@ -723,6 +1533,8 @@ class Relay:
                 await self.desk(sock, name, q.get("key", ""), q.get("name", ""))
             elif role == "sound":
                 await self.sound(sock, name, q.get("key", ""))
+            elif role == "game":
+                await self.game(sock, name, q.get("key", ""))
             else:
                 if q.get("look") == "1":
                     await self.look(sock, name, q.get("code", ""))
@@ -739,12 +1551,13 @@ class Relay:
             return
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key)
+            ch = self.channels[name] = Channel(name, key, self.array)
         elif ch.key is None:         # made by a viewer waiting for it: this key claims it
             ch.key = key
         elif ch.key != key:
             await sock.close(4003, "wrong key for this channel")
             return
+        ch.key_used()
         if ch.sender is not None:
             await ch.sender.close(4000, "replaced by a newer transmitter")
         ch.sender, ch.code, ch.state = sock, code, "open"
@@ -788,10 +1601,12 @@ class Relay:
             await sock.close(4003, "wrong watch code")
             return
         if ch is None:
-            ch = self.channels[name] = Channel(name, None)
+            ch = self.channels[name] = Channel(name, None, self.array)
         sock.look_frames, sock.look_at = False, 0.0
         ch.lookers.add(sock)
         sock.send_nowait(ch.status())
+        if ch.game.kept:
+            sock.send_nowait(ch.game_line())
         try:
             while True:
                 msg = await sock.recv()
@@ -820,7 +1635,7 @@ class Relay:
             return
         if ch is None:
             # nobody has claimed it yet: wait as a viewer of an empty channel
-            ch = self.channels[name] = Channel(name, None)
+            ch = self.channels[name] = Channel(name, None, self.array)
         sock.code = code
         self.next_who += 1
         sock.who, sock.device, sock.name = self.next_who, "", "visitor"
@@ -928,12 +1743,13 @@ class Relay:
             return None
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key)
+            ch = self.channels[name] = Channel(name, key, self.array)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:
             await sock.close(4003, "wrong key for this channel")
             return None
+        ch.key_used()
         return ch
 
     async def desk(self, sock, name, key, host_name):
@@ -947,6 +1763,8 @@ class Relay:
         self.log("desk      %s  (%d open)" % (name, len(ch.desks)))
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
+        if ch.game.kept:
+            sock.send_nowait(ch.game_line())
         sock.send_nowait(ch.banned_line())
         sock.send_nowait(ch.viewer_list())
         # (messages that came while the portal was closed)
@@ -1121,22 +1939,404 @@ class Relay:
                     v.send_nowait(ch.sound_info)
                 self.log("no sound  %s" % name)
 
+    async def game(self, sock, name, key):
+        """The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's {"game"} messages into the channel's
+        kept state (Channel.take_game), GAME_A_SECOND a second at most and GAME_MESSAGE long at most (the rest
+        dropped, with no answer). One at a time: a newer one replaces the older. Its v= is the plugin's own version,
+        which --min-client never looks at. Held back by --delay as everything is."""
+        ch = await self.claim(sock, name, key)
+        if ch is None:
+            return
+        if ch.gamer is not None:
+            await ch.gamer.close(4000, "replaced by a newer game")
+        ch.gamer = sock
+        self.log("game      %s" % name)
+        ch.tell_viewers()                    # (the status line's "game")
+        read = deque()                       # when its last messages were read, for GAME_A_SECOND
+        try:
+            while ch.gamer is sock:
+                msg = await sock.recv()
+                if not isinstance(msg, str) or ch.gamer is not sock:
+                    continue
+                now = time.monotonic()
+                while read and now - read[0] >= 1.0:
+                    read.popleft()
+                if len(read) >= GAME_A_SECOND:
+                    continue
+                read.append(now)
+                if len(msg) > GAME_MESSAGE:
+                    continue
+                if self.delay > 0:
+                    ch.held.append((now + self.delay, GameText(msg)))
+                    self.due(ch.held[-1][0])
+                else:
+                    ch.take_game(msg)
+        finally:
+            if ch.gamer is sock:
+                ch.gamer = None
+                ch.drop_where()              # (following: only while the plugin's connected)
+                self.log("no game   %s" % name)
+                ch.tell_viewers()
+
     async def channel_list(self, writer):
         """The open portals (11/05/2026, Jace: "a page ... that shows all active connected public portals"): every channel
         that's set up and has no watch code, live ones first, with whether each is live. Anyone may read it (the
-        public side too); a channel with a watch code is never listed."""
+        public side too); a channel with a watch code is never listed.
+        "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
+        counted under each inviter, [{"by", "n"}] sorted by "by" (the Worker's openPortals, the same). Never the
+        invited names, and only under an inviter that's on the list itself, so nothing's said of a hidden outstation.
+        "where" (11/08/2026, following; game_where): the square the plugin last said, only while the channel's live and
+        listed, and only if it came within where_fresh_s; else null. Nowhere else."""
+        # (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
+        waiting = {ch.name for ch in self.channels.values() if ch.key is not None and ch.pending}
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
-                 "doing": ch.doing()}
-                for ch in self.channels.values() if ch.key is not None and not ch.code]
+                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
+                 "home": None if isinstance(ch.home, dict) and ch.home.get("near") in waiting else ch.home,
+                 "where": dict(ch.where) if ch.where is not None and ch.sender is not None
+                          and time.monotonic() - ch.where_at <= self.where_fresh_s else None}
+                for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
-        body = json.dumps({"channels": rows}).encode()
+        shown, counts = {r["channel"] for r in rows}, {}
+        for ch in self.channels.values():
+            if ch.key is not None and ch.pending and ch.by is not None and ch.by in shown:
+                counts[ch.by] = counts.get(ch.by, 0) + 1
+        pending = [{"by": by, "n": n} for by, n in sorted(counts.items())]
+        body = json.dumps({"channels": rows, "pending": pending}).encode()
         writer.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
                       "Access-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" % len(body)).encode() + body)
         try:
             await writer.drain()
         finally:
             writer.close()
+
+    async def game_read(self, writer, method, name, q):
+        """GET /game/<channel>?code=<watch code> (11/07/2026): the game state kept, for a page while the outstation's
+        dark, and whether the plugin's connected now. It needs the watch code when the channel has one, as watching
+        does. Anyone may read it (the public side too: it's what viewers see anyway)."""
+        async def answer(status, body=None):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\nAccess-Control-Allow-Origin: *\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method != "GET":
+            return await answer("405 Method Not Allowed")
+        if not re.fullmatch(r"[A-Za-z0-9_.~-]{1,64}", name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        ch = self.channels.get(name)
+        if ch is not None and ch.code and q.get("code", "") != ch.code:
+            return await answer("403 Forbidden", {"error": "wrong watch code"})
+        if ch is None or not ch.game.kept:
+            return await answer("404 Not Found", {"error": "no game state for that outstation"})
+        await answer("200 OK", {"game": ch.game.kept, "at": ch.game.at, "connected": ch.gamer is not None})
+
+    async def aether_socket(self, sock, q):
+        """The aether (11/07/2026; Aether): a visitor (?name=&device=) or an outstation (?channel=&key=: its version and
+        its key as its desk's, so a key claims a channel nobody has, as a desk's does) into the one room, and its lines
+        to everyone in it (Aether.take). Refused: 4002 a name or device the aether can't take, 4033 banned, 4009 a
+        visitor's name that's a claimed channel's (case and spaces aside); 4001, 4003 and 4026 as a desk's."""
+        a = self.aether
+        if "channel" in q:
+            name = q["channel"]
+            if too_old(q.get("v"), self.min_client):
+                await sock.close(4026, "this outstation is too old for the relay: %s or newer is needed" % self.min_client)
+                return
+            if await self.claim(sock, name, q.get("key", "")) is None:
+                return
+            me = {"from": "outstation", "name": name, "who": "channel:" + name}
+        else:
+            name, device = aether_name(q.get("name")), q.get("device", "")
+            if not name:
+                await sock.close(4002, "a name in the aether is 1 to 20 letters, digits, spaces, _ - or .")
+                return
+            if not AETHER_DEVICE.fullmatch(device):
+                await sock.close(4002, "a device id is 8 to 64 characters")
+                return
+            me = {"from": "visitor", "name": name, "who": "device:" + device}
+        if me["who"] in a.bans:
+            await sock.close(4033, "banned from the aether")
+            return
+        form = channel_form(me["name"])
+        if me["from"] == "visitor" and any(ch.key is not None and ch.name.lower() == form for ch in self.channels.values()):
+            await sock.close(4009, "that name belongs to an outstation")
+            return
+        sock.aether = me
+        a.socks.add(sock)
+        self.log("aether    %s  (%d here)" % (me["name"], a.count()))
+        sock.send_nowait(json.dumps({"aether_so_far": [a.public(l) for l in a.lines]}))
+        a.here_changed(sock)
+        try:
+            while True:
+                msg = await sock.recv()
+                if isinstance(msg, str) and len(msg) <= AETHER_MESSAGE:
+                    a.take(sock, msg)
+        finally:
+            if sock in a.socks:
+                a.socks.discard(sock)
+                a.here_changed()
+
+    async def aether_read(self, writer, method):
+        """GET /aether (11/07/2026): the room's last AETHER_READ lines and how many are here, for a page before it
+        joins. Anyone may read it (the public side too); cached a few seconds."""
+        if method == "GET":
+            body = json.dumps(self.aether.read()).encode()
+            head = ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: public, max-age=5\r\n"
+                    "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body))
+        else:
+            body, head = b"", "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        writer.write(head.encode() + body)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def array_read(self, writer, method, q):
+        """GET /array/events?since=<cursor> (11/08/2026; ArrayFeed): what's happening across the open outstations, for
+        outside.wiki's front page: {"events": [...], "next"}. Anyone may read it (any origin, the public side too), and
+        it's never cached. since: a cursor, as an earlier read's next gave it."""
+        since, status, body = q.get("since"), "200 OK", None
+        if method != "GET":
+            status = "405 Method Not Allowed"
+        elif since is not None and not (ARRAY_CURSOR.fullmatch(since) and int(since) <= SAFE_INT):
+            status, body = "400 Bad Request", {"error": "since is a cursor: an earlier read's next"}
+        else:
+            body = self.array.read(int(since) if since is not None else None)
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\n"
+                      "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def aether_keeper(self, reader, writer, method, headers, path):
+        """The aether's keeper (11/07/2026; the Worker's, the same), with --admin-token (Authorization: Bearer <it>):
+            GET  /admin/aether                  every line kept, with who wrote it, and the bans
+            POST /admin/aether/unsay  {"id"}    a line taken back off everyone's page
+            POST /admin/aether/ban    {"id"}    whoever wrote it banned: their lines taken back, their sockets closed
+            POST /admin/aether/unban  {"who"}   let back in
+        Without a token (16 characters at least) all of them are refused; the public side refuses them whatever."""
+        async def answer(status, body=None, plain=None):
+            data = json.dumps(body).encode() if body is not None else (plain or b"")
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode()
+                         + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        auth = headers.get("authorization", "").encode("latin-1")
+        if len(self.admin_token) < 16 or not hmac.compare_digest(auth, ("Bearer " + self.admin_token).encode("utf-8")):
+            return await answer("403 Forbidden", plain=b"no")
+        a = self.aether
+        if len(path) == 2:
+            if method != "GET":
+                return await answer("405 Method Not Allowed")
+            return await answer("200 OK", {"lines": [dict(a.public(l), who=l["who"]) for l in a.lines],
+                                           "bans": list(a.bans.values())})
+        if len(path) != 3 or path[2] not in ("unsay", "ban", "unban"):
+            return await answer("404 Not Found")
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        try:
+            if headers.get("transfer-encoding", "").lower() == "chunked":
+                raw = await read_chunked(reader)
+            else:
+                n = int(headers.get("content-length", "0") or 0)
+                if n > 4096:
+                    return await answer("413 Payload Too Large")
+                raw = await reader.readexactly(n)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request")
+        if len(raw) > 4096:
+            return await answer("413 Payload Too Large")
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        body = body if isinstance(body, dict) else {}
+        if path[2] == "unban":
+            if not isinstance(body.get("who"), str) or a.bans.pop(body["who"], None) is None:
+                return await answer("404 Not Found", {"error": "nobody's banned by that"})
+            return await answer("200 OK", {"bans": list(a.bans.values())})
+        i = body.get("id")
+        if isinstance(i, float) and i.is_integer():
+            i = int(i)
+        line = next((l for l in a.lines if l["id"] == i), None) if isinstance(i, int) and not isinstance(i, bool) else None
+        if line is None:
+            return await answer("404 Not Found", {"error": "no such line in the aether"})
+        if path[2] == "unsay":
+            a.unsay([line["id"]])
+            return await answer("200 OK", {"unsaid": [line["id"]]})
+        gone = a.ban(line)
+        self.log("aether    banned %s" % line["who"])
+        return await answer("200 OK", {"banned": line["who"], "unsaid": gone})
+
+    async def invites(self, reader, writer, method, headers, name, q):
+        """Invites (11/07/2026; docs/protocol.md "Invites"; the Worker's channel.ts invites, the same): an outstation
+        hands out channels of its own, INVITES_START to begin with and one more every INVITE_EVERY_S on air.
+            GET  /invites/<channel>?key=<key>          {"left", "earned", "used", "hours", "next_in_s"}
+            POST /invites/<channel>  {"key", "player"}  {"channel", "key", "code", "left"}: a new channel for that
+                                                        player, claimed with a new key, which says whose invite it was
+        Here a channel is "handed out" once it's claimed (its first transmitter, or an invite). Nothing is awaited
+        between the checks and the new channel's key, so two posts at once can't both take the last invite."""
+        async def answer(status, body=None):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method not in ("GET", "POST"):
+            return await answer("405 Method Not Allowed")
+        if not re.fullmatch(r"[A-Za-z0-9_.~-]{1,64}", name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        body = {}
+        if method == "POST":
+            try:
+                if headers.get("transfer-encoding", "").lower() == "chunked":
+                    raw = await read_chunked(reader)
+                else:
+                    n = int(headers.get("content-length", "0") or 0)
+                    if n > 4096:
+                        return await answer("413 Payload Too Large", {"error": "an invite is a key and a name"})
+                    raw = await reader.readexactly(n)
+            except (ValueError, asyncio.IncompleteReadError):
+                return await answer("400 Bad Request")
+            if len(raw) > 4096:
+                return await answer("413 Payload Too Large", {"error": "an invite is a key and a name"})
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+        ch = self.channels.get(name)
+        no = key_refusal(ch, q.get("key", "") if method == "GET" else body.get("key"))
+        if no:
+            return await answer(no[0], {"error": no[1]})
+        if method == "GET":
+            return await answer("200 OK", invite_numbers(ch.seconds_in_all(), ch.invited))
+        now = time.monotonic()
+        ch.invite_posts = [t for t in ch.invite_posts if now - t < 3600]
+        if len(ch.invite_posts) >= INVITES_AN_HOUR:
+            return await answer("429 Too Many Requests", {"error": "%d invites an hour at most: try again later" % INVITES_AN_HOUR})
+        ch.invite_posts.append(now)
+        player = body.get("player")
+        if not isinstance(player, str) or not PLAYER.fullmatch(player):
+            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters or numbers, lower case"})
+        if player == name.lower():
+            return await answer("400 Bad Request", {"error": "that's your own outstation"})
+        if invite_numbers(ch.seconds_in_all(), ch.invited)["left"] <= 0:
+            return await answer("409 Conflict", {"error": "no invites left: one more every %d hours on air" % (INVITE_EVERY_S // 3600)})
+        other = self.channels.get(player)
+        if other is not None and other.key is not None:
+            return await answer("409 Conflict", {"error": "that name has an outstation already"})
+        new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
+        if other is None:
+            other = self.channels[player] = Channel(player, new_key, self.array)
+        else:
+            other.key = new_key       # (a channel only viewers were waiting on: now it's handed out, and they hear so)
+            other.tell_viewers()
+        other.by = name
+        other.pending = True          # (not taken up till its key's used: counted under this one, never named)
+        ch.invited.append(player)
+        self.log("invite    %s  -> %s" % (name, player))
+        code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
+        return await answer("200 OK", {"channel": player, "key": new_key, "code": code,
+                                       "left": invite_numbers(ch.seconds_in_all(), ch.invited)["left"]})
+
+    async def settle(self, reader, writer, method, headers, path, q):
+        """Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts and channel.ts, the same): where an
+        outstation stands on outside.wiki's globe.
+            POST /settle/<channel>?key=<key>&v=<version>   the app's: its key for a one-time code, {"code", "expires"};
+                                                            asking again replaces the code (no CORS: a page never has
+                                                            the key; the public side refuses it, as invites)
+            GET  /settle/<channel>?code=<code>             the page's check: {"channel", "home", "next"}; not used up
+            POST /home/<channel>  {"code", ...}             the page settles: {"home", "next"}, the code used up
+        Nothing is awaited between a code's check and its use, so one code settles once."""
+        page = not (path[0] == "settle" and method == "POST")
+
+        async def answer(status, body=None, more=""):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%s%s%sCache-Control: no-store\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, SETTLE_CORS if page else "", more, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method == "OPTIONS":
+            writer.write(("HTTP/1.1 204 No Content\r\n%sAccess-Control-Max-Age: 86400\r\nConnection: close\r\n\r\n"
+                          % SETTLE_CORS).encode())
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+            return
+        name = path[1]
+        if not CHANNEL_NAME.fullmatch(name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        if method != "POST" and not (path[0] == "settle" and method == "GET"):
+            return await answer("405 Method Not Allowed")
+        raw = b""
+        if method == "POST":
+            try:
+                raw = await read_body(reader, headers, SETTLE_BODY)
+            except (ValueError, asyncio.IncompleteReadError):
+                return await answer("400 Bad Request", {"error": SETTLE_SHAPE})
+            if raw is None:
+                return await answer("413 Payload Too Large", {"error": "a settle is 2 KB at most"})
+        ch = self.channels.get(name)
+        now = int(time.time() * 1000)
+        if path[0] == "settle" and method == "POST":
+            no = key_refusal(ch, q.get("key", ""))
+            if no:
+                return await answer(no[0], {"error": no[1]})
+            ch.settle = {"code": settle_code(), "expires": now + int(self.settle_code_s * 1000), "used": False}
+            self.log("settle    %s  (a code for the globe)" % name)
+            return await answer("200 OK", {"code": ch.settle["code"], "expires": ch.settle["expires"]})
+        if path[0] == "settle":
+            no = ch.settle_refusal(q.get("code", "")) if ch is not None else "wrong code: open settling again from your outstation"
+            if no:
+                return await answer("403 Forbidden", {"error": no})
+            return await answer("200 OK", {"channel": name, "home": ch.home, "next": ch.settle_next()})
+        try:
+            body = json.loads(raw, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            body = None
+        code = body.get("code") if isinstance(body, dict) else None
+        no = ch.settle_refusal(code) if ch is not None else "wrong code: open settling again from your outstation"
+        if no:
+            return await answer("403 Forbidden", {"error": no})
+        what, home = settle_wanted(body)
+        if what == "error":
+            return await answer("400 Bad Request", {"error": home})
+        if home is not None and "near" in home:
+            if home["near"] == name:
+                return await answer("400 Bad Request", {"error": "that's your own outstation"})
+            other = self.channels.get(home["near"])
+            if other is None or other.key is None:
+                return await answer("400 Bad Request", {"error": "no outstation called that here"})
+        # a settle that changes nothing (the same place, the same outstation, or clear with none) isn't a change: it's
+        # let through whenever it comes, and the next change is no later for it
+        same = home == ch.home
+        nxt = ch.settle_next()
+        if not same and nxt is not None:
+            return await answer("429 Too Many Requests", {"error": "one move every %d days: try again later"
+                                                          % (SETTLE_EVERY_S // 86400), "next": nxt})
+        ch.settle["used"] = True
+        if not same:
+            ch.home, ch.home_at = home, now
+            self.log("settle    %s  -> %s" % (name, json.dumps(home)))
+        return await answer("200 OK", {"home": ch.home, "next": ch.settle_next()})
 
     async def page(self, writer, path, head_only=False):
         """The watching page itself, so a friend needs only this relay's address."""
@@ -1233,6 +2433,7 @@ class Relay:
                 # kept for good, or let go again
                 if ch is None or ch.key is None or q.get("key", "") != ch.key:
                     return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+                ch.key_used()
                 clips = self.clip_list(name)
                 c = next((c for c in clips if c["id"] == path[2]), None)
                 if c is None:
@@ -1251,6 +2452,7 @@ class Relay:
             if method == "DELETE" and CLIP_ID.match(path[2]):
                 if ch is None or ch.key is None or q.get("key", "") != ch.key:
                     return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+                ch.key_used()
                 clips = self.clip_list(name)
                 c = next((c for c in clips if c["id"] == path[2]), None)
                 if c is None:
@@ -1266,6 +2468,7 @@ class Relay:
             return await answer("405 Method Not Allowed")
         if ch is None or ch.key is None or len(q.get("key", "")) < 8 or q.get("key", "") != ch.key:
             return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+        ch.key_used()
         try:
             n = int(headers.get("content-length", "0") or 0)
         except ValueError:
@@ -1348,11 +2551,12 @@ class Relay:
             return await answer("403 Forbidden")
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key)
+            ch = self.channels[name] = Channel(name, key, self.array)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:
             return await answer("403 Forbidden")
+        ch.key_used()
         content_type = headers.get("content-type", "")
         payload = dink_payload(content_type, body)
         # (Dink posts each event once to each address it lists: listed twice, every event came twice, to the portal and
@@ -1710,10 +2914,11 @@ def dink_report(p):
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
-                settings=None, min_client="", clips_dir=None):
+                settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S,
+                where_fresh_s=WHERE_FRESH_S):
     """port: everything (keep it on this PC). public_port: the page and watching only,
-    for Tailscale Funnel (or anything else) to hand to the internet."""
-    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir)
+    for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes)."""
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -1758,6 +2963,13 @@ def main(argv=None):
                     help="where clips on players' Outside pages are kept (\"\" takes none)")
     ap.add_argument("--min-client", default="",
                     help="the oldest outstation client let in (e.g. 0.2.0); older ones are told to update")
+    ap.add_argument("--admin-token", default="",
+                    help="the keeper's token (16 characters at least) for the aether's keeper routes; none refuses them")
+    ap.add_argument("--settle-code-seconds", type=float, default=SETTLE_CODE_S,
+                    help="how long a settling code for the globe page lasts (%d; shorter for tests)" % SETTLE_CODE_S)
+    ap.add_argument("--where-fresh-seconds", type=float, default=WHERE_FRESH_S,
+                    help="how long a player's square shows on the open outstations' list after it came (%d; shorter "
+                         "for tests)" % WHERE_FRESH_S)
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -1768,7 +2980,8 @@ def main(argv=None):
     try:
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
-                          clips_dir=a.clips or None))
+                          clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds,
+                          where_fresh_s=a.where_fresh_seconds))
     except KeyboardInterrupt:
         pass
 

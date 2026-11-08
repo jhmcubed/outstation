@@ -12,25 +12,32 @@ Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Pytho
 | desk | `/desk/<channel>?key=<key>&name=<your name in the chat>` | the chat window (several may be open) |
 | watch | `/watch/<channel>?code=<watch code>` | a viewer (Outside) |
 | look | `/watch/<channel>?look=1&code=<watch code>` | a looker: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek (below, "Lookers") |
+| game | `/game/<channel>?key=<key>&v=<the plugin's version>` | the Outside plugin: the player's game state (below, "The game") |
+| aether | `/aether?name=<name>&device=<random id>`, or `/aether?channel=<channel>&key=<key>&v=<version>` | a visitor, or an outstation: the one room for everyone (below, "The aether") |
 
 `ws://` on this PC, `wss://` on Cloudflare. A channel is 1 to 64 characters: letters, digits and `_ . ~ -`.
 
 The client adds `&v=<its version>` to every address it opens (below, "The client's version").
 
 Closing codes:
-- 4000: replaced by a newer transmitter or sound.
+- 4000: replaced by a newer transmitter, sound or game.
 - 4001: a key under 8 characters.
 - 4003: the wrong key, the wrong watch code, the watch code changed, a channel nobody handed out (Cloudflare), or the channel given a new key or taken back.
 - 4026: this client is older than the relay allows; the reason says which version is needed ("… 0.2.0 or newer is needed"). Trying again won't help: the client stops and says where to get a newer one.
 - 4029: too many wrong keys from one address in a minute (Cloudflare).
+- 4002: a name or device id the aether can't take (below, "The aether"). The same again won't help.
+- 4009: a visitor's name in the aether that's an outstation's.
+- 4033: banned from the aether.
+- 1013: the relay couldn't check an aether socket's key or name just then (Cloudflare): try again.
 
 ## The client's version
 
-The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, and on its monitor's and a friend's peek's watch sockets.
-- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
+The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, its aether socket, and on its monitor's and a friend's peek's watch sockets.
+- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket, or an outstation's aether socket, from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
 - Versions are compared by number (`0.10.0` is newer than `0.9.0`), and a pre-release's suffix is left out (`0.5.0-rc.1` counts as `0.5.0`).
 - A socket that says no version is let in: ghillie's Python portal predates it.
 - Viewers never need one.
+- The game socket's `v=` is the Outside plugin's own version (below, "The game"): the minimum never applies to it.
 - No minimum (the default) lets every version in. Raise it only when the protocol changes in a way older clients can't follow, and after the keeper's list (`GET /admin/channels`, `client`) shows who'd be turned away.
 
 ## The transmitter
@@ -47,8 +54,9 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Viewers
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title"}}`. `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
-- frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the chat so far, the poll, the drop guess and the sound's line.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game"}}`. `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the game state, the chat so far, the poll, the drop guess and the sound's line.
+- `{"game": {...}}`: the player's game state, from the Outside plugin (below, "The game"), once seated.
 - `{"report": {"type", "text", "at", "data"}}`: a field report (from Dink; below, "Dink").
 - `{"summary": {...} | null}`: this stream's summary (below, "The stream's summary").
 - `{"chat": {"id", "name", "text", "host", "who", "queued", "at"}}`, `{"unsay": id}`
@@ -72,7 +80,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -90,14 +98,20 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 ## Lookers
 
 A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: the listening post's receiver, the outstations page's tiles, the client's monitor and a friend's peek in its friends list. It needs the watch code, as a viewer does.
-- It hears the status lines, the summary and the clips' lines.
+- It hears the status lines, the summary, the clips' lines and the game state (below, "The game").
 - It gets frames only while it asks, `{"look": {"frames": true}}` (`false` to stop), at most one every half second. While the transmitter is sending small frames (one in the last 3 s), a looker gets those instead of the full ones.
 - It never says `{"got"}`, so the Worker takes it to read 128 KB a second (since 11/07/2026: before, a looker's frames stopped for good after its first 4 MB).
 - Anything else it sends is thrown away.
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); this list is the only place it's ever shown. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+
+`pending` (11/08/2026, for outside.wiki's globe: a key beside an inviter for each invite still waiting) counts the invites not taken up yet: one entry per inviter with any, `n` how many, sorted by `by`; `[]` for none. Readers from before it ignore it.
+- An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips, invites or settling. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
+- Never the invited channel's name: the inviter typed it, and the friend hasn't agreed to anything. So an outstation settled beside one (`home` `{"near"}`, below, "Settling") shows `home` `null` here till it's taken up, then `{"near"}` again (the keeper's list and the owner's own `GET /settle` and `POST /home` still say the outstation chosen).
+- Only under an inviter that's in `channels` itself: an inviter with a watch code (or, on Cloudflare, one taken back) has its invites counted nowhere, so nothing's said of a hidden outstation.
+- Only an invite's channel is ever pending. The keeper's own (`by` `null`) are listed from the moment they're handed out, as before, and a new key from the keeper leaves a channel as it was. On Cloudflare, channels invited before 11/08/2026 count as taken up.
 
 ## The stream's summary
 
@@ -139,9 +153,9 @@ The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts o
 ## Handing out channels (Cloudflare)
 
 `Authorization: Bearer <ADMIN_TOKEN>`:
-- `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off.
-- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound and desks are cut off. Viewers stay, off air.
-- `GET /admin/channels`: the list, each with `channel`, `since`, `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
+- `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off. Its game state is forgotten (below, "The game").
+- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound, desks and game socket are cut off, and its game state, its home and any settling code forgotten (below, "Settling"). Viewers stay, off air.
+- `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none), `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows), and `home` and `homeAt` (where it's settled and when that last changed, in ms; `null` for none; below, "Settling").
 
 The attach code (the station key, in the client's words) is `outstation1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up. Keys made before 11/06/2026 start `portal1:`, with the same inside; the client still reads them.
 
@@ -168,6 +182,124 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 - `DELETE /admin/requests/<channel>`: turned down.
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
+
+## Invites (11/07/2026)
+
+Each outstation hands out a few channels of its own, so a friend can bring a friend without the keeper (Jace: "each of my friends being able to pass out a few keys so that way the platform propagates easier", "people earning more invites through streaming"). Both relays.
+
+    GET   /invites/<channel>?key=<key>             200 {"left", "earned", "used": ["moss", …], "hours", "next_in_s"}
+    POST  /invites/<channel>  {"key", "player"}    200 {"channel", "key", "code", "left"}
+
+The numbers:
+- Three to begin with (`INVITES_START`), and one more for every 10 hours on air (`INVITE_EVERY_S`, 36000), counted over the channel's whole life.
+- `earned` is 3 + (seconds on air ÷ 36000, rounded down). `left` is `earned` less the invites used, never below 0. `used` is the names invited, in order.
+- `hours` is the time on air, one decimal, rounded down (so it never says 10.0 before the invite at 10). `next_in_s` is how many more seconds on air until the next one (1 to 36000).
+- The stretch on air going on now counts.
+- On the Worker, a channel from before 11/07/2026 starts from the months it still keeps (the last four). On the Python relay, the count starts when the channel's claimed, and a restart starts it again, as everything there is in memory.
+
+`POST` hands out a channel for `player`, exactly as the keeper's `POST /admin/channels/<channel>` does: a new key, and `code` the attach code (above, "Handing out channels"), which a friend pastes into the client. `left` is what's left after it.
+- `player` is the channel's name: 1 to 12 letters or numbers, lower case, no spaces (the same as `/requests`).
+- An invite is counted only once the new channel has its key, so nothing that fails uses one up. Two posts at once can't both take the last one.
+- The new channel says whose invite it came from (`by`, the inviter's channel name) in `GET /admin/channels` and in `GET /channels`: the register's "established through …'s outstation". A new key from the keeper keeps it.
+- Till its key is first used (taken up), `GET /channels` leaves the new channel out and only counts it under its inviter (`pending`, above, "The open outstations").
+- Taking a channel back (`DELETE /admin/channels/<channel>`) doesn't take back the channels it invited, and doesn't give its inviter the invite back.
+- Invites don't touch `/requests`: a request waiting for a name that's then invited shows `given` in the keeper's list.
+
+Refused, each with `{"error": "…"}`:
+- 404 `no outstation called that here`: the channel isn't handed out (on the Python relay: nobody's claimed it).
+- 403: the wrong key (`wrong key for this channel`), or a key under 8 characters. On Cloudflare a wrong key counts towards the wrong-key limit (10 a minute from one address), and past it the reason is `too many wrong keys: try again in a minute`, still 403.
+- 429 `5 invites an hour at most: try again later`: past 5 posts an hour from one outstation (`INVITES_AN_HOUR`). Every post with the right key counts, whatever its answer.
+- 400 `a player's name: 1 to 12 letters or numbers, lower case`, or `that's your own outstation` (and `which outstation?` for a channel in the address that can't be one).
+- 409 `no invites left: one more every 10 hours on air`.
+- 409 `that name has an outstation already`: the name is handed out (on the Python relay: claimed).
+- 503 `the invite didn't go through: try again` (Cloudflare): the new channel couldn't be made. No invite is used.
+- 413 past 4 KB; 405 any other method.
+
+The Python relay refuses both routes on its public side (the Funnel's port), as it refuses transmitting.
+
+## The game: the Outside plugin (11/07/2026)
+
+The Outside plugin, a RuneLite plugin of our own, sends the player's live game state to their channel, and Outside (the
+viewer page) draws it beside the transmission and the chat: live, and as last known while dark. Both relays
+(`relay/src/game.ts` and channel.ts; relay-py's `game_fields`, `Game` and `Relay.game`).
+
+    ws(s)://<relay>/game/<channel>?key=<key>&v=<the plugin's version>     the plugin
+    GET <relay>/game/<channel>?code=<watch code>                         the state kept: {"game", "at", "connected"}
+
+**The socket.** The same key as transmitting, with the same refusals: 4001 for a key under 8 characters, 4003 for the
+wrong one (on Cloudflare also for a channel nobody handed out), and on Cloudflare 4029 past 10 wrong keys a minute from one
+address. Its `v=` is the plugin's own version: `MIN_CLIENT` (`--min-client`) never looks at it. One at a time: a newer
+one replaces the older (4000). It hears nothing, and nothing it sends is answered.
+
+**It sends** text, `{"game": {...}}`, with any of these fields:
+- `name`: the player's name (one line, 12 characters at most)
+- `world`: the world they're on
+- `type`: the account type (one line, 40 at most)
+- `off`: `true` when the player logs out. Kept like the others: a later message without it leaves it as it was, and `"off": false` clears it.
+- `paused`: why the plugin has stopped sending what the player wears and carries, for their safety (one line, 32 characters at most, e.g. `"wilderness"`: the Wilderness, a PvP world), or `false` when it carries on. Kept like the others (`true` isn't its shape: left out). What was kept before it paused stays as it was, unless the plugin clears it (`"worn": []`, `"inv": []`).
+- `vitals`: `{"hp": [now, most], "prayer": [now, most], "run": 0–100, "spec": 0–100}`
+- `skills`: `{"<Skill name>": [real level, boosted level, xp]}`; a name is a letter, then letters, spaces, `_` or `-`, 24 at most
+- `worn`: 14 slots, each `[item id, how many]` or `null` (the place in the list is RuneLite's `EquipmentInventorySlot` index)
+- `inv`: 28 slots, the same
+- `bag`: the looting bag, its slots (at most 28), or `null` while it isn't known
+- `pouch`: the rune pouch's slots (at most 8)
+- `quiver`: `[item id, how many]` or `null`
+- `prayers`: the prayers on, by name (at most 64, 40 characters each)
+- `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
+- `where` (11/08/2026, following): not one of the game's fields, and never kept or sent with them (below, "Following").
+
+Each field given replaces the one kept, whole; `items` is merged instead (a name and a price for each id). Checked
+loosely:
+- The message must be a JSON object, and `game` one too. Unknown fields are left out, and never kept.
+- Numbers are whole, 0 to 2,147,483,647 (a Java int: RuneLite's); words are made one line.
+- A field that isn't its shape is left out (one slot that isn't `[id, how many]` or `null` leaves its whole list out). In `vitals` and `skills` only the parts that aren't are left out; in `items` only the entries (an id is digits, no leading zeros).
+
+The limits:
+- A message at most 64 KB (65,536 characters); a longer one is ignored.
+- 5 messages a second from one socket; more are dropped, with no answer.
+- The item dictionary at most 3,000 ids; past that, new ids are ignored (those it has can still change).
+- The kept state at most 192 KB as JSON; a message that would take it past is ignored, all of it.
+
+**What others get:**
+- A message that changed something goes on to seated viewers, lookers and desks as `{"game": {...the fields given, less anything left out, "at": <ms>}}`. One that changed nothing goes nowhere.
+- Someone just come (a viewer as it takes its seat, a looker, a desk) gets `{"game": {...the whole state kept, "at": <ms, when it last changed>}}`, if there's any. A viewer in line for a seat gets it once seated, as it does frames.
+- The status line's `game` (above, "Viewers"), and each row of `GET /channels`: whether a game socket is connected now.
+
+**Following** (11/08/2026, Jace approved it with these safeguards). With the plugin's following on, it sends where the
+player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle of a 128-tile square of the main map,
+at most once a minute, and the same square again every 3 minutes while it stays put. `{"game": {"where": null}}` clears
+it: sent at once on going into the Wilderness, a PvP area or world, Deadman or an instance, and when following's
+switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
+`Channel.take_where`).
+- A `where` that isn't `null` must be an object with exactly `x` and `y`, each a whole number `k*128 + 64`, `x` from
+  1024 up to (not including) 4096 and `y` from 2496 up to 4224. Anything else is ignored, and the rest of the message
+  is taken as ever.
+- The relay takes one every 50 seconds at most; one sooner is ignored (a `where` that was ignored for its shape doesn't
+  count). `null` is taken whenever it comes.
+- It's dropped when the game socket closes (with no newer one connected), when the plugin sends `"off": true` (logged
+  out) or a `paused` that's a string (held for the player's safety: the plugin's `Kit.held`), whatever `where` that
+  message holds; and on Cloudflare when the keeper gives the channel a new key or takes it back. On the Python relay a
+  `where` that `--delay` held back isn't taken once the plugin's gone.
+- It's held in memory only, with when it came, never in storage: a channel's object that sleeps (Cloudflare), or a
+  restart, forgets it, and the plugin says it again within 3 minutes.
+- It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live and on that list (no
+  watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
+  Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
+  desks, the whole state someone just come gets, `GET /game`, the Array's events, the aether or the keeper's list.
+
+**The read:** `GET /game/<channel>?code=<watch code>`, for a page while the outstation's dark:
+- 200 `{"game": {...the whole state}, "at": <ms, when it last changed>, "connected": bool}`
+- 404 `{"error": "no game state for that outstation"}` when there's none
+- 403 `{"error": "wrong watch code"}` when the channel has a watch code and it isn't the one given, as watching would be
+- 400 for a channel that can't be one, 405 for anything but `GET`
+
+Anyone may read it (any origin). The Python relay's public side (the Funnel's port) allows the read, since it's what
+viewers see anyway, and refuses the socket.
+
+**What's kept, and for how long:** the state stays when the stream ends and when the plugin goes, so a page shows the
+last of it while the player's away, until the plugin next changes it.
+- On Cloudflare: in memory, and saved in the channel's storage at most once a minute while messages come (the first at once, then a minute after the last save), and when the game socket closes; a channel that's slept starts from what was saved, so a restart of the channel's object while the plugin's sending loses at most that minute. Forgotten when the keeper gives the channel a new key or takes it back.
+- On the Python relay: in memory only, as everything there, while the relay runs. `--delay` holds the game's messages back too.
 
 ## Clips (11/06/2026)
 
@@ -209,6 +341,222 @@ On the desk socket, both relays:
 
 `at` in ms. A message for an outstation with no desk connected is held, at most 20 and 7 days each, and handed over as its
 desk next connects. Both outstations must be on the same relay.
+
+## The aether (11/07/2026)
+
+One room for every outstation and every visitor on the relay, as IRC's channels were (Jace: "a global chat… seeing people
+spam ascii art and stuff. reminds me of IRC and AOL Instant Messenger. i want this to feel like a real network people are
+joining"). Both relays: the Worker's `relay/src/aether.ts`, one Durable Object for the whole relay; relay-py's `Aether`
+and `Relay.aether_socket`. Outside shows it as a tab beside a transmission's chat, the client as a tab of its own
+(client/src/aether.rs).
+
+    ws(s)://<relay>/aether?name=<name>&device=<random id>                 a visitor
+    ws(s)://<relay>/aether?channel=<channel>&key=<key>&v=<its version>    an outstation, under its channel's name
+    GET <relay>/aether                                                     the room before joining: {"lines", "here"}
+
+**Joining.** With `channel` it's an outstation's socket; without, a visitor's.
+- An outstation: its version and its key are checked as its desk's would be: 4026 for a client older than `MIN_CLIENT`
+  (`--min-client`), then 4001 for a key under 8 characters, 4003 for the wrong one (on Cloudflare also for a channel
+  nobody handed out; on the Python relay a key claims a channel nobody has, as a desk's does), and on Cloudflare 4029
+  past 10 wrong keys a minute from one address. Its name in the room is its channel. A `channel` that can't be one
+  ("The sockets", above) isn't upgraded: 400.
+- A visitor: `name`, with its runs of spaces made one and its ends trimmed, must then be 1 to 20 letters, digits, spaces,
+  `_`, `-` or `.`, ASCII only; `device` is the random id its page keeps, 8 to 64 printable characters with no spaces
+  (what a ban holds on to). Either wrong: 4002. A name that's an outstation's, case and spaces aside ("Moss Fern" is
+  `mossfern`'s), is refused with 4009, "that name belongs to an outstation": on Cloudflare any channel handed out (the
+  Directory's list), on the Python relay any channel claimed. A visitor's `v=` is never looked at.
+- Banned (below, the keeper): 4033 "banned from the aether", a visitor by its device, an outstation by its channel.
+- On Cloudflare, 1013 when the relay couldn't check the key or the name just then: try again.
+
+**On joining** it hears `{"aether_so_far": [line, …]}`, the last 100 lines, oldest first, and then `{"aether_here": n}`.
+
+**It sends** text, `{"say": text}`. Anything else is thrown away, and anything over 8 KB isn't read.
+- A line may be several rows (ASCII art). Control characters are taken out, all but `\n` (C1's too, and the direction
+  and zero-width ones); each row is cut to 80 characters and its trailing spaces trimmed (its leading spaces stay, for
+  the art's shape); empty rows at the start and the end are dropped; and the first 12 rows are kept. So a line is at
+  most 960 characters, the newlines between its rows aside. Characters are code points. A row over 80 is cut, not
+  refused, and a 13th row and on are left out.
+- A line that's empty after that is ignored, and isn't counted.
+- At most one line every 2 s and 15 a minute, counted for the socket and for whoever it is (a visitor's device, an
+  outstation's channel), so opening another socket or reconnecting doesn't start the count again. Past either, the line
+  goes nowhere, and only that socket hears `{"aether_slow": s}`: the seconds to wait, rounded up to a tenth.
+
+**Everyone in the room hears:**
+- `{"aether": {"id", "name", "text", "from", "at"}}`: a line, its sender included. `id` goes up with each line; `from` is
+  `"outstation"` or `"visitor"`; `at` in ms. Never a device or a key.
+- `{"aether_here": n}`: how many are here, each visitor's device and each outstation counted once, however many sockets
+  it has open. Sent to everyone as it changes, at most once every 2 s (a change in between waits its turn); whoever's
+  just come hears it at once.
+- `{"aether_unsay": id}`: a line the keeper's taken back (below).
+
+Nothing an aether socket sends reaches any channel, and nothing from a channel (its chat, its desk, its viewers) reaches
+the aether. The Python relay's `--delay` doesn't hold it back.
+
+**The read:** `GET /aether` answers `{"lines": [the last 30, as above], "here": n}`, for a page to show the room before
+it joins. Anyone may read it (any origin), and it may be cached for 5 s (`Cache-Control: public, max-age=5`). 405 for
+anything but `GET`.
+
+**What's kept:** the last 100 lines, each with who wrote it (for the keeper), and the bans.
+- On Cloudflare: in memory, and in the Aether object's storage as one row, written at most every 5 s while lines come
+  (soon after the first, then 5 s after the last write) and when the room empties; the bans as they change. A restart
+  of the object while lines come loses at most those 5 s. Each sender's count for the rate is in memory (a sleep
+  forgets it, which only loosens it); each socket's own outlives a sleep.
+- On the Python relay: in memory, as everything there, while the relay runs.
+
+**The keeper** (`Authorization: Bearer <ADMIN_TOKEN>`; on the Python relay `--admin-token`, 16 characters at least,
+without which they're all refused):
+- `GET /admin/aether`: `{"lines": [{"id", "name", "text", "from", "at", "who"}, …], "bans": [{"who", "name", "at"}, …]}`.
+  `who` is `"device:<id>"` for a visitor and `"channel:<channel>"` for an outstation.
+- `POST /admin/aether/unsay` with `{"id"}`: the line taken back. Everyone hears `{"aether_unsay": id}`, and it's gone from
+  what's kept (and from the read). Answers `{"unsaid": [id]}`, or 404 `{"error": "no such line in the aether"}`.
+- `POST /admin/aether/ban` with `{"id"}`: whoever wrote that line is banned, a visitor by its device and an outstation by
+  its channel. Every line of theirs still kept is taken back (each `{"aether_unsay": id}`), and their sockets are closed
+  with 4033 "banned from the aether"; trying again is refused the same. Answers `{"banned": who, "unsaid": [ids]}`, or
+  404 as above.
+- `POST /admin/aether/unban` with `{"who"}` (as the list has it): let back in. Answers `{"bans": [...]}`, or 404
+  `{"error": "nobody's banned by that"}`.
+- 403 without the token, 405 for another method, 413 past 4 KB.
+
+The Python relay's public side (the Funnel's port) lets visitors in and allows the read; it refuses an outstation's
+socket and the keeper's routes, whatever key or token comes with them.
+
+## The Array's events (11/08/2026)
+
+What's happening across the open outstations, for outside.wiki's front page, which shows every outstation in the Array
+as a light and pops its icon with "+1" as one gets a kill, a level, a pet, a big drop, a collection log slot or a clue.
+Both relays: the Worker's `relay/src/array.ts` (kept by the Directory, the object that answers `GET /channels`);
+relay-py's `array_events` and `ArrayFeed`.
+
+    GET <relay>/array/events                  the last 50 at most: {"events": [...], "next": <cursor>}
+    GET <relay>/array/events?since=<cursor>   the ones after the cursor, 100 at most, oldest first
+
+**An event** is `{"id", "at", "channel", "kind", ...}`: `id` (below, "The cursor"), `at` when the relay took it (ms),
+`channel` the outstation's, and with each `kind` its own fields:
+
+| kind | from | its fields |
+|---|---|---|
+| `"kill"` | a `KILL_COUNT` report | `boss`, `kc` (the kill count) |
+| `"level"` | a `LEVEL` report: one event for each skill it levelled | `skill`, `level` |
+| `"pet"` | a `PET` report | `name`, if Dink gave one |
+| `"loot"` | a `LOOT` report whose drop is worth 1,000,000 coins or more in all (less isn't one) | `name` (the drop's best item, by quantity × price; the first, in a tie), `value` (the drop's whole value) |
+| `"clog"` | a `COLLECTION` report (a new collection log slot) | `name` (the item), if given |
+| `"clue"` | a `CLUE` report | `tier`, `count` (how many of that tier), each if given |
+
+They're made from the numbers each report carries (its `data`, above in "Dink": what `reportData` / `report_data` keep),
+the same as the stream's summary is, so a report that comes as a Dink post and one that comes over the transmit socket
+count alike. Any other kind of report makes none, and nothing that names another player is in one (a drop's `source`
+never is). A name is one line, 60 characters at most; a number is whole, 0 to 2⁵³ − 1 (one that isn't leaves its event,
+or that one skill, out; a kill needs its boss and its count). Events are ordered as the reports came, a report's levels
+in the order Dink gave them.
+
+**Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting) and
+**open** (handed out, with no watch code: the same test that puts it on `GET /channels`). A dark outstation's reports,
+and a watch-coded one's, never make an event, then or later. What the relay already refuses or ignores (the wrong key,
+a kind not in `REPORTS`, the same Dink post twice) makes none either. On the Python relay with `--delay`, a report counts
+as it reaches viewers, so one that comes in the delay's last moments before the outstation goes dark doesn't.
+
+**The cursor:** `next` is what to send as `since` next time. It's an event's `id`, which only goes up: each is about the
+moment the event came, in ms (one more than the last, when that's later), so ids keep going up when the relay (or the
+Worker's object) starts again, and a cursor from before still works. Treat it as a number with no meaning of its own.
+- With events in the answer, `next` is the last one's `id`.
+- With none: `since` back (nothing new yet), or the newest `id` there is if `since` is past it. Without `since`, the
+  newest `id` there is (or, before any event, the moment the feed began).
+- So a page reads once without `since` for what's just happened, then with `since` set to each answer's `next`. Past 100
+  new ones, `next` is the 100th's, and the next read has the rest.
+- `since` must be digits, at most 2⁵³ − 1: anything else is 400 `{"error": "since is a cursor: an earlier read's next"}`.
+  `since=` (empty) is the same as none.
+
+**The limits:**
+- One outstation adds 10 events a minute at most (counted over the last 60 s); past that, they're dropped, so one noisy
+  plugin can't flood the feed. A report of three levels with room for one adds the first.
+- The last 500 are kept, the oldest going first.
+
+**The read:** anyone may read it (any origin: `Access-Control-Allow-Origin: *`), and it's never cached
+(`Cache-Control: no-cache`). 405 for anything but `GET`. The Python relay's public side (the Funnel's port) allows it.
+
+**What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
+the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
+again; on the Python relay while it runs. Nothing of it is written to storage.
+
+## Settling (11/08/2026)
+
+outside.wiki's front page shows every outstation as a light on a globe of Gielinor. By default an outstation stands near
+whoever invited it, and since every invite starts with one person, everything clusters round him. Settling lets an
+outstation's owner choose where it stands: a place on the globe, beside an outstation of their choosing, or back to the
+default. Both relays: the Worker's `relay/src/settle.ts` (and channel.ts's `settle` and `home`); relay-py's
+`settle_wanted` and `Relay.settle`.
+
+The owner proves it's theirs with the station key, which never goes to a web page: the outstation app trades its key for
+a short-lived one-time code, opens the globe page with only that code, and the page settles with the code.
+
+    POST  /settle/<channel>?key=<key>&v=<version>   the app          200 {"code", "expires"}
+    GET   /settle/<channel>?code=<code>             the globe page   200 {"channel", "home", "next"}
+    POST  /home/<channel>  {"code", ...}            the globe page   200 {"home", "next"}
+
+**A home** is `{"lon", "lat"}` (a place, two decimals each), `{"near": "<channel>"}` (beside that outstation), or `null`
+(the default: beside its inviter). It shows in each row of `GET /channels`
+(above, "The open outstations"), and in the keeper's `GET /admin/channels` with `homeAt`, when it last changed (ms).
+
+**The code.** `POST /settle` with the channel's key answers `{"code", "expires"}`: `code` is 12 random characters from
+`[a-z0-9]`, `expires` when it stops working (ms), 10 minutes on. Asking again replaces any earlier code (the old one is
+refused from then on). One code at a time a channel, and one settle uses it up.
+- The key's checked as the invites' is (above, "Invites"): 404 `no outstation called that here` for a channel that isn't
+  handed out (on the Python relay: nobody's claimed it); 403 `wrong key for this channel`, or `a transmit key needs at
+  least 8 characters`; on Cloudflare a wrong key counts towards the wrong-key limit (10 a minute from one address), and
+  past it the reason is `too many wrong keys: try again in a minute`, still 403. Each with `{"error": "…"}`.
+- `v=` is the app's version. Like the other HTTP routes (`/invites`, `/dink`, `/clips`), nothing turns a version away
+  here: `MIN_CLIENT` (`--min-client`) is for sockets.
+- Only the code's SHA-256 is kept on Cloudflare (with when it expires and whether it's been used); on the Python relay
+  the code itself, in memory.
+
+**The check.** `GET /settle/<channel>?code=<code>`, for the page before it shows anything: 200 `{"channel", "home",
+"next"}`, where `next` is when a move is allowed again (ms), or `null` if one is now. It doesn't use the code up. A code
+that won't do is 403, `{"error"}` saying which: `wrong code: …` (not this channel's code now, or not one at all),
+`that code has expired: …`, or `that code's been used: …`, each ending `open settling again from your outstation`.
+
+**The settle.** `POST /home/<channel>` with a JSON body, one of:
+- `{"code", "lon", "lat"}`: a place. `lon` a number from -180 to 180, `lat` from -85 to 85; each kept rounded to 2
+  decimals (half towards +infinity, as JavaScript's `Math.round`: 0.125 is 0.13).
+- `{"code", "near": "<channel>"}`: beside an outstation. It must be a channel handed out (on Cloudflare, the Directory's
+  list; on the Python relay, a claimed channel), and not this one.
+- `{"code", "clear": true}`: back to the default. The home becomes `null`.
+
+Anything else in the body is left alone. Answers:
+- 200 `{"home", "next"}`, and the code is used up. `next` is when the home may change again (ms).
+- 403 `{"error"}` for a wrong, expired or used code, as the check's (a body that isn't JSON, or has no `code`, is a wrong
+  code). The code's checked before the values: nothing about them is said without one that works.
+- 400 `{"error"}` for values that won't do: `lon is a number from -180 to 180`, `lat is a number from -85 to 85`,
+  `no outstation called that here` (a `near` that isn't handed out, or isn't a channel's name), `that's your own
+  outstation`, `clear is true`, or `one of a place (lon and lat), an outstation (near) or clear` (none of them, or more
+  than one).
+- 429 `{"error": "one move every 7 days: try again later", "next"}` when it's too soon (below).
+- 503 `{"error"}` (Cloudflare) when the relay couldn't look the `near` up just then: try again.
+- 413 `{"error": "a settle is 2 KB at most"}` for a body over 2,048 bytes (`POST /settle`'s too, though it needs none);
+  405 for any other method on `/settle` or `/home`; 400 `{"error": "which outstation?"}` for a channel in the address
+  that can't be one.
+
+None but the 200 uses the code up, so the page can say what's wrong and let them try again with the same one.
+
+**How often.** The first change is free, whenever it comes. After it, one change every 7 days (`next` is the last change
+and 7 days), and a clear counts as one. A settle that changes nothing (the same place once rounded, the same outstation,
+or a clear with no home) isn't a change: it's let through whenever it comes, uses the code up, and leaves `next` as it
+was (`null` if nothing's ever changed). So clearing first, before ever settling, doesn't start the 7 days.
+
+**CORS.** The page is on another origin and sends JSON, so `GET /settle` and `POST /home` answer its preflight
+(`OPTIONS`, 204) and every answer of theirs (errors too) carries `Access-Control-Allow-Origin: *`,
+`Access-Control-Allow-Methods: GET, POST, OPTIONS` and `Access-Control-Allow-Headers: content-type`. `POST /settle` is
+the app's and carries none, so no page can read a code. `POST /home` only ever takes a code, never a key. Nothing here
+may be cached (`Cache-Control: no-store`).
+
+**What's kept:** the home and when it changed, with the channel (on Cloudflare in its meta, so it outlives a sleep; on
+the Python relay in memory while it runs), and the code until it's replaced. A new key from the keeper keeps the home
+(as it keeps `by`) and drops the code the old key got; taking the channel back (`DELETE /admin/channels/<channel>`)
+forgets the home, when it changed, and the code. A `near` names the outstation as it was when chosen: if that one's
+later taken back, the home still names it, and the page decides where that leaves it.
+
+The Python relay's public side (the Funnel's port) allows `GET /settle`, `POST /home` and their preflights, and refuses
+`POST /settle` whatever key comes with it, as it refuses invites. It has no keeper's routes, so nothing there takes a
+channel back.
 
 ## Anomalies and requisitions (Cloudflare)
 

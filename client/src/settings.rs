@@ -28,6 +28,7 @@ fn d_static_key() -> String { "pause".into() }
 fn d_clip_key() -> String { "insert".into() }
 fn d_chat_size() -> f32 { 16.0 }
 fn d_game_chat_size() -> f32 { 20.0 }
+fn d_game_chat_fade() -> u32 { 20 }
 fn d_guess_min() -> u64 { 1_000_000 }
 fn d_scale() -> f32 { 1.0 }
 fn d_mask_key() -> String { "end".into() }
@@ -87,6 +88,10 @@ pub struct Dink {
     /// and each one put on the player's Outside page too (clipsup.rs): a standard copy, off to begin with
     #[serde(default)]
     pub clips_up: bool,
+    /// and each one sent to Discord under Dink's post, where that post went (dink.rs, 11/07/2026: "Dink, but with
+    /// video"): the same standard copy, on to begin with, and only ever where Dink's post was going anyway
+    #[serde(default = "d_true")]
+    pub clips_discord: bool,
     /// the drawer's first question, "do you use Dink with Discord too?": not answered yet, yes or no
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<bool>,
@@ -96,7 +101,7 @@ pub struct Dink {
 
 impl Default for Dink {
     fn default() -> Self {
-        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, discord: None, extra: Map::new() }
+        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, clips_discord: true, discord: None, extra: Map::new() }
     }
 }
 
@@ -162,6 +167,14 @@ pub struct Settings {
     /// the replay buffer: the last 0 to 30 seconds kept here, for a clip (0 keeps nothing)
     #[serde(default)]
     pub replay_seconds: u32,
+    /// dark but recording (11/07/2026): while dark, the tape keeps rolling (the capture runs, nothing's sent), so clips
+    /// still save themselves, to this PC and Discord; off to begin with
+    #[serde(default)]
+    pub tape_dark: bool,
+    /// clips only (11/07/2026, Jace: an easier route "for people who are only downloading/using the program to record
+    /// automatic clips"): no channel, no key; the window is the tape, Dink and the clips
+    #[serde(default)]
+    pub clips_only: bool,
     /// where clips go (empty: Videos\outstation)
     #[serde(default)]
     pub clip_folder: String,
@@ -251,6 +264,15 @@ pub struct Settings {
     pub chat_size: f32,
     #[serde(default = "d_game_chat_size")]
     pub game_chat_size: f32,
+    /// how long a line over the game stays before it fades out, in seconds (0: it stays till newer ones push it off;
+    /// 11/07/2026, Jace: "make the chat on screen fade out after a certain amount of time")
+    #[serde(default = "d_game_chat_fade")]
+    pub game_chat_fade: u32,
+    /// the chat over the game drawn into the picture too, where it sits over the game and as big (11/07/2026, Jace:
+    /// "add a toggle to capture chat on the broadcast screen"): drawn on this PC into each frame (chatpic.rs), so
+    /// observers, the clips and the tape all have it. Off to begin with.
+    #[serde(default)]
+    pub chat_in_picture: bool,
     /// a drop from the guessed boss worth this much decides a guess round
     #[serde(default = "d_guess_min")]
     pub guess_min_value: u64,
@@ -276,6 +298,14 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// clips only, and not attached to a channel: the window shows the tape and the clips, not the transmission
+    pub fn clips_mode(&self) -> bool {
+        self.clips_only && !self.attached()
+    }
+    /// the tape kept while dark: asked for, and with some seconds to keep
+    pub fn taping_dark(&self) -> bool {
+        self.tape_dark && self.replay_seconds > 0
+    }
     pub fn attached(&self) -> bool {
         !self.relay.is_empty() && !self.channel.is_empty() && self.key.len() >= 8
     }
@@ -395,6 +425,13 @@ fn write(p: &Path, s: &Settings) -> std::io::Result<()> {
     std::fs::rename(&tmp, p)
 }
 
+/// This outstation's own station key, made again from its settings (11/07/2026: for the Outside plugin's settings).
+pub fn make_attach(relay: &str, channel: &str, key: &str) -> String {
+    use base64::Engine;
+    let body = serde_json::json!({ "relay": relay, "channel": channel, "key": key }).to_string();
+    format!("{}{}", KEY_PREFIX, base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(body))
+}
+
 /// A station key (the attach code): "outstation1:" (or, from before, "portal1:") and base64url JSON {"relay",
 /// "channel", "key"}.
 pub fn parse_attach(code: &str) -> Result<(String, String, String), String> {
@@ -429,6 +466,9 @@ mod tests {
             assert_eq!(parse_attach(&code).unwrap(), ("wss://outside-portal.x.workers.dev".into(), "ja".into(), "abcdefghijkl".into()));
         }
         assert!(parse_attach("outstation1:!!!").is_err());
+        // (its own key, made again for the Outside plugin, reads back the same)
+        let made = make_attach("wss://relay.ghillie.workers.dev", "sburb", "abcdefghijkl");
+        assert_eq!(parse_attach(&made).unwrap(), ("wss://relay.ghillie.workers.dev".into(), "sburb".into(), "abcdefghijkl".into()));
         assert!(!is_key("hello"));
         assert!(parse_attach("hello").is_err());
     }
@@ -437,6 +477,8 @@ mod tests {
     fn unknown_fields_are_kept_and_defaults_fill_in() {
         let s: Settings = serde_json::from_str(r#"{"channel": "ja", "later": 5, "dink": {"port": 9000, "soon": true}}"#).unwrap();
         assert_eq!((s.fps, s.width, s.quality, s.dink.port), (8, 384, 60, 9000));
+        // (11/07/2026: the chat over the game fades after 20 s, and isn't in the picture, to begin with)
+        assert_eq!((s.game_chat_fade, s.chat_in_picture), (20, false));
         let back = serde_json::to_value(&s).unwrap();
         assert_eq!(back["later"], 5);
         assert_eq!(back["dink"]["soon"], true);
