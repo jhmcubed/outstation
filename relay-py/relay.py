@@ -98,7 +98,13 @@ transmission and the chat, live, and as last known while dark.
   minutes before ({"x", "y"}; Zanaris as one place, WHERE_ZANARIS), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
   whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
   and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
-  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read.
+  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read. With the plugin's "and my
+  world" on too, "where" carries the world with the square, {"x", "y", "world"} (WORLD_RANGE).
+  What they're doing (11/08/2026): "activity", one coarse label ({"kind": "skilling", "skill"}, {"kind": "boss",
+  "boss"}, {"kind": "fighting"}, {"kind": "idle"}: game_activity's closed lists), or null; held, dropped and shown on
+  GET /channels exactly as "where" is.
+  Shooting stars (11/08/2026): "star", a crashed star the player found two minutes before ({"world", "x", "y", "tier"},
+  or "gone": true), into the relay's StarList with nobody's name: GET /stars (below).
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
 
 The aether (11/07/2026, Jace: "a global chat... reminds me of IRC and AOL Instant Messenger. i want this to feel like a
@@ -123,6 +129,13 @@ happening across the open outstations, for outside.wiki's front page (each outst
   more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
   GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
   public side allows the read.
+
+Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): the crashed stars the
+plugins have found, with nobody's name on them, for outside.wiki's globe.
+    read:      GET http://HOST:PORT/stars       {"stars": [{"world", "x", "y", "tier", "found", "seen"}, ...]}
+  One for each world and square, whoever told of it; kept STAR_LIFE_S after it was first told of, or till it's told
+  gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
+  only. The public side allows the read.
 
 Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): where an outstation stands on
 outside.wiki's globe of Gielinor (by default beside whoever invited it), chosen by its owner. The app trades its key for a
@@ -190,6 +203,27 @@ WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096)
 # location as being on Zanaris"): the plugin sends any tile there (x 2368-2495, y 4352-4479) as this one place, which
 # the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
 WHERE_ZANARIS = {"x": 2368, "y": 4416}
+# which world (11/08/2026, with following's "and my world"; the Worker's WORLD_RANGE, the same): a whole number in this
+# range, wide enough for the worlds RuneLite reports (301 and up for years, and lower if Jagex numbers them from 1).
+# Shooting stars' worlds are checked the same.
+WORLD_RANGE = (1, 999)
+# what they're doing (11/08/2026; the Worker's ACTIVITY_SKILLS and ACTIVITY_BOSSES, the same; the bosses are the
+# plugin's Activity.BOSSES's labels: test_relay.py checks the three lists match)
+ACTIVITY_SKILLS = ("Agility", "Attack", "Construction", "Cooking", "Crafting", "Defence", "Farming", "Firemaking",
+                   "Fishing", "Fletching", "Herblore", "Hitpoints", "Hunter", "Magic", "Mining", "Prayer", "Ranged",
+                   "Runecraft", "Sailing", "Slayer", "Smithing", "Strength", "Thieving", "Woodcutting")
+ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Barrows", "Bryophyta", "Cerberus",
+                   "Commander Zilyana", "Corporeal Beast", "Dagannoth Prime", "Dagannoth Rex", "Dagannoth Supreme",
+                   "Duke Sucellus", "General Graardor", "Giant Mole", "Grotesque Guardians", "Hespori",
+                   "K'ril Tsutsaroth", "Kalphite Queen", "King Black Dragon", "Kraken", "Kree'arra", "Moons of Peril",
+                   "Nex", "Obor", "Phantom Muspah", "Phosani's Nightmare", "Royal Titans", "Sarachnis", "Scurrius",
+                   "Skotizo", "Sol Heredit", "The Hueycoatl", "The Leviathan", "The Nightmare", "The Whisperer",
+                   "Thermonuclear smoke devil", "TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Vorkath", "Yama", "Zalcano",
+                   "Zulrah")
+# shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): a star's kept
+# STAR_LIFE_S after it was first told of (a star lasts about two hours), or till it's told gone; for STAR_GONE_S after,
+# a late report of it doesn't bring it back; one outstation tells of STARS_AN_HOUR in an hour at most; STARS_KEPT at most
+STAR_LIFE_S, STAR_GONE_S, STARS_AN_HOUR, STARS_KEPT = 2 * 3600, 600, 30, 1000
 # the aether (11/07/2026; docs/protocol.md "The aether"): one room for every outstation and visitor. A line at most
 # AETHER_ROWS rows of AETHER_WIDTH characters (so 960 in all); one from someone every AETHER_EVERY ms at most, and
 # AETHER_A_MINUTE a minute; the last AETHER_KEPT kept (and handed to whoever joins), the last AETHER_READ in GET /aether;
@@ -611,22 +645,136 @@ def game_where(g):
     w = g["where"]
     if w is None:
         return None
-    if not isinstance(w, dict) or len(w) != 2:
+    if not isinstance(w, dict) or not (len(w) == 2 or (len(w) == 3 and "world" in w)):
         return _BAD
     out = {}
     for k in ("x", "y"):
-        v = w.get(k)
-        if isinstance(v, float) and v.is_integer():
-            v = int(v)                                   # (3136.0 is 3136, as JavaScript reads it)
-        if not isinstance(v, int) or isinstance(v, bool):
+        v = game_int(w.get(k))                           # (3136.0 is 3136, as JavaScript reads it)
+        if v is None:
             return _BAD
         out[k] = v
-    if out == WHERE_ZANARIS:
-        return dict(WHERE_ZANARIS)
-    for k, (lo, hi) in (("x", WHERE_X), ("y", WHERE_Y)):
-        if not lo <= out[k] < hi or out[k] % WHERE_SQUARE != WHERE_SQUARE // 2:
+    world = {}
+    if len(w) == 3:
+        if not is_world(w["world"]):
             return _BAD
-    return out
+        world = {"world": game_int(w["world"])}
+    if out == WHERE_ZANARIS:
+        return dict(WHERE_ZANARIS, **world)
+    if not (is_square(out["x"], WHERE_X) and is_square(out["y"], WHERE_Y)):
+        return _BAD
+    return dict(out, **world)
+
+
+def game_int(v):
+    """A whole number as JavaScript reads one (3136.0 is 3136; true isn't one), or None."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def is_square(v, bounds):
+    """A square's middle along one side of the main map: a whole number k*128 + 64 from bounds[0] up to bounds[1]."""
+    v = game_int(v)
+    return v is not None and bounds[0] <= v < bounds[1] and v % WHERE_SQUARE == WHERE_SQUARE // 2
+
+
+def is_world(v):
+    """A world's number (WORLD_RANGE). The Worker's isWorld, the same."""
+    v = game_int(v)
+    return v is not None and WORLD_RANGE[0] <= v <= WORLD_RANGE[1]
+
+
+def game_activity(g):
+    """A {"game"} message's "activity" (what they're doing, 11/08/2026): one of {"kind": "skilling", "skill"} (one of
+    ACTIVITY_SKILLS), {"kind": "boss", "boss"} (one of ACTIVITY_BOSSES), {"kind": "fighting"} or {"kind": "idle"},
+    exactly (a copy); None to clear it (null); or _BAD for anything else (none, or not its shape: ignored, and the rest
+    of the message taken as ever). Never one of the game's fields. The Worker's gameActivity, the same."""
+    if not isinstance(g, dict) or "activity" not in g:
+        return _BAD
+    a = g["activity"]
+    if a is None:
+        return None
+    if not isinstance(a, dict):
+        return _BAD
+    kind = a.get("kind")
+    if kind in ("idle", "fighting") and len(a) == 1:
+        return {"kind": kind}
+    if kind == "skilling" and len(a) == 2 and isinstance(a.get("skill"), str) and a["skill"] in ACTIVITY_SKILLS:
+        return {"kind": "skilling", "skill": a["skill"]}
+    if kind == "boss" and len(a) == 2 and isinstance(a.get("boss"), str) and a["boss"] in ACTIVITY_BOSSES:
+        return {"kind": "boss", "boss": a["boss"]}
+    return _BAD
+
+
+def game_star(g):
+    """A {"game"} message's "star" (a shooting star found, 11/08/2026): {"world", "x", "y", "tier"} (a world, a square's
+    middle on the main map as "where"'s, a tier 1 to 9) or {"world", "x", "y", "gone": True}, exactly; or None for none
+    or anything not its shape. The Worker's gameStar, the same."""
+    s = g.get("star") if isinstance(g, dict) else None
+    if not isinstance(s, dict) or not is_world(s.get("world")) or not is_square(s.get("x"), WHERE_X) \
+            or not is_square(s.get("y"), WHERE_Y):
+        return None
+    at = {"world": game_int(s["world"]), "x": game_int(s["x"]), "y": game_int(s["y"])}
+    keys = ",".join(sorted(s))
+    tier = game_int(s.get("tier"))
+    if keys == "tier,world,x,y" and tier is not None and 1 <= tier <= 9:
+        return dict(at, tier=tier)
+    if keys == "gone,world,x,y" and s["gone"] is True:
+        return dict(at, gone=True)
+    return None
+
+
+class StarList:
+    """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, whoever told of
+    it, never who did; in memory only. A channel's only trace is when it told of one in the last hour (STARS_AN_HOUR).
+    The Worker's StarList (stars.ts), the same. Times in ms."""
+
+    def __init__(self):
+        self.stars = {}              # "world:x:y" -> {"world", "x", "y", "tier", "found", "seen"}
+        self.gone = {}               # "world:x:y" -> when it was told gone
+        self.recent = {}             # a channel -> when it told of one, the last hour
+
+    def expire(self, now):
+        """The stars and the gone past their time, and a quiet channel's times, forgotten."""
+        for k in [k for k, s in self.stars.items() if now - s["found"] >= STAR_LIFE_S * 1000]:
+            del self.stars[k]
+        for k in [k for k, t in self.gone.items() if now - t >= STAR_GONE_S * 1000]:
+            del self.gone[k]
+        for c in [c for c, t in self.recent.items() if now - t[-1] >= 3_600_000]:
+            del self.recent[c]
+
+    def add(self, channel, r, now=None):
+        """A channel's report (game_star's): whether it was counted (False past its STARS_AN_HOUR). A new star's added;
+        one kept takes a tier as low or lower (a star's only ever mined down) and when it was seen; gone takes it off,
+        and keeps it off for STAR_GONE_S."""
+        now = int(time.time() * 1000) if now is None else now
+        self.expire(now)
+        times = [t for t in self.recent.get(channel, []) if now - t < 3_600_000]
+        if len(times) >= STARS_AN_HOUR:
+            return False
+        times.append(now)
+        self.recent[channel] = times
+        k = "%d:%d:%d" % (r["world"], r["x"], r["y"])
+        if r.get("gone"):
+            self.stars.pop(k, None)
+            self.gone[k] = now
+            return True
+        if k in self.gone:
+            return True
+        had = self.stars.get(k)
+        if had is not None:
+            if r["tier"] <= had["tier"]:
+                had["tier"], had["seen"] = r["tier"], now
+            return True
+        if len(self.stars) < STARS_KEPT:
+            self.stars[k] = {"world": r["world"], "x": r["x"], "y": r["y"], "tier": r["tier"], "found": now, "seen": now}
+        return True
+
+    def read(self, now=None):
+        """GET /stars: every star kept, by world, then x, then y."""
+        now = int(time.time() * 1000) if now is None else now
+        self.expire(now)
+        return {"stars": sorted((dict(s) for s in self.stars.values()), key=lambda s: (s["world"], s["x"], s["y"]))}
 
 
 class Game:
@@ -963,9 +1111,10 @@ class Aether:
 
 
 class Channel:
-    def __init__(self, name, key, array=None):
+    def __init__(self, name, key, array=None, stars=None):
         self.name, self.key = name, key
         self.array = array           # the relay's ArrayFeed: this channel's events go in while it's live and listed
+        self.stars = stars           # the relay's StarList: the shooting stars its plugin finds go in, with no name
         self.code = ""
         self.sender = None
         self.viewers = set()
@@ -1027,6 +1176,10 @@ class Channel:
         self.where = None
         self.where_at = None
         self.where_took = None
+        # what they're doing (11/08/2026; game_activity): kept, taken and dropped exactly as "where" is
+        self.activity = None
+        self.activity_at = None
+        self.activity_took = None
         # settling (11/08/2026): where it stands on outside.wiki's globe ({"lon", "lat"} or {"near"}; None: beside its
         # inviter), when that last changed (ms), and the app's one-time code for the page ({"code", "expires", "used"})
         self.home = None
@@ -1073,7 +1226,9 @@ class Channel:
             return
         fields = game_fields(m["game"])
         self.take_where(game_where(m["game"]), fields)
-        got = self.game.apply(fields)       # (never "where": game_fields leaves it out)
+        self.take_activity(game_activity(m["game"]), fields)
+        self.take_star(game_star(m["game"]), fields)
+        got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
         if got is None:
             return
         line = json.dumps({"game": dict(got, at=self.game.at)})
@@ -1095,6 +1250,30 @@ class Channel:
 
     def drop_where(self):
         self.where = self.where_at = None
+
+    def take_activity(self, a, fields):
+        """What they're doing (game_activity): taken and dropped exactly as take_where takes "where", one every
+        WHERE_EVERY_S at most, null whenever it comes; logged out or held for the player's safety, dropped; nothing taken
+        while no plugin's connected."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or a is None:
+            self.drop_activity()
+            return
+        now = time.monotonic()
+        if a is _BAD or self.gamer is None or (self.activity_took is not None and now - self.activity_took < WHERE_EVERY_S):
+            return
+        self.activity, self.activity_at, self.activity_took = a, now, now
+
+    def drop_activity(self):
+        self.activity = self.activity_at = None
+
+    def take_star(self, star, fields):
+        """A shooting star the plugin found (game_star): into the relay's StarList, which counts this channel's reports
+        and keeps the star with no name. Not from a message that logs out or holds for the player's safety, nor once
+        the plugin's gone (a report --delay held back)."""
+        if star is None or self.stars is None or self.gamer is None or fields.get("off") is True \
+                or isinstance(fields.get("paused"), str):
+            return
+        self.stars.add(self.name, star)
 
     def on_air(self):
         """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
@@ -1417,6 +1596,7 @@ class Relay:
         self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
+        self.stars = StarList()        # shooting stars (11/08/2026): the ones the plugins found, with nobody's name
         self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
         self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
@@ -1475,8 +1655,8 @@ class Relay:
                                              or (path and path[0] in ("invites", "admin"))):
             # from the internet: no transmitting, no Dink posts, no invites, no settling code for a key (POST /settle),
             # no game socket, no outstation in the aether and none of the keeper's routes, whatever key comes with them
-            # (the game's read, GET /game, the aether's read, a visitor in the aether, the Array's events and the globe
-            # page's settling with a code are let through: what anyone on Outside may do anyway)
+            # (the game's read, GET /game, the aether's read, a visitor in the aether, the Array's events, the shooting
+            # stars and the globe page's settling with a code are let through: what anyone on Outside may do anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -1504,6 +1684,9 @@ class Relay:
             return
         if path == ["array", "events"] and not key:
             await self.array_read(writer, method, q)
+            return
+        if path == ["stars"] and not key:
+            await self.stars_read(writer, method)
             return
         if path[:2] == ["admin", "aether"] and not key:
             await self.aether_keeper(reader, writer, method, headers, path)
@@ -1560,7 +1743,7 @@ class Relay:
             return
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key, self.array)
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
         elif ch.key is None:         # made by a viewer waiting for it: this key claims it
             ch.key = key
         elif ch.key != key:
@@ -1610,7 +1793,7 @@ class Relay:
             await sock.close(4003, "wrong watch code")
             return
         if ch is None:
-            ch = self.channels[name] = Channel(name, None, self.array)
+            ch = self.channels[name] = Channel(name, None, self.array, self.stars)
         sock.look_frames, sock.look_at = False, 0.0
         ch.lookers.add(sock)
         sock.send_nowait(ch.status())
@@ -1644,7 +1827,7 @@ class Relay:
             return
         if ch is None:
             # nobody has claimed it yet: wait as a viewer of an empty channel
-            ch = self.channels[name] = Channel(name, None, self.array)
+            ch = self.channels[name] = Channel(name, None, self.array, self.stars)
         sock.code = code
         self.next_who += 1
         sock.who, sock.device, sock.name = self.next_who, "", "visitor"
@@ -1752,7 +1935,7 @@ class Relay:
             return None
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key, self.array)
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:
@@ -1984,6 +2167,7 @@ class Relay:
             if ch.gamer is sock:
                 ch.gamer = None
                 ch.drop_where()              # (following: only while the plugin's connected)
+                ch.drop_activity()           # (what they're doing, the same)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
 
@@ -1994,8 +2178,9 @@ class Relay:
         "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
         counted under each inviter, [{"by", "n"}] sorted by "by" (the Worker's openPortals, the same). Never the
         invited names, and only under an inviter that's on the list itself, so nothing's said of a hidden outstation.
-        "where" (11/08/2026, following; game_where): the square the plugin last said, only while the channel's live and
-        listed, and only if it came within where_fresh_s; else null. Nowhere else."""
+        "where" (11/08/2026, following; game_where): the square the plugin last said (and its world, with "and my world"
+        on), only while the channel's live and listed, and only if it came within where_fresh_s; else null.
+        "activity" (11/08/2026; game_activity): what they were doing, the same way. Nowhere else."""
         # (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
         waiting = {ch.name for ch in self.channels.values() if ch.key is not None and ch.pending}
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
@@ -2003,7 +2188,9 @@ class Relay:
                  "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
                  "home": None if isinstance(ch.home, dict) and ch.home.get("near") in waiting else ch.home,
                  "where": dict(ch.where) if ch.where is not None and ch.sender is not None
-                          and time.monotonic() - ch.where_at <= self.where_fresh_s else None}
+                          and time.monotonic() - ch.where_at <= self.where_fresh_s else None,
+                 "activity": dict(ch.activity) if ch.activity is not None and ch.sender is not None
+                             and time.monotonic() - ch.activity_at <= self.where_fresh_s else None}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         shown, counts = {r["channel"] for r in rows}, {}
@@ -2114,6 +2301,19 @@ class Relay:
             status, body = "400 Bad Request", {"error": "since is a cursor: an earlier read's next"}
         else:
             body = self.array.read(int(since) if since is not None else None)
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\n"
+                      "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def stars_read(self, writer, method):
+        """GET /stars (11/08/2026; StarList): the shooting stars the plugins have found, with nobody's name, for
+        outside.wiki's globe: {"stars": [...]}. Anyone may read it (any origin, the public side too), never cached."""
+        status, body = ("200 OK", self.stars.read()) if method == "GET" else ("405 Method Not Allowed", None)
         data = json.dumps(body).encode() if body is not None else b""
         kind = "Content-Type: application/json\r\n" if body is not None else ""
         writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\n"
@@ -2250,7 +2450,7 @@ class Relay:
             return await answer("409 Conflict", {"error": "that name has an outstation already"})
         new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
         if other is None:
-            other = self.channels[player] = Channel(player, new_key, self.array)
+            other = self.channels[player] = Channel(player, new_key, self.array, self.stars)
         else:
             other.key = new_key       # (a channel only viewers were waiting on: now it's handed out, and they hear so)
             other.tell_viewers()
@@ -2560,7 +2760,7 @@ class Relay:
             return await answer("403 Forbidden")
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key, self.array)
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:

@@ -71,12 +71,17 @@
 //   GET    /settle/<channel>?code=<code>             {"channel", "home", "next"}
 //   POST   /home/<channel>  {"code", "lon", "lat"} | {"code", "near"} | {"code", "clear": true}   {"home", "next"}
 // The home shows in each row of GET /channels, and the keeper's GET /admin/channels has it with when it changed (homeAt).
+//
+// Shooting stars (11/08/2026; stars.ts): the crashed stars the plugins have found, kept in the Directory's memory with
+// nobody's name, for the globe:
+//   GET    /stars    {"stars": [{"world", "x", "y", "tier", "found", "seen"}]}
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
 import { Aether } from "./aether";
 import { type ArrayEvent, ArrayFeed, arrayAnswer, arraySince } from "./array";
-import { WHERE_FRESH_MS } from "./game";
+import { type StarReport, WHERE_FRESH_MS } from "./game";
+import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, relayOf } from "./text";
 import { SETTLE_BODY, settleAnswer, settlePreflight } from "./settle";
@@ -139,6 +144,9 @@ export class Directory extends DurableObject<Env> {
   // the Array's events (11/08/2026; array.ts): each told by its channel (Channel.tellArray) while it's live and listed;
   // in memory only, so an eviction forgets them (the feed's short-lived: a page only wants what's happening now)
   array = new ArrayFeed();
+  // shooting stars (11/08/2026; stars.ts): each told by the channel whose plugin found it (Channel.takeStar), kept with
+  // nobody's name; in memory only, so an eviction forgets them (a star lasts two hours at most)
+  stars = new StarList();
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
@@ -150,6 +158,14 @@ export class Directory extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       return arrayAnswer(this.array.read(arraySince(url.searchParams.get("since")) ?? undefined));
+    }
+    if (url.pathname === "/stars") {
+      if (request.method === "PUT") {
+        const { channel, star } = (await request.json()) as { channel: string; star: StarReport };
+        this.stars.add(channel, star);
+        return new Response(null, { status: 204 });
+      }
+      return arrayAnswer(this.stars.read());
     }
     if (url.pathname === "/listed" && request.method === "PUT") {
       const row = (await request.json()) as Listing;
@@ -211,8 +227,9 @@ export class Directory extends DurableObject<Env> {
    *  counted under each inviter, [{"by", "n"}] sorted by "by". Never the invited names (the inviter typed them; the
    *  friends haven't agreed to anything), and only under an inviter that's on the list itself (no watch code), so
    *  nothing's said of a hidden outstation.
-   *  "where" (11/08/2026, following; game.ts): the square the plugin last said, {"x", "y"}, only while the channel's live
-   *  and on the list, and only if it came within WHERE_FRESH_MS; else null. Nowhere else. */
+   *  "where" (11/08/2026, following; game.ts): the square the plugin last said, {"x", "y"} (and "world", with "and my
+   *  world" on), only while the channel's live and on the list, and only if it came within WHERE_FRESH_MS; else null.
+   *  "activity" (11/08/2026; game.ts): what they were doing, the same way. Nowhere else. */
   async openPortals(): Promise<Response> {
     const given = await this.givenNames(), names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
     const ask = names.filter((n) => { const l = this.listed.get(n); return !l || now - l.seen > LISTING_CHECK; });
@@ -232,11 +249,12 @@ export class Directory extends DurableObject<Env> {
     const waiting = new Set(rows.filter(waits).map((r) => r.channel));
     const homeOf = (h: Listing["home"]) => (h && "near" in h && waiting.has(h.near) ? null : h ?? null);
     const fresh = (parseFloat(this.env.WHERE_FRESH_SECONDS || "") * 1000) || WHERE_FRESH_MS, at = Date.now();
-    const whereOf = (r: Listing) => (r.live && r.where && at - (r.whereAt || 0) <= fresh ? { x: r.where.x, y: r.where.y } : null);
+    const whereOf = (r: Listing) => (r.live && r.where && at - (r.whereAt || 0) <= fresh ? { ...r.where } : null);
+    const activityOf = (r: Listing) => (r.live && r.activity && at - (r.activityAt || 0) <= fresh ? { ...r.activity } : null);
     const open = rows.filter((r) => !r.code && !waits(r))
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
                      title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game,
-                     home: homeOf(r.home), where: whereOf(r) }));
+                     home: homeOf(r.home), where: whereOf(r), activity: activityOf(r) }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     const shown = new Set(open.map((r) => r.channel)), counts = new Map<string, number>();
     for (const r of rows) {
@@ -582,6 +600,12 @@ export default {
       if (since === null) return arrayAnswer({ error: "since is a cursor: an earlier read's next" }, 400);
       return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"))
         .fetch("https://dir/array" + (since === undefined ? "" : "?since=" + since));
+    }
+
+    // shooting stars (11/08/2026; stars.ts): the stars the plugins have found, with nobody's name; any page may read it
+    if (parts[0] === "stars" && parts.length === 1) {
+      if (request.method !== "GET") return arrayAnswer(null, 405);
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/stars");
     }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)

@@ -1979,6 +1979,345 @@ class Following(Base):
         return got
 
 
+
+class FollowingWorld(Base):
+    """Which world (11/08/2026): with the plugin's "and my world" on, "where" carries the world with the square, {"x",
+    "y", "world"}, a whole number from 1 to 999; shown, taken and dropped as the square is (Following's tests)."""
+
+    game, say, where, live_and_following = Following.game, Following.say, Following.where, Following.live_and_following
+
+    async def test_the_world_shows_with_the_square(self):
+        await self.live_and_following({"x": 3264, "y": 3264, "world": 302})
+        self.assertEqual(await self.where(), {"x": 3264, "y": 3264, "world": 302})
+
+    async def test_zanaris_with_its_world(self):
+        await self.live_and_following({"y": 4416, "world": 330, "x": 2368})
+        self.assertEqual(await self.where(), {"x": 2368, "y": 4416, "world": 330})
+
+    async def test_a_bad_world_is_ignored_with_its_square_and_the_rest_still_lands(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        v = await self.watch()
+        await self.pause()
+        bad = [{"x": 3264, "y": 3264, "world": 0}, {"x": 3264, "y": 3264, "world": 1000},
+               {"x": 3264, "y": 3264, "world": -302}, {"x": 3264, "y": 3264, "world": 302.5},
+               {"x": 3264, "y": 3264, "world": "302"}, {"x": 3264, "y": 3264, "world": True},
+               {"x": 3264, "y": 3264, "world": None}, {"x": 3264, "y": 3264, "w": 302},
+               {"x": 3264, "world": 302}, {"x": 3264, "y": 3264, "world": 302, "plane": 0}]
+        for i, w in enumerate(bad):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)                           # (5 a second at most)
+            await self.say(g, {"world": 300 + i, "where": w})
+            got = await next_of(v, "game")
+            self.assertEqual((sorted(got), got["world"]), (["at", "world"], 300 + i), w)
+        self.assertIsNone(await self.where())
+        await asyncio.sleep(1.0)
+        await self.say(g, {"where": {"x": 3264, "y": 3264, "world": 999.0}})   # (as JavaScript reads it)
+        self.assertEqual(await self.where(), {"x": 3264, "y": 3264, "world": 999})
+
+    async def test_never_to_viewers_or_the_read(self):
+        v = await self.watch()
+        await self.live_and_following({"x": 3264, "y": 3264, "world": 417})
+        await self.say((self.clients[-1]), {"name": "Sburb"})
+        self.assertEqual(await self.where(), {"x": 3264, "y": 3264, "world": 417})
+        heard = []
+        try:
+            while True:
+                kind, line = await v.recv(timeout=0.5)
+                if kind == "text":
+                    heard.append(line)
+        except asyncio.TimeoutError:
+            pass
+        self.assertTrue(any('"game"' in line for line in heard))
+        for line in heard:
+            self.assertNotIn('"world"', line)
+            self.assertNotIn("where", line)
+        self.assertNotIn('"world"', json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+
+
+class Activity(Base):
+    """What they're doing (11/08/2026): the Outside plugin may send "activity", one coarse label from closed lists
+    ({"kind": "skilling", "skill"}, {"kind": "boss", "boss"}, {"kind": "fighting"}, {"kind": "idle"}), or null. Held,
+    taken (one every 50 s), dropped and shown on GET /channels exactly as following's "where", and without it. Never to
+    viewers, lookers or desks, in GET /game or in the Array's events. (The throttle's end: relay-py/test_relay.py's.)"""
+
+    MINING = {"kind": "skilling", "skill": "Mining"}
+
+    async def game(self, key=None, channel=None):
+        return await Client().open("%s/game/%s?key=%s&v=0.0.1" % (RELAY, channel or self.ch, key or self.key))
+
+    async def say(self, g, fields):
+        await g.send(json.dumps({"game": fields}))
+
+    async def row(self, channel=None):
+        """This channel's row on GET /channels, after a moment for the Worker's channel to tell the Directory (None if
+        it has none)."""
+        await self.pause(2)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        return rows.get(channel or self.ch)
+
+    async def activity(self):
+        r = await self.row()
+        return False if r is None else r["activity"]
+
+    async def live_and_doing(self, activity=None):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"activity": activity or self.MINING})
+        return tx, g
+
+    async def test_it_shows_only_while_live_without_following(self):
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"activity": self.MINING})
+        self.assertIsNone(await self.activity())                   # (held, but not on air)
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        r = await self.row()
+        self.assertEqual((r["activity"], r["where"]), (self.MINING, None))
+        tx.close()
+        await self.pause(2)
+        self.assertIsNone(await self.activity())
+
+    async def test_each_shape_it_takes(self):
+        for a in ({"kind": "boss", "boss": "Vorkath"}, {"kind": "fighting"}, {"kind": "idle"},
+                  {"skill": "Sailing", "kind": "skilling"}, {"kind": "boss", "boss": "Barrows"}):
+            self.ch = "t" + secrets.token_hex(5)
+            if WORKER:
+                status, got = admin("POST", "/admin/channels/" + self.ch)
+                self.key = got["key"]
+            await self.live_and_doing(a)
+            self.assertEqual(await self.activity(), dict(a), a)
+
+    async def test_it_goes_stale(self):
+        await self.live_and_doing()
+        self.assertEqual(await self.activity(), self.MINING)
+        await asyncio.sleep(WHERE_FRESH_S + 0.5)
+        self.assertIsNone(await self.activity())
+
+    async def test_a_bad_one_is_ignored_and_the_rest_of_its_message_still_lands(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        v = await self.watch()
+        await self.pause()
+        bad = [{"kind": "skilling", "skill": "Overall"}, {"kind": "skilling", "skill": "mining"},
+               {"kind": "skilling"}, {"kind": "boss", "boss": "Callisto"}, {"kind": "boss", "boss": "Jace"},
+               {"kind": "fighting", "with": "Goblin"}, {"kind": "idle", "since": 5}, {"kind": "afk"}, {"kind": 1},
+               {}, "idle", ["idle"], 5, True, {"kind": "skilling", "skill": ["Mining"]},
+               {"kind": "boss", "boss": "Vorkath", "kc": 50}]
+        for i, a in enumerate(bad):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)
+            await self.say(g, {"world": 300 + i, "activity": a})
+            got = await next_of(v, "game")
+            self.assertEqual((sorted(got), got["world"]), (["at", "world"], 300 + i), a)
+        self.assertIsNone(await self.activity())
+        await asyncio.sleep(1.0)
+        await self.say(g, {"activity": {"kind": "idle"}})          # (a bad one never counted: this one's taken)
+        self.assertEqual(await self.activity(), {"kind": "idle"})
+
+    async def test_one_every_50_seconds_and_null_clears_whenever(self):
+        tx, g = await self.live_and_doing()
+        self.assertEqual(await self.activity(), self.MINING)
+        await self.say(g, {"activity": {"kind": "fighting"}})      # (too soon: ignored)
+        self.assertEqual(await self.activity(), self.MINING)
+        await self.say(g, {"activity": None})
+        self.assertIsNone(await self.activity())
+
+    async def test_logging_out_holding_or_the_plugin_going_drops_it(self):
+        tx, g = await self.live_and_doing()
+        self.assertEqual(await self.activity(), self.MINING)
+        await self.say(g, {"off": True})
+        self.assertIsNone(await self.activity())
+        self.ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            self.key = admin("POST", "/admin/channels/" + self.ch)[1]["key"]
+        tx, g = await self.live_and_doing()
+        self.assertEqual(await self.activity(), self.MINING)
+        await self.say(g, {"paused": "wilderness"})
+        self.assertIsNone(await self.activity())
+        self.ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            self.key = admin("POST", "/admin/channels/" + self.ch)[1]["key"]
+        tx, g = await self.live_and_doing()
+        self.assertEqual(await self.activity(), self.MINING)
+        g.close()
+        v = await self.watch()
+        while (await next_of(v, "relay"))["game"]:
+            pass
+        self.assertIsNone(await self.activity())
+
+    async def test_a_coded_outstation_never_shows_it(self):
+        tx = await self.tx(code="moss")
+        await next_of(tx, "relay")
+        g = await self.game()
+        self.clients.append(g)
+        await self.say(g, {"activity": {"kind": "boss", "boss": "Zalcano"}})
+        self.assertIsNone(await self.row())
+
+    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
+    async def test_a_new_key_drops_it(self):
+        await self.live_and_doing()
+        self.assertEqual(await self.activity(), self.MINING)
+        status, got = admin("POST", "/admin/channels/" + self.ch)
+        tx = await self.tx(key=got["key"])
+        await next_of(tx, "relay")
+        self.assertIsNone(await self.activity())
+
+    async def test_never_to_viewers_lookers_desks_the_read_or_the_arrays_events(self):
+        v, look, d = await self.watch(), await self.connect("watch", "look=1"), await self.desk()
+        tx, g = await self.live_and_doing({"kind": "boss", "boss": "Kraken"})
+        await self.say(g, {"world": 302})
+        self.assertEqual(await self.activity(), {"kind": "boss", "boss": "Kraken"})
+        for c in (v, look, d):
+            heard = []
+            try:
+                while True:
+                    kind, line = await c.recv(timeout=0.5)
+                    if kind == "text":
+                        heard.append(line)
+            except asyncio.TimeoutError:
+                pass
+            self.assertTrue(any('"game"' in line for line in heard))
+            for line in heard:
+                self.assertNotIn("Kraken", line)
+                self.assertNotIn("activity", line)
+        self.assertNotIn("Kraken", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+        with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
+            self.assertNotIn("Kraken", r.read().decode())
+
+
+class Stars(Base):
+    """Shooting stars (11/08/2026): the Outside plugin may send "star", a crashed star it saw two minutes before
+    ({"world", "x", "y", "tier"}, or "gone": true). The relay keeps one for each world and square, whoever told of it,
+    and GET /stars shows them with nobody's name: a lower tier replaces, a higher one's old news, gone takes it off (and
+    a late report doesn't bring it back). One outstation tells of 30 an hour at most. (Expiry, at two hours: relay-py's
+    own tests.) Each test has a world and a square of its own: the list is the whole relay's."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.world = 1 + secrets.randbelow(999)
+        self.x = 1088 + 128 * secrets.randbelow(24)
+        self.y = 2496 + 128 * secrets.randbelow(14)
+
+    async def game(self, key=None, channel=None):
+        g = await Client().open("%s/game/%s?key=%s&v=0.0.1" % (RELAY, channel or self.ch, key or self.key))
+        self.clients.append(g)
+        return g
+
+    async def say(self, g, star, **more):
+        await g.send(json.dumps({"game": dict({"star": star}, **more)}))
+
+    def star(self, **more):
+        return dict({"world": self.world, "x": self.x, "y": self.y}, **more)
+
+    async def mine(self):
+        """This test's star on GET /stars (None if it isn't there), after a moment for the Worker's Directory."""
+        await self.pause(2)
+        status, got = http("GET", "/stars")
+        self.assertEqual(status, 200)
+        found = [s for s in got["stars"] if (s["world"], s["x"], s["y"]) == (self.world, self.x, self.y)]
+        self.assertLessEqual(len(found), 1)
+        return found[0] if found else None
+
+    async def test_a_star_shows_with_nobodys_name_dark_or_not(self):
+        g = await self.game()
+        await self.say(g, self.star(tier=7))
+        s = await self.mine()
+        self.assertIsNotNone(s)
+        self.assertEqual(sorted(s), ["found", "seen", "tier", "world", "x", "y"])
+        self.assertEqual((s["world"], s["x"], s["y"], s["tier"]), (self.world, self.x, self.y, 7))
+        self.assertEqual(s["found"], s["seen"])
+        with urllib.request.urlopen(http_url() + "/stars", timeout=10) as r:
+            self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+            self.assertNotIn(self.ch, r.read().decode())
+
+    async def test_several_outstations_one_star_tiers_only_fall_and_gone_takes_it_off(self):
+        g = await self.game()
+        other = "t" + secrets.token_hex(5)
+        if WORKER:
+            key = admin("POST", "/admin/channels/" + other)[1]["key"]
+        else:
+            key = "secret-key-" + secrets.token_hex(4)
+        h = await self.game(key=key, channel=other)
+        await self.say(g, self.star(tier=6))
+        await self.say(h, self.star(tier=6))
+        first = await self.mine()
+        await self.say(h, self.star(tier=5))
+        s = await self.mine()
+        self.assertEqual((s["tier"], s["found"]), (5, first["found"]))
+        self.assertGreaterEqual(s["seen"], first["seen"])
+        await self.say(g, self.star(tier=6))                       # (older news: ignored)
+        self.assertEqual((await self.mine())["tier"], 5)
+        await self.say(g, self.star(gone=True))
+        self.assertIsNone(await self.mine())
+        await self.say(h, self.star(tier=1))                       # (a late report of it: it stays gone)
+        self.assertIsNone(await self.mine())
+
+    async def test_a_bad_one_is_ignored_and_the_rest_of_its_message_still_lands(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        bad = [self.star(tier=0), self.star(tier=10), self.star(tier=6.5), self.star(tier="6"), self.star(tier=True),
+               self.star(gone=False), self.star(gone=1), self.star(tier=6, gone=True), self.star(),
+               self.star(tier=6, plane=0), dict(self.star(tier=6), x=self.x + 1), dict(self.star(tier=6), world=0),
+               dict(self.star(tier=6), world=1000), {"x": 2368, "y": 4416, "world": self.world, "tier": 6},
+               {"x": self.x, "y": self.y, "tier": 6}, "star", [self.world, self.x, self.y, 6]]
+        for i, st in enumerate(bad):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)
+            await self.say(g, st, world=300 + i)
+            got = await next_of(v, "game")
+            self.assertEqual((sorted(got), got["world"]), (["at", "world"], 300 + i), st)
+        self.assertIsNone(await self.mine())
+
+    async def test_not_from_a_message_that_logs_out_or_holds_and_never_to_viewers(self):
+        v = await self.watch()
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        await self.say(g, self.star(tier=8), off=True)
+        await self.say(g, self.star(tier=8), paused="wilderness")
+        self.assertIsNone(await self.mine())
+        await self.say(g, self.star(tier=8), off=False, paused=False)
+        self.assertEqual((await self.mine())["tier"], 8)
+        heard = []
+        try:
+            while True:
+                kind, line = await v.recv(timeout=0.5)
+                if kind == "text":
+                    heard.append(line)
+        except asyncio.TimeoutError:
+            pass
+        for line in heard:
+            self.assertNotIn("star", line)
+        self.assertNotIn("star", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+
+    async def test_thirty_an_hour_from_one_outstation(self):
+        g = await self.game()
+        other = self.world % 999 + 1                               # (thirty stars on a world of their own)
+        for i in range(30):
+            if i and i % 5 == 0:
+                await asyncio.sleep(1.05)                          # (5 a second at most)
+            await self.say(g, dict(self.star(tier=9), world=other, y=2496 + 128 * (i % 13), x=1088 + 128 * (i // 13)))
+        await asyncio.sleep(1.05)
+        await self.say(g, self.star(tier=9))                       # (the 31st: ignored)
+        self.assertIsNone(await self.mine())
+
+    async def test_only_get(self):
+        req = urllib.request.Request(http_url() + "/stars", method="POST", data=b"{}")
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 405)
+
 async def nothing_game(c, wait=0.5):
     """The game line someone just come is sent, or None if none comes in `wait` seconds."""
     try:
