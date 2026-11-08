@@ -95,7 +95,7 @@ transmission and the chat, live, and as last known while dark.
   whether one is connected. Kept in memory, as everything here, while the relay runs.
     read:      GET http://HOST:PORT/game/<channel>?code=<watch code>    {"game": {...}, "at", "connected"}
   Following (11/08/2026): apart from the game's fields, "where", the middle of the 128-tile square the player was in two
-  minutes before ({"x", "y"}), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
+  minutes before ({"x", "y"}; Zanaris as one place, WHERE_ZANARIS), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
   whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
   and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
   (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read.
@@ -186,6 +186,10 @@ GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the 
 # one every WHERE_EVERY_S, and shown on GET /channels for WHERE_FRESH_S after it came (the relay's where_fresh_s,
 # --where-fresh-seconds)
 WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096), (2496, 4224), 50, 240
+# Zanaris (11/08/2026, Jace: "if someone goes to zanaris through a fairy ring on Gielinor make sure it shows their
+# location as being on Zanaris"): the plugin sends any tile there (x 2368-2495, y 4352-4479) as this one place, which
+# the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
+WHERE_ZANARIS = {"x": 2368, "y": 4416}
 # the aether (11/07/2026; docs/protocol.md "The aether"): one room for every outstation and visitor. A line at most
 # AETHER_ROWS rows of AETHER_WIDTH characters (so 960 in all); one from someone every AETHER_EVERY ms at most, and
 # AETHER_A_MINUTE a minute; the last AETHER_KEPT kept (and handed to whoever joins), the last AETHER_READ in GET /aether;
@@ -599,8 +603,8 @@ def game_fields(g):
 
 def game_where(g):
     """A {"game"} message's "where" (following, 11/08/2026): {"x", "y"} for a square's middle (each a whole number
-    k*128 + 64, x from 1024 up to 4096, y from 2496 up to 4224, and nothing else in it), None to clear it (null), or
-    _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). Never one of
+    k*128 + 64, x from 1024 up to 4096, y from 2496 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS,
+    exactly), None to clear it (null), or _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). Never one of
     the game's fields (game_fields leaves it out). The Worker's gameWhere, the same."""
     if not isinstance(g, dict) or "where" not in g:
         return _BAD
@@ -610,13 +614,18 @@ def game_where(g):
     if not isinstance(w, dict) or len(w) != 2:
         return _BAD
     out = {}
-    for k, (lo, hi) in (("x", WHERE_X), ("y", WHERE_Y)):
+    for k in ("x", "y"):
         v = w.get(k)
         if isinstance(v, float) and v.is_integer():
             v = int(v)                                   # (3136.0 is 3136, as JavaScript reads it)
-        if not isinstance(v, int) or isinstance(v, bool) or not lo <= v < hi or v % WHERE_SQUARE != WHERE_SQUARE // 2:
+        if not isinstance(v, int) or isinstance(v, bool):
             return _BAD
         out[k] = v
+    if out == WHERE_ZANARIS:
+        return dict(WHERE_ZANARIS)
+    for k, (lo, hi) in (("x", WHERE_X), ("y", WHERE_Y)):
+        if not lo <= out[k] < hi or out[k] % WHERE_SQUARE != WHERE_SQUARE // 2:
+            return _BAD
     return out
 
 

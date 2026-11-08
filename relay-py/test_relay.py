@@ -542,13 +542,18 @@ class FollowingWords(unittest.TestCase):
         self.assertEqual(W({"where": {"y": 2496, "x": 1088}}), {"x": 1088, "y": 2496})        # (the corners)
         self.assertEqual(W({"where": {"x": 4032, "y": 4160}}), {"x": 4032, "y": 4160})
         self.assertEqual(W({"where": {"x": 3264.0, "y": 3264}}), {"x": 3264, "y": 3264})    # (as JavaScript reads it)
+        self.assertEqual(W({"where": {"y": 4416, "x": 2368}}), {"x": 2368, "y": 4416})        # (Zanaris, as one place)
+        self.assertEqual(W({"where": {"x": 2368.0, "y": 4416.0}}), relay.WHERE_ZANARIS)
+        self.assertIsNot(W({"where": {"x": 2368, "y": 4416}}), relay.WHERE_ZANARIS)          # (a copy: never the constant)
         self.assertIsNone(W({"where": None}))
         for g in ({}, {"world": 302}, None, [], {"where": {"x": 1024, "y": 3264}}, {"where": {"x": 960, "y": 3264}},
                   {"where": {"x": 4160, "y": 3264}}, {"where": {"x": 3264, "y": 2368}}, {"where": {"x": 3264, "y": 4224}},
                   {"where": {"x": 3264, "y": 4288}}, {"where": {"x": 3265, "y": 3264}}, {"where": {"x": 3264.5, "y": 3264}},
                   {"where": {"x": True, "y": 3264}}, {"where": {"x": "3264", "y": 3264}}, {"where": {"x": 3264}},
                   {"where": {"x": 3264, "y": 3264, "plane": 0}}, {"where": [3264, 3264]}, {"where": "lumbridge"},
-                  {"where": 3264}, {"where": True}):
+                  {"where": 3264}, {"where": True}, {"where": {"x": 2368, "y": 4544}}, {"where": {"x": 2496, "y": 4416}},
+                  {"where": {"x": 2240, "y": 4416}}, {"where": {"x": 2368, "y": 4288}}, {"where": {"x": 2368, "y": 4417}},
+                  {"where": {"x": 2368, "y": 4416, "plane": 0}}, {"where": {"x": True, "y": 4416}}):
             self.assertIs(W(g), relay._BAD, g)
         self.assertNotIn("where", relay.game_fields({"world": 302, "where": {"x": 3264, "y": 3264}}))   # (never kept)
 

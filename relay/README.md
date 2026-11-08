@@ -66,6 +66,8 @@ npx wrangler secret put ADMIN_TOKEN
 npm run deploy
 ```
 
+**Since 11/08/2026 it deploys itself:** Cloudflare's Workers Builds is connected to this repository (the relay Worker ▸ Settings ▸ Builds: branch `main`, path `/relay`, `npx wrangler deploy`), so merging a pull request into `main` puts the relay up, about a minute later. Check the pull request's tests before merging: the build deploys whatever lands on `main`. `npm run deploy` by hand still works from a PC logged in with `npx wrangler login`.
+
 It goes up as `https://relay.<subdomain>.workers.dev` (Jace's: `https://relay.ghillie.workers.dev`), and the sockets are `wss://` at the same address.
 
 ## Settings

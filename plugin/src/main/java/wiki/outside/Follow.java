@@ -13,7 +13,8 @@ import java.util.Deque;
  * <li>two minutes behind: what's sent is where they were two minutes ago, at most once a minute;</li>
  * <li>never somewhere dangerous: in the Wilderness, a PvP area, on a PvP or Deadman world or in an instance (raids,
  * boss rooms), nothing's recorded, and the moment they're there the area already sent is cleared;</li>
- * <li>never anywhere off the main map (an underground area is counted where it lies under; anything else, nothing).</li>
+ * <li>never anywhere off the main map (an underground area is counted where it lies under; Zanaris as one place, the
+ * globe's moon; anything else, nothing).</li>
  * </ul>
  * Off by default (OutsideConfig.follow), and the relay shows it only while their outstation's transmitting and open.
  * The client's thread calls tick() each game tick with where the player is; what it gives back, if anything, is sent.
@@ -24,6 +25,10 @@ class Follow
 	static final long BEHIND_MS = 120_000, EVERY_MS = 60_000, AGAIN_MS = 180_000;
 	/** the main map's bounds (the surface; an underground area is 6400 tiles north of what's above it) */
 	static final int X0 = 1024, X1 = 4096, Y0 = 2496, Y1 = 4224, UNDER = 6400;
+	/** Zanaris (Jace, 11/08/2026: shown on the globe's moon), as one place whatever its tile: the fairy rings and the
+	 *  shed both land in this box, and all of it goes as the one square ZANARIS, never more exactly */
+	static final int ZX0 = 2368, ZX1 = 2496, ZY0 = 4352, ZY1 = 4480;
+	static final int[] ZANARIS = {2368, 4416};
 
 	private final Deque<long[]> seen = new ArrayDeque<>(); // [when, x, y], x < 0 for somewhere it mustn't say
 	private long sentAt = -1;
@@ -117,9 +122,13 @@ class Follow
 		sentAt = -1;
 	}
 
-	/** The middle of the square a point's in, on the main map; null anywhere else. */
+	/** The middle of the square a point's in, on the main map, or Zanaris as one place; null anywhere else. */
 	static int[] square(int x, int y)
 	{
+		if (x >= ZX0 && x < ZX1 && y >= ZY0 && y < ZY1)
+		{
+			return ZANARIS.clone();
+		}
 		if (y >= Y0 + UNDER && y < Y1 + UNDER)
 		{
 			y -= UNDER;

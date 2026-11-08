@@ -46,11 +46,23 @@ public class FollowTest
 		assertArrayEquals(new int[]{3264, 3264}, Follow.square(3222, 3218 + 6400));
 		assertArrayEquals(new int[]{3264, 3264}, Follow.square(3200, 3200));
 		assertArrayEquals(new int[]{3264, 3264}, Follow.square(3327, 3327));
-		// (off the main map: an instance's copy, Prifddinas, Zanaris, nothing)
+		// (off the main map: an instance's copy, Prifddinas, Puro-Puro, nothing)
 		assertNull(Follow.square(7000, 3200));
 		assertNull(Follow.square(3260, 6100));
-		assertNull(Follow.square(2412, 4434));
+		assertNull(Follow.square(2560, 4300));
 		assertNull(Follow.square(0, 0));
+	}
+
+	@Test
+	public void zanarisIsOnePlace()
+	{
+		// (its fairy ring, its bank and its far corners: all the one square, the globe's moon)
+		assertArrayEquals(new int[]{2368, 4416}, Follow.square(2412, 4434));
+		assertArrayEquals(new int[]{2368, 4416}, Follow.square(2383, 4458));
+		assertArrayEquals(new int[]{2368, 4416}, Follow.square(2368, 4352));
+		assertArrayEquals(new int[]{2368, 4416}, Follow.square(2495, 4479));
+		assertNull(Follow.square(2496, 4416));
+		assertNull(Follow.square(2412, 4480));
 	}
 
 	@Test

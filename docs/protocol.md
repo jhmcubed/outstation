@@ -266,14 +266,16 @@ The limits:
 - The status line's `game` (above, "Viewers"), and each row of `GET /channels`: whether a game socket is connected now.
 
 **Following** (11/08/2026, Jace approved it with these safeguards). With the plugin's following on, it sends where the
-player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle of a 128-tile square of the main map,
-at most once a minute, and the same square again every 3 minutes while it stays put. `{"game": {"where": null}}` clears
+player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle of a 128-tile square of the main map
+(or Zanaris, as one place: below), at most once a minute, and the same square again every 3 minutes while it stays put. `{"game": {"where": null}}` clears
 it: sent at once on going into the Wilderness, a PvP area or world, Deadman or an instance, and when following's
 switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
 `Channel.take_where`).
 - A `where` that isn't `null` must be an object with exactly `x` and `y`, each a whole number `k*128 + 64`, `x` from
-  1024 up to (not including) 4096 and `y` from 2496 up to 4224. Anything else is ignored, and the rest of the message
-  is taken as ever.
+  1024 up to (not including) 4096 and `y` from 2496 up to 4224; or exactly `{"x": 2368, "y": 4416}`, Zanaris
+  (`WHERE_ZANARIS`, 11/08/2026: the plugin sends any tile there, x 2368–2495 and y 4352–4479, as that one place, and
+  the globe draws it on its moon). Anything else is ignored, Zanaris's neighbouring squares included, and the rest of
+  the message is taken as ever.
 - The relay takes one every 50 seconds at most; one sooner is ignored (a `where` that was ignored for its shape doesn't
   count). `null` is taken whenever it comes.
 - It's dropped when the game socket closes (with no newer one connected), when the plugin sends `"off": true` (logged

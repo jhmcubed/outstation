@@ -101,7 +101,7 @@ export function gameFields(g: unknown): Fields {
 }
 
 // Following (11/08/2026, Jace approved it with these safeguards): the plugin may send "where", the middle of the 128-tile
-// square of the main map the player was in two minutes before ({"x", "y"}), or null to clear it. It's never one of the
+// square of the main map the player was in two minutes before ({"x", "y"}; Zanaris as one place), or null to clear it. It's never one of the
 // game's fields: never kept with them, never sent to viewers, lookers or desks, never in GET /game. The channel holds it
 // in memory only (channel.ts, takeWhere), at most one every WHERE_EVERY_MS (null whenever it comes), and the open
 // outstations' list (GET /channels) shows it while the channel's live and listed and it came within WHERE_FRESH_MS
@@ -109,15 +109,20 @@ export function gameFields(g: unknown): Fields {
 export const WHERE_SQUARE = 128, WHERE_X = [1024, 4096], WHERE_Y = [2496, 4224];
 export const WHERE_EVERY_MS = 50_000, WHERE_FRESH_MS = 240_000;
 export type Where = { x: number; y: number };
+// Zanaris (11/08/2026, Jace: "if someone goes to zanaris through a fairy ring on Gielinor make sure it shows their
+// location as being on Zanaris"): the plugin sends any tile there (x 2368-2495, y 4352-4479) as this one place, which
+// the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
+export const WHERE_ZANARIS: Readonly<Where> = { x: 2368, y: 4416 };
 
 /** A message's "where": {x, y} for a square's middle (each a whole number k*128 + 64, x from 1024 up to 4096, y from
- *  2496 up to 4224, and nothing else in it), null to clear it, or undefined for anything else (none, or not its shape:
- *  ignored, and the rest of the message taken as ever). */
+ *  2496 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS, exactly), null to clear it, or undefined for
+ *  anything else (none, or not its shape: ignored, and the rest of the message taken as ever). */
 export function gameWhere(g: unknown): Where | null | undefined {
   if (!isObj(g) || !("where" in g)) return undefined;
   const w = g.where;
   if (w === null) return null;
   if (!isObj(w) || Object.keys(w).length !== 2) return undefined;
+  if (w.x === WHERE_ZANARIS.x && w.y === WHERE_ZANARIS.y) return { ...WHERE_ZANARIS };
   const ok = (v: unknown, [lo, hi]: number[]) =>
     typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi && v % WHERE_SQUARE === WHERE_SQUARE / 2;
   return ok(w.x, WHERE_X) && ok(w.y, WHERE_Y) ? { x: w.x as number, y: w.y as number } : undefined;
