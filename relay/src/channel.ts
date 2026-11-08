@@ -10,11 +10,15 @@
 // The game (11/07/2026; game.ts, docs/protocol.md "The game"): the Outside plugin's socket (/game/<channel>?key=), one at
 // a time, its fields kept and what changed passed to seated viewers, lookers and desks; saved at most once a minute while
 // messages come, and as it closes, so a page shows the last of it while the player's away.
+//
+// The Array's events (11/08/2026; array.ts, docs/protocol.md "The Array's events"): what each field report adds (a kill,
+// a level, a pet, a big drop, a log slot, a clue), told to the Directory only while the channel's live and listed.
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 import { type Fields, GameState, gameFields, GAME_A_SECOND, GAME_MESSAGE } from "./game";
+import { arrayEvents } from "./array";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
@@ -391,6 +395,18 @@ export class Channel extends DurableObject<Env> {
       this.ctx.waitUntil(this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) })
         .then((r) => { if (!r.ok) this.listingRow = ""; }, () => { this.listingRow = ""; })); // (told again at the next change)
     }, LISTING_WAIT);
+  }
+
+  /** A field report's events (array.ts) told to the Directory, for the Array's feed (11/08/2026): only while this
+   *  channel's live and listed (handed out, no watch code: on GET /channels), so a dark or coded outstation's reports
+   *  never show. The Directory keeps them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
+  tellArray(report: unknown) {
+    if (!this.name || !this.live() || this.meta.keyHash === null || this.meta.code) return;
+    const events = arrayEvents(report);
+    if (!events.length) return;
+    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+    this.ctx.waitUntil(this.directory.fetch("https://dir/array", { method: "PUT", body: JSON.stringify({ channel: this.name, events }) })
+      .then(() => undefined, () => undefined)); // (one lost is one less "+1")
   }
 
   /** Who's watching, for the desk (11/05/2026, Jace: "add viewer list"): each viewer's number, the name it gave in
@@ -927,10 +943,13 @@ export class Channel extends DurableObject<Env> {
       this.reports.push(msg);
       this.reports = this.reports.slice(-REPORTS_KEPT);
       this.ctx.storage.put("reports", this.reports);
+      let report: unknown = null;
+      try { report = JSON.parse(msg).report; } catch { /* not a report after all */ }
       if (this.meta.summary) {
-        try { summed = fold(this.meta.summary, JSON.parse(msg).report); } catch { /* not a report after all */ }
+        try { summed = fold(this.meta.summary, report); } catch { /* not one it can read */ }
         if (summed) this.saveMeta();
       }
+      this.tellArray(report);
     } else if (typeof msg === "string") {
       this.lastData = msg;
       if (msg.startsWith('{"state"')) {

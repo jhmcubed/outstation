@@ -17,7 +17,7 @@ import { oneLine, pyjson } from "./text";
 // (past that, new ones are ignored). relay.py's, the same.
 export const GAME_MESSAGE = 64 * 1024, GAME_KEPT = 192 * 1024, GAME_ITEMS = 3000, GAME_A_SECOND = 5;
 const GAME_INT = 2 ** 31 - 1; // the most any number in the game holds (a Java int: RuneLite's)
-const SKILL = /^[A-Za-z][A-Za-z _-]{0,23}$/; // a skill's name
+export const SKILL = /^[A-Za-z][A-Za-z _-]{0,23}$/; // a skill's name (the Array's events' too: array.ts)
 const ID = /^(0|[1-9][0-9]{0,9})$/; // an item's id as the dictionary has it
 const ITEMS = '"items": {}'.length;
 

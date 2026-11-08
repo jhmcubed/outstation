@@ -105,7 +105,7 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it.
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
 ## The stream's summary
 
@@ -389,6 +389,64 @@ without which they're all refused):
 
 The Python relay's public side (the Funnel's port) lets visitors in and allows the read; it refuses an outstation's
 socket and the keeper's routes, whatever key or token comes with them.
+
+## The Array's events (11/08/2026)
+
+What's happening across the open outstations, for outside.wiki's front page, which shows every outstation in the Array
+as a light and pops its icon with "+1" as one gets a kill, a level, a pet, a big drop, a collection log slot or a clue.
+Both relays: the Worker's `relay/src/array.ts` (kept by the Directory, the object that answers `GET /channels`);
+relay-py's `array_events` and `ArrayFeed`.
+
+    GET <relay>/array/events                  the last 50 at most: {"events": [...], "next": <cursor>}
+    GET <relay>/array/events?since=<cursor>   the ones after the cursor, 100 at most, oldest first
+
+**An event** is `{"id", "at", "channel", "kind", ...}`: `id` (below, "The cursor"), `at` when the relay took it (ms),
+`channel` the outstation's, and with each `kind` its own fields:
+
+| kind | from | its fields |
+|---|---|---|
+| `"kill"` | a `KILL_COUNT` report | `boss`, `kc` (the kill count) |
+| `"level"` | a `LEVEL` report: one event for each skill it levelled | `skill`, `level` |
+| `"pet"` | a `PET` report | `name`, if Dink gave one |
+| `"loot"` | a `LOOT` report whose drop is worth 1,000,000 coins or more in all (less isn't one) | `name` (the drop's best item, by quantity × price; the first, in a tie), `value` (the drop's whole value) |
+| `"clog"` | a `COLLECTION` report (a new collection log slot) | `name` (the item), if given |
+| `"clue"` | a `CLUE` report | `tier`, `count` (how many of that tier), each if given |
+
+They're made from the numbers each report carries (its `data`, above in "Dink": what `reportData` / `report_data` keep),
+the same as the stream's summary is, so a report that comes as a Dink post and one that comes over the transmit socket
+count alike. Any other kind of report makes none, and nothing that names another player is in one (a drop's `source`
+never is). A name is one line, 60 characters at most; a number is whole, 0 to 2⁵³ − 1 (one that isn't leaves its event,
+or that one skill, out; a kill needs its boss and its count). Events are ordered as the reports came, a report's levels
+in the order Dink gave them.
+
+**Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting) and
+**open** (handed out, with no watch code: the same test that puts it on `GET /channels`). A dark outstation's reports,
+and a watch-coded one's, never make an event, then or later. What the relay already refuses or ignores (the wrong key,
+a kind not in `REPORTS`, the same Dink post twice) makes none either. On the Python relay with `--delay`, a report counts
+as it reaches viewers, so one that comes in the delay's last moments before the outstation goes dark doesn't.
+
+**The cursor:** `next` is what to send as `since` next time. It's an event's `id`, which only goes up: each is about the
+moment the event came, in ms (one more than the last, when that's later), so ids keep going up when the relay (or the
+Worker's object) starts again, and a cursor from before still works. Treat it as a number with no meaning of its own.
+- With events in the answer, `next` is the last one's `id`.
+- With none: `since` back (nothing new yet), or the newest `id` there is if `since` is past it. Without `since`, the
+  newest `id` there is (or, before any event, the moment the feed began).
+- So a page reads once without `since` for what's just happened, then with `since` set to each answer's `next`. Past 100
+  new ones, `next` is the 100th's, and the next read has the rest.
+- `since` must be digits, at most 2⁵³ − 1: anything else is 400 `{"error": "since is a cursor: an earlier read's next"}`.
+  `since=` (empty) is the same as none.
+
+**The limits:**
+- One outstation adds 10 events a minute at most (counted over the last 60 s); past that, they're dropped, so one noisy
+  plugin can't flood the feed. A report of three levels with room for one adds the first.
+- The last 500 are kept, the oldest going first.
+
+**The read:** anyone may read it (any origin: `Access-Control-Allow-Origin: *`), and it's never cached
+(`Cache-Control: no-cache`). 405 for anything but `GET`. The Python relay's public side (the Funnel's port) allows it.
+
+**What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
+the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
+again; on the Python relay while it runs. Nothing of it is written to storage.
 
 ## Anomalies and requisitions (Cloudflare)
 

@@ -212,6 +212,8 @@ Your picture and sound are passed on as they come and never written down. Only t
 
 **What's public:** while your channel has no watch code, the relay's list of open outstations (on the outstations page) shows that it's there, whether it's live, how many watch, its title, and the boss and kill count it's on while it's live. A watch code takes it off the list.
 
+While it's live with no watch code, the relay's feed of what's happening across the Array (outside.wiki's front page, 11/08/2026) also shows, under your channel's name and as each comes from Dink: a kill (the boss and its count), a level (the skill and level), a pet (its name), a drop worth 1,000,000 coins or more (its best item and its value), a collection log slot (the item) and a clue (its tier and count). Nothing that comes while you're dark, or while you have a watch code, ever goes on it.
+
 **Messages between outstations** (your friends list's "message"):
 - A message waiting for an outstation that's closed is kept until that outstation next opens: who it's from (their channel and chat name), their words and when. At most 20, each for a week.
 - One delivered isn't written down anywhere. Your outstation keeps a conversation only while it's open.
@@ -232,6 +234,8 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 **Invites** (11/07/2026): how many each outstation has used and the names it invited, its time on air in all (invites are earned from it), and, for an outstation established through an invite, whose invite it was. That last one's public, on the relay's list of open outstations.
 
 **The Outside plugin's game** (only if you use the plugin; 11/07/2026): the last of what it sent (what you wore and carried, your looting bag, rune pouch and quiver, your vitals, prayers and skills, your name, world and account type, and the names and prices of those items), so your page shows it while you're away. Saved at most once a minute while it changes, and when the plugin disconnects. Your page shows it to anyone who opens it, as your transmission. Taken away when your channel is.
+
+**The Array's events** (11/08/2026): the feed above, the last 500 from every outstation together (each one's channel, what it was and when), and when each outstation's last few came (10 a minute at most from one). In memory only, never written down: gone when the relay restarts, and on Cloudflare whenever that part of the relay is put to sleep.
 
 **The aether** (everyone's room; 11/07/2026): its last 100 lines (each one's name, words and when, and for a visitor the random number their browser made, which a ban holds on to), and who's banned from it. A visitor's address isn't written down.
 

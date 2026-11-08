@@ -1148,6 +1148,218 @@ class Summary(ReportData):
         self.assertNotIn("ended", back)
 
 
+def array_read(query=""):
+    """(status, headers, JSON or None) of GET /array/events, as outside.wiki's front page reads it."""
+    try:
+        with urllib.request.urlopen(http_url() + "/array/events" + query, timeout=10) as r:
+            return r.status, r.headers, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, e.headers, json.loads(raw) if raw else None
+        except ValueError:
+            return e.code, e.headers, None
+
+
+def array_since(since):
+    """Every event after the cursor, page by page."""
+    out = []
+    while True:
+        status, _, body = array_read("?since=%d" % since)
+        if status != 200:
+            raise AssertionError("GET /array/events: %s" % status)
+        if not body["events"]:
+            return out
+        out += body["events"]
+        since = body["next"]
+
+
+SKILLS = ["Attack", "Strength", "Defence", "Ranged", "Prayer", "Magic", "Runecraft", "Hitpoints", "Crafting", "Mining",
+          "Smithing", "Fishing"]
+
+
+class ArrayEvents(Base):
+    """The Array's events (11/08/2026): what's happening across the open outstations, for outside.wiki's front page (an
+    outstation's icon pops "+1"). Only a live outstation on GET /channels (no watch code) makes them; one channel adds
+    10 a minute at most."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual(status, 200)
+        self.since = body["next"]                                           # (what came before this test: left out)
+
+    async def dink(self, payload, ch=None, key=None):
+        self.assertEqual(await post("/dink/%s?key=%s" % (ch or self.ch, key or self.key), json.dumps(payload).encode(),
+                                    "application/json"), 204)
+
+    async def mine(self, n=0, wait=3.0, ch=None):
+        """This channel's events since the test began, oldest first: as soon as n have come, or after `wait` seconds."""
+        end = time.monotonic() + wait
+        while True:
+            got = [e for e in await asyncio.to_thread(array_since, self.since) if e["channel"] == (ch or self.ch)]
+            if (n and len(got) >= n) or time.monotonic() >= end:
+                return got
+            await asyncio.sleep(0.05)
+
+    async def none_of_mine(self):
+        self.assertEqual(await self.mine(wait=self.settle * 5), [])
+
+    @staticmethod
+    def what(events):
+        return [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in events]
+
+    async def other(self):
+        """Another channel of this test's, and its key (handed out on the Worker; claimed by its transmitter here)."""
+        ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+            self.assertEqual(status, 200)
+            return ch, got["key"]
+        return ch, "secret-key-" + secrets.token_hex(4)
+
+    async def test_a_live_open_outstations_reports_become_events(self):
+        await self.tx()
+        await self.pause()
+        began = time.time() * 1000
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412,
+                         "isPersonalBest": True, "party": ["someone else"]}})
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Ranged": 92, "Hitpoints": 90},
+                         "allSkills": {"Ranged": 92, "Hitpoints": 90}}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC", "items": [
+            {"id": 536, "name": "Dragon bones", "quantity": 2, "priceEach": 3000},
+            {"id": 22006, "name": "Skeletal visage", "quantity": 1, "priceEach": 1200000}]}})         # (1,206,000: in)
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC", "items": [
+            {"id": 536, "name": "Dragon bones", "quantity": 300, "priceEach": 3333}]}})              # (999,900: under)
+        await self.dink({"type": "COLLECTION", "content": "", "extra": {"itemName": "Draconic visage", "itemId": 11286,
+                         "completedEntries": 812, "totalEntries": 1568, "dropperName": "someone"}})
+        await self.dink({"type": "CLUE", "content": "", "extra": {"clueType": "Hard", "numberCompleted": 150}})
+        await self.dink({"type": "PET", "content": "", "extra": {}})                                  # (no name given)
+        await self.dink({"type": "QUEST", "content": "", "extra": {"questName": "Dragon Slayer II"}})   # (not one of them)
+        got = await self.mine(8)
+        self.assertEqual(self.what(got), [
+            {"kind": "kill", "boss": "Vorkath", "kc": 412},
+            {"kind": "level", "skill": "Ranged", "level": 92},
+            {"kind": "level", "skill": "Hitpoints", "level": 90},
+            {"kind": "pet", "name": "Vorki"},
+            {"kind": "loot", "name": "Skeletal visage", "value": 1206000},
+            {"kind": "clog", "name": "Draconic visage"},
+            {"kind": "clue", "tier": "Hard", "count": 150},
+            {"kind": "pet"},
+        ])
+        self.assertEqual(list(got[0]), ["id", "at", "channel", "kind", "boss", "kc"])
+        ids = [e["id"] for e in got]
+        self.assertEqual(ids, sorted(set(ids)))                                # (each its own, going up)
+        for e in got:
+            self.assertEqual(e["channel"], self.ch)
+            self.assertTrue(began - 5000 <= e["at"] <= time.time() * 1000 + 5000, e["at"])
+        self.assertEqual(await self.mine(wait=self.settle * 4), got)            # (and nothing more: the quest, the small drop)
+
+    async def test_a_report_from_the_transmitter_counts_too_its_numbers_and_names_checked(self):
+        tx = await self.tx()
+        await self.pause()
+        for data in ({"pet": "Vorki"}, {"boss": "Zulrah " + "z" * 80, "count": 5.0},
+                     {"skills": {"Attack": "99", "Magic": -1, "Prayer": True, "  ": 5, "9": 9, "Strength": 99}},
+                     {"value": 2 ** 53, "items": []}, {"value": 1000000, "items": [{"name": "Coins", "quantity": 1000000, "price": 1}]}):
+            kind = {"pet": "PET", "boss": "KILL_COUNT", "skills": "LEVEL", "value": "LOOT"}[next(iter(data))]
+            await tx.send(json.dumps({"report": {"type": kind, "text": "", "at": 1, "data": data}}))
+        await tx.send(json.dumps({"report": "not one"}))
+        got = await self.mine(4)
+        self.assertEqual(self.what(got), [
+            {"kind": "pet", "name": "Vorki"},
+            {"kind": "kill", "boss": ("Zulrah " + "z" * 80)[:60], "kc": 5},     # (a name cut to 60; 5.0 is 5)
+            {"kind": "level", "skill": "Strength", "level": 99},              # (only a skill's name, and a whole number)
+            {"kind": "loot", "name": "Coins", "value": 1000000},             # (1,000,000 is enough; 2^53 isn't a number)
+        ])
+
+    async def test_since_moves_on_and_a_read_without_it_has_the_last_fifty(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Zulrah", "count": 1}})
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Zulrah", "count": 2}})
+        first, second = await self.mine(2)
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % first["id"])
+        self.assertEqual((status, body), (200, {"events": [second], "next": second["id"]}))
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % second["id"])
+        self.assertEqual((status, body), (200, {"events": [], "next": second["id"]}))
+        # (a cursor past the newest, from a relay that's started again with its clock behind: next is the newest)
+        self.assertEqual((await asyncio.to_thread(array_read, "?since=9007199254740991"))[2],
+                         {"events": [], "next": second["id"]})
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual((status, body["events"][-1], body["next"]), (200, second, second["id"]))
+        self.assertLessEqual(len(body["events"]), 50)
+        self.assertEqual([e["id"] for e in body["events"]], sorted(e["id"] for e in body["events"]))
+        for bad in ("abc", "-1", "1.5", "99999999999999999", "9007199254740992"):
+            status, _, body = await asyncio.to_thread(array_read, "?since=" + bad)
+            self.assertEqual((status, sorted(body)), (400, ["error"]), bad)
+
+    async def test_a_page_is_a_hundred_at_most_and_a_report_adds_ten_at_most(self):
+        # eleven outstations, each levelling twelve skills at once: ten each, and the first hundred in one read
+        chans = [(self.ch, self.key)] + [await self.other() for _ in range(10)]
+        for ch, key in chans:
+            self.clients.append(await Client().open("%s/transmit/%s?key=%s" % (RELAY, ch, key)))
+        await self.pause(2)
+        for ch, key in chans:
+            await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 50 for s in SKILLS}}}, ch, key)
+        end = time.monotonic() + 5
+        while len([e for e in await asyncio.to_thread(array_since, self.since) if e["channel"] in dict(chans)]) < 110:
+            self.assertLess(time.monotonic(), end, "the 110 events didn't all come")
+            await asyncio.sleep(0.1)
+        status, _, page = await asyncio.to_thread(array_read, "?since=%d" % self.since)
+        self.assertEqual(len(page["events"]), 100)
+        self.assertEqual(page["next"], page["events"][-1]["id"])
+        rest = await asyncio.to_thread(array_since, page["next"])
+        ours = [e for e in page["events"] + rest if e["channel"] in dict(chans)]
+        self.assertEqual(len(ours), 110)
+        for ch, _ in chans:
+            self.assertEqual([e["skill"] for e in ours if e["channel"] == ch], SKILLS[:10])
+        self.assertEqual(len((await asyncio.to_thread(array_read))[2]["events"]), 50)
+
+    async def test_one_outstation_adds_ten_a_minute_at_most(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 60 for s in SKILLS[:8]}}})
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 7}})
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 61 for s in SKILLS[8:11]}}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        await self.mine(10)
+        got = await self.mine(wait=self.settle * 5)
+        self.assertEqual(len(got), 10)
+        self.assertEqual(self.what(got[-2:]), [{"kind": "kill", "boss": "Vorkath", "kc": 7},
+                                               {"kind": "level", "skill": SKILLS[8], "level": 61}])
+
+    async def test_a_dark_outstations_reports_never_show(self):
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 9}})   # (never on air)
+        tx = await self.tx()
+        await self.pause(2)
+        tx.close()
+        await self.pause(4)
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})                     # (gone dark)
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})
+        await self.none_of_mine()
+
+    async def test_a_watch_coded_outstations_reports_never_show(self):
+        await self.tx("a-code")
+        await self.pause(2)
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 9}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Vorki"}})
+        await self.dink({"type": "LOOT", "content": "", "extra": {"source": "Vorkath", "category": "NPC", "items": [
+            {"name": "Skeletal visage", "quantity": 1, "priceEach": 1200000}]}})
+        await self.none_of_mine()
+
+    async def test_any_page_may_read_it_and_only_read_it(self):
+        status, headers, body = await asyncio.to_thread(array_read)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"), "*")
+        self.assertEqual(headers.get("Cache-Control"), "no-cache")
+        self.assertIn("application/json", headers.get("Content-Type"))
+        self.assertEqual(sorted(body), ["events", "next"])
+        self.assertIsInstance(body["next"], int)
+        for method in ("POST", "PUT", "DELETE"):
+            self.assertEqual(http(method, "/array/events")[0], 405, method)
+
+
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64       # (only its first bytes are looked at)
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 

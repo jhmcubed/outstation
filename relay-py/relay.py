@@ -108,6 +108,14 @@ outstation and every visitor on the relay.
     keeper:    GET /admin/aether; POST /admin/aether/unsay {"id"}, /ban {"id"}, /unban {"who"}
   The keeper's routes need --admin-token (Authorization: Bearer <it>); without one they're refused. The public side lets
   visitors in and allows the read, and refuses an outstation's socket and the keeper's routes.
+
+The Array's events (11/08/2026; docs/protocol.md "The Array's events"; the Worker's array.ts, the same): what's
+happening across the open outstations, for outside.wiki's front page (each outstation's icon pops "+1").
+    read:      GET http://HOST:PORT/array/events?since=<cursor>      {"events": [...], "next": <cursor>}
+  Each event is {"id", "at", "channel", "kind", ...}: a kill, a level (one a skill), a pet, a drop worth 1,000,000 or
+  more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
+  GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
+  public side allows the read.
 """
 
 import argparse
@@ -167,6 +175,14 @@ AETHER_TRAILING = re.compile(r"[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$"
 AETHER_NAME = re.compile(r"[A-Za-z0-9_. -]{1,20}")        # a visitor's name, its spaces tidied (fullmatch)
 AETHER_DEVICE = re.compile(r"[\x21-\x7e]{8,64}")           # a visitor's device id: printable, no spaces (fullmatch)
 CHANNEL_NAME = re.compile(r"[A-Za-z0-9_.~-]{1,64}")       # a channel (fullmatch)
+# the Array's events (11/08/2026; docs/protocol.md "The Array's events"; the Worker's array.ts, the same): what's
+# happening across the open outstations, for outside.wiki's front page. The last ARRAY_KEPT kept, in memory; one channel
+# adds ARRAY_A_MINUTE a minute at most (the rest are dropped); a read without since has the last ARRAY_LATEST, one with
+# since at most ARRAY_PAGE after it; a drop goes in only when it's worth ARRAY_LOOT or more; a name in an event is
+# ARRAY_WORD characters at most (Dink's are cut to 60 already); a number, 0 to SAFE_INT (as JavaScript holds one exactly)
+ARRAY_KEPT, ARRAY_A_MINUTE, ARRAY_LATEST, ARRAY_PAGE, ARRAY_LOOT, ARRAY_WORD = 500, 10, 50, 100, 1_000_000, 60
+SAFE_INT = 2 ** 53 - 1
+ARRAY_CURSOR = re.compile(r"[0-9]{1,16}")                  # since, as next gave it (fullmatch; SAFE_INT at most)
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -540,6 +556,113 @@ class Game:
         return out
 
 
+# The Array's events (11/08/2026, Jace: each outstation on outside.wiki's front page should look alive, its icon popping
+# "+1" as it gets a kill, a level, a pet, a big drop, a log slot or a clue; docs/protocol.md "The Array's events"): what
+# each field report adds (array_events), and the feed that keeps the last of them (ArrayFeed). A channel adds a report's
+# events only while it's live and listed (Channel.deliver), so a dark or coded outstation's reports never show. The
+# Worker's arrayEvents and ArrayFeed (array.ts), the same.
+
+def array_whole(v):
+    """A number an event may carry: a whole one, 0 to SAFE_INT, or None. 5.0 is 5 (the Worker can't tell them apart)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and 0 <= v <= SAFE_INT else None
+
+
+def array_word(v):
+    """A name an event may carry: one line, ARRAY_WORD characters at most, or None."""
+    return one_line(v, ARRAY_WORD) or None
+
+
+def array_events(report):
+    """What one field report adds to the Array's events, each {"kind", ...} (its id, time and channel are the feed's),
+    from the report's type and the numbers it carries (its data, as fold reads them): a kill (the boss and its count),
+    a level for each skill levelled, a pet (its name if Dink gave one), a drop worth ARRAY_LOOT or more (the best item's
+    name and the drop's whole value), a collection log slot (the item) and a clue (its tier and how many, if given).
+    Anything else adds nothing."""
+    if not isinstance(report, dict):
+        return []
+    d = report.get("data") if isinstance(report.get("data"), dict) else {}
+    kind = report.get("type")
+
+    def given(e):
+        return {k: v for k, v in e.items() if v is not None}
+    if kind == "KILL_COUNT":
+        boss, kc = array_word(d.get("boss")), array_whole(d.get("count"))
+        return [{"kind": "kill", "boss": boss, "kc": kc}] if boss and kc is not None else []
+    if kind == "LEVEL":
+        skills = d.get("skills") if isinstance(d.get("skills"), dict) else {}
+        out = []
+        for k, v in skills.items():
+            skill, level = array_word(k), array_whole(v)
+            if skill and GAME_SKILL.fullmatch(skill) and level is not None:
+                out.append({"kind": "level", "skill": skill, "level": level})
+        return out
+    if kind == "PET":
+        return [given({"kind": "pet", "name": array_word(d.get("pet"))})]
+    if kind == "LOOT":
+        value = array_whole(d.get("value"))
+        if value is None or value < ARRAY_LOOT:
+            return []
+        name, most = None, -1
+        for i in d.get("items") if isinstance(d.get("items"), list) else []:
+            if not isinstance(i, dict):
+                continue
+            n, worth = array_word(i.get("name")), (array_whole(i.get("quantity")) or 0) * (array_whole(i.get("price")) or 0)
+            if n and worth > most:
+                name, most = n, worth
+        return [given({"kind": "loot", "name": name, "value": value})]
+    if kind == "COLLECTION":
+        return [given({"kind": "clog", "name": array_word(d.get("item"))})]
+    if kind == "CLUE":
+        return [given({"kind": "clue", "tier": array_word(d.get("tier")), "count": array_whole(d.get("count"))})]
+    return []
+
+
+class ArrayFeed:
+    """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory only.
+    An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
+    keep going up after a restart and a page's cursor (since) still works."""
+
+    def __init__(self, now=None):
+        self.events = deque(maxlen=ARRAY_KEPT)
+        self.last = int(time.time() * 1000) if now is None else now   # the newest id given, or when the feed began
+        self.recent = {}             # a channel -> when (ms) its events of the last minute came, for ARRAY_A_MINUTE
+
+    def add(self, channel, events, now=None):
+        """A channel's events into the feed, as many as ARRAY_A_MINUTE leaves room for (the rest dropped); those kept."""
+        now = int(time.time() * 1000) if now is None else now
+        for c in [c for c, t in self.recent.items() if now - t[-1] >= 60000]:
+            del self.recent[c]
+        times = [t for t in self.recent.get(channel, []) if now - t < 60000]
+        added = []
+        for e in events:
+            if len(times) >= ARRAY_A_MINUTE:
+                break
+            times.append(now)
+            self.last = max(now, self.last + 1)
+            added.append(dict({"id": self.last, "at": now, "channel": channel}, **e))
+        self.events.extend(added)
+        if times:
+            self.recent[channel] = times
+        return added
+
+    def read(self, since=None):
+        """GET /array/events: without since the last ARRAY_LATEST, with it the first ARRAY_PAGE after it; next, the
+        cursor for the next read (the last event's id, or with none, since, or the newest id when since is past it)."""
+        if since is None:
+            got = list(self.events)[-ARRAY_LATEST:]
+        else:
+            got = [e for e in self.events if e["id"] > since][:ARRAY_PAGE]
+        if got:
+            nxt = got[-1]["id"]
+        else:
+            nxt = self.last if since is None else min(since, self.last)
+        return {"events": got, "next": nxt}
+
+
 # The aether (11/07/2026; docs/protocol.md "The aether"): a line cleaned row by row (it may be ASCII art, so it isn't made
 # one line), a visitor's name, and the rate. The Worker's aetherText, aetherName, channelForm, aetherRecent and
 # aetherWait (text.ts), the same.
@@ -705,8 +828,9 @@ class Aether:
 
 
 class Channel:
-    def __init__(self, name, key):
+    def __init__(self, name, key, array=None):
         self.name, self.key = name, key
+        self.array = array           # the relay's ArrayFeed: this channel's events go in while it's live and listed
         self.code = ""
         self.sender = None
         self.viewers = set()
@@ -818,6 +942,11 @@ class Channel:
         for v in list(self.viewers) + list(self.desks) + list(self.lookers):
             v.send_nowait(line)
 
+    def listed(self):
+        """Whether it's on the open outstations' list (GET /channels): claimed, with no watch code. The Array's events
+        come only from a channel listed (and live)."""
+        return self.key is not None and not self.code
+
     def doing(self):
         """What the stream's at now, for the open portals: the boss of the last kill count and its count."""
         s = self.summary or {}
@@ -914,14 +1043,25 @@ class Channel:
             return
         if isinstance(msg, str) and msg.startswith('{"report"'):
             self.reports.append(msg)
-            if self.summary is not None:
+            try:
+                report = json.loads(msg).get("report")
+            except (ValueError, RecursionError):
+                report = None
+            # (a malformed report folds to nothing rather than dropping the connection, as the Worker does)
+            try:
+                summed = self.summary is not None and fold(self.summary, report)
+            except (TypeError, ValueError, AttributeError, KeyError):
+                summed = False
+            if summed:
+                # (after the report itself has gone to viewers, below)
+                asyncio.get_event_loop().call_soon(self.tell_summary)
+            if self.array is not None and self.sender is not None and self.listed():
+                # the Array's events (11/08/2026): only while it's live and on the open outstations' list, so a dark
+                # or coded outstation's reports never show (with --delay, as the report reaches viewers)
                 try:
-                    changed = fold(self.summary, json.loads(msg).get("report"))
-                except ValueError:
-                    changed = False
-                if changed:
-                    # (after the report itself has gone to viewers, below)
-                    asyncio.get_event_loop().call_soon(self.tell_summary)
+                    self.array.add(self.name, array_events(report))
+                except (TypeError, ValueError, AttributeError, KeyError):
+                    pass
         elif isinstance(msg, str):
             self.last_data = msg
             if msg.startswith('{"state"'):
@@ -1083,6 +1223,7 @@ class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token=""):
         self.delay = delay
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
+        self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
         self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
         self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
@@ -1137,8 +1278,8 @@ class Relay:
         if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch") and not visitor)
                        or (path and path[0] in ("invites", "admin"))):
             # from the internet: no transmitting, no Dink posts, no invites, no game socket, no outstation in the aether
-            # and none of the keeper's routes, whatever key comes with them (the game's read, GET /game, the aether's read
-            # and a visitor in the aether are let through: what anyone on Outside may do anyway)
+            # and none of the keeper's routes, whatever key comes with them (the game's read, GET /game, the aether's read,
+            # a visitor in the aether and the Array's events are let through: what anyone on Outside may do anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -1160,6 +1301,9 @@ class Relay:
             return
         if aether and not key:
             await self.aether_read(writer, method)
+            return
+        if path == ["array", "events"] and not key:
+            await self.array_read(writer, method, q)
             return
         if path[:2] == ["admin", "aether"] and not key:
             await self.aether_keeper(reader, writer, method, headers, path)
@@ -1216,7 +1360,7 @@ class Relay:
             return
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key)
+            ch = self.channels[name] = Channel(name, key, self.array)
         elif ch.key is None:         # made by a viewer waiting for it: this key claims it
             ch.key = key
         elif ch.key != key:
@@ -1265,7 +1409,7 @@ class Relay:
             await sock.close(4003, "wrong watch code")
             return
         if ch is None:
-            ch = self.channels[name] = Channel(name, None)
+            ch = self.channels[name] = Channel(name, None, self.array)
         sock.look_frames, sock.look_at = False, 0.0
         ch.lookers.add(sock)
         sock.send_nowait(ch.status())
@@ -1299,7 +1443,7 @@ class Relay:
             return
         if ch is None:
             # nobody has claimed it yet: wait as a viewer of an empty channel
-            ch = self.channels[name] = Channel(name, None)
+            ch = self.channels[name] = Channel(name, None, self.array)
         sock.code = code
         self.next_who += 1
         sock.who, sock.device, sock.name = self.next_who, "", "visitor"
@@ -1407,7 +1551,7 @@ class Relay:
             return None
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key)
+            ch = self.channels[name] = Channel(name, key, self.array)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:
@@ -1647,7 +1791,7 @@ class Relay:
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
                  "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None}
-                for ch in self.channels.values() if ch.key is not None and not ch.code]
+                for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         body = json.dumps({"channels": rows}).encode()
         writer.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
@@ -1736,6 +1880,26 @@ class Relay:
         else:
             body, head = b"", "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         writer.write(head.encode() + body)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def array_read(self, writer, method, q):
+        """GET /array/events?since=<cursor> (11/08/2026; ArrayFeed): what's happening across the open outstations, for
+        outside.wiki's front page: {"events": [...], "next"}. Anyone may read it (any origin, the public side too), and
+        it's never cached. since: a cursor, as an earlier read's next gave it."""
+        since, status, body = q.get("since"), "200 OK", None
+        if method != "GET":
+            status = "405 Method Not Allowed"
+        elif since is not None and not (ARRAY_CURSOR.fullmatch(since) and int(since) <= SAFE_INT):
+            status, body = "400 Bad Request", {"error": "since is a cursor: an earlier read's next"}
+        else:
+            body = self.array.read(int(since) if since is not None else None)
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\n"
+                      "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode() + data)
         try:
             await writer.drain()
         finally:
@@ -1872,7 +2036,7 @@ class Relay:
             return await answer("409 Conflict", {"error": "that name has an outstation already"})
         new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
         if other is None:
-            other = self.channels[player] = Channel(player, new_key)
+            other = self.channels[player] = Channel(player, new_key, self.array)
         else:
             other.key = new_key       # (a channel only viewers were waiting on: now it's handed out, and they hear so)
             other.tell_viewers()
@@ -2093,7 +2257,7 @@ class Relay:
             return await answer("403 Forbidden")
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key)
+            ch = self.channels[name] = Channel(name, key, self.array)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:

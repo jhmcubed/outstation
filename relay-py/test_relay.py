@@ -646,6 +646,17 @@ class PublicSide(RelayTest):
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.3)
 
+    async def test_the_arrays_events_are_read_there_and_nothing_else(self):
+        await self.connect("/transmit/sburb?key=secret-key")
+        await asyncio.sleep(0.05)
+        await post(self.port, "/dink/sburb?key=secret-key", json.dumps({"type": "PET", "content": "", "extra": {
+            "petName": "Vorki"}}).encode(), "application/json")
+        status, kind, body = await get(self.public_port, "/array/events")
+        got = json.loads(body)
+        self.assertEqual((status, kind), (200, "application/json"))
+        self.assertEqual([(e["channel"], e["kind"], e["name"]) for e in got["events"]], [("sburb", "pet", "Vorki")])
+        self.assertEqual(await post(self.public_port, "/array/events", b"{}", "application/json"), 403)
+
 
 class Full(RelayTest):
     """A cap on how many watch at once: the transmitter's upload sends each their own copy."""
@@ -795,6 +806,20 @@ class Delay(RelayTest):
         with self.assertRaises(asyncio.TimeoutError):
             await next_of(v, "game", timeout=0.25)
         self.assertEqual((await next_of(v, "game", timeout=1.0))["world"], 302)
+
+    async def test_the_arrays_events_are_held_back_too_and_none_once_its_dark(self):
+        tx = await self.connect("/transmit/sburb?key=secret-key")
+        await asyncio.sleep(0.05)
+        await post(self.port, "/dink/sburb?key=secret-key", json.dumps({"type": "KILL_COUNT", "content": "", "extra": {
+            "boss": "Vorkath", "count": 5}}).encode(), "application/json")
+        self.assertEqual(self.relay.array.read()["events"], [])
+        await asyncio.sleep(0.6)
+        self.assertEqual([e["kc"] for e in self.relay.array.read()["events"]], [5])
+        await post(self.port, "/dink/sburb?key=secret-key", json.dumps({"type": "KILL_COUNT", "content": "", "extra": {
+            "boss": "Vorkath", "count": 6}}).encode(), "application/json")
+        tx.close()                       # (dark before the report reaches viewers: it never shows)
+        await asyncio.sleep(0.6)
+        self.assertEqual([e["kc"] for e in self.relay.array.read()["events"]], [5])
 
 
 async def next_of(client, kind, timeout=1.0):
@@ -1114,6 +1139,103 @@ class Sound(RelayTest):
         await next_of(v, "sound")
         snd.close()
         self.assertEqual((await next_of(v, "sound"))["mode"], "off")
+
+
+class ArrayWords(unittest.TestCase):
+    """The Array's events (11/08/2026): what a field report adds (relay.array_events; the Worker's arrayEvents, the
+    same). The shared suite (tests/protocol_test.py, ArrayEvents) tests the feed on both relays."""
+
+    def ev(self, kind, data=None):
+        return relay.array_events({"type": kind, "text": "", "at": 1, "data": data} if data is not None else
+                                  {"type": kind, "text": "", "at": 1})
+
+    def test_each_kind_and_what_goes_with_it(self):
+        self.assertEqual(self.ev("KILL_COUNT", {"boss": "Vorkath", "count": 412, "pb": True}),
+                         [{"kind": "kill", "boss": "Vorkath", "kc": 412}])
+        self.assertEqual(self.ev("LEVEL", {"skills": {"Ranged": 92, "Hitpoints": 90}, "total": 2000, "combat": 120}),
+                         [{"kind": "level", "skill": "Ranged", "level": 92}, {"kind": "level", "skill": "Hitpoints", "level": 90}])
+        self.assertEqual(self.ev("PET", {"pet": "Vorki", "duplicate": False}), [{"kind": "pet", "name": "Vorki"}])
+        self.assertEqual(self.ev("PET", {"duplicate": True}), [{"kind": "pet"}])
+        self.assertEqual(self.ev("PET"), [{"kind": "pet"}])                     # (no numbers at all: still a pet)
+        self.assertEqual(self.ev("COLLECTION", {"item": "Draconic visage", "id": 11286, "done": 812, "total": 1568}),
+                         [{"kind": "clog", "name": "Draconic visage"}])
+        self.assertEqual(self.ev("CLUE", {"tier": "Elite", "count": 12}), [{"kind": "clue", "tier": "Elite", "count": 12}])
+        self.assertEqual(self.ev("CLUE", {"tier": "Beginner"}), [{"kind": "clue", "tier": "Beginner"}])
+        for kind in ("QUEST", "SLAYER", "DEATH", "XP_MILESTONE", "COMBAT_ACHIEVEMENT", "SPEEDRUN", None):
+            self.assertEqual(self.ev(kind, {"boss": "Vorkath", "count": 1, "pet": "x"}), [], kind)
+        for nothing in (None, "x", 5, ["x"], {"data": {"boss": "x", "count": 1}}):
+            self.assertEqual(relay.array_events(nothing), [], nothing)
+        self.assertEqual(self.ev("KILL_COUNT", {"boss": "Vorkath"}), [])        # (a kill needs its boss and its count)
+        self.assertEqual(self.ev("KILL_COUNT", {"count": 5}), [])
+        self.assertEqual(self.ev("LEVEL", {"total": 2000}), [])
+
+    def test_a_drop_counts_from_a_million_its_best_item_named(self):
+        def drop(*items):
+            return self.ev("LOOT", {"items": [{"name": n, "quantity": q, "price": p} for n, q, p in items],
+                                    "value": sum(q * p for _, q, p in items)})
+        self.assertEqual(drop(("Dragon bones", 300, 3333)), [])                 # (999,900)
+        self.assertEqual(drop(("Coins", 1000000, 1)), [{"kind": "loot", "name": "Coins", "value": 1000000}])
+        self.assertEqual(drop(("Dragon bones", 2, 3000), ("Skeletal visage", 1, 1200000), ("Coins", 600000, 2)),
+                         [{"kind": "loot", "name": "Skeletal visage", "value": 2406000}])
+        self.assertEqual(drop(("Coins", 500000, 2), ("Gold bar", 1000000, 1)),  # (a tie: the first)
+                         [{"kind": "loot", "name": "Coins", "value": 2000000}])
+        self.assertEqual(self.ev("LOOT", {"value": 5000000}), [{"kind": "loot", "value": 5000000}])
+
+    def test_numbers_are_whole_and_names_one_line(self):
+        w = relay.array_whole
+        self.assertEqual([w(5), w(5.0), w(0), w(2 ** 53 - 1)], [5, 5, 0, 2 ** 53 - 1])
+        self.assertIsInstance(w(5.0), int)                                     # (5, not 5.0: as the Worker writes it)
+        for bad in (-1, 5.5, 2 ** 53, True, False, "5", None, float("nan"), float("inf"), [5]):
+            self.assertIsNone(w(bad), bad)
+        self.assertEqual(self.ev("KILL_COUNT", {"boss": "  The\nNightmare\t " + "x" * 80, "count": 3}),
+                         [{"kind": "kill", "boss": ("The Nightmare " + "x" * 80)[:60], "kc": 3}])
+        self.assertEqual(self.ev("LEVEL", {"skills": {"Attack": "99", "Magic": -1, "Prayer": True, "  ": 5, "9": 9,
+                                                      "Strength": 99.0, "x" * 25: 1}}),
+                         [{"kind": "level", "skill": "Strength", "level": 99}])  # (a skill's name: a letter, 24 at most)
+        self.assertEqual(self.ev("PET", {"pet": 5}), [{"kind": "pet"}])
+
+
+class ArrayFeedRing(unittest.TestCase):
+    """The Array's feed (relay.ArrayFeed; the Worker's ArrayFeed, the same): the last 500, ten a minute from a channel,
+    ids that go up, and reading by cursor."""
+
+    def test_ten_a_minute_from_one_channel_the_rest_dropped(self):
+        f, pet = relay.ArrayFeed(now=0), {"kind": "pet"}
+        self.assertEqual(len(f.add("moss", [pet] * 12, now=1000)), 10)
+        self.assertEqual(f.add("moss", [pet], now=30000), [])
+        self.assertEqual(len(f.add("fern", [pet] * 3, now=30000)), 3)        # (another channel: its own ten)
+        self.assertEqual(f.add("moss", [pet], now=60999), [])
+        self.assertEqual(len(f.add("moss", [pet] * 12, now=61000)), 10)      # (a minute on: ten more)
+        self.assertEqual(sorted(f.recent), ["fern", "moss"])
+        f.add("peat", [pet], now=200000)
+        self.assertEqual(sorted(f.recent), ["peat"])                          # (a quiet channel's times go)
+
+    def test_ids_go_up_each_its_own_even_in_one_ms_and_past_a_restart(self):
+        f = relay.ArrayFeed(now=5000)
+        got = f.add("moss", [{"kind": "pet"}] * 3, now=5000) + f.add("fern", [{"kind": "pet"}], now=4000)
+        self.assertEqual([(e["id"], e["at"]) for e in got], [(5001, 5000), (5002, 5000), (5003, 5000), (5004, 4000)])
+        self.assertEqual(f.add("moss", [{"kind": "clue"}], now=9000)[0]["id"], 9000)
+        later = relay.ArrayFeed(now=20000)                                     # (started again: its ids are past them all)
+        self.assertEqual(later.read(since=9000), {"events": [], "next": 9000})
+        e = later.add("moss", [{"kind": "pet"}], now=20000)[0]
+        self.assertEqual((e["id"], later.read(since=9000)["events"]), (20001, [e]))
+
+    def test_the_last_500_kept_and_read_by_cursor(self):
+        f = relay.ArrayFeed(now=0)
+        for i in range(60):                                                    # (60 channels of 10: 600 events)
+            f.add("c%d" % i, [{"kind": "level", "skill": "Attack", "level": n} for n in range(10)], now=1000 + i)
+        ids = [e["id"] for e in f.events]
+        self.assertEqual((len(ids), ids[0], ids[-1]), (500, ids[-1] - 499, f.last))
+        first = f.read()
+        self.assertEqual((len(first["events"]), first["next"]), (50, f.last))
+        self.assertEqual(first["events"], list(f.events)[-50:])
+        page = f.read(since=0)
+        self.assertEqual((len(page["events"]), page["events"][0]["id"], page["next"]), (100, ids[0], ids[99]))
+        self.assertEqual(f.read(since=ids[449])["events"], list(f.events)[450:])
+        self.assertEqual(f.read(since=f.last), {"events": [], "next": f.last})
+        self.assertEqual(f.read(since=f.last + 10 ** 6), {"events": [], "next": f.last})   # (past the newest: the newest)
+        empty = relay.ArrayFeed(now=7)
+        self.assertEqual((empty.read(), empty.read(since=3)), ({"events": [], "next": 7}, {"events": [], "next": 3}))
 
 
 class AetherWords(unittest.TestCase):

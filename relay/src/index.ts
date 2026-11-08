@@ -58,10 +58,16 @@
 //   GET    /aether                    the last 30 lines and how many are here, for a page before it joins
 //   GET    /admin/aether              the keeper's: every line kept with who wrote it, and the bans
 //   POST   /admin/aether/unsay {"id"}  /ban {"id"}  /unban {"who"}
+//
+// The Array's events (11/08/2026, Jace: each outstation on outside.wiki's front page should look alive, its icon popping
+// "+1"; array.ts): a kill, a level, a pet, a big drop, a log slot or a clue, from each open outstation's field reports
+// while it's live, kept in the Directory's memory (the last 500; one channel adds 10 a minute at most):
+//   GET    /array/events?since=<cursor>   {"events": [{"id", "at", "channel", "kind", ...}], "next": <cursor>}
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
 import { Aether } from "./aether";
+import { type ArrayEvent, ArrayFeed, arrayAnswer, arraySince } from "./array";
 import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, relayOf } from "./text";
 
@@ -120,10 +126,21 @@ export class Directory extends DurableObject<Env> {
   // handed out or taken back
   given: Map<string, string | null> | null = null;
   listed = new Map<string, { row: Listing; seen: number }>();
+  // the Array's events (11/08/2026; array.ts): each told by its channel (Channel.tellArray) while it's live and listed;
+  // in memory only, so an eviction forgets them (the feed's short-lived: a page only wants what's happening now)
+  array = new ArrayFeed();
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
     if (url.pathname === "/channels") return this.openPortals();
+    if (url.pathname === "/array") {
+      if (request.method === "PUT") {
+        const { channel, events } = (await request.json()) as { channel: string; events: ArrayEvent[] };
+        this.array.add(channel, events);
+        return new Response(null, { status: 204 });
+      }
+      return arrayAnswer(this.array.read(arraySince(url.searchParams.get("since")) ?? undefined));
+    }
     if (url.pathname === "/listed" && request.method === "PUT") {
       const row = (await request.json()) as Listing;
       const had = this.listed.get(row.channel);
@@ -504,6 +521,16 @@ export default {
       const raw = await request.text();
       if (raw.length > 4096) return Response.json({ error: "an invite is a key and a name" }, { status: 413 });
       return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST", headers: request.headers, body: raw }), name, "/_invites"));
+    }
+
+    // the Array's events (11/08/2026; array.ts): what's happening across the open outstations, for outside.wiki's front
+    // page; any page may read it
+    if (parts[0] === "array" && parts[1] === "events" && parts.length === 2) {
+      if (request.method !== "GET") return arrayAnswer(null, 405);
+      const since = arraySince(url.searchParams.get("since"));
+      if (since === null) return arrayAnswer({ error: "since is a cursor: an earlier read's next" }, 400);
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"))
+        .fetch("https://dir/array" + (since === undefined ? "" : "?since=" + since));
     }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)
