@@ -1862,6 +1862,22 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
                 }
             });
         }
+        // (where it stands on outside.wiki's globe, 11/08/2026: settle.rs; the key goes only to the relay)
+        if s.attached() {
+            ui.horizontal_wrapped(|ui| {
+                let busy = crate::settle::busy();
+                if button(ui, if busy { "asking the relay…" } else { "choose where it stands on the globe…" }, !busy, None)
+                    .on_hover_text(tip("outside.wiki's globe of Gielinor: by default your outstation stands beside whoever invited you. Choose a place of your own, or an outstation to stand beside. Opens the globe in your browser with a code good for 10 minutes; your key stays here. After the first, it can move once a week.")).clicked() {
+                    let ctx = ui.ctx().clone();
+                    crate::settle::begin(&s, move || ctx.request_repaint());
+                }
+                match crate::settle::status() {
+                    Some((at, Ok(_))) if at.elapsed() < Duration::from_secs(600) => { ui.label(rich("the globe's open in your browser: choose there within 10 minutes", 14.0, LIME())); }
+                    Some((at, Err(why))) if at.elapsed() < Duration::from_secs(120) => { ui.label(rich(&why, 14.0, PINK())); }
+                    _ => { ui.label(rich("on outside.wiki's globe", 14.0, QUIET())); }
+                }
+            });
+        }
         let detach = button(ui, "attach another station key…", true, None).clicked();
         if detach {
             s.key.clear();

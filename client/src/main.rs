@@ -39,6 +39,7 @@ mod net;
 mod notify;
 mod report;
 mod settings;
+mod settle;
 mod shortcut;
 mod sound;
 #[cfg(feature = "station")]

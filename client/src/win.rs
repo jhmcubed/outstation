@@ -242,8 +242,9 @@ pub fn bytes_sent() -> Option<u64> {
 
 // ---- the clipboard ----
 
-/// Open one of ghillie.wiki's pages in the browser (the friends list's names), or the portal's own SAFETY.md on GitHub
-/// (the attach screen's link), or its own "Something went wrong" form (report.rs, an anomaly reported on GitHub): Windows
+/// Open one of ghillie.wiki's pages in the browser (the friends list's names), outside.wiki's globe (settle.rs), or the
+/// portal's own SAFETY.md on GitHub (the attach screen's link), or its own "Something went wrong" form (report.rs, an
+/// anomaly reported on GitHub): Windows
 /// opens it with whatever opens web pages. Nothing else is opened this way.
 pub fn open_page(url: &str) -> bool {
     use windows::Win32::UI::Shell::ShellExecuteW;
@@ -254,10 +255,12 @@ pub fn open_page(url: &str) -> bool {
     r.0 as usize > 32
 }
 
-/// Whether open_page opens this: ghillie.wiki's pages, SAFETY.md, and the repository's form for a report.
+/// Whether open_page opens this: ghillie.wiki's pages, outside.wiki's (the globe, to settle: settle.rs), SAFETY.md,
+/// the repository's form for a report, and a page on this computer (a local copy of the globe, to try it).
 pub fn opens(url: &str) -> bool {
-    let ours = url.starts_with("https://ghillie.wiki/") || url == crate::settings::SAFETY_PAGE
-        || url.starts_with(&format!("{}?", crate::report::ISSUE_PAGE));
+    let ours = url.starts_with("https://ghillie.wiki/") || url.starts_with("https://outside.wiki/") || url == crate::settings::SAFETY_PAGE
+        || url.starts_with(&format!("{}?", crate::report::ISSUE_PAGE))
+        || url.starts_with("http://localhost:") || url.starts_with("http://127.0.0.1:");
     ours && !url.chars().any(|c| c.is_whitespace() || c == '"')
 }
 
