@@ -93,6 +93,8 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 - when you press **make a key**: the name you typed for your friend, with your channel and key
 - The station key that comes back is only shown to you and copied when you press copy. You send it on yourself.
 
+**To your relay, to settle on the globe** (settings ▸ more, "choose where it stands on the globe…"; 11/08/2026), only when you press it: your channel and its key, for a one-time code (good for 10 minutes, once). Then your browser opens outside.wiki's globe with your channel's name and that code, never the key, and you choose there. What you choose (a place, rounded, or an outstation to stand beside) is public on the relay's list of open outstations.
+
 **To the aether** (the chat's "the aether" tab; 11/07/2026), only once you open it: your channel and its key, to join under your channel's name, then each line you send there. Everyone in the aether sees your lines, and the relay keeps the room's last 100 lines.
 
 **For your friends list** (friends ▸), while anyone's on it, to your relay (Jace's, before you're attached):
@@ -210,7 +212,7 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 
 Your picture and sound are passed on as they come and never written down. Only the newest frame is held, in memory, for whoever arrives next, and it's gone when the relay sleeps.
 
-**What's public:** while your channel has no watch code, the relay's list of open outstations (on the outstations page) shows that it's there, whether it's live, how many watch, its title, and the boss and kill count it's on while it's live. A watch code takes it off the list.
+**What's public:** while your channel has no watch code, the relay's list of open outstations (on the outstations page) shows that it's there, whether it's live, how many watch, its title, the boss and kill count it's on while it's live, and where you've settled it on outside.wiki's globe, if you have (a spot on the map of Gielinor, rounded to two decimals, or the outstation you chose to stand beside). A watch code takes it off the list.
 
 While it's live with no watch code, the relay's feed of what's happening across the Array (outside.wiki's front page, 11/08/2026) also shows, under your channel's name and as each comes from Dink: a kill (the boss and its count), a level (the skill and level), a pet (its name), a drop worth 1,000,000 coins or more (its best item and its value), a collection log slot (the item) and a clue (its tier and count). Nothing that comes while you're dark, or while you have a watch code, ever goes on it.
 
@@ -234,6 +236,8 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 **Invites** (11/07/2026): how many each outstation has used and the names it invited, its time on air in all (invites are earned from it), and, for an outstation established through an invite, whose invite it was. That last one's public, on the relay's list of open outstations.
 
 **The Outside plugin's game** (only if you use the plugin; 11/07/2026): the last of what it sent (what you wore and carried, your looting bag, rune pouch and quiver, your vitals, prayers and skills, your name, world and account type, and the names and prices of those items), so your page shows it while you're away. Saved at most once a minute while it changes, and when the plugin disconnects. Your page shows it to anyone who opens it, as your transmission. Taken away when your channel is.
+
+**Settling** (11/08/2026; only if you settle): where your outstation stands on outside.wiki's globe, the spot you chose (rounded to two decimals) or the outstation you chose to stand beside, and when you last moved it (you can move it once a week). That's public, on the list of open outstations (above). To settle, your outstation trades its key for a one-time code that works for 10 minutes and only once, and opens the globe page with only that code: the key never goes to the page. The relay keeps the code (on Jace's relay only its SHA-256) until it's used, runs out or is replaced. Taken away when your channel is.
 
 **The Array's events** (11/08/2026): the feed above, the last 500 from every outstation together (each one's channel, what it was and when), and when each outstation's last few came (10 a minute at most from one). In memory only, never written down: gone when the relay restarts, and on Cloudflare whenever that part of the relay is put to sleep.
 

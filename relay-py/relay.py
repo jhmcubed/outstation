@@ -116,6 +116,18 @@ happening across the open outstations, for outside.wiki's front page (each outst
   more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
   GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
   public side allows the read.
+
+Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): where an outstation stands on
+outside.wiki's globe of Gielinor (by default beside whoever invited it), chosen by its owner. The app trades its key for a
+one-time code, opens the globe page with only that, and the page settles with it, so the key never reaches a page.
+    code:      POST http://HOST:PORT/settle/<channel>?key=<secret>&v=<version>    {"code", "expires"}
+    check:     GET  http://HOST:PORT/settle/<channel>?code=<code>                 {"channel", "home", "next"}
+    settle:    POST http://HOST:PORT/home/<channel>  {"code", "lon", "lat"} | {"code", "near"} | {"code", "clear": true}
+                                                                                   {"home", "next"}
+  A code lasts SETTLE_CODE_S (--settle-code-seconds, for tests), one at a time, and one settle uses it up. The first
+  change is free; after it, one every SETTLE_EVERY_S. GET /channels' rows carry each one's home. The page's two (and their
+  preflights, OPTIONS) carry CORS and are allowed on the public side; the app's POST /settle is refused there, as invites
+  are.
 """
 
 import argparse
@@ -127,6 +139,7 @@ import json
 import math
 import os
 import re
+import secrets
 import struct
 import sys
 import time
@@ -183,6 +196,16 @@ CHANNEL_NAME = re.compile(r"[A-Za-z0-9_.~-]{1,64}")       # a channel (fullmatch
 ARRAY_KEPT, ARRAY_A_MINUTE, ARRAY_LATEST, ARRAY_PAGE, ARRAY_LOOT, ARRAY_WORD = 500, 10, 50, 100, 1_000_000, 60
 SAFE_INT = 2 ** 53 - 1
 ARRAY_CURSOR = re.compile(r"[0-9]{1,16}")                  # since, as next gave it (fullmatch; SAFE_INT at most)
+# settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): a code lasts SETTLE_CODE_S (the
+# relay's settle_code_s, --settle-code-seconds), and after the first change a home may change once every SETTLE_EVERY_S;
+# a POST's body at most SETTLE_BODY bytes; a place's lon within ±SETTLE_LON, its lat within ±SETTLE_LAT
+SETTLE_CODE_S, SETTLE_EVERY_S, SETTLE_BODY, SETTLE_LON, SETTLE_LAT = 600, 7 * 86400, 2048, 180, 85
+SETTLE_CODE = re.compile(r"[a-z0-9]{12}")                  # a code, as the app was given it (fullmatch)
+SETTLE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+SETTLE_SHAPE = "a settle is JSON: a code, and a place (lon and lat), an outstation (near) or clear"
+# the page's answers on another origin (GET /settle, POST /home and their preflights); the app's POST /settle has none
+SETTLE_CORS = ("Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+               "Access-Control-Allow-Headers: content-type\r\n")
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
@@ -398,6 +421,73 @@ def attach_code(relay, channel, key):
     attachCode, the same)."""
     raw = json.dumps({"relay": relay, "channel": channel, "key": key}, separators=(",", ":")).encode()
     return "outstation1:" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def key_refusal(ch, key):
+    """Why an HTTP route's key won't do for this channel, as (its status, its reason), or None: the invites' check, and
+    settling's (the Worker's keyRefusal). Not claimed, 404; a key under 8 characters or the wrong one, 403."""
+    if ch is None or ch.key is None:
+        return "404 Not Found", "no outstation called that here"
+    if not isinstance(key, str) or len(key) < 8:
+        return "403 Forbidden", "a transmit key needs at least 8 characters"
+    if not hmac.compare_digest(key.encode("utf-8", "surrogatepass"), ch.key.encode("utf-8", "surrogatepass")):
+        return "403 Forbidden", "wrong key for this channel"
+    return None
+
+
+# Settling (11/08/2026; docs/protocol.md "Settling"): what a settle asks for, checked. The Worker's settle.ts, the same.
+
+def settle_code():
+    """A new code: 12 characters from [a-z0-9], about 62 bits (not to be guessed in its ten minutes)."""
+    return "".join(secrets.choice(SETTLE_ALPHABET) for _ in range(12))
+
+
+def two_places(x):
+    """Two decimals, as the Worker's twoPlaces (JavaScript's Math.round: a half goes towards +infinity, where Python's
+    round goes to the even one), so both relays keep the same number."""
+    y = x * 100
+    r = math.floor(y)
+    return (r + 1 if y - r >= 0.5 else r) / 100
+
+
+def settle_wanted(body):
+    """What a POST /home body asks for: ("home", the home or None for back to the default), or ("error", why not: a
+    400's reason). Exactly one of a place (lon, lat), near or clear; anything else in the body is left alone. A near is
+    only looked at for its shape here: whether it's an outstation, and not this one, is Relay.settle's to ask."""
+    if not isinstance(body, dict):
+        return "error", SETTLE_SHAPE
+    place, near, clear = "lon" in body or "lat" in body, "near" in body, "clear" in body
+    if place + near + clear != 1:
+        return "error", "one of a place (lon and lat), an outstation (near) or clear"
+    if clear:
+        return ("home", None) if body["clear"] is True else ("error", "clear is true")
+    if near:
+        n = body["near"]
+        return ("home", {"near": n}) if isinstance(n, str) and CHANNEL_NAME.fullmatch(n) else \
+            ("error", "no outstation called that here")
+
+    def in_range(v, most):
+        # (NaN and the infinities are never within it; a whole number too long for a float is compared as it is)
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and -most <= v <= most
+    if not in_range(body.get("lon"), SETTLE_LON):
+        return "error", "lon is a number from -%d to %d" % (SETTLE_LON, SETTLE_LON)
+    if not in_range(body.get("lat"), SETTLE_LAT):
+        return "error", "lat is a number from -%d to %d" % (SETTLE_LAT, SETTLE_LAT)
+    return "home", {"lon": two_places(body["lon"]), "lat": two_places(body["lat"])}
+
+
+async def read_body(reader, headers, most):
+    """A request's body, or None when it's past most bytes. ValueError (or IncompleteReadError): one that can't be read."""
+    if headers.get("transfer-encoding", "").lower() == "chunked":
+        raw = await read_chunked(reader)
+    else:
+        n = int(headers.get("content-length", "0") or 0)
+        if n > most:
+            if n <= 16 * most:
+                await reader.readexactly(n)   # (read and dropped, so a reset doesn't take the answer with it)
+            return None
+        raw = await reader.readexactly(n)
+    return raw if len(raw) <= most else None
 
 
 # The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's fields checked, and kept. The Worker's
@@ -883,6 +973,29 @@ class Channel:
         # streams and the plugin's going: a page shows the last of it while the player's away)
         self.gamer = None
         self.game = Game()
+        # settling (11/08/2026): where it stands on outside.wiki's globe ({"lon", "lat"} or {"near"}; None: beside its
+        # inviter), when that last changed (ms), and the app's one-time code for the page ({"code", "expires", "used"})
+        self.home = None
+        self.home_at = None
+        self.settle = None
+
+    def settle_refusal(self, code):
+        """Why a settling code won't do (a 403's reason), or None."""
+        s = self.settle
+        if s is None or not isinstance(code, str) or not SETTLE_CODE.fullmatch(code) \
+                or not hmac.compare_digest(code, s["code"]):
+            return "wrong code: open settling again from your outstation"
+        if s["used"]:
+            return "that code's been used: open settling again from your outstation"
+        if time.time() * 1000 >= s["expires"]:
+            return "that code has expired: open settling again from your outstation"
+        return None
+
+    def settle_next(self):
+        """When the home may next change (ms), or None for now: SETTLE_EVERY_S after the last change (the first is free)."""
+        if self.home_at is not None and time.time() * 1000 < self.home_at + SETTLE_EVERY_S * 1000:
+            return self.home_at + SETTLE_EVERY_S * 1000
+        return None
 
     def seconds_in_all(self):
         """Seconds on air in all, the stretch going on now included (for invites)."""
@@ -1220,8 +1333,10 @@ def too_old(v, min_client):
 
 
 class Relay:
-    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token=""):
+    def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
+                 settle_code_s=SETTLE_CODE_S):
         self.delay = delay
+        self.settle_code_s = settle_code_s  # how long a settling code lasts (SETTLE_CODE_S; tests shorten it)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
         self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
@@ -1275,11 +1390,15 @@ class Relay:
             # (a blank one kept: "channel=" is an outstation's, as on the Worker)
             q = {k: v[0] for k, v in parse_qs(url.query, keep_blank_values=True).items()}
         visitor = aether and "channel" not in q
-        if public and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch") and not visitor)
-                       or (path and path[0] in ("invites", "admin"))):
-            # from the internet: no transmitting, no Dink posts, no invites, no game socket, no outstation in the aether
-            # and none of the keeper's routes, whatever key comes with them (the game's read, GET /game, the aether's read,
-            # a visitor in the aether and the Array's events are let through: what anyone on Outside may do anyway)
+        settling = len(path) == 2 and path[0] in ("settle", "home") and not key
+        # (the globe page's: GET /settle, POST /home and their preflights)
+        settling_page = settling and (method == "OPTIONS" or method == ("GET" if path[0] == "settle" else "POST"))
+        if public and not settling_page and (method not in ("GET", "HEAD") or (key and (not path or path[0] != "watch") and not visitor)
+                                             or (path and path[0] in ("invites", "admin"))):
+            # from the internet: no transmitting, no Dink posts, no invites, no settling code for a key (POST /settle),
+            # no game socket, no outstation in the aether and none of the keeper's routes, whatever key comes with them
+            # (the game's read, GET /game, the aether's read, a visitor in the aether, the Array's events and the globe
+            # page's settling with a code are let through: what anyone on Outside may do anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -1292,6 +1411,9 @@ class Relay:
             return
         if len(path) == 2 and path[0] == "invites" and not key:
             await self.invites(reader, writer, method, headers, path[1], q)
+            return
+        if settling:
+            await self.settle(reader, writer, method, headers, path, q)
             return
         if method == "GET" and not key and url.path == "/channels":
             await self.channel_list(writer)
@@ -1790,7 +1912,7 @@ class Relay:
         public side too); a channel with a watch code is never listed."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
-                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None}
+                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None, "home": ch.home}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         body = json.dumps({"channels": rows}).encode()
@@ -2010,13 +2132,9 @@ class Relay:
             if not isinstance(body, dict):
                 body = {}
         ch = self.channels.get(name)
-        if ch is None or ch.key is None:
-            return await answer("404 Not Found", {"error": "no outstation called that here"})
-        key = q.get("key", "") if method == "GET" else body.get("key")
-        if not isinstance(key, str) or len(key) < 8:
-            return await answer("403 Forbidden", {"error": "a transmit key needs at least 8 characters"})
-        if key != ch.key:
-            return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+        no = key_refusal(ch, q.get("key", "") if method == "GET" else body.get("key"))
+        if no:
+            return await answer(no[0], {"error": no[1]})
         if method == "GET":
             return await answer("200 OK", invite_numbers(ch.seconds_in_all(), ch.invited))
         now = time.monotonic()
@@ -2046,6 +2164,91 @@ class Relay:
         code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
         return await answer("200 OK", {"channel": player, "key": new_key, "code": code,
                                        "left": invite_numbers(ch.seconds_in_all(), ch.invited)["left"]})
+
+    async def settle(self, reader, writer, method, headers, path, q):
+        """Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts and channel.ts, the same): where an
+        outstation stands on outside.wiki's globe.
+            POST /settle/<channel>?key=<key>&v=<version>   the app's: its key for a one-time code, {"code", "expires"};
+                                                            asking again replaces the code (no CORS: a page never has
+                                                            the key; the public side refuses it, as invites)
+            GET  /settle/<channel>?code=<code>             the page's check: {"channel", "home", "next"}; not used up
+            POST /home/<channel>  {"code", ...}             the page settles: {"home", "next"}, the code used up
+        Nothing is awaited between a code's check and its use, so one code settles once."""
+        page = not (path[0] == "settle" and method == "POST")
+
+        async def answer(status, body=None, more=""):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%s%s%sCache-Control: no-store\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, SETTLE_CORS if page else "", more, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method == "OPTIONS":
+            writer.write(("HTTP/1.1 204 No Content\r\n%sAccess-Control-Max-Age: 86400\r\nConnection: close\r\n\r\n"
+                          % SETTLE_CORS).encode())
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+            return
+        name = path[1]
+        if not CHANNEL_NAME.fullmatch(name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        if method != "POST" and not (path[0] == "settle" and method == "GET"):
+            return await answer("405 Method Not Allowed")
+        raw = b""
+        if method == "POST":
+            try:
+                raw = await read_body(reader, headers, SETTLE_BODY)
+            except (ValueError, asyncio.IncompleteReadError):
+                return await answer("400 Bad Request", {"error": SETTLE_SHAPE})
+            if raw is None:
+                return await answer("413 Payload Too Large", {"error": "a settle is 2 KB at most"})
+        ch = self.channels.get(name)
+        now = int(time.time() * 1000)
+        if path[0] == "settle" and method == "POST":
+            no = key_refusal(ch, q.get("key", ""))
+            if no:
+                return await answer(no[0], {"error": no[1]})
+            ch.settle = {"code": settle_code(), "expires": now + int(self.settle_code_s * 1000), "used": False}
+            self.log("settle    %s  (a code for the globe)" % name)
+            return await answer("200 OK", {"code": ch.settle["code"], "expires": ch.settle["expires"]})
+        if path[0] == "settle":
+            no = ch.settle_refusal(q.get("code", "")) if ch is not None else "wrong code: open settling again from your outstation"
+            if no:
+                return await answer("403 Forbidden", {"error": no})
+            return await answer("200 OK", {"channel": name, "home": ch.home, "next": ch.settle_next()})
+        try:
+            body = json.loads(raw, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            body = None
+        code = body.get("code") if isinstance(body, dict) else None
+        no = ch.settle_refusal(code) if ch is not None else "wrong code: open settling again from your outstation"
+        if no:
+            return await answer("403 Forbidden", {"error": no})
+        what, home = settle_wanted(body)
+        if what == "error":
+            return await answer("400 Bad Request", {"error": home})
+        if home is not None and "near" in home:
+            if home["near"] == name:
+                return await answer("400 Bad Request", {"error": "that's your own outstation"})
+            other = self.channels.get(home["near"])
+            if other is None or other.key is None:
+                return await answer("400 Bad Request", {"error": "no outstation called that here"})
+        # a settle that changes nothing (the same place, the same outstation, or clear with none) isn't a change: it's
+        # let through whenever it comes, and the next change is no later for it
+        same = home == ch.home
+        nxt = ch.settle_next()
+        if not same and nxt is not None:
+            return await answer("429 Too Many Requests", {"error": "one move every %d days: try again later"
+                                                          % (SETTLE_EVERY_S // 86400), "next": nxt})
+        ch.settle["used"] = True
+        if not same:
+            ch.home, ch.home_at = home, now
+            self.log("settle    %s  -> %s" % (name, json.dumps(home)))
+        return await answer("200 OK", {"home": ch.home, "next": ch.settle_next()})
 
     async def page(self, writer, path, head_only=False):
         """The watching page itself, so a friend needs only this relay's address."""
@@ -2619,10 +2822,10 @@ def dink_report(p):
 
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
-                settings=None, min_client="", clips_dir=None, admin_token=""):
+                settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes)."""
-    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token)
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -2669,6 +2872,8 @@ def main(argv=None):
                     help="the oldest outstation client let in (e.g. 0.2.0); older ones are told to update")
     ap.add_argument("--admin-token", default="",
                     help="the keeper's token (16 characters at least) for the aether's keeper routes; none refuses them")
+    ap.add_argument("--settle-code-seconds", type=float, default=SETTLE_CODE_S,
+                    help="how long a settling code for the globe page lasts (%d; shorter for tests)" % SETTLE_CODE_S)
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -2679,7 +2884,7 @@ def main(argv=None):
     try:
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
-                          clips_dir=a.clips or None, admin_token=a.admin_token))
+                          clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds))
     except KeyboardInterrupt:
         pass
 

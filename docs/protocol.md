@@ -105,7 +105,7 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home"}]}`, live ones first. Only channels handed out and with no watch code are on it. `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
 ## The stream's summary
 
@@ -148,8 +148,8 @@ The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts o
 
 `Authorization: Bearer <ADMIN_TOKEN>`:
 - `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off. Its game state is forgotten (below, "The game").
-- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound, desks and game socket are cut off, and its game state forgotten. Viewers stay, off air.
-- `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none) and `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
+- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound, desks and game socket are cut off, and its game state, its home and any settling code forgotten (below, "Settling"). Viewers stay, off air.
+- `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none), `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows), and `home` and `homeAt` (where it's settled and when that last changed, in ms; `null` for none; below, "Settling").
 
 The attach code (the station key, in the client's words) is `outstation1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up. Keys made before 11/06/2026 start `portal1:`, with the same inside; the client still reads them.
 
@@ -447,6 +447,86 @@ Worker's object) starts again, and a cursor from before still works. Treat it as
 **What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
 the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
 again; on the Python relay while it runs. Nothing of it is written to storage.
+
+## Settling (11/08/2026)
+
+outside.wiki's front page shows every outstation as a light on a globe of Gielinor. By default an outstation stands near
+whoever invited it, and since every invite starts with one person, everything clusters round him. Settling lets an
+outstation's owner choose where it stands: a place on the globe, beside an outstation of their choosing, or back to the
+default. Both relays: the Worker's `relay/src/settle.ts` (and channel.ts's `settle` and `home`); relay-py's
+`settle_wanted` and `Relay.settle`.
+
+The owner proves it's theirs with the station key, which never goes to a web page: the outstation app trades its key for
+a short-lived one-time code, opens the globe page with only that code, and the page settles with the code.
+
+    POST  /settle/<channel>?key=<key>&v=<version>   the app          200 {"code", "expires"}
+    GET   /settle/<channel>?code=<code>             the globe page   200 {"channel", "home", "next"}
+    POST  /home/<channel>  {"code", ...}            the globe page   200 {"home", "next"}
+
+**A home** is `{"lon", "lat"}` (a place, two decimals each), `{"near": "<channel>"}` (beside that outstation), or `null`
+(the default: beside its inviter). It shows in each row of `GET /channels`
+(above, "The open outstations"), and in the keeper's `GET /admin/channels` with `homeAt`, when it last changed (ms).
+
+**The code.** `POST /settle` with the channel's key answers `{"code", "expires"}`: `code` is 12 random characters from
+`[a-z0-9]`, `expires` when it stops working (ms), 10 minutes on. Asking again replaces any earlier code (the old one is
+refused from then on). One code at a time a channel, and one settle uses it up.
+- The key's checked as the invites' is (above, "Invites"): 404 `no outstation called that here` for a channel that isn't
+  handed out (on the Python relay: nobody's claimed it); 403 `wrong key for this channel`, or `a transmit key needs at
+  least 8 characters`; on Cloudflare a wrong key counts towards the wrong-key limit (10 a minute from one address), and
+  past it the reason is `too many wrong keys: try again in a minute`, still 403. Each with `{"error": "…"}`.
+- `v=` is the app's version. Like the other HTTP routes (`/invites`, `/dink`, `/clips`), nothing turns a version away
+  here: `MIN_CLIENT` (`--min-client`) is for sockets.
+- Only the code's SHA-256 is kept on Cloudflare (with when it expires and whether it's been used); on the Python relay
+  the code itself, in memory.
+
+**The check.** `GET /settle/<channel>?code=<code>`, for the page before it shows anything: 200 `{"channel", "home",
+"next"}`, where `next` is when a move is allowed again (ms), or `null` if one is now. It doesn't use the code up. A code
+that won't do is 403, `{"error"}` saying which: `wrong code: …` (not this channel's code now, or not one at all),
+`that code has expired: …`, or `that code's been used: …`, each ending `open settling again from your outstation`.
+
+**The settle.** `POST /home/<channel>` with a JSON body, one of:
+- `{"code", "lon", "lat"}`: a place. `lon` a number from -180 to 180, `lat` from -85 to 85; each kept rounded to 2
+  decimals (half towards +infinity, as JavaScript's `Math.round`: 0.125 is 0.13).
+- `{"code", "near": "<channel>"}`: beside an outstation. It must be a channel handed out (on Cloudflare, the Directory's
+  list; on the Python relay, a claimed channel), and not this one.
+- `{"code", "clear": true}`: back to the default. The home becomes `null`.
+
+Anything else in the body is left alone. Answers:
+- 200 `{"home", "next"}`, and the code is used up. `next` is when the home may change again (ms).
+- 403 `{"error"}` for a wrong, expired or used code, as the check's (a body that isn't JSON, or has no `code`, is a wrong
+  code). The code's checked before the values: nothing about them is said without one that works.
+- 400 `{"error"}` for values that won't do: `lon is a number from -180 to 180`, `lat is a number from -85 to 85`,
+  `no outstation called that here` (a `near` that isn't handed out, or isn't a channel's name), `that's your own
+  outstation`, `clear is true`, or `one of a place (lon and lat), an outstation (near) or clear` (none of them, or more
+  than one).
+- 429 `{"error": "one move every 7 days: try again later", "next"}` when it's too soon (below).
+- 503 `{"error"}` (Cloudflare) when the relay couldn't look the `near` up just then: try again.
+- 413 `{"error": "a settle is 2 KB at most"}` for a body over 2,048 bytes (`POST /settle`'s too, though it needs none);
+  405 for any other method on `/settle` or `/home`; 400 `{"error": "which outstation?"}` for a channel in the address
+  that can't be one.
+
+None but the 200 uses the code up, so the page can say what's wrong and let them try again with the same one.
+
+**How often.** The first change is free, whenever it comes. After it, one change every 7 days (`next` is the last change
+and 7 days), and a clear counts as one. A settle that changes nothing (the same place once rounded, the same outstation,
+or a clear with no home) isn't a change: it's let through whenever it comes, uses the code up, and leaves `next` as it
+was (`null` if nothing's ever changed). So clearing first, before ever settling, doesn't start the 7 days.
+
+**CORS.** The page is on another origin and sends JSON, so `GET /settle` and `POST /home` answer its preflight
+(`OPTIONS`, 204) and every answer of theirs (errors too) carries `Access-Control-Allow-Origin: *`,
+`Access-Control-Allow-Methods: GET, POST, OPTIONS` and `Access-Control-Allow-Headers: content-type`. `POST /settle` is
+the app's and carries none, so no page can read a code. `POST /home` only ever takes a code, never a key. Nothing here
+may be cached (`Cache-Control: no-store`).
+
+**What's kept:** the home and when it changed, with the channel (on Cloudflare in its meta, so it outlives a sleep; on
+the Python relay in memory while it runs), and the code until it's replaced. A new key from the keeper keeps the home
+(as it keeps `by`) and drops the code the old key got; taking the channel back (`DELETE /admin/channels/<channel>`)
+forgets the home, when it changed, and the code. A `near` names the outstation as it was when chosen: if that one's
+later taken back, the home still names it, and the page decides where that leaves it.
+
+The Python relay's public side (the Funnel's port) allows `GET /settle`, `POST /home` and their preflights, and refuses
+`POST /settle` whatever key comes with it, as it refuses invites. It has no keeper's routes, so nothing there takes a
+channel back.
 
 ## Anomalies and requisitions (Cloudflare)
 

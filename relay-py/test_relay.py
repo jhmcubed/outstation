@@ -1141,6 +1141,91 @@ class Sound(RelayTest):
         self.assertEqual((await next_of(v, "sound"))["mode"], "off")
 
 
+class SettleWords(unittest.TestCase):
+    """Settling (11/08/2026; docs/protocol.md "Settling"): what a POST /home asks for, its two decimals and the code, as
+    the Worker's settle.ts has them."""
+
+    def test_two_decimals_with_a_half_going_up_as_javascript_rounds(self):
+        # (each as node's Math.round(x * 100) / 100 gives it; Python's round(0.125, 2) is 0.12)
+        got = [relay.two_places(x) for x in (0.125, -0.125, 12.345, -122.4567, 1.005, -45.555, 180, -0.001, 84.999)]
+        self.assertEqual(got, [0.13, -0.12, 12.35, -122.46, 1, -45.55, 180, 0, 85])
+
+    def test_one_of_a_place_an_outstation_or_clear(self):
+        w = relay.settle_wanted
+        self.assertEqual(w({"code": "x", "lon": 1.234, "lat": -5}), ("home", {"lon": 1.23, "lat": -5}))
+        self.assertEqual(w({"near": "moss", "other": 1}), ("home", {"near": "moss"}))
+        self.assertEqual(w({"clear": True}), ("home", None))
+        self.assertEqual(w([]), ("error", relay.SETTLE_SHAPE))
+        for body in ({}, {"clear": True, "near": "moss"}, {"lon": 1, "lat": 2, "near": "moss"}):
+            self.assertEqual(w(body), ("error", "one of a place (lon and lat), an outstation (near) or clear"), body)
+        for body in ({"lon": float("nan"), "lat": 0}, {"lon": float("inf"), "lat": 0}, {"lon": 10 ** 400, "lat": 0},
+                     {"lon": False, "lat": 0}, {"lon": 180.001, "lat": 0}):
+            self.assertEqual(w(body), ("error", "lon is a number from -180 to 180"), body)
+        self.assertEqual(w({"lon": 0, "lat": -85.001}), ("error", "lat is a number from -85 to 85"))
+        self.assertEqual(w({"near": "../moss"}), ("error", "no outstation called that here"))
+        self.assertEqual(w({"clear": "yes"}), ("error", "clear is true"))
+
+    def test_a_code_is_twelve_letters_and_digits_and_never_the_same(self):
+        codes = {relay.settle_code() for _ in range(500)}
+        self.assertEqual(len(codes), 500)
+        self.assertTrue(all(relay.SETTLE_CODE.fullmatch(c) for c in codes))
+        self.assertEqual(set("".join(codes)), set(relay.SETTLE_ALPHABET))
+
+
+class Settling(RelayTest):
+    """Settling (11/08/2026): what the shared tests (tests/protocol_test.py, Settling) can't wait for, and the public side."""
+
+    async def code(self, channel="sburb", key="secret-key"):
+        status, got = await ask(self.port, "POST", "/settle/%s?key=%s&v=0.9.0" % (channel, key))
+        self.assertEqual(status, 200)
+        return got["code"]
+
+    async def test_a_week_on_it_may_move_again_and_a_clear_takes_it_back_to_beside_its_inviter(self):
+        await self.connect("/transmit/sburb?key=secret-key")
+        await self.connect("/transmit/moss?key=moss-key-1")
+        await asyncio.sleep(0.05)
+        status, got = await ask(self.port, "POST", "/home/sburb", {"code": await self.code(), "near": "moss"})
+        self.assertEqual((status, got["home"]), (200, {"near": "moss"}))
+        ch = self.relay.channels["sburb"]
+        self.assertEqual(ch.home_at + relay.SETTLE_EVERY_S * 1000, got["next"])
+        code = await self.code()
+        status, got = await ask(self.port, "POST", "/home/sburb", {"code": code, "clear": True})
+        self.assertEqual(status, 429)
+        ch.home_at -= relay.SETTLE_EVERY_S * 1000 + 1                      # (a week and a moment ago)
+        status, got = await ask(self.port, "GET", "/settle/sburb?code=" + code)
+        self.assertEqual((status, got["home"], got["next"]), (200, {"near": "moss"}, None))
+        now = time.time() * 1000
+        status, got = await ask(self.port, "POST", "/home/sburb", {"code": code, "clear": True})
+        self.assertEqual((status, got["home"]), (200, None))
+        self.assertTrue(now + relay.SETTLE_EVERY_S * 1000 - 1000 <= got["next"] <= now + relay.SETTLE_EVERY_S * 1000 + 1000)
+        self.assertIsNone(ch.home)
+        status, _, body = await get(self.port, "/channels")
+        self.assertEqual({c["channel"]: c["home"] for c in json.loads(body)["channels"]}, {"sburb": None, "moss": None})
+
+    async def test_a_code_lasts_as_long_as_the_relay_says(self):
+        self.relay.settle_code_s = 0.2
+        await self.connect("/transmit/sburb?key=secret-key")
+        await asyncio.sleep(0.05)
+        code = await self.code()
+        self.assertEqual((await ask(self.port, "GET", "/settle/sburb?code=" + code))[0], 200)
+        await asyncio.sleep(0.3)
+        status, got = await ask(self.port, "GET", "/settle/sburb?code=" + code)
+        self.assertEqual((status, got["error"]), (403, "that code has expired: open settling again from your outstation"))
+
+    async def test_the_public_side_lets_the_page_settle_but_never_takes_a_key(self):
+        await self.connect("/transmit/sburb?key=secret-key")
+        await asyncio.sleep(0.05)
+        self.assertEqual((await ask(self.public_port, "POST", "/settle/sburb?key=secret-key"))[0], 403)
+        code = await self.code()
+        status, got = await ask(self.public_port, "GET", "/settle/sburb?code=" + code)
+        self.assertEqual((status, got["home"]), (200, None))
+        for path in ("/settle/sburb", "/home/sburb"):
+            self.assertEqual((await ask(self.public_port, "OPTIONS", path))[0], 204, path)
+        self.assertEqual((await ask(self.public_port, "PUT", "/home/sburb", {"code": code}))[0], 403)
+        status, got = await ask(self.public_port, "POST", "/home/sburb", {"code": code, "lon": 1, "lat": 2})
+        self.assertEqual((status, got["home"]), (200, {"lon": 1, "lat": 2}))
+
+
 class ArrayWords(unittest.TestCase):
     """The Array's events (11/08/2026): what a field report adds (relay.array_events; the Worker's arrayEvents, the
     same). The shared suite (tests/protocol_test.py, ArrayEvents) tests the feed on both relays."""

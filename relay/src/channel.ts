@@ -13,12 +13,17 @@
 //
 // The Array's events (11/08/2026; array.ts, docs/protocol.md "The Array's events"): what each field report adds (a kill,
 // a level, a pet, a big drop, a log slot, a clue), told to the Directory only while the channel's live and listed.
+//
+// Settling (11/08/2026; settle.ts, docs/protocol.md "Settling"): where the outstation stands on outside.wiki's globe (its
+// home), chosen by its owner with a one-time code the app trades its key for; kept in the meta, and in its row of
+// GET /channels.
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 import { type Fields, GameState, gameFields, GAME_A_SECOND, GAME_MESSAGE } from "./game";
 import { arrayEvents } from "./array";
+import { type Home, type SettleCode, SETTLE_CODE, SETTLE_CODE_MS, SETTLE_EVERY_MS, settleAnswer, settleCode, settleWanted } from "./settle";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
@@ -36,6 +41,7 @@ export interface Env {
   CLIPS_MOST?: string; // a channel's clips at most (20)
   CLIPS_DAYS?: string; // and for how long (30 days)
   CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
+  SETTLE_CODE_SECONDS?: string; // (tests) how long a settling code lasts (settle.ts's SETTLE_CODE_MS: 600)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -101,6 +107,7 @@ export interface Listing {
   channel: string; set: boolean; code: boolean; at: number;
   live?: boolean; open?: boolean; static?: boolean; viewers?: number; title?: string; doing?: { boss: string; kc: number } | null;
   game?: boolean; // (the Outside plugin's connected, 11/07/2026)
+  home?: Home | null; // (where it stands on outside.wiki's globe, 11/08/2026: settle.ts)
 }
 
 interface Att {
@@ -164,6 +171,9 @@ interface Meta {
   guessId?: number;
   guessMin?: number; // the desk's {"guess_min_value"}
   kc?: Record<string, [string, number]>; // boss (lower case) -> (its name, the kill count Dink last told of)
+  home?: Home | null; // where it stands on outside.wiki's globe (settle.ts, 11/08/2026): null or none, beside its inviter
+  homeAt?: number; // when the home last changed (ms): the next change is SETTLE_EVERY_MS after it
+  settle?: SettleCode; // the app's one-time code for the globe page (only its SHA-256), while it lasts
 }
 
 // One field report into a stream's summary (relay-py's fold, the same): what the stream's done so far, from Dink's numbers.
@@ -378,7 +388,7 @@ export class Channel extends DurableObject<Env> {
     const live = this.live();
     return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
-             doing: this.doing(), game: this.sockets("game").length > 0 };
+             doing: this.doing(), game: this.sockets("game").length > 0, home: this.meta.home ?? null };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -522,7 +532,8 @@ export class Channel extends DurableObject<Env> {
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
                              open: live && this.meta.state === "open", static: live && this.meta.state === "static",
                              viewers: this.seated().length, title: this.meta.title || "", client: this.meta.client || "",
-                             live_s: this.secondsThisMonth(), doing: this.doing() });
+                             live_s: this.secondsThisMonth(), doing: this.doing(), home: this.meta.home ?? null,
+                             homeAt: this.meta.homeAt ?? null });
     }
     if (role === "_listing") return Response.json(this.listing()); // (the Directory, for a row it hasn't been told)
     if (role === "_revoke") return this.revoke();
@@ -539,6 +550,8 @@ export class Channel extends DurableObject<Env> {
     if (role === "_key") return Response.json({ no: await this.checkKey(q.get("key") || "", ip) });
     if (role === "_dm") return this.takeDm(request);
     if (role === "_invites") return this.invites(request, q, ip);
+    if (role === "_settle") return this.settle(request, q, ip);
+    if (role === "_home") return this.home(request);
     if (role === "_game") return this.readGame(q);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
@@ -1475,8 +1488,8 @@ export class Channel extends DurableObject<Env> {
     if (request.method !== "GET" && request.method !== "POST") return new Response(null, { status: 405 });
     const body = request.method === "POST" ? ((await request.json().catch(() => null)) as { key?: unknown; player?: unknown } | null) : null;
     const key = request.method === "GET" ? q.get("key") || "" : typeof body?.key === "string" ? body.key : "";
-    const no = await this.checkKey(key, ip);
-    if (no) return json({ error: no[1] }, 403);
+    const no = await this.keyRefusal(key, ip);
+    if (no) return json({ error: no[1] }, no[0]);
     const used = () => this.meta.invited || [];
     if (request.method === "GET") return json(inviteNumbers(this.secondsInAll(), used()));
     const now = Date.now();
@@ -1519,6 +1532,107 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
+  /** Why an HTTP route's key won't do for this channel, as [its status, its reason], or null: the invites' check, and
+   *  settling's. 404 for a channel nobody's handed out; 403 for a key under 8 characters, the wrong key, or past the
+   *  wrong-key limit (checkKey's reasons). */
+  async keyRefusal(key: string, ip: string): Promise<[number, string] | null> {
+    if (this.meta.keyHash === null) return [404, "no outstation called that here"];
+    const no = await this.checkKey(key, ip);
+    return no ? [403, no[1]] : null;
+  }
+
+  // Settling (11/08/2026; settle.ts, docs/protocol.md "Settling"): where this outstation stands on outside.wiki's globe.
+  //   POST /settle ?key=     the app's: its key for a one-time code, {"code", "expires"}; asking again replaces it
+  //   GET  /settle ?code=    the page's: {"channel", "home", "next"}; the code isn't used up
+  //   POST /home   {"code", ...}   the page settles: {"home", "next"}, the code used up
+
+  /** Why a settling code won't do (a 403's reason), or null. h: the SHA-256 of the code given (null: not a code). */
+  codeRefusal(h: string | null): string | null {
+    const s = this.meta.settle;
+    if (!s || h === null || s.hash !== h) return "wrong code: open settling again from your outstation";
+    if (s.used) return "that code's been used: open settling again from your outstation";
+    if (Date.now() >= s.expires) return "that code has expired: open settling again from your outstation";
+    return null;
+  }
+
+  /** When the home may next change (ms), or null for now: SETTLE_EVERY_MS after the last change (the first is free). */
+  settleNext(): number | null {
+    const at = this.meta.homeAt;
+    return at !== undefined && Date.now() < at + SETTLE_EVERY_MS ? at + SETTLE_EVERY_MS : null;
+  }
+
+  async settle(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (request.method === "POST") {
+      const no = await this.keyRefusal(q.get("key") || "", ip);
+      if (no) return settleAnswer({ error: no[1] }, no[0], false);
+      const code = settleCode(), life = (parseFloat(this.env.SETTLE_CODE_SECONDS || "") * 1000) || SETTLE_CODE_MS;
+      const expires = Date.now() + life;
+      this.meta.settle = { hash: await this.hash(code), expires };
+      this.saveMeta();
+      return settleAnswer({ code, expires }, 200, false);
+    }
+    const raw = q.get("code") || "";
+    const no = this.codeRefusal(SETTLE_CODE.test(raw) ? await this.hash(raw) : null);
+    if (no) return settleAnswer({ error: no }, 403, true);
+    return settleAnswer({ channel: this.name, home: this.meta.home ?? null, next: this.settleNext() }, 200, true);
+  }
+
+  async home(request: Request): Promise<Response> {
+    let body: unknown = null;
+    try { body = JSON.parse(await request.text()); } catch { /* (settleWanted says so) */ }
+    const raw = body && typeof body === "object" && typeof (body as { code?: unknown }).code === "string" ? (body as { code: string }).code : "";
+    const h = SETTLE_CODE.test(raw) ? await this.hash(raw) : null;
+    let no = this.codeRefusal(h);
+    if (no) return settleAnswer({ error: no }, 403, true);
+    const wanted = settleWanted(body);
+    if ("error" in wanted) return settleAnswer({ error: wanted.error }, 400, true);
+    const home = wanted.home;
+    if (home && "near" in home) {
+      if (home.near === this.name) return settleAnswer({ error: "that's your own outstation" }, 400, true);
+      let given: boolean;
+      try {
+        this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+        const r = await this.directory.fetch("https://dir/given?name=" + encodeURIComponent(home.near));
+        given = ((await r.json()) as { given: boolean }).given === true;
+      } catch {
+        return settleAnswer({ error: "the relay couldn't look for that outstation just then: try again" }, 503, true);
+      }
+      if (!given) return settleAnswer({ error: "no outstation called that here" }, 400, true);
+      // (asked again: another settle with this code may have come in while the Directory was asked)
+      if ((no = this.codeRefusal(h))) return settleAnswer({ error: no }, 403, true);
+    }
+    // a settle that changes nothing (the same place, the same outstation, or clear with none) isn't a change: it's let
+    // through whenever it comes, and the next change is no later for it
+    const same = JSON.stringify(home) === JSON.stringify(this.meta.home ?? null);
+    const next = this.settleNext();
+    if (!same && next !== null) {
+      return settleAnswer({ error: `one move every ${SETTLE_EVERY_MS / 86_400_000} days: try again later`, next }, 429, true);
+    }
+    this.meta.settle!.used = true;
+    if (!same) {
+      this.meta.home = home;
+      this.meta.homeAt = Date.now();
+    }
+    this.saveMeta();
+    if (!same) await this.tellListingNow();
+    return settleAnswer({ home: this.meta.home ?? null, next: this.settleNext() }, 200, true);
+  }
+
+  /** This channel's row told to the Directory now, and waited for (a settle: so GET /channels has the new home by the
+   *  time the page's answered). tellListing's, without its wait. */
+  async tellListingNow() {
+    if (!this.name) return;
+    const row = this.listing();
+    this.listingRow = JSON.stringify({ ...row, at: 0 });
+    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+    try {
+      const r = await this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) });
+      if (!r.ok) this.listingRow = "";
+    } catch {
+      this.listingRow = ""; // (told again at the next change; and the Directory asks a row it hasn't had in a while)
+    }
+  }
+
   // Jace's admin (index.ts checks the admin token before it reaches here)
 
   // (onlyNew: an invite's, which never takes a channel that has a key already, whatever the Directory says)
@@ -1527,6 +1641,7 @@ export class Channel extends DurableObject<Env> {
     const bytes = crypto.getRandomValues(new Uint8Array(18));
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);
+    delete this.meta.settle; // (a settling code the old key got: it's not the new key's; the home stays, as "by" does)
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel has a new key");
@@ -1538,6 +1653,9 @@ export class Channel extends DurableObject<Env> {
 
   async revoke(): Promise<Response> {
     this.meta.keyHash = null;
+    delete this.meta.home; // (settling: its home, when it changed, and any code, forgotten)
+    delete this.meta.homeAt;
+    delete this.meta.settle;
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel was taken back");

@@ -9,6 +9,7 @@ It uses WebSocket Hibernation. A channel that's off air, with only viewers and t
 - the reports, the stream's summary and each boss's last kill count
 - the version that last transmitted, the time on air by month, and in all (for invites)
 - the names it has invited
+- where it's settled on outside.wiki's globe and when that last changed, and the app's settling code (its SHA-256) while it lasts (11/08/2026, `src/settle.ts`)
 - the game state the Outside plugin last sent (11/07/2026), saved at most once a minute while it sends and when it goes
 - messages held for the outstation, and the list of its clips (the clips' files are in R2)
 
@@ -44,6 +45,8 @@ The Outside plugin (a RuneLite plugin of our own, 11/07/2026) sends the player's
 
 Each outstation can hand out channels too (invites, since 11/07/2026): three to begin with and one more every 10 hours on air, through `GET`/`POST /invites/<channel>` with its own key (`../docs/protocol.md`, "Invites"). Each channel's row in `GET /admin/channels` says whose invite it came from (`by`, `null` for yours).
 
+Each outstation can choose where it stands on outside.wiki's globe (settling, since 11/08/2026): its app trades the key for a one-time code with `POST /settle/<channel>?key=`, and the globe page checks it (`GET /settle/<channel>?code=`) and settles with it (`POST /home/<channel>`), once a week after the first (`src/settle.ts`; `../docs/protocol.md`, "Settling"). The home shows in `GET /channels`, and in `GET /admin/channels` with when it changed (`homeAt`).
+
 ## On Cloudflare
 
 These are done once, by the account's owner:
@@ -72,3 +75,4 @@ The `vars` in `wrangler.jsonc`:
 - `MIN_CLIENT`: the oldest client let in (e.g. "0.2.0"; "" lets every version in). Older clients are turned away with 4026 and told to get a newer one (`../docs/protocol.md`, "The client's version"). Look at `GET /admin/channels` first: each channel's `client` is the version that last transmitted on it.
 - `OPEN_CLAIM`: "1" lets the first transmitter claim a channel, as `relay.py` does. For local tests only; never on Cloudflare.
 - `POLL_MIN_SECONDS`, `POLL_KEPT_SECONDS`: shorter polls, for the tests.
+- `SETTLE_CODE_SECONDS`: how long a settling code lasts (600 when unset), shorter for the tests.

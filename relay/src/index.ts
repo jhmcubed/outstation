@@ -63,6 +63,13 @@
 // "+1"; array.ts): a kill, a level, a pet, a big drop, a log slot or a clue, from each open outstation's field reports
 // while it's live, kept in the Directory's memory (the last 500; one channel adds 10 a minute at most):
 //   GET    /array/events?since=<cursor>   {"events": [{"id", "at", "channel", "kind", ...}], "next": <cursor>}
+//
+// Settling (11/08/2026; settle.ts): where an outstation stands on outside.wiki's globe, chosen by its owner. The app
+// trades its key for a one-time code; the globe page, opened with only the code, checks it and settles with it:
+//   POST   /settle/<channel>?key=<key>&v=<version>   {"code", "expires"} (no CORS: the app's)
+//   GET    /settle/<channel>?code=<code>             {"channel", "home", "next"}
+//   POST   /home/<channel>  {"code", "lon", "lat"} | {"code", "near"} | {"code", "clear": true}   {"home", "next"}
+// The home shows in each row of GET /channels, and the keeper's GET /admin/channels has it with when it changed (homeAt).
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
@@ -70,6 +77,7 @@ import { Aether } from "./aether";
 import { type ArrayEvent, ArrayFeed, arrayAnswer, arraySince } from "./array";
 import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, relayOf } from "./text";
+import { SETTLE_BODY, settleAnswer, settlePreflight } from "./settle";
 
 export { Channel, Aether };
 
@@ -155,6 +163,8 @@ export class Directory extends DurableObject<Env> {
       const form = url.searchParams.get("name") || "";
       return Response.json({ taken: [...(await this.givenNames()).keys()].some((n) => n.toLowerCase() === form) });
     }
+    // settling's (11/08/2026, channel.ts's home): whether an outstation to settle beside is a channel handed out
+    if (url.pathname === "/given") return Response.json({ given: (await this.givenNames()).has(name) });
     if (url.pathname === "/notice") {
       if (request.method === "PUT") {
         const { text } = (await request.json()) as { text: string };
@@ -209,7 +219,8 @@ export class Directory extends DurableObject<Env> {
     }));
     const open = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set && !r.code)
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
-                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game }));
+                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game,
+                     home: r.home ?? null }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     return new Response(JSON.stringify({ channels: open }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-cache" } });
   }
@@ -420,9 +431,11 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     const rows = await Promise.all(given.map(async (c) => {
       try {
         const r = await channelStub(env, c.channel).fetch(toChannel(new Request(request.url), c.channel, "/_status"));
-        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number };
-        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0 };
-      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0 }; } // (c: channel, since, by)
+        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number;
+                                         home?: unknown; homeAt?: number | null };
+        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0,
+                 home: st.home ?? null, homeAt: st.homeAt ?? null };
+      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0, home: null, homeAt: null }; } // (c: channel, since, by)
     }));
     return Response.json(rows);
   }
@@ -521,6 +534,22 @@ export default {
       const raw = await request.text();
       if (raw.length > 4096) return Response.json({ error: "an invite is a key and a name" }, { status: 413 });
       return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST", headers: request.headers, body: raw }), name, "/_invites"));
+    }
+
+    // settling (11/08/2026; settle.ts): the app's key for a code (POST /settle), and the globe page's check (GET /settle)
+    // and settle (POST /home) with it, all in the channel. The page's are on another origin, with a JSON body: they answer
+    // its preflight, and carry CORS whatever they answer. The app's has none: a page never has the key.
+    if ((parts[0] === "settle" || parts[0] === "home") && parts.length === 2) {
+      const name = parts[1], settle = parts[0] === "settle", page = !(settle && request.method === "POST");
+      if (request.method === "OPTIONS") return settlePreflight();
+      if (!NAME.test(name)) return settleAnswer({ error: "which outstation?" }, 400, page);
+      if (request.method !== "POST" && !(settle && request.method === "GET")) return settleAnswer(null, 405, page);
+      const n = parseInt(request.headers.get("content-length") || "0") || 0, big = { error: "a settle is 2 KB at most" };
+      if (n > SETTLE_BODY) return settleAnswer(big, 413, page);
+      if (settle) return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: request.method, headers: request.headers }), name, "/_settle"));
+      const raw = await request.arrayBuffer();
+      if (raw.byteLength > SETTLE_BODY) return settleAnswer(big, 413, page);
+      return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST", headers: request.headers, body: raw }), name, "/_home"));
     }
 
     // the Array's events (11/08/2026; array.ts): what's happening across the open outstations, for outside.wiki's front

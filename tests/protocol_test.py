@@ -43,6 +43,9 @@ MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.
 AETHER_KEEPER = WORKER or MODE == "python"
 SAY_BURST = 20
 SOUND_HOLD = 0.5
+# how long a settling code lasts on the relays under test (11/08/2026: 10 minutes as they're run, shortened here so a code
+# can be seen to expire; a relay already running: whatever it was started with, given here)
+SETTLE_CODE_S = float(os.environ.get("SETTLE_CODE_SECONDS") or (600 if MODE.startswith("ws") else 3))
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
@@ -86,14 +89,16 @@ def setUpModule():
         PROC = subprocess.Popen(
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
-             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR)],
+             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
+             "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
     else:
         STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN],
+                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
+                                 "--settle-code-seconds", "%g" % SETTLE_CODE_S],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -1910,6 +1915,258 @@ class Invites(Base):
     async def test_z_past_five_posts_an_hour_wait(self):
         codes = [self.invite("i" + secrets.token_hex(5))[0] for _ in range(6)]
         self.assertEqual(codes, [200, 200, 200, 409, 409, 429])
+
+
+def settle_http(method, path, body=None, raw=None):
+    """(status, headers, JSON or None) from settling's routes, as the outstation app or the globe page calls them."""
+    data = raw if raw is not None else json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    req = urllib.request.Request(http_url() + path, method=method, data=data,
+                                 headers={"Content-Type": "application/json"} if data else {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            got = r.read()
+            return r.status, r.headers, json.loads(got) if got else None
+    except urllib.error.HTTPError as e:
+        got = e.read()
+        try:
+            return e.code, e.headers, json.loads(got) if got else None
+        except ValueError:
+            return e.code, e.headers, None
+
+
+SETTLE_CORS = {"access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
+               "access-control-allow-headers": "content-type"}
+WEEK_MS = 7 * 86400 * 1000
+
+
+class Settling(Base):
+    """Settling (11/08/2026): where an outstation stands on outside.wiki's globe. The app trades its key for a one-time
+    code (POST /settle), the globe page checks it (GET /settle) and settles with it, once (POST /home): a place, beside an
+    outstation, or back to the default. The first change is free, then one every 7 days; the home shows in GET /channels.
+    A code lasts SETTLE_CODE_S here (10 minutes on a relay as it's run). The 7 days are the relays' own: what's after
+    them is relay-py/test_relay.py's."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        if not WORKER:
+            await self.claim(self.ch, self.key)    # (relay.py: a channel is handed out once its first transmitter claims it)
+
+    async def claim(self, ch, key):
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, ch, key))
+        await next_of(tx, "relay")
+        tx.close()
+        await self.pause(2)
+
+    async def other(self):
+        """Another outstation and its key: handed out by the keeper (the Worker), or claimed (relay.py)."""
+        ch = "t" + secrets.token_hex(5)
+        if WORKER:
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+            self.assertEqual(status, 200)
+            return ch, got["key"]
+        key = "secret-key-" + secrets.token_hex(4)
+        await self.claim(ch, key)
+        return ch, key
+
+    def code(self, key=None, ch=None):
+        """The app's ask: (status, headers, answer)."""
+        return settle_http("POST", "/settle/%s?key=%s&v=0.9.0" % (ch or self.ch, key or self.key))
+
+    def fresh(self, key=None, ch=None):
+        status, _, got = self.code(key, ch)
+        self.assertEqual(status, 200, got)
+        return got["code"]
+
+    def check(self, code, ch=None):
+        return settle_http("GET", "/settle/%s?code=%s" % (ch or self.ch, urllib.parse.quote(code)))
+
+    def home(self, body, ch=None):
+        """The page's settle: (status, headers, answer). (Not settle: Base's settle is a time.)"""
+        return settle_http("POST", "/home/" + (ch or self.ch), body)
+
+    def cors(self, headers):
+        return {k: headers.get(k) for k in SETTLE_CORS}
+
+    async def test_the_key_gets_a_code_the_page_can_check_without_using_it_up(self):
+        before = time.time() * 1000
+        status, h, got = self.code()
+        after = time.time() * 1000
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(got), ["code", "expires"])
+        self.assertRegex(got["code"], r"^[a-z0-9]{12}$")
+        life = SETTLE_CODE_S * 1000
+        self.assertTrue(before + life - 2000 <= got["expires"] <= after + life + 2000, got["expires"] - before)
+        self.assertIsNone(h.get("access-control-allow-origin"))              # (the app's: no page may read it)
+        for _ in range(2):
+            status, h, st = self.check(got["code"])
+            self.assertEqual((status, st), (200, {"channel": self.ch, "home": None, "next": None}))
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        self.assertNotEqual(self.fresh(), got["code"])
+
+    async def test_a_bad_key_and_a_channel_nobody_has_are_refused(self):
+        status, h, got = self.code(key="not-the-key-at-all")
+        self.assertEqual((status, got["error"]), (403, "wrong key for this channel"))
+        self.assertIsNone(h.get("access-control-allow-origin"))
+        status, _, got = self.code(key="short")
+        self.assertEqual((status, got["error"]), (403, "a transmit key needs at least 8 characters"))
+        status, _, got = self.code(ch="none" + secrets.token_hex(4))
+        self.assertEqual((status, got["error"]), (404, "no outstation called that here"))
+        status, _, got = self.code(ch="not%20one")
+        self.assertEqual((status, got["error"]), (400, "which outstation?"))
+        self.assertEqual(self.check(self.fresh())[0], 200)                   # (the right key still does)
+
+    @unittest.skipUnless(WORKER, "the wrong-key limit: the Worker only")
+    async def test_past_ten_wrong_keys_a_minute_even_the_right_one_waits(self):
+        self.assertEqual([self.code(key="wrong-key-%s" % secrets.token_hex(3))[0] for _ in range(10)], [403] * 10)
+        status, _, got = self.code()
+        self.assertEqual((status, got["error"]), (403, "too many wrong keys: try again in a minute"))
+
+    async def test_a_wrong_or_replaced_code_is_refused(self):
+        first = self.fresh()
+        for bad in ("abcdefghijkl" if first != "abcdefghijkl" else "bcdefghijklm", "", "short", first.upper(),
+                    first + "x"):
+            status, h, got = self.check(bad)
+            self.assertEqual((status, got["error"]), (403, "wrong code: open settling again from your outstation"), bad)
+            self.assertEqual(self.cors(h), SETTLE_CORS)
+        second = self.fresh()                                                # (asked again: the first stops working)
+        self.assertEqual(self.check(first)[0], 403)
+        self.assertEqual(self.home({"code": first, "lon": 1, "lat": 1})[0], 403)
+        self.assertEqual(self.check(second)[0], 200)
+        self.assertEqual(self.check(second, ch="none" + secrets.token_hex(4))[0], 403)   # (not that channel's)
+        other, key = await self.other()
+        self.assertEqual(self.check(second, ch=other)[0], 403)
+        self.assertEqual(self.check(self.fresh(key, other), ch=other)[0], 200)   # (each channel has its own)
+        self.assertEqual(self.check(second)[0], 200)
+
+    @unittest.skipIf(SETTLE_CODE_S > 10, "a relay already running keeps its codes ten minutes")
+    async def test_an_expired_code_is_refused(self):
+        code = self.fresh()
+        self.assertEqual(self.check(code)[0], 200)
+        await asyncio.sleep(SETTLE_CODE_S + 0.3)
+        status, _, got = self.check(code)
+        self.assertEqual((status, got["error"]), (403, "that code has expired: open settling again from your outstation"))
+        self.assertEqual(self.home({"code": code, "lon": 10, "lat": 10})[0], 403)
+        self.assertEqual(self.home({"code": self.fresh(), "lon": 10, "lat": 10})[0], 200)   # (a new one does)
+
+    async def test_a_place_is_kept_to_two_decimals_and_the_code_used_up(self):
+        code = self.fresh()
+        before = time.time() * 1000
+        status, h, got = self.home({"code": code, "lon": -122.4567, "lat": 0.125})
+        after = time.time() * 1000
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(got), ["home", "next"])
+        self.assertEqual(got["home"], {"lon": -122.46, "lat": 0.13})          # (a half goes up, as JavaScript rounds)
+        self.assertTrue(before + WEEK_MS - 2000 <= got["next"] <= after + WEEK_MS + 2000)
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        status, _, again = self.check(code)
+        self.assertEqual((status, again["error"]), (403, "that code's been used: open settling again from your outstation"))
+        self.assertEqual(self.home({"code": code, "lon": 1, "lat": 1})[0], 403)
+        status, _, st = self.check(self.fresh())
+        self.assertEqual((status, st), (200, {"channel": self.ch, "home": {"lon": -122.46, "lat": 0.13}, "next": got["next"]}))
+
+    async def test_the_first_change_is_free_then_one_every_seven_days_and_a_clear_counts(self):
+        status, _, got = self.home({"code": self.fresh(), "clear": True})    # (no home to clear: nothing changes)
+        self.assertEqual((status, got), (200, {"home": None, "next": None}))
+        status, _, first = self.home({"code": self.fresh(), "lon": 10, "lat": 20})    # (so this is still the first)
+        self.assertEqual((status, first["home"]), (200, {"lon": 10, "lat": 20}))
+        code = self.fresh()
+        status, h, got = self.home({"code": code, "lon": 11, "lat": 20})
+        self.assertEqual((status, got["next"], got["error"]), (429, first["next"], "one move every 7 days: try again later"))
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        status, _, got = self.home({"code": code, "clear": True})
+        self.assertEqual((status, got["next"]), (429, first["next"]))
+        other, _ = await self.other()
+        self.assertEqual(self.home({"code": code, "near": other})[0], 429)
+        self.assertEqual(self.check(code)[2]["next"], first["next"])          # (refused: the code's still good)
+        status, _, got = self.home({"code": code, "lon": 10.001, "lat": 19.999})    # (the same place: no change)
+        self.assertEqual((status, got), (200, {"home": {"lon": 10, "lat": 20}, "next": first["next"]}))
+        self.assertEqual(self.check(code)[0], 403)
+
+    async def test_beside_an_outstation_and_the_home_in_the_open_outstations(self):
+        other, key = await self.other()
+        third, _ = await self.other()
+        status, h, got = self.home({"code": self.fresh(), "near": other})
+        self.assertEqual((status, got["home"]), (200, {"near": other}))
+        self.assertEqual(self.home({"code": self.fresh(key, other), "lon": -45.5, "lat": 60.25}, ch=other)[0], 200)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        self.assertEqual(rows[self.ch]["home"], {"near": other})
+        self.assertEqual(rows[other]["home"], {"lon": -45.5, "lat": 60.25})
+        self.assertIsNone(rows[third]["home"])
+        status, _, st = self.check(self.fresh())
+        self.assertEqual(st["home"], {"near": other})
+
+    async def test_bad_places_and_outstations_are_refused_and_leave_the_code(self):
+        code = self.fresh()
+        place, one = "lon is a number from -180 to 180", "one of a place (lon and lat), an outstation (near) or clear"
+        for body, why in [({"lon": 180.01, "lat": 0}, place), ({"lon": -181, "lat": 0}, place),
+                          ({"lon": "12", "lat": 0}, place), ({"lon": True, "lat": 0}, place),
+                          ({"lon": None, "lat": 0}, place), ({"lat": 0}, place), ({"lon": 1e400, "lat": 0}, place),
+                          ({"lon": 0, "lat": 85.5}, "lat is a number from -85 to 85"),
+                          ({"lon": 0, "lat": -86}, "lat is a number from -85 to 85"),
+                          ({"lon": 0}, "lat is a number from -85 to 85"),
+                          ({"near": "none" + secrets.token_hex(4)}, "no outstation called that here"),
+                          ({"near": "not one"}, "no outstation called that here"),
+                          ({"near": 12}, "no outstation called that here"),
+                          ({"near": self.ch}, "that's your own outstation"),
+                          ({}, one), ({"lon": 0, "lat": 0, "near": self.ch}, one), ({"clear": True, "lat": 0}, one),
+                          ({"clear": False}, "clear is true"), ({"clear": 1}, "clear is true")]:
+            raw = json.dumps(dict(body, code=code)).replace("Infinity", "1e400").encode()
+            status, h, got = settle_http("POST", "/home/" + self.ch, raw=raw)
+            self.assertEqual((status, got and got.get("error")), (400, why), body)
+            self.assertEqual(self.cors(h), SETTLE_CORS)
+        for raw in (b"not json", b'["a", "list"]', b'{"lon": 1, "lat": 2}', b""):     # (no code in any of them)
+            self.assertEqual(settle_http("POST", "/home/" + self.ch, raw=raw)[0], 403, raw)
+        self.assertEqual(self.check(code)[0], 200)                            # (none of them used it up)
+        status, _, got = self.home({"code": code, "lon": 180, "lat": -85})   # (the edges are in)
+        self.assertEqual((status, got["home"]), (200, {"lon": 180, "lat": -85}))
+
+    async def test_the_pages_routes_answer_its_preflight_and_any_page_may_read_them(self):
+        for path in ("/settle/" + self.ch, "/home/" + self.ch):
+            status, h, _ = settle_http("OPTIONS", path)
+            self.assertEqual((status, self.cors(h)), (204, SETTLE_CORS), path)
+        code = self.fresh()
+        answers = [self.check(code), self.check("wrongwrongwr"), self.home({"code": code, "lon": 999, "lat": 0}),
+                   self.home({"code": "wrongwrongwr", "lon": 0, "lat": 0}), self.home({"code": code, "lon": 1, "lat": 2}),
+                   settle_http("PUT", "/home/" + self.ch, {"code": code}), settle_http("GET", "/home/" + self.ch),
+                   settle_http("DELETE", "/settle/" + self.ch), self.check(code, ch="not%20one")]
+        self.assertEqual([a[0] for a in answers], [200, 403, 400, 403, 200, 405, 405, 405, 400])
+        for status, h, _ in answers:
+            self.assertEqual(self.cors(h), SETTLE_CORS, status)
+        for status, h, _ in (self.code(), self.code(key="not-the-key-at-all")):    # (the app's: none)
+            self.assertIsNone(h.get("access-control-allow-origin"), status)
+
+    async def test_a_body_past_2_kb_is_refused(self):
+        code = self.fresh()
+        body = {"code": code, "lon": 1, "lat": 2, "pad": ""}
+        body["pad"] = "x" * (2049 - len(json.dumps(body)))
+        status, h, got = settle_http("POST", "/home/" + self.ch, raw=json.dumps(body).encode())
+        self.assertEqual((status, got["error"]), (413, "a settle is 2 KB at most"))
+        self.assertEqual(self.cors(h), SETTLE_CORS)
+        body["pad"] = body["pad"][1:]                                          # (2,048 bytes: read)
+        self.assertEqual(len(json.dumps(body).encode()), 2048)
+        status, _, got = self.home(body)
+        self.assertEqual((status, got["home"]), (200, {"lon": 1, "lat": 2}))
+
+    @unittest.skipUnless(WORKER, "a new key and taking back: the keeper's, the Worker only")
+    async def test_a_new_key_keeps_the_home_and_taking_back_forgets_it_and_the_code(self):
+        before = time.time() * 1000
+        self.assertEqual(self.home({"code": self.fresh(), "lon": 5, "lat": 6})[0], 200)
+        row = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]
+        self.assertEqual(row["home"], {"lon": 5, "lat": 6})
+        self.assertTrue(before - 2000 <= row["homeAt"] <= time.time() * 1000 + 2000)
+        waiting = self.fresh()
+        status, got = admin("POST", "/admin/channels/" + self.ch)           # (a new key: the old key's code goes)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.check(waiting)[0], 403)
+        self.assertEqual(self.check(self.fresh(got["key"]))[2]["home"], {"lon": 5, "lat": 6})
+        waiting = self.fresh(got["key"])
+        self.assertEqual(admin("DELETE", "/admin/channels/" + self.ch)[0], 204)
+        self.assertEqual(self.check(waiting)[0], 403)
+        self.assertEqual(self.code(key=got["key"])[0], 404)
+        status, got = admin("POST", "/admin/channels/" + self.ch)           # (handed out again: from nothing)
+        self.assertEqual(self.check(self.fresh(got["key"]))[2], {"channel": self.ch, "home": None, "next": None})
+        row = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]
+        self.assertEqual((row["home"], row["homeAt"]), (None, None))
 
 
 class Aether(Base):
