@@ -83,4 +83,21 @@ public interface OutsideConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigItem(
+		keyName = "follow",
+		name = "Follow me on the globe",
+		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe travels to the rough area"
+			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
+			+ " your outstation's transmitting. Never in the Wilderness, a PvP area, on a PvP or Deadman world or in an"
+			+ " instance: there, what was sent is cleared at once.",
+		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
+			+ " your outstation's relay, a server not controlled or verified by the RuneLite developers, at most once a"
+			+ " minute, and anyone who opens outside.wiki's globe can see it while your outstation's transmitting.",
+		position = 6
+	)
+	default boolean follow()
+	{
+		return false;
+	}
 }

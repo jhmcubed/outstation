@@ -94,6 +94,8 @@ public class OutsidePlugin extends Plugin
 
 	/** only on the client's thread (the ticks); a new connection asks for everything again through `resend` */
 	private final Kit kit = new Kit();
+	/** following, likewise only on the client's thread */
+	private final Follow follow = new Follow();
 	private volatile boolean resend;
 	/** sending held while somewhere dangerous (the Wilderness, a PvP world), and said so once */
 	private boolean paused;
@@ -146,6 +148,12 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged e)
 	{
+		if (e.getGameState() == GameState.LOGIN_SCREEN)
+		{
+			// (logged out: the relay drops the area with the rest; next time, the two minutes start again)
+			follow.forget();
+			follow.clear();
+		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN && open)
 		{
 			JsonObject off = new JsonObject();
@@ -162,14 +170,26 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
-		if (!open || client.getGameState() != GameState.LOGGED_IN)
+		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
 		}
-		if (resend)
+		if (open && resend)
 		{
 			resend = false;
 			kit.forget();
+			follow.again();
+		}
+		// (following: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
+		// somewhere dangerous clears it at once, before anything else)
+		JsonObject where = follow();
+		if (!open)
+		{
+			return;
+		}
+		if (where != null)
+		{
+			send(where);
 		}
 		// (somewhere dangerous: nothing more goes till they're out, unless they've said otherwise, so nobody
 		// watching their page sees what they risk)
@@ -336,6 +356,25 @@ public class OutsidePlugin extends Plugin
 			qs[i] = client.getVarbitValue(amounts[i]);
 		}
 		return Kit.items(ids, qs);
+	}
+
+	/** Following's tick (Follow): what to send, or null. Off, what was sent goes once and nothing's kept. */
+	private JsonObject follow()
+	{
+		if (!config.follow())
+		{
+			JsonObject gone = follow.clear();
+			follow.forget();
+			return gone;
+		}
+		Player me = client.getLocalPlayer();
+		WorldPoint at = me == null ? null : me.getWorldLocation();
+		if (at == null)
+		{
+			return null;
+		}
+		boolean safe = !dangerous() && !client.getTopLevelWorldView().isInstance();
+		return follow.tick(System.currentTimeMillis(), at.getX(), at.getY(), safe);
 	}
 
 	/** In the Wilderness, a PvP area, or on a PvP or Deadman world (read here, never sent). */

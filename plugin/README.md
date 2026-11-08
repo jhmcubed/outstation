@@ -18,8 +18,9 @@ To your relay (Jace's, on Cloudflare, unless your key says another), over one co
 - **skills** (one switch): each skill's level, boosted level and experience
 - **hitpoints, prayer, run and special** (one switch), and which prayers are on
 - that you've logged out
+- **follow me on the globe** (one switch, off to begin with, behind its own warning; 11/08/2026): the rough area you were in two minutes ago, for your outstation's light on outside.wiki's globe to travel to. Only a square of the map about 128 tiles a side (the middle of the square, never your tile), at most once a minute (the same square again every 3 minutes while you stay in it). Never in the Wilderness, a PvP area, on a PvP or Deadman world, or in an instance (raids, boss rooms): the moment you're in one, the area already sent is cleared, and nothing goes again till you've been clear of it two whole minutes. Nowhere off the main map (an underground area counts as the square above it). Your relay shows it only while your outstation's transmitting and open, and drops it when you log out.
 
-Only what changed goes, at most once a game tick (hitpoints and the like alone, at most every 3 seconds). In the Wilderness, a PvP area, or on a PvP or Deadman world, nothing more goes till you're out ("In the Wilderness too" turns that off, behind a warning), so nobody watching your page sees what you risk; your page says it's paused. Never: your screen, your chat, where you are, your bank, other players, anything you type. Your page shows what was sent to anyone who opens it, as your transmission is.
+Only what changed goes, at most once a game tick (hitpoints and the like alone, at most every 3 seconds). In the Wilderness, a PvP area, or on a PvP or Deadman world, nothing more goes till you're out ("In the Wilderness too" turns that off, behind a warning), so nobody watching your page sees what you risk; your page says it's paused. Never: your screen, your chat, the tile you're on (only the rough area, two minutes late, and only with following on), your bank, other players, anything you type. Your page shows what was sent to anyone who opens it, as your transmission is.
 
 ## Trying it before the Hub
 
@@ -51,7 +52,8 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
 - **The third-party warning:** on the "Send to my outstation" setting (`@ConfigItem(warning = …)`), and for the Hub's manifest (below).
 - **Jagex's rules and the rejected list:**
   - It changes nothing in the game or RuneLite: no overlays, no menu entries, no input, no chat typed.
-  - It reads only the player's own character: nothing about other players ("crowdsourcing" is on the rejected list), no location sent.
+  - It reads only the player's own character: nothing about other players ("crowdsourcing" is on the rejected list).
+  - Location: none, unless the player switches on "Follow me on the globe" (off to begin with, behind its own warning). Then only a 128-tile square of the main map, two minutes late, at most once a minute, cleared at once and held for two minutes in the Wilderness, PvP areas and worlds, Deadman worlds and instances. RuneLite's own Party plugin shares more (exact tiles, live, with the party's members); this is coarser and later, but public, so it may still be a question for the reviewers: `Follow.java` holds every rule, and `FollowTest` checks them.
   - It runs no server and exposes nothing over HTTP from the PC ("plugins which expose player information over HTTP" are rejected): it sends to the player's own outstation's relay, as RuneProfile and Wise Old Man's plugins send to theirs.
   - It's free, with nothing behind a paid service.
   - In the Wilderness, a PvP area, or on a PvP or Deadman world, it stops sending (unless the player turns "In the Wilderness too" on, behind its own warning), so nobody watching can see what a player risks.
@@ -61,6 +63,6 @@ The manifest, `plugins/outside` in runelite/plugin-hub, once the plugin has a re
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
 commit=<the full commit hash>
-warning=This plugin submits your equipment, inventory, looting bag, rune pouch, skills and vitals, and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page shows them publicly.
+warning=This plugin submits your equipment, inventory, looting bag, rune pouch, skills and vitals, the rough area you were in two minutes ago if you switch following on, and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page shows them publicly.
 ```
 
