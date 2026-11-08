@@ -19,6 +19,8 @@ The Aether (one object for the whole relay, `src/aether.ts`, since 11/07/2026) i
 
 It also answers `GET /channels`, the open portals' list, from what each channel has told it (in memory only). A channel tells the Directory its row whenever the row changes: live, the picture, viewers, title, what it's doing. A row the Directory hasn't heard (after it slept), or hasn't heard for 5 minutes, it asks that channel for. So a read costs one request, however many channels there are. Before 11/07/2026, every read asked every channel and woke each one. An invite not taken up yet (its key never used) tells it only that, and is counted under its inviter in the list's `pending`, never named (11/08/2026).
 
+It keeps the shooting stars too (11/08/2026, `src/stars.ts`): the crashed stars the Outside plugins have found, one for each world and 128-tile square, with nobody's name on them, for `GET /stars` (outside.wiki's globe). A channel passes on each report its plugin sends; the Directory counts 30 an hour from one channel at most and keeps each star two hours at most, or till it's told gone. In memory only, like the Array's events (`../docs/protocol.md`, "Shooting stars").
+
 It keeps the Array's events too (11/08/2026, `src/array.ts`): the last 500 kills, levels, pets, big drops, log slots and clues across the open outstations, for `GET /array/events` (outside.wiki's front page). A channel tells it each report's events while it's live with no watch code; it drops what's past 10 a minute from one channel. They're in memory only, so the feed starts empty whenever the Directory's evicted (`../docs/protocol.md`, "The Array's events").
 
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
@@ -78,4 +80,4 @@ The `vars` in `wrangler.jsonc`:
 - `OPEN_CLAIM`: "1" lets the first transmitter claim a channel, as `relay.py` does. For local tests only; never on Cloudflare.
 - `POLL_MIN_SECONDS`, `POLL_KEPT_SECONDS`: shorter polls, for the tests.
 - `SETTLE_CODE_SECONDS`: how long a settling code lasts (600 when unset), shorter for the tests.
-- `WHERE_FRESH_SECONDS`: how long a player's square (following) shows on `GET /channels` after the plugin said it (240 when unset), shorter for the tests.
+- `WHERE_FRESH_SECONDS`: how long a player's square (following, and its world) and what they're doing show on `GET /channels` after the plugin said them (240 when unset), shorter for the tests.

@@ -105,7 +105,7 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); this list is the only place it's ever shown. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown; the shooting stars the plugins find have a list of their own, with nobody's name (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
 `pending` (11/08/2026, for outside.wiki's globe: a key beside an inviter for each invite still waiting) counts the invites not taken up yet: one entry per inviter with any, `n` how many, sorted by `by`; `[]` for none. Readers from before it ignore it.
 - An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips, invites or settling. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
@@ -247,6 +247,8 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
 - `where` (11/08/2026, following): not one of the game's fields, and never kept or sent with them (below, "Following").
+- `activity` (11/08/2026, what they're doing): the same (below, "What they're doing").
+- `star` (11/08/2026, a shooting star they found): the same (below, "Shooting stars").
 
 Each field given replaces the one kept, whole; `items` is merged instead (a name and a price for each id). Checked
 loosely:
@@ -271,7 +273,13 @@ player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle 
 it: sent at once on going into the Wilderness, a PvP area or world, Deadman or an instance, and when following's
 switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
 `Channel.take_where`).
-- A `where` that isn't `null` must be an object with exactly `x` and `y`, each a whole number `k*128 + 64`, `x` from
+- **Which world** (11/08/2026): with the plugin's "and my world" on as well as following, `where` carries the world the
+  player was on with the square, from the same moment two minutes before: `{"x", "y", "world"}`. Never on its own,
+  never from a PvP, Deadman or other dangerous world (the plugin clears `where` there, as anywhere dangerous), and
+  switching "and my world" off clears `where` at once. `world` is a whole number from 1 to 999 (`WORLD_RANGE`): RuneLite
+  has reported 301 and up for years, and the range takes lower numbers too in case Jagex numbers worlds from 1. Anything
+  else in it (0, 1000, `"302"`, `true`, another key) and the whole `where` is ignored.
+- A `where` that isn't `null` must be an object with exactly `x` and `y` (and `world`, above), each a whole number `k*128 + 64`, `x` from
   1024 up to (not including) 4096 and `y` from 2496 up to 4224; or exactly `{"x": 2368, "y": 4416}`, Zanaris
   (`WHERE_ZANARIS`, 11/08/2026: the plugin sends any tile there, x 2368–2495 and y 4352–4479, as that one place, and
   the globe draws it on its moon). Anything else is ignored, Zanaris's neighbouring squares included, and the rest of
@@ -288,6 +296,46 @@ switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `t
   watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
   Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
   desks, the whole state someone just come gets, `GET /game`, the Array's events, the aether or the keeper's list.
+
+**What they're doing** (11/08/2026, Jace's choice for the globe: the light's mood). With the plugin's "What I'm doing,
+on the globe" on (off to begin with; it doesn't need following), it sends what the player was doing two minutes
+before, as `{"game": {"activity": {...}}}`, one of exactly these:
+
+| `activity` | when |
+|---|---|
+| `{"kind": "skilling", "skill": "<skill>"}` | the skill of the player's own latest experience drop, within about a minute (one of `ACTIVITY_SKILLS`: RuneLite's skill names, `Agility` to `Woodcutting` and `Sailing`; not the total) |
+| `{"kind": "boss", "boss": "<boss>"}` | a fight with a boss: the NPC they're attacking, or one attacking them, is on the plugin's list (one of `ACTIVITY_BOSSES`, below) |
+| `{"kind": "fighting"}` | a fight with anything else (a hit theirs or on them within 15 seconds) |
+| `{"kind": "idle"}` | none of those |
+
+The bosses (`ACTIVITY_BOSSES`; the plugin's `Activity.BOSSES` gives each NPC's name the label that goes, several NPCs
+as one: the six brothers as `Barrows`, Dusk and Dawn as `Grotesque Guardians`, Branda and Eldric as `Royal Titans`, the
+three Moons as `Moons of Peril`): Abyssal Sire, Alchemical Hydra, Amoxliatl, Araxxor, Barrows, Bryophyta, Cerberus,
+Commander Zilyana, Corporeal Beast, Dagannoth Prime, Dagannoth Rex, Dagannoth Supreme, Duke Sucellus, General Graardor,
+Giant Mole, Grotesque Guardians, Hespori, K'ril Tsutsaroth, Kalphite Queen, King Black Dragon, Kraken, Kree'arra, Moons
+of Peril, Nex, Obor, Phantom Muspah, Phosani's Nightmare, Royal Titans, Sarachnis, Scurrius, Skotizo, Sol Heredit, The
+Hueycoatl, The Leviathan, The Nightmare, The Whisperer, Thermonuclear smoke devil, TzKal-Zuk, TzTok-Jad, Vardorvis,
+Vorkath, Yama, Zalcano, Zulrah. None of the Wilderness's: nothing's sent there. Many are only ever fought in an
+instance, where nothing's sent either. relay-py's tests check the plugin's, the Worker's and the Python relay's lists
+match. No minigames: the few the plugin could tell cheaply by where they are are instances, and the rest read as their
+skill (Wintertodt as Firemaking).
+
+The plugin sends it as following sends `where` (two minutes behind, at most once a minute, the same again every 3
+minutes; `{"activity": null}` at once on going anywhere dangerous or into an instance, and when it's switched off; then
+nothing till two minutes clear of it), and both relays take it the same way (`relay/src/game.ts`'s `gameActivity` and
+channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activity`):
+- Anything not exactly one of those shapes (another key, a skill or boss not on the list, a different case) is ignored,
+  and the rest of the message is taken as ever. `null` clears it whenever it comes.
+- One every 50 seconds at most; one sooner is ignored (one ignored for its shape doesn't count).
+- Dropped when the game socket closes, when the plugin sends `"off": true` or a `paused` that's a string, and on
+  Cloudflare when the keeper gives the channel a new key or takes it back.
+- Held in memory only, with when it came. Shown only on `GET /channels` (above), while the channel's live and on that
+  list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers,
+  lookers or desks, `GET /game`, the Array's events, the aether or the keeper's list.
+
+**Shooting stars** (11/08/2026): with the plugin's "Shooting stars I find" on, a crashed star the player saw goes as
+`{"game": {"star": {...}}}`, for the relay's list of stars (below, "Shooting stars"). Never one of the game's fields, and
+never shown with the channel: the list has nobody's name.
 
 **The read:** `GET /game/<channel>?code=<watch code>`, for a page while the outstation's dark:
 - 200 `{"game": {...the whole state}, "at": <ms, when it last changed>, "connected": bool}`
@@ -479,6 +527,46 @@ Worker's object) starts again, and a cursor from before still works. Treat it as
 **What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
 the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
 again; on the Python relay while it runs. Nothing of it is written to storage.
+
+## Shooting stars (11/08/2026)
+
+The crashed shooting stars the Outside plugins have found, for outside.wiki's globe, with nobody's name on them. Both
+relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object that answers `GET /channels`), and
+`game.ts`'s `gameStar`; relay-py's `game_star` and `StarList`.
+
+    GET <relay>/stars        {"stars": [{"world", "x", "y", "tier", "found", "seen"}, ...]}
+
+**The plugin** (with "Shooting stars I find" on; off to begin with) sends, on its game socket:
+- `{"game": {"star": {"world", "x", "y", "tier"}}}`: a star it saw two minutes before. `world` the world it's on (1 to
+  999, as `where`'s), `x` and `y` the middle of the 128-tile square of the main map it's in (as `where`'s; never
+  Zanaris), `tier` its size, 1 to 9 (the crashed star's object: RuneLite's `STAR_SIZE_ONE_STAR` to
+  `STAR_SIZE_NINE_STAR`, ids 41229 to 41020).
+- `{"game": {"star": {"world", "x", "y", "gone": true}}}`: it was mined out while the player watched (not a hop or a
+  new scene), two minutes before.
+- At most one report of a star every 3 minutes (the newest of what's two minutes old), and only of a star seen from
+  somewhere safe: never one lying in the Wilderness, nor seen from a PvP area or world, Deadman or an instance. A star
+  seen and gone within the two minutes is never told of.
+
+**The relay** takes exactly those shapes (anything else in `star` is ignored, and the rest of the message taken as
+ever), not from a message with `"off": true` or a `paused` that's a string, and keeps:
+- one star for each world and square, whoever told of it: several outstations telling of one star make one.
+- a lower or equal tier replaces the kept one's (and `seen`); a higher one is older news and is ignored. A star's only
+  ever mined down.
+- `gone` takes it off the list, and for 10 minutes after, a report of it (another outstation's, as late) doesn't bring
+  it back.
+- each star for 2 hours after it was first told of (`found`), however often it's seen since: about a star's life.
+- 1,000 at most at once; past that, a new one's ignored.
+- one outstation tells of 30 an hour at most (counted over the last hour); past that, its reports are ignored. That
+  count, kept by channel and forgotten an hour after its last report, is the only trace of who told of what: the stars
+  themselves carry no channel, and nothing anywhere says who found one.
+
+**The read** answers every star kept, by world, then `x`, then `y`: `world`, `x`, `y`, `tier`, `found` (when it was
+first told of, ms: two minutes or more after it was seen) and `seen` (when its tier was last told of). Anyone may read
+it (any origin: `Access-Control-Allow-Origin: *`), it's never cached, and it's 405 for anything but `GET`. The Python
+relay's public side (the Funnel's port) allows it.
+
+**What's kept:** in memory only. On Cloudflare in the Directory's memory, so an eviction (after a while unused, or a
+deploy) starts the list empty again; on the Python relay while it runs. Nothing of it is written to storage.
 
 ## Settling (11/08/2026)
 
