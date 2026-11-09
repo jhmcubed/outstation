@@ -134,8 +134,15 @@ class Stars
 	}
 
 	/** The next report due ({"star": {"world", "x", "y", "tier"}} or {..., "gone": true}, with "site" when it's known),
-	 *  one at most; or null. */
+	 *  one at most; or null. Without the finder's credit (OutsideConfig.starsCredit off). */
 	JsonObject due(long now)
+	{
+		return due(now, false);
+	}
+
+	/** The same, with "credit": true when they've asked to be named as its finder (11/09/2026, Jace: opt-in, as Star
+	 *  Miners' "Send in-game name"); without it, the relay names nobody for this report. */
+	JsonObject due(long now, boolean credit)
 	{
 		JsonObject out = null;
 		for (Iterator<Star> it = stars.values().iterator(); it.hasNext(); )
@@ -182,6 +189,10 @@ class Stars
 			else
 			{
 				star.addProperty("tier", then[1]);
+			}
+			if (credit)
+			{
+				star.addProperty("credit", true);
 			}
 			out = new JsonObject();
 			out.add("star", star);

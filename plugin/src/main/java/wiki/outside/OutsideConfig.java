@@ -142,14 +142,30 @@ public interface OutsideConfig extends Config
 		name = "Shooting stars I find",
 		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
 			+ " its size, its world, its landing site and the rough area it's in (a square about 128 tiles a side), two"
-			+ " minutes late, with your outstation's name as its finder if you're first. Never one in the Wilderness, or"
+			+ " minutes late (with your outstation's name as its finder only if you say so, below). Never one in the Wilderness, or"
 			+ " seen from a PvP area, world or minigame, or Deadman.",
 		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
 			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it"
-			+ " to anyone on outside.wiki's list of stars, with your outstation's name if you found it first.",
+			+ " to anyone on outside.wiki's list of stars (your outstation's name with it only with \"Name me as a star's"
+			+ " finder\" on).",
 		position = 9
 	)
 	default boolean stars()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "starsCredit",
+		name = "Name me as a star's finder",
+		description = "Off (to begin with). Only with \"Shooting stars I find\" on: your outstation's name goes on"
+			+ " outside.wiki's list of stars beside each star you told of first. Off, your stars still go on the list,"
+			+ " with no finder named.",
+		warning = "On, outside.wiki's list of stars shows your outstation's name beside each shooting star you told of"
+			+ " first (its world, landing site and rough area, two minutes after you saw it), to anyone who opens it.",
+		position = 10
+	)
+	default boolean starsCredit()
 	{
 		return false;
 	}

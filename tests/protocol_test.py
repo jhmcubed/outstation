@@ -2219,6 +2219,10 @@ class Stars(Base):
         await g.send(json.dumps({"game": dict({"star": star}, **more)}))
 
     def star(self, **more):
+        """This test's star, asking for the finder's credit (11/09/2026: opt-in) unless credit=None."""
+        more.setdefault("credit", True)
+        if more["credit"] is None:
+            del more["credit"]
         return dict({"world": self.world, "x": self.x, "y": self.y}, **more)
 
     async def mine(self):
@@ -2241,6 +2245,22 @@ class Stars(Base):
         self.assertEqual(s["found"], s["seen"])
         with urllib.request.urlopen(http_url() + "/stars", timeout=10) as r:
             self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+
+    async def test_without_the_credit_the_finder_isnt_named_but_counted(self):
+        # (11/09/2026, Jace: "Name me as a star's finder" is opt-in; a report without "credit" names nobody)
+        g = await self.game()
+        await self.say(g, self.star(tier=4, credit=None))
+        s = await self.mine()
+        self.assertEqual((s["by"], s["reports"]), (None, 1))
+        for bad in (False, 1, "yes"):
+            await self.say(g, self.star(tier=3, credit=bad))          # (not its shape: ignored)
+        self.assertEqual((await self.mine())["tier"], 4)
+        await asyncio.sleep(1.0)
+        await self.say(g, self.star(tier=3))                       # (now asked for: named)
+        s = await self.mine()
+        self.assertEqual((s["tier"], s["by"], s["reports"]), (3, self.ch, 1))
+        with urllib.request.urlopen(http_url() + "/stars", timeout=10) as r:
+            self.assertNotIn("credit", r.read().decode())
 
     async def test_a_landing_site_and_a_hidden_finder(self):
         # (11/09/2026: Shooting Star Info's sites, each in its own square; a watch-coded outstation is never named)

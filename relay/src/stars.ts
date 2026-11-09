@@ -7,8 +7,9 @@
 // The plugin sends each star it sees on its game socket ("star": game.ts's gameStar), two minutes late. Its channel
 // passes it to the Directory (Channel.takeStar), with whether the channel's on the open outstations' list, and the
 // Directory keeps the list here (StarList), in memory only: one star for each world and square (several outstations
-// telling of one star make one), the first of them on that list as its finder ("by": a channel with a watch code, or an
-// invite not taken up, is never named, so nothing's said of a hidden outstation), and how many outstations told of it.
+// telling of one star make one), the first of them on that list whose report asked for the credit as its finder ("by",
+// 11/09/2026: opt-in, the report's "credit": true; a channel with a watch code, or an invite not taken up, is never
+// named, so nothing's said of a hidden outstation), and how many outstations told of it (credit or not).
 // One outstation tells of STARS_AN_HOUR in an hour at most (past that, ignored). relay-py/relay.py's StarList, the same.
 
 import { type StarReport } from "./game";
@@ -58,7 +59,7 @@ export class StarList {
     if (had) {
       if (r.tier <= had.tier) { had.tier = r.tier; had.seen = now; }
       had.site ??= r.site ?? null;
-      if (had.by === null && listed) had.by = channel;
+      if (had.by === null && listed && r.credit === true) had.by = channel;
       const tellers = this.tellers.get(k)!;
       tellers.add(channel);
       had.reports = tellers.size;
@@ -66,7 +67,7 @@ export class StarList {
     }
     if (this.stars.size >= STARS_KEPT) return true; // (full: a new one's ignored)
     this.stars.set(k, { world: r.world, x: r.x, y: r.y, site: r.site ?? null, tier: r.tier, found: now, seen: now,
-                        by: listed ? channel : null, reports: 1 });
+                        by: listed && r.credit === true ? channel : null, reports: 1 });
     this.tellers.set(k, new Set([channel]));
     return true;
   }

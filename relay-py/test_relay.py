@@ -680,6 +680,13 @@ class StarWords(unittest.TestCase):
                          {"world": 302, "x": 3008, "y": 3264, "site": "Rimmington mine", "tier": 6})
         self.assertEqual(S({"star": {"world": 302, "x": 3264, "y": 3392, "site": "Varrock east bank", "gone": True}}),
                          {"world": 302, "x": 3264, "y": 3392, "site": "Varrock east bank", "gone": True})
+        self.assertEqual(S({"star": {"world": 302, "x": 3008, "y": 3264, "tier": 6, "credit": True}}),
+                         {"world": 302, "x": 3008, "y": 3264, "tier": 6, "credit": True})
+        self.assertEqual(S({"star": {"credit": True, "world": 302, "x": 3008, "y": 3264, "site": "Rimmington mine",
+                                     "gone": True}}),
+                         {"world": 302, "x": 3008, "y": 3264, "site": "Rimmington mine", "credit": True, "gone": True})
+        for c in (False, 1, "true", None, [True], {}):
+            self.assertIsNone(S({"star": {"world": 302, "x": 3008, "y": 3264, "tier": 6, "credit": c}}), c)
         at = {"world": 302, "x": 3008, "y": 3264}
         for g in ({"star": dict(at, tier=6, site="Varrock east bank")},                  # (a site in another square)
                   {"star": dict(at, tier=6, site="Rimmington Mine")}, {"star": dict(at, tier=6, site=None)},
@@ -706,7 +713,18 @@ class StarListRing(unittest.TestCase):
     an outstation."""
 
     def star(self, tier=6, **more):
-        return dict({"world": 302, "x": 3008, "y": 3264, "tier": tier}, **more)
+        return dict({"world": 302, "x": 3008, "y": 3264, "tier": tier, "credit": True}, **more)
+
+    def test_only_a_report_asking_for_the_credit_names_its_finder(self):
+        # (11/09/2026, Jace: opt-in; a report without it is counted, and names nobody)
+        f = relay.StarList()
+        plain = {"world": 302, "x": 3008, "y": 3264, "tier": 6}
+        f.add("moss", plain, True, now=0)
+        self.assertEqual([(s["by"], s["reports"]) for s in f.read(now=0)["stars"]], [(None, 1)])
+        f.add("fern", self.star(5), True, now=10)
+        self.assertEqual([(s["by"], s["reports"]) for s in f.read(now=10)["stars"]], [("fern", 2)])
+        f.add("peat", self.star(4), True, now=20)                 # (the first credited finder stays)
+        self.assertEqual([(s["by"], s["reports"]) for s in f.read(now=20)["stars"]], [("fern", 3)])
 
     def test_one_star_from_several_outstations_its_finder_and_how_many(self):
         f = relay.StarList()
@@ -1007,7 +1025,7 @@ class PublicSide(RelayTest):
 
     async def test_the_stars_are_read_there_and_nothing_else(self):
         g = await self.connect("/game/sburb?key=secret-key&v=0.0.1")
-        await g.send(json.dumps({"game": {"star": {"world": 302, "x": 3008, "y": 3264, "tier": 6}}}))
+        await g.send(json.dumps({"game": {"star": {"world": 302, "x": 3008, "y": 3264, "tier": 6, "credit": True}}}))
         await asyncio.sleep(0.05)
         status, kind, body = await get(self.public_port, "/stars")
         got = json.loads(body)

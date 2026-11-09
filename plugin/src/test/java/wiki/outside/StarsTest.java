@@ -170,4 +170,25 @@ public class StarsTest
 		assertEquals("Varrock east bank", got.get(0).get("site").getAsString());
 		assertTrue(got.get(0).get("gone").getAsBoolean());
 	}
+
+	@Test
+	public void theFindersCreditOnlyWhenAskedFor()
+	{
+		// (11/09/2026, Jace: opt-in; off, the report carries no flag and the relay names nobody)
+		Stars s = new Stars();
+		for (long t = 0; t < 121_000; t += TICK)
+		{
+			s.see(t, 330, 2974, 3241, 6, true);
+		}
+		JsonObject off = s.due(121_000);
+		assertFalse(off.getAsJsonObject("star").has("credit"));
+		Stars t = new Stars();
+		for (long c = 0; c < 121_000; c += TICK)
+		{
+			t.see(c, 330, 2974, 3241, 6, true);
+		}
+		JsonObject on = t.due(121_000, true);
+		assertTrue(on.getAsJsonObject("star").get("credit").getAsBoolean());
+		assertEquals(6, on.getAsJsonObject("star").size());
+	}
 }

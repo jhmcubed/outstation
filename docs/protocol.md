@@ -563,6 +563,9 @@ relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object tha
   `STAR_SIZE_NINE_STAR`, ids 41229 to 41020).
 - `{"game": {"star": {"world", "x", "y", "gone": true}}}`: it was mined out while the player watched (not a hop or a
   new scene), two minutes before.
+- Either with `"credit": true` (11/09/2026, Jace: opt-in): the player's switched "Name me as a star's finder" on, so
+  the relay may name their outstation as the star's finder. Without it, the report is taken and counted as ever, but
+  names nobody. `credit` that isn't `true` makes the whole `star` not its shape.
 - Either with `"site"` (11/09/2026): its landing site's name, when the star's tile is one of the sites in Shooting Star
   Info's table (its `Location.java`, BSD 2-Clause, Copyright (c) 2022, Cute Rock; the plugin's `Sites.java`), less its
   Wilderness sites and Prifddinas's: 71 in all. The relays take only those names (`STAR_SITES`), each with the square
@@ -574,8 +577,9 @@ relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object tha
 **The relay** takes exactly those shapes (anything else in `star` is ignored, and the rest of the message taken as
 ever), not from a message with `"off": true` or a `paused` that's a string, and keeps:
 - one star for each world and square, however many told of it: several outstations telling of one star make one. Its
-  finder (`by`) is the first of them on the open outstations' list (handed out, no watch code, not an invite waiting
-  to be taken up), or `null` while none is: a hidden outstation is never named, only counted. `reports` is how many
+  finder (`by`) is the first of them whose report carried `"credit": true` and that's on the open outstations' list
+  (handed out, no watch code, not an invite waiting to be taken up), or `null` while none is: an outstation that didn't
+  ask for the credit, or a hidden one, is never named, only counted. `reports` is how many
   outstations have told of it. Its `site` is the first one told, or `null`.
 - a lower or equal tier replaces the kept one's (and `seen`); a higher one is older news and is ignored. A star's only
   ever mined down.

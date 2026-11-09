@@ -239,7 +239,7 @@ public class OutsidePlugin extends Plugin
 		{
 			send(what);
 		}
-		JsonObject star = config.stars() ? stars.due(ms) : null;
+		JsonObject star = config.stars() ? stars.due(ms, config.starsCredit()) : null;
 		if (star != null)
 		{
 			send(star);

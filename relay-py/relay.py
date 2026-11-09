@@ -134,8 +134,8 @@ Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's star
 plugins have found, and who found each, for outside.wiki's globe.
     read:      GET http://HOST:PORT/stars
                {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}, ...]}
-  One for each world and square, however many told of it, with the first listed outstation to tell of it as its finder
-  ("by", 11/09/2026; null for a hidden one) and how many did; kept STAR_LIFE_S after it was first told of, or till it's told
+  One for each world and square, however many told of it, with the first listed outstation to tell of it with "credit":
+  true as its finder ("by", 11/09/2026: opt-in; null for none, or a hidden one) and how many did; kept STAR_LIFE_S after it was first told of, or till it's told
   gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
   only. The public side allows the read.
 
@@ -801,19 +801,24 @@ def game_activity(g):
 def game_star(g):
     """A {"game"} message's "star" (a shooting star found, 11/08/2026): {"world", "x", "y", "tier"} (a world, a square's
     middle on the main map as "where"'s, a tier 1 to 9) or {"world", "x", "y", "gone": True}, exactly, each with "site"
-    (11/09/2026: one of STAR_SITES, in its own square) or without; or None for none or anything not its shape. The
-    Worker's gameStar, the same."""
+    (11/09/2026: one of STAR_SITES, in its own square) or without, and "credit": True (11/09/2026: the player's asked to
+    be named as its finder; opt-in) or without; or None for none or anything not its shape. The Worker's gameStar, the
+    same."""
     s = g.get("star") if isinstance(g, dict) else None
     if not isinstance(s, dict) or not is_world(s.get("world")) or not is_square(s.get("x"), WHERE_X) \
             or not is_square(s.get("y"), WHERE_Y):
         return None
     at = {"world": game_int(s["world"]), "x": game_int(s["x"]), "y": game_int(s["y"])}
+    if "credit" in s and s["credit"] is not True:
+        return None
     if "site" in s:
         sq = STAR_SITES.get(s["site"]) if isinstance(s["site"], str) else None
         if sq is None or sq != (at["x"], at["y"]):
             return None
         at["site"] = s["site"]
-    keys = ",".join(sorted(k for k in s if k != "site"))
+    if s.get("credit") is True:
+        at["credit"] = True
+    keys = ",".join(sorted(k for k in s if k not in ("site", "credit")))
     tier = game_int(s.get("tier"))
     if keys == "tier,world,x,y" and tier is not None and 1 <= tier <= 9:
         return dict(at, tier=tier)
@@ -824,8 +829,8 @@ def game_star(g):
 
 class StarList:
     """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, however many told
-    of it, with the first outstation on the open outstations' list to tell of it as its finder ("by", 11/09/2026: a
-    hidden outstation is never named) and how many did; in memory only. One outstation tells of STARS_AN_HOUR in an
+    of it, with the first outstation on the open outstations' list whose report asked for the credit as its finder
+    ("by", 11/09/2026: opt-in, "credit": true; a hidden outstation is never named) and how many did; in memory only. One outstation tells of STARS_AN_HOUR in an
     hour at most. The Worker's StarList (stars.ts), the same. Times in ms."""
 
     def __init__(self):
@@ -870,14 +875,15 @@ class StarList:
                 had["tier"], had["seen"] = r["tier"], now
             if had["site"] is None:
                 had["site"] = r.get("site")
-            if had["by"] is None and listed:
+            if had["by"] is None and listed and r.get("credit") is True:
                 had["by"] = channel
             self.tellers[k].add(channel)
             had["reports"] = len(self.tellers[k])
             return True
         if len(self.stars) < STARS_KEPT:
             self.stars[k] = {"world": r["world"], "x": r["x"], "y": r["y"], "site": r.get("site"), "tier": r["tier"],
-                             "found": now, "seen": now, "by": channel if listed else None, "reports": 1}
+                             "found": now, "seen": now,
+                             "by": channel if listed and r.get("credit") is True else None, "reports": 1}
             self.tellers[k] = {channel}
         return True
 

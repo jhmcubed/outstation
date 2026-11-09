@@ -278,20 +278,24 @@ export const STAR_SITES: Record<string, [number, number]> = {
   "Varlamore colosseum entrance bank": [1728, 3136],
   "Mine north-west of hunter guild": [1472, 3136],
 };
+// The finder's credit (11/09/2026, Jace: opt-in, as Star Miners'): "credit": true, with either, when the player's asked
+// to be named as the star's finder (the plugin's "Name me as a star's finder"); without it, stars.ts names nobody for
+// that report, though it still counts it. Anything but true is not its shape.
 export type StarReport = ({ world: number; x: number; y: number; tier: number } | { world: number; x: number; y: number; gone: true })
-  & { site?: string };
+  & { site?: string; credit?: true };
 
 /** A message's "star", or undefined for none or anything not its shape (ignored, and the rest taken as ever). */
 export function gameStar(g: unknown): StarReport | undefined {
   if (!isObj(g) || !isObj(g.star)) return undefined;
-  const s = g.star, keys = Object.keys(s).filter((k) => k !== "site").sort().join(",");
+  const s = g.star, keys = Object.keys(s).filter((k) => k !== "site" && k !== "credit").sort().join(",");
+  if ("credit" in s && s.credit !== true) return undefined;
   if (!isWorld(s.world) || !isSquare(s.x, WHERE_X) || !isSquare(s.y, WHERE_Y)) return undefined;
   const at = { world: s.world, x: s.x as number, y: s.y as number };
   if ("site" in s) {
     const sq = typeof s.site === "string" && Object.hasOwn(STAR_SITES, s.site) ? STAR_SITES[s.site] : undefined;
     if (!sq || sq[0] !== at.x || sq[1] !== at.y) return undefined;
   }
-  const site = "site" in s ? { site: s.site as string } : {};
+  const site = { ...("site" in s ? { site: s.site as string } : {}), ...(s.credit === true ? { credit: true as const } : {}) };
   if (keys === "tier,world,x,y" && typeof s.tier === "number" && Number.isInteger(s.tier) && s.tier >= 1 && s.tier <= 9) return { ...at, ...site, tier: s.tier };
   if (keys === "gone,world,x,y" && s.gone === true) return { ...at, ...site, gone: true };
   return undefined;
