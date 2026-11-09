@@ -444,7 +444,7 @@ public class OutsidePlugin extends Plugin
 			return gone;
 		}
 		WorldPoint at = here();
-		activity.region(at == null ? -1 : at.getRegionID());
+		activity.region(at == null ? -1 : at.getRegionID(), at == null ? 0 : at.getPlane());
 		return doing.tick(now, activity.now(now), safe);
 	}
 

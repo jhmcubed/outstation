@@ -149,22 +149,22 @@ public class ActivityTest
 	public void aRaidOrMinigameByWhereTheyAreAndABossFightBeforeEither()
 	{
 		Activity a = new Activity();
-		a.region(13137);                                              // (the Chambers of Xeric)
+		a.region(13137, 0);
 		assertEquals("raid Chambers of Xeric", label2(a.now(0)));
 		a.hit(1000, "Great Olm");                                     // (not on the boss list: still the raid)
 		assertEquals("raid Chambers of Xeric", label2(a.now(1000)));
-		a.region(14672);                                              // (Osmumten's Burial Chamber: the Tombs')
+		a.region(14672, 0);                                              // (Osmumten's Burial Chamber: the Tombs')
 		assertEquals("raid Tombs of Amascut", label2(a.now(1000)));
-		a.region(9551);                                               // (the Fight Caves, and Jad)
+		a.region(9551, 0);                                               // (the Fight Caves, and Jad)
 		assertEquals("minigame the Fight Caves", label2(a.now(1000)));
 		a.hit(2000, "TzTok-Jad");
 		assertEquals("boss TzTok-Jad", label2(a.now(2000)));
 		assertEquals("minigame the Fight Caves", label2(a.now(17_000)));
-		a.region(6462);                                               // (Wintertodt, with its Firemaking)
+		a.region(6462, 0);                                               // (Wintertodt, with its Firemaking)
 		a.xp(18_000, "Firemaking", 100);
 		a.xp(19_000, "Firemaking", 200);
 		assertEquals("minigame Wintertodt", label2(a.now(19_000)));
-		a.region(12850);                                              // (Lumbridge: no minigame)
+		a.region(12850, 0);                                              // (Lumbridge: no minigame)
 		assertEquals("skilling Firemaking", label2(a.now(19_000)));
 		// (the PvP minigames are none of them: nothing goes from them at all)
 		for (int r : new int[]{13658, 14432, 9520, 9620, 8493, 9005, 9552, 13362, 12621})
@@ -173,6 +173,11 @@ public class ActivityTest
 			assertNull(Activity.MINIGAMES.get(r));
 			assertNull(Activity.RAIDS.get(r));
 		}
+		// (Nightmare Zone above plane 0; the King Black Dragon's lair, the same region, on it)
+		a.region(9033, 1);
+		assertEquals("minigame Nightmare Zone", label2(a.now(100_000)));
+		a.region(9033, 0);
+		assertEquals("idle", label2(a.now(100_000)));
 		assertEquals(4, Activity.raidLabels().size());
 		assertEquals(24, Activity.minigameLabels().size());
 	}

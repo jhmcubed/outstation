@@ -568,7 +568,7 @@ relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object tha
   Wilderness sites and Prifddinas's: 71 in all. The relays take only those names (`STAR_SITES`), each with the square
   it's in, and only in that square; a star elsewhere goes without one.
 - At most one report of a star every 3 minutes (the newest of what's two minutes old), and only of a star seen from
-  somewhere safe: never one lying in the Wilderness (for now: Jace hasn't decided), nor seen from a PvP area, world or
+  somewhere safe: never one lying in the Wilderness (Jace's decision, 11/09/2026: never reported), nor seen from a PvP area, world or
   minigame, or Deadman. A star seen and gone within the two minutes is never told of.
 
 **The relay** takes exactly those shapes (anything else in `star` is ignored, and the rest of the message taken as

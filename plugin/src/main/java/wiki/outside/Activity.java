@@ -150,10 +150,15 @@ class Activity
 	private String boss = null;
 	private int region = -1;
 
-	/** The region they're in this tick (an instance's as its template lies), for the raids and minigames. */
-	void region(int r)
+	/** Nightmare Zone shares its region with the King Black Dragon's lair: KBD's on plane 0, the Zone above it (as
+	 *  RuneLite's Discord plugin tells them apart, 11/09/2026) */
+	static final int NMZ_OR_KBD = 9033;
+
+	/** The region they're in this tick (an instance's as its template lies) and its plane, for the raids and
+	 *  minigames. */
+	void region(int r, int plane)
 	{
-		region = r;
+		region = r == NMZ_OR_KBD && plane == 0 ? -1 : r;
 	}
 
 	/** A skill's experience (StatChanged): a drop in it is skilling, unless it's a fighting skill's during a fight. */
