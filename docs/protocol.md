@@ -600,6 +600,162 @@ relay's public side (the Funnel's port) allows it.
 the Directory's memory, so an eviction (after a while unused, or a
 deploy) starts the list empty again; on the Python relay while it runs. Nothing of it is written to storage.
 
+## The almanac (11/09/2026)
+
+What the globe on outside.wiki shows of the game around the outstations: Jagex's game updates, the worlds (how many are
+playing, and any league or deadman season on worlds of its own) and the market's day. The relay fetches each source
+itself, on its own schedule, and every visitor reads the same copy, so no page ever asks Jagex or the Wiki (Jace's rule:
+the Wiki is fed up with sites scraping it constantly; nothing heavy, fetched once and shared). Both relays: the Worker's
+`relay/src/almanac.ts` (kept by the Directory, the object that answers `GET /channels`, refreshed by a Cron Trigger);
+relay-py's `almanac.py` (refreshed by a task in the relay). The globe's side is ghillie's
+`tools/release-kit/prototypes/outside-splash/almanac.js` (its `fromRelay`).
+
+    GET <relay>/almanac         {"at", "updates", "worlds", "market", "sources"}
+    GET <relay>/admin/almanac   the keeper's: each source's schedule and last error
+    POST <relay>/admin/almanac  the keeper's: every source asked now, whatever its schedule (then the same)
+
+**The answer**, with `at` when it was made (ms):
+- `updates`: Jagex's newest news posts, newest first, 8 at most (one without a date last):
+  `[{"id", "title", "url", "at", "category", "summary"}]`. `id` stays the same for the same post, fetch after fetch:
+  the feed's `guid` (one line, 200 characters at most), else its link when that's on runescape.com, else its title,
+  `@` and its `at` (`"<title>@null"` without a date); tell posts apart by it. `url` is the post's link only when it's on runescape.com (`https`
+  or `http`), else `null`; `at` the post's date (ms) or `null`; `category` as the feed has it ("Game Updates",
+  "Community", "Future Updates"…) or `null`; `summary` its description as one line of text, 200 characters at most (an
+  ellipsis when cut), or `null`. Titles are one line, 140 at most.
+- `worlds`: `{"players", "worlds", "at", "seasons", "list"}` (`seasons` always there: `[]` while none runs). `players` all the players on every world that's up, and
+  `worlds` how many worlds are up; `at` when the list was fetched (ms). `seasons` (in this order, each only while it has
+  a world): `[{"kind": "leagues" | "deadman", "name", "players", "worlds", "activity"}]`, `name` the same as `kind`,
+  `activity` the commonest of its worlds' activity texts (between equals, the lowest world's) or `null`. A league's
+  worlds are those flagged `SEASONAL` and not `DEADMAN`; deadman's those flagged `DEADMAN` (a seasonal deadman world is
+  flagged both, a tournament world too); `BETA_WORLD`, `NOSAVE_MODE` and `TOURNAMENT` worlds are never a season's.
+  `list`: every world, by number, `{"world", "players", "region", "location", "activity", "types"}`: `players` `null`
+  while it's down, `region` an ISO 3166 alpha-2 code from its location (`US`, `GB`, `AU`, `DE`, `BR`, `JP`, `SG`, `ZA`;
+  `null` for one RuneLite doesn't know), `location` the list's own number for it, `activity` its one-line text (60
+  characters at most, `""` for none) and `types` the names of its flags (below).
+- `market`: the day's ticker, 10 at most: `[{"item", "at", "id", "price", "change", "volume", "value", "why"}]`. First the 6
+  biggest moves on the day before (by the size of `change`, `"why": "mover"`), picked among the 200 items most traded
+  in gp that day, then the 4 most traded in gp of the rest (`"why": "traded"`). `at` is the same on every line: when
+  the prices are from, the start (UTC midnight, ms) of the Wiki's day they're the averages of (its `/24h` `timestamp`),
+  not when the relay fetched them. It changes only when the Wiki's day does (about once a day, a day or two behind), so
+  a page that keeps the last `at` it saw can tell a new market from the same one read again. `item` its name (`"item <id>"` when the
+  Wiki has none), `id` the item's, `price` the day's average price in gp (the Wiki's high and low averages, each
+  weighted by its volume), `change` in % on the day before's average, to one decimal (`null` for a traded item with no
+  day before), `volume` how many traded in the day (high and low together), `value` price × volume, in gp.
+- `sources`: `{"updates", "worlds", "market", "names"}`, each `{"at", "ok", "age_s"}`: `at` when it was last fetched
+  well (ms, `null` for never), `ok` whether the last try was (`null` before any), `age_s` seconds since `at`. `market`
+  also has `day`, the start of the Wiki's day its numbers are (ms, UTC midnight). `names` is the Wiki's item names.
+- A part never fetched well is `null`. A source that fails keeps its last good part in the answer, with `ok` false and
+  its `at` (so its age) as it was: one failing never takes the others down.
+
+**The sources and their schedule** (the request counts: relay/README.md, "The almanac's sources"):
+- **Jagex's news:** `https://secure.runescape.com/m=news/latest_news.rss?oldschool=true`, every 20 minutes. RSS 2.0:
+  each `<item>`'s `title`, `link`, `pubDate` (RFC 822), `category` and `description` (CDATA taken as it is, entities
+  decoded, tags dropped). A feed that declares a DOCTYPE or an ENTITY is refused. The first 50 items are read.
+- **The world list:** `https://oldschool.runescape.com/slr.ws?order=LPWM`, every 5 minutes. The game's own binary list,
+  read as RuneLite read it (its http-service's `WorldsService`, until RuneLite 1.8.0): big-endian, a 4-byte length (of
+  what follows; bytes past it are ignored), the worlds' count (2 bytes), then each world's number (2), its flags (4),
+  its address and its activity (each ended by a 0 byte, Latin-1), its location (1) and its players (2, signed: -1 while
+  it's down). The address isn't passed on. The flags' names and values are RuneLite's own (`runelite-api`'s
+  `WorldType`, the same in the `http-api` 1.2.26 the client builds with): `MEMBERS` 1, `PVP` 1<<2, `BOUNTY` 1<<5,
+  `PVP_ARENA` 1<<6, `SKILL_TOTAL` 1<<7, `QUEST_SPEEDRUNNING` 1<<8, `HIGH_RISK` 1<<10, `HARDCORE_MAIN` 1<<11,
+  `LAST_MAN_STANDING` 1<<14, `BETA_WORLD` 1<<16, `LEGACY_ONLY` 1<<22, `EOC_ONLY` 1<<23, `NOSAVE_MODE` 1<<25,
+  `TOURNAMENT` 1<<26, `FRESH_START_WORLD` 1<<27, `DEADMAN` 1<<29, `SEASONAL` 1<<30 (any other bit is ignored). The
+  locations are RuneLite's `WorldRegion` (`http-api` 1.2.26): 0 US, 1 GB, 3 AU, 7 DE, 8 BR, 9 JP, 10 SG, 12 ZA. A list
+  that's cut short, says another length than its size, or has no worlds (or more than 1,000) is refused whole.
+- **The Wiki's prices:** `https://prices.runescape.wiki/api/v2/osrs/24h` and `/mapping`. The Wiki's page (RuneScape:
+  Real-time Prices) asks every user of its API to move from `/api/v1/osrs` to `/api/v2/osrs` (v1 "may be removed in
+  the future"; v2's averages may have two decimals), so the relay asks v2. `/24h` (`{"timestamp", "data": {id:
+  {"avgHighPrice", "highPriceVolume", "avgLowPrice", "lowPriceVolume"}}}`) is a whole UTC day, the same all day (its
+  `Expires` is the next UTC midnight): it's asked 15 minutes after UTC midnight and, while its `timestamp` is still the
+  day kept, again each hour until the new day's there. The day before it (to measure the change against) is the day
+  kept when it's the one before, so normally nothing more is asked; else `/24h?timestamp=<the day before>` once. Only
+  `/24h` and `/mapping` are asked, never one item at a time. `/mapping` (`[{"id", "name", …}]`) once a day, for the
+  names.
+
+**Every request** carries the relay's own User-Agent, `outstation-relay/1.0 (the almanac for outside.wiki's globe:
+fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)`, the one thing the Wiki's
+acceptable-use policy asks; nothing else goes with it: no visitor's address, header or anything a page sent. Each answer
+is 8 MB at most; a request gives up after 15 seconds.
+
+**Failures** back off: after a source's nth failure in a row, it's asked again after its usual wait doubled n − 1 times,
+to a cap (the news: 20 minutes, then 40, 80, then every 2 hours; the world list: 5 minutes up to an hour; `/24h`: an hour
+up to 6; `/mapping`: an hour up to a day). A good answer puts it back on its usual schedule.
+
+**The read never asks a source,** with one exception: the first read when a source has never been tried (a cold start:
+the Worker's first read after it's deployed, before the cron's first run; relay.py's first, if it comes before its own
+schedule's first round) waits for one refresh, and every read that comes meanwhile waits for that same one. After that,
+only the schedule asks: the Worker's Cron Trigger every 5 minutes (`wrangler.jsonc`, `triggers`), relay.py's task every
+minute, each asking whichever sources are due (30 s early counts, so a cron that fires a moment early still takes the
+world list every 5 minutes). Anyone may read it (any origin: `Access-Control-Allow-Origin: *`); a browser may keep an
+answer a minute (`Cache-Control: public, max-age=60`). 405 for anything but `GET`. The Python relay's public side (the
+Funnel's port) allows the read and refuses the keeper's routes, which need the keeper's token as `/admin/aether`'s do.
+
+**What's kept:** on Cloudflare in the Directory's storage (so an eviction or a deploy doesn't ask anything again): the
+answer's parts and each source's schedule (`alm:kept`), the Wiki's last two days of `/24h` reduced to each item's average
+price and volume (`alm:latest`, `alm:before`), and the item names (`alm:names`). On the Python relay in memory, while it
+runs. Nothing about any visitor is kept or sent.
+
+**relay.py's switch:** `--almanac on` (the default: the real hosts), `--almanac off` (nothing fetched; `GET /almanac`
+answers its shape, every part `null`), or an address, everything fetched under it at the real ones' paths (the tests'
+server). The Worker's `ALMANAC_UPSTREAM` var is the same address (tests only; unset on Cloudflare).
+
+**An example** (from the tests' fixtures, cut down):
+
+```json
+{"at": 1794201788313,
+ "updates": [{"id": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1",
+              "title": "Leagues VI: Demonic Pacts — Out Now!",
+              "url": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1", "at": 1793880000000,
+              "category": "Game Updates", "summary": "The sixth League is here. Unlock relics & regions…"}],
+ "worlds": {"players": 9537, "worlds": 12, "at": 1794201788295,
+            "seasons": [{"kind": "leagues", "name": "leagues", "players": 4500, "worlds": 3, "activity": "Leagues VI"},
+                        {"kind": "deadman", "name": "deadman", "players": 900, "worlds": 1,
+                         "activity": "Deadman: Annihilation"}],
+            "list": [{"world": 301, "players": 1200, "region": "US", "location": 0, "activity": "Trade - Free",
+                      "types": []},
+                     {"world": 305, "players": 2000, "region": "US", "location": 0, "activity": "Leagues VI",
+                      "types": ["MEMBERS", "SEASONAL"]},
+                     {"world": 310, "players": null, "region": "ZA", "location": 12, "activity": "-",
+                      "types": ["MEMBERS"]}]},
+ "market": [{"item": "Nature rune", "at": 1794009600000, "id": 561, "price": 120, "change": 10.1, "volume": 10900000,
+             "value": 1307900000, "why": "mover"},
+            {"item": "Twisted bow", "at": 1794009600000, "id": 20997, "price": 1438888889, "change": 3.6, "volume": 45,
+             "value": 64750000010, "why": "traded"}],
+ "sources": {"updates": {"at": 1794201788307, "ok": true, "age_s": 0},
+             "worlds": {"at": 1794201788295, "ok": true, "age_s": 0},
+             "market": {"at": 1794201788310, "ok": true, "age_s": 0, "day": 1794009600000},
+             "names": {"at": 1794201788309, "ok": true, "age_s": 0}}}
+```
+
+**What the globe reads of it** (almanac.js's `fromRelay`, ghillie's dd2b794): `market` whole (its "market" kind),
+each of `updates` it hasn't had (its "update" kind: `title`, `url`, `at`, `summary`; told apart by `url` and `title`)
+and `worlds` (its "worlds" kind: `players`, `worlds`, `at`, `seasons` as `[{kind, name, players, worlds}]`). The shape
+is the one it was written for, with more beside it (`id`, `category`, `list`, `activity`, the market lines' `at`,
+`value`, `why`, `sources`), which it can ignore. Stars aren't in the almanac: the globe reads `GET /stars` itself
+("Shooting stars", above).
+
+**What the globe should change to read it well** (none of it breaks today; it's in ghillie's repository):
+1. Tell a new market from the same one by its `at`. In `fromRelay`, in place of `if (a.market) emit("market", a.market);`:
+   `if (a.market && a.market.length && a.market[0].at !== marketAt) { marketAt = a.market[0].at; emit("market", a.market); }`
+   with `var marketAt = null, worldsAt = null;` beside `almanacOff`; and the same for the worlds, by `a.worlds.at` (it
+   changes every 5 minutes, as the list is fetched), in place of `if (a.worlds) emit("worlds", a.worlds);`:
+   `if (a.worlds && a.worlds.at !== worldsAt) { worldsAt = a.worlds.at; emit("worlds", a.worlds); }`.
+   login.js's market card says when the numbers are from with `ALM.marketAt` (when the page got them); `m.at` is when
+   they're from (a whole UTC day).
+2. Tell updates apart by `id` (`url` is `null` when the feed's link isn't on runescape.com, and two posts could share a
+   title): `list("update").some(function (o) { return o.id === u.id; })` in place of the `url` and `title` test.
+3. `fromRelay` is off unless the page has `?almanac=relay`, and turns itself off for the page's life after one failed
+   read (`!r.ok`, or any network error). Once this relay is deployed: ask by default, and on a failure just wait for the
+   next read (every 2 minutes, as now). A cold relay still answers 200 (every part `null`), never 404.
+4. login.js sorts the ticker by the size of `change` and keeps 6, which drops the most-traded lines unless they moved
+   most. Keep the relay's order (6 movers, then 4 most traded) or use `why`; `change` is `null` for a traded line with
+   no day before (now shown as ▲0.0%).
+5. A season's island is named from `name` ("leagues"); `activity` carries the worlds' own words ("Leagues VI"), if the
+   island should say which.
+6. `updates` are all of Jagex's news, every category; to show only game updates, filter on `category` ("Game Updates").
+7. When a source's `ok` is `false` its part is older than usual; `age_s` says by how much, if the page wants to say so.
+8. almanac.js's header still gives the old shape (`"worlds": {"players","worlds","at"}`): this section is the shape now.
+
 ## Settling (11/08/2026)
 
 outside.wiki's front page shows every outstation as a light on a globe of Gielinor. By default an outstation stands near

@@ -260,7 +260,25 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 
 A request nobody answers goes after 14 days, and an answer nobody collects goes after 7. The address a request came from is held in memory for an hour (3 requests an hour from one place). An address that sends wrong keys is held in memory for a minute.
 
+**The almanac** (outside.wiki's globe; 11/09/2026): the newest of Jagex's news posts, the world list (each world's players, region, activity and flags) and the day's prices of the items most traded, as last fetched (below, "What the relay fetches"), and when each was. Nothing in it is about you or any visitor.
+
 All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops, except clips, which it keeps in a folder.
+
+## What the relay fetches
+
+The relay asks three outside places for anything, all for outside.wiki's globe (the almanac, 11/09/2026), each on its own schedule and once for everybody: a page on outside.wiki never asks them, and opening the globe never makes the relay ask them either.
+
+| what | from | how often |
+|---|---|---|
+| Jagex's news posts (their RSS feed) | secure.runescape.com | every 20 minutes |
+| the world list (how many play on each world) | oldschool.runescape.com | every 5 minutes |
+| the day's Grand Exchange prices, and the items' names | the OSRS Wiki's prices API (prices.runescape.wiki) | the prices once a day (just after midnight UTC, then hourly only until the new day's out); the names once a day |
+
+So the Wiki gets about two requests a day from the relay, and Jagex about 360, however many people open the globe. When a place doesn't answer, the relay keeps what it had and asks less often, not more. The one exception: the very first time the globe's read reaches a relay that has never fetched anything (just after it's first put up), that read waits while the relay asks each place once.
+
+Each request says what it is and where to find us (the relay's User-Agent, `outstation-relay/1.0 (the almanac for outside.wiki's globe: fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)`, which is what the Wiki's rules ask). Nothing about you or any visitor goes with it: no address, no name, nothing a page sent. These are public pages anyone's browser can open; the relay reads them as they are and passes on only the parts the globe shows.
+
+A relay of your own (`relay-py`) does the same while it runs, unless it's started with `--almanac off`.
 
 ## Jagex's rules
 

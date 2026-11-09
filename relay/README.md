@@ -23,6 +23,8 @@ It keeps the shooting stars too (11/08/2026, `src/stars.ts`): the crashed stars 
 
 It keeps the Array's events too (11/08/2026, `src/array.ts`): the last 500 kills, levels, pets, big drops, log slots and clues across the open outstations, for `GET /array/events` (outside.wiki's front page). A channel tells it each report's events while it's live with no watch code; it drops what's past 10 a minute from one channel. They're in memory only, so the feed starts empty whenever the Directory's evicted (`../docs/protocol.md`, "The Array's events").
 
+It keeps the almanac too (11/09/2026, `src/almanac.ts`): Jagex's news, the world list and the Wiki's prices, for outside.wiki's globe (`GET /almanac`), fetched by the relay on a schedule and shared by every visitor (below, "The almanac's sources"; `../docs/protocol.md`, "The almanac"). It's in the Directory's storage, so an eviction or a deploy doesn't fetch anything again.
+
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
 
 ## On this PC
@@ -72,6 +74,36 @@ npm run deploy
 
 It goes up as `https://relay.<subdomain>.workers.dev` (Jace's: `https://relay.ghillie.workers.dev`), and the sockets are `wss://` at the same address.
 
+## The almanac's sources
+
+`GET /almanac` (outside.wiki's globe) is made from three outside sources, each fetched by the relay alone, on its own schedule, and shared by every visitor: a page never asks them, and a visitor's read never makes the relay ask them (but once, cold: below). Jace's rule (11/08/2026): the Wiki "stated they are fed up with websites and plugins and apps using their data to scrape things all the time constantly… we should refrain from putting unnecessary strain on their servers."
+
+How it runs: the Cron Trigger in `wrangler.jsonc` (`"triggers": {"crons": ["*/5 * * * *"]}`) wakes the Worker every 5 minutes, and it asks the Directory to refresh whichever sources are due. The Directory keeps what came in its storage (`alm:kept`, `alm:latest`, `alm:before`, `alm:names`), so a read costs one request to it and nothing upstream, and an eviction or a deploy loses nothing. Why the Directory: it already answers `/channels` and `/stars` for the globe, so there's no new object (and no migration), its storage outlives evictions (the Cache API is per data centre and can be dropped any time, and KV would be one more binding, with a write limit), and one object means one refresh at a time: reads that come while it's cold wait for that one refresh together.
+
+| source | address | how often | requests a day |
+|---|---|---|---|
+| Jagex's news | `https://secure.runescape.com/m=news/latest_news.rss?oldschool=true` | every 20 minutes | 72 |
+| the world list | `https://oldschool.runescape.com/slr.ws?order=LPWM` | every 5 minutes | 288 |
+| the Wiki's day of prices | `https://prices.runescape.wiki/api/v2/osrs/24h` | 15 minutes after UTC midnight; hourly after it only while the new day isn't out | 1 normally; 24 at most |
+| the Wiki's day before | `…/24h?timestamp=<the day before>` | only when the kept day isn't the one before (never, once it's running) | 0 normally; 1 after a fresh start |
+| the Wiki's item names | `https://prices.runescape.wiki/api/v2/osrs/mapping` | once a day | 1 |
+
+So the Wiki gets about 2 requests a day from the relay (at most 26), and Jagex about 360. A failing source is asked less, not more: each failure in a row doubles its wait, to a cap (the news 2 hours, the world list an hour, `/24h` 6 hours, `/mapping` a day). Besides the schedule, only two things ask: the first `GET /almanac` after a deploy with nothing kept yet (one refresh of each source, shared by every read that comes meanwhile), and the keeper's `POST /admin/almanac` (each once, by hand). `GET /admin/almanac` shows each source's last fetch, its failures and its next try, without asking anything.
+
+The prices are the Wiki's v2 API: its page (RuneScape:Real-time Prices) asks users of v1, which "may be removed in the future", to move to v2. `/24h` is a whole UTC day that's the same all day (the Wiki's own `Expires` is the next UTC midnight), so asking it hourly would only fetch the same day again. Only `/24h` and `/mapping` are asked, never one item at a time (the policy's other ask).
+
+Every request has this User-Agent (the Wiki's acceptable-use policy's one ask: say what it's for and how to reach us; the project's page, no email address), and nothing else from anyone:
+
+```
+outstation-relay/1.0 (the almanac for outside.wiki's globe: fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)
+```
+
+The answers are capped at 8 MB and 15 seconds each. The sizes, as asked on 11/09/2026: `/24h` 390 KB (70 KB gzipped, which the Worker asks for), `/mapping` 870 KB. The world list and the news feed couldn't be reached from the session that built this (its network refused Jagex's hosts), so their formats come from RuneLite's parser and the feed's RSS 2.0, and the first real fetches happen on Cloudflare: look at `GET /admin/almanac` after the deploy, and if the world list fails there, `https://www.runescape.com/g=oldscape/slr.ws?order=LPWM` is the address RuneLite's own service used (`WORLDS_URL` in `src/almanac.ts` and `relay-py/almanac.py`).
+
+The Python relay does the same in a task of its own (a look each minute), with `--almanac off` to fetch nothing. It keeps what came in memory only, so each start asks each source once.
+
+`npm test` runs `test/almanac_test.mts` (the parsing, against `../tests/fixtures/almanac`, and a day of the schedule on a clock of its own: the request counts above); `../relay-py/test_almanac.py` is the same for the Python relay, and `../tests/protocol_test.py`'s `Almanac` tests both relays' `GET /almanac` with the sources served from the fixtures on the test's own computer.
+
 ## Settings
 
 The `vars` in `wrangler.jsonc`:
@@ -81,3 +113,4 @@ The `vars` in `wrangler.jsonc`:
 - `POLL_MIN_SECONDS`, `POLL_KEPT_SECONDS`: shorter polls, for the tests.
 - `SETTLE_CODE_SECONDS`: how long a settling code lasts (600 when unset), shorter for the tests.
 - `WHERE_FRESH_SECONDS`: how long a player's square (following, and its world) and what they're doing show on `GET /channels` after the plugin said them (240 when unset), shorter for the tests.
+- `ALMANAC_UPSTREAM`: the almanac's sources all fetched under this address (at the real ones' paths) instead of Jagex's and the Wiki's hosts. For the tests only; never on Cloudflare.
