@@ -89,14 +89,83 @@ public interface OutsideConfig extends Config
 		name = "Follow me on the globe",
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe travels to the rough area"
 			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
-			+ " your outstation's transmitting. Never in the Wilderness, a PvP area, on a PvP or Deadman world or in an"
-			+ " instance: there, what was sent is cleared at once.",
+			+ " your outstation's transmitting. In an instance (a raid, a boss room), the area it's opened from. Never in"
+			+ " the Wilderness, a PvP area or minigame, or on a PvP or Deadman world: there, what was sent is cleared at"
+			+ " once.",
 		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
 			+ " your outstation's relay, a server not controlled or verified by the RuneLite developers, at most once a"
 			+ " minute, and anyone who opens outside.wiki's globe can see it while your outstation's transmitting.",
 		position = 6
 	)
 	default boolean follow()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "followWorld",
+		name = "And my world",
+		description = "Off (to begin with). On, with following on too, the world you were on two minutes ago goes with"
+			+ " the square, so the globe can show which world your light's on. Never on a PvP, Deadman or other"
+			+ " dangerous world, and never without following.",
+		warning = "On, the world you were on two minutes ago goes with the rough area (a square of the map about 128"
+			+ " tiles a side), so anyone who opens outside.wiki's globe while your outstation's transmitting can see which"
+			+ " world and roughly where you were two minutes before.",
+		position = 7
+	)
+	default boolean followWorld()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "activity",
+		name = "What I'm doing, on the globe",
+		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe shows what you were doing"
+			+ " two minutes ago, only as one word: skilling (and which skill), a boss, a raid or a minigame (and which),"
+			+ " fighting, or idle. At most once a minute, while your outstation's transmitting. Never in the Wilderness,"
+			+ " a PvP area or minigame, or on a PvP or Deadman world: there, what was sent is cleared at once. It doesn't"
+			+ " need following on.",
+		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss, raid or minigame and"
+			+ " which, fighting, or idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
+			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while your outstation's"
+			+ " transmitting.",
+		position = 8
+	)
+	default boolean activity()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "stars",
+		name = "Shooting stars I find",
+		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
+			+ " its size, its world, its landing site and the rough area it's in (a square about 128 tiles a side), two"
+			+ " minutes late (with your outstation's name as its finder only if you say so, below). Never one in the Wilderness, or"
+			+ " seen from a PvP area, world or minigame, or Deadman.",
+		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
+			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it"
+			+ " to anyone on outside.wiki's list of stars (your outstation's name with it only with \"Name me as a star's"
+			+ " finder\" on).",
+		position = 9
+	)
+	default boolean stars()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "starsCredit",
+		name = "Name me as a star's finder",
+		description = "Off (to begin with). Only with \"Shooting stars I find\" on: your outstation's name goes on"
+			+ " outside.wiki's list of stars beside each star you told of first. Off, your stars still go on the list,"
+			+ " with no finder named.",
+		warning = "On, outside.wiki's list of stars shows your outstation's name beside each shooting star you told of"
+			+ " first (its world, landing site and rough area, two minutes after you saw it), to anyone who opens it.",
+		position = 10
+	)
+	default boolean starsCredit()
 	{
 		return false;
 	}

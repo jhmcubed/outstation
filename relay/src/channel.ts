@@ -17,11 +17,16 @@
 // Settling (11/08/2026; settle.ts, docs/protocol.md "Settling"): where the outstation stands on outside.wiki's globe (its
 // home), chosen by its owner with a one-time code the app trades its key for; kept in the meta, and in its row of
 // GET /channels.
+//
+// The globe's from the plugin (11/08/2026; game.ts): following's square (and its world), and what they're doing, held
+// in memory for the channel's row of GET /channels; and the shooting stars they find, passed to the Directory's list
+// (stars.ts), which names the first listed outstation to find each (11/09/2026).
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
-import { type Fields, GameState, gameFields, gameWhere, GAME_A_SECOND, GAME_MESSAGE, type Where, WHERE_EVERY_MS } from "./game";
+import { type Activity, type Fields, GameState, gameActivity, gameFields, gameStar, gameWhere, GAME_A_SECOND, GAME_MESSAGE,
+         type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
 import { type Home, type SettleCode, SETTLE_CODE, SETTLE_CODE_MS, SETTLE_EVERY_MS, settleAnswer, settleCode, settleWanted } from "./settle";
 
@@ -42,7 +47,8 @@ export interface Env {
   CLIPS_DAYS?: string; // and for how long (30 days)
   CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
   SETTLE_CODE_SECONDS?: string; // (tests) how long a settling code lasts (settle.ts's SETTLE_CODE_MS: 600)
-  WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
+  WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" or an "activity" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
+  ALMANAC_UPSTREAM?: string; // (tests) the almanac's sources all fetched under this address instead of the real hosts (almanac.ts's urls)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -111,6 +117,7 @@ export interface Listing {
   home?: Home | null; // (where it stands on outside.wiki's globe, 11/08/2026: settle.ts)
   pending?: boolean; // (an invite nobody's taken up yet, 11/08/2026: not listed, only counted under its inviter)
   where?: Where; whereAt?: number; // (following, 11/08/2026: only while live, and when it came; the Directory says if it's fresh)
+  activity?: Activity; activityAt?: number; // (what they're doing, 11/08/2026: the same)
 }
 
 interface Att {
@@ -269,6 +276,10 @@ export class Channel extends DurableObject<Env> {
   where: Where | null = null;
   whereAt = 0;
   whereTook = 0;
+  // what they're doing (11/08/2026; game.ts, gameActivity): kept, taken and dropped exactly as "where" is
+  activity: Activity | null = null;
+  activityAt = 0;
+  activityTook = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -403,7 +414,8 @@ export class Channel extends DurableObject<Env> {
     return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
              doing: this.doing(), game: this.sockets("game").length > 0, home: this.meta.home ?? null,
-             ...(live && this.where ? { where: this.where, whereAt: this.whereAt } : {}) };
+             ...(live && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
+             ...(live && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}) };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -801,7 +813,9 @@ export class Channel extends DurableObject<Env> {
     if (!m || typeof m !== "object" || Array.isArray(m) || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) return;
     const fields = gameFields(m.game);
     this.takeWhere(gameWhere(m.game), fields, now);
-    const got = this.game.apply(fields); // (never "where": gameFields leaves it out)
+    this.takeActivity(gameActivity(m.game), fields, now);
+    this.takeStar(gameStar(m.game), fields);
+    const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
     if (!got) return;
     const line = pyjson({ game: { ...got, at: this.game.at } });
     for (const v of [...this.seated(), ...this.sockets("look"), ...this.sockets("desk")]) this.send(v, line);
@@ -825,6 +839,35 @@ export class Channel extends DurableObject<Env> {
     this.where = null;
     this.whereAt = 0;
     this.tellListing();
+  }
+
+  /** What they're doing (game.ts, gameActivity): taken and dropped exactly as takeWhere takes "where", one every
+   *  WHERE_EVERY_MS at most, null whenever it comes; logged out or held for the player's safety, dropped. */
+  takeActivity(a: Activity | null | undefined, fields: Fields, now: number) {
+    if (fields.off === true || typeof fields.paused === "string" || a === null) return this.dropActivity();
+    if (!a || now - this.activityTook < WHERE_EVERY_MS) return;
+    this.activity = a;
+    this.activityAt = this.activityTook = now;
+    this.tellListing();
+  }
+
+  dropActivity() {
+    if (!this.activity) return;
+    this.activity = null;
+    this.activityAt = 0;
+    this.tellListing();
+  }
+
+  /** A shooting star the plugin found (game.ts, gameStar): to the Directory's list (stars.ts), which counts this
+   *  channel's reports (STARS_AN_HOUR) and names it as the star's finder only if it's on the open outstations' list
+   *  (handed out, no watch code, not an invite waiting). Not from a message that logs out or holds for the player's
+   *  safety. */
+  takeStar(star: StarReport | undefined, fields: Fields) {
+    if (!star || !this.name || fields.off === true || typeof fields.paused === "string") return;
+    const listed = this.meta.keyHash !== null && !this.meta.code && !this.meta.pending;
+    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
+    this.ctx.waitUntil(this.directory.fetch("https://dir/stars", { method: "PUT", body: JSON.stringify({ channel: this.name, star, listed }) })
+      .then(() => undefined, () => undefined)); // (one lost: the next outstation to see it tells of it)
   }
 
   /** The game state into storage, at most once every GAME_SAVE while messages come: soon after the first, then a minute
@@ -851,6 +894,8 @@ export class Channel extends DurableObject<Env> {
   clearGame() {
     this.dropWhere(); // (following: the new key's holder starts with none)
     this.whereTook = 0;
+    this.dropActivity(); // (what they're doing, the same)
+    this.activityTook = 0;
     if (this.gameTimer) clearTimeout(this.gameTimer);
     this.gameTimer = null;
     this.gameDirty = false;
@@ -928,6 +973,7 @@ export class Channel extends DurableObject<Env> {
       if (!this.sockets("game").length) {
         this.saveGame(); // (the last of it, for a page while the player's away)
         this.dropWhere(); // (following: only while the plugin's connected)
+        this.dropActivity(); // (what they're doing, the same)
         this.tellViewers();
       }
     }

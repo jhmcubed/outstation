@@ -98,7 +98,13 @@ transmission and the chat, live, and as last known while dark.
   minutes before ({"x", "y"}; Zanaris as one place, WHERE_ZANARIS), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
   whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
   and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
-  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read.
+  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read. With the plugin's "and my
+  world" on too, "where" carries the world with the square, {"x", "y", "world"} (WORLD_RANGE).
+  What they're doing (11/08/2026): "activity", one coarse label ({"kind": "skilling", "skill"}, {"kind": "boss",
+  "boss"}, {"kind": "fighting"}, {"kind": "idle"}: game_activity's closed lists), or null; held, dropped and shown on
+  GET /channels exactly as "where" is.
+  Shooting stars (11/08/2026): "star", a crashed star the player found two minutes before ({"world", "x", "y", "tier"},
+  or "gone": true; "site" with either), into the relay's StarList: GET /stars (below).
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
 
 The aether (11/07/2026, Jace: "a global chat... reminds me of IRC and AOL Instant Messenger. i want this to feel like a
@@ -123,6 +129,23 @@ happening across the open outstations, for outside.wiki's front page (each outst
   more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
   GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
   public side allows the read.
+
+Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): the crashed stars the
+plugins have found, and who found each, for outside.wiki's globe.
+    read:      GET http://HOST:PORT/stars
+               {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}, ...]}
+  One for each world and square, however many told of it, with the first listed outstation to tell of it with "credit":
+  true as its finder ("by", 11/09/2026: opt-in; null for none, or a hidden one) and how many did; kept STAR_LIFE_S after it was first told of, or till it's told
+  gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
+  only. The public side allows the read.
+
+The almanac (11/09/2026; docs/protocol.md "The almanac"; almanac.py, and the Worker's almanac.ts, the same): Jagex's
+news, the world list (its seasons) and the Wiki's prices (the day's movers), for outside.wiki's globe, each fetched by
+the relay alone on its own schedule (almanac_loop; --almanac on, the default, off, or an address for tests) and shared.
+    read:      GET http://HOST:PORT/almanac     {"at", "updates", "worlds", "market", "sources"}
+    keeper:    GET /admin/almanac (each source's schedule), POST /admin/almanac (every source asked now)
+  A read never asks a source, except the first when nothing's been tried (shared by every read meanwhile). A source
+  that fails keeps its last good data, with its age, and backs off. The public side allows the read.
 
 Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): where an outstation stands on
 outside.wiki's globe of Gielinor (by default beside whoever invited it), chosen by its owner. The app trades its key for a
@@ -157,6 +180,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from forward import DEFAULT as DEFAULT_FORWARD, Forward  # noqa: E402
+import almanac as almanac_sources  # noqa: E402
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 512 * 1024          # a frame is ~10-30 KB; anything bigger is refused
@@ -190,6 +214,113 @@ WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096)
 # location as being on Zanaris"): the plugin sends any tile there (x 2368-2495, y 4352-4479) as this one place, which
 # the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
 WHERE_ZANARIS = {"x": 2368, "y": 4416}
+# which world (11/08/2026, with following's "and my world"; the Worker's WORLD_RANGE, the same): a whole number in this
+# range, wide enough for the worlds RuneLite reports (301 and up for years, and lower if Jagex numbers them from 1).
+# Shooting stars' worlds are checked the same.
+WORLD_RANGE = (1, 999)
+# what they're doing (11/08/2026; the Worker's ACTIVITY_SKILLS and ACTIVITY_BOSSES, the same; the bosses are the
+# plugin's Activity.BOSSES's labels: test_relay.py checks the three lists match)
+ACTIVITY_SKILLS = ("Agility", "Attack", "Construction", "Cooking", "Crafting", "Defence", "Farming", "Firemaking",
+                   "Fishing", "Fletching", "Herblore", "Hitpoints", "Hunter", "Magic", "Mining", "Prayer", "Ranged",
+                   "Runecraft", "Sailing", "Slayer", "Smithing", "Strength", "Thieving", "Woodcutting")
+ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Barrows", "Bryophyta", "Cerberus",
+                   "Commander Zilyana", "Corporeal Beast", "Dagannoth Prime", "Dagannoth Rex", "Dagannoth Supreme",
+                   "Duke Sucellus", "General Graardor", "Giant Mole", "Grotesque Guardians", "Hespori",
+                   "K'ril Tsutsaroth", "Kalphite Queen", "King Black Dragon", "Kraken", "Kree'arra", "Moons of Peril",
+                   "Nex", "Obor", "Phantom Muspah", "Phosani's Nightmare", "Royal Titans", "Sarachnis", "Scurrius",
+                   "Skotizo", "Sol Heredit", "The Hueycoatl", "The Leviathan", "The Nightmare", "The Whisperer",
+                   "Thermonuclear smoke devil", "TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Vorkath", "Yama", "Zalcano",
+                   "Zulrah")
+# raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"; the Worker's ACTIVITY_RAIDS and
+# ACTIVITY_MINIGAMES, the same; the plugin's Activity.RAIDS and MINIGAMES's labels, by RuneLite's Discord plugin's region
+# ids). No PvP minigames.
+ACTIVITY_RAIDS = ("Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut")
+ACTIVITY_MINIGAMES = (
+    "Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Fishing Trawler", "Giants' Foundry",
+    "Guardians of the Rift", "Hallowed Sepulchre", "Mage Training Arena", "Nightmare Zone", "Pest Control",
+    "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Temple Trekking", "Tempoross", "Tithe Farm",
+    "Trouble Brewing", "Volcanic Mine", "Wintertodt", "the Colosseum", "the Corrupted Gauntlet", "the Fight Caves",
+    "the Gauntlet", "the Inferno")
+# the landing sites (11/09/2026, Jace: "named landing sites: yes"; the Worker's STAR_SITES, the same): Shooting Star
+# Info's (its Location.java; BSD 2-Clause, Copyright (c) 2022, Cute Rock: plugin/README.md, "Credits"), less the
+# Wilderness's and Prifddinas's, each name with the square it's in. A star's "site" must be one of these, in its square.
+STAR_SITES = {
+    "Rimmington mine": (3008, 3264),
+    "Crafting guild": (2880, 3264),
+    "West Falador mine": (2880, 3392),
+    "East Falador bank": (3008, 3392),
+    "North Dwarven Mine entrance": (3008, 3392),
+    "Taverley house portal": (2880, 3520),
+    "Brimhaven northwest gold mine": (2752, 3264),
+    "Brimhaven south dungeon entrance": (2752, 3136),
+    "Nature Altar mine north of Shilo": (2880, 3008),
+    "Shilo Village gem mine": (2880, 3008),
+    "North Crandor": (2880, 3264),
+    "South Crandor": (2880, 3264),
+    "Al Kharid mine": (3264, 3264),
+    "Al Kharid bank": (3264, 3136),
+    "Mage Training Arena entrance": (3392, 3264),
+    "Nw of Uzer (Eagle's Eyrie)": (3392, 3136),
+    "Nardah bank": (3392, 2880),
+    "Agility Pyramid mine": (3264, 2880),
+    "Desert Quarry mine": (3136, 2880),
+    "Corsair Cove bank": (2624, 2880),
+    "Corsair Resource Area": (2496, 2880),
+    "Myths' Guild": (2496, 2880),
+    "Feldip Hills (aks fairy ring)": (2624, 3008),
+    "Rantz cave": (2624, 3008),
+    "Soul Wars south mine": (2240, 2752),
+    "Fossil Island Volcanic Mine entrance": (3776, 3776),
+    "Fossil Island rune rocks": (3776, 3776),
+    "Mos Le'Harmless west bank": (3648, 3008),
+    "Keldagrim entrance mine": (2752, 3648),
+    "Rellekka mine": (2624, 3648),
+    "Jatizso mine entrance": (2368, 3776),
+    "Neitiznot south of rune rock": (2368, 3776),
+    "Miscellania mine (cip fairy ring)": (2496, 3904),
+    "Lunar Isle mine entrance": (2112, 3904),
+    "Yanille bank": (2624, 3136),
+    "Port Khazard mine": (2624, 3136),
+    "Ardougne Monastery": (2624, 3264),
+    "South of Legends' Guild": (2752, 3392),
+    "Catherby bank": (2752, 3392),
+    "Coal Trucks west of Seers'": (2624, 3520),
+    "Hosidius mine": (1728, 3520),
+    "Port Piscarilius mine in Kourend": (1728, 3648),
+    "Shayzien mine south of Kourend Castle": (1600, 3648),
+    "South Lovakengj bank": (1472, 3776),
+    "Lovakite mine": (1472, 3904),
+    "Arceuus dense essence mine": (1728, 3904),
+    "Mount Karuulm bank": (1344, 3776),
+    "Mount Karuulm mine": (1216, 3776),
+    "Kebos Swamp mine": (1216, 3648),
+    "Chambers of Xeric bank": (1216, 3520),
+    "Varrock east bank": (3264, 3392),
+    "South-east Varrock mine": (3264, 3392),
+    "Champions' Guild mine": (3136, 3392),
+    "Draynor Village": (3136, 3264),
+    "West Lumbridge Swamp mine": (3136, 3136),
+    "East Lumbridge Swamp mine": (3264, 3136),
+    "Darkmeyer ess. mine entrance": (3648, 3392),
+    "Theatre of Blood bank": (3648, 3264),
+    "Canifis bank": (3520, 3520),
+    "Burgh de Rott bank": (3520, 3264),
+    "Abandoned Mine west of Burgh": (3392, 3264),
+    "West of Grand Tree": (2496, 3520),
+    "Gnome Stronghold spirit tree": (2496, 3392),
+    "Piscatoris (akq fairy ring)": (2368, 3648),
+    "Lletya": (2368, 3136),
+    "Isafdar runite rocks": (2240, 3136),
+    "Arandar mine north of Lleyta": (2368, 3264),
+    "Mynydd nw of Prifddinas": (2112, 3392),
+    "Varlamore South East mine": (1728, 3008),
+    "Varlamore colosseum entrance bank": (1728, 3136),
+    "Mine north-west of hunter guild": (1472, 3136),
+}
+# shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): a star's kept
+# STAR_LIFE_S after it was first told of (a star lasts about two hours), or till it's told gone; for STAR_GONE_S after,
+# a late report of it doesn't bring it back; one outstation tells of STARS_AN_HOUR in an hour at most; STARS_KEPT at most
+STAR_LIFE_S, STAR_GONE_S, STARS_AN_HOUR, STARS_KEPT = 2 * 3600, 600, 30, 1000
 # the aether (11/07/2026; docs/protocol.md "The aether"): one room for every outstation and visitor. A line at most
 # AETHER_ROWS rows of AETHER_WIDTH characters (so 960 in all); one from someone every AETHER_EVERY ms at most, and
 # AETHER_A_MINUTE a minute; the last AETHER_KEPT kept (and handed to whoever joins), the last AETHER_READ in GET /aether;
@@ -611,22 +742,165 @@ def game_where(g):
     w = g["where"]
     if w is None:
         return None
-    if not isinstance(w, dict) or len(w) != 2:
+    if not isinstance(w, dict) or not (len(w) == 2 or (len(w) == 3 and "world" in w)):
         return _BAD
     out = {}
     for k in ("x", "y"):
-        v = w.get(k)
-        if isinstance(v, float) and v.is_integer():
-            v = int(v)                                   # (3136.0 is 3136, as JavaScript reads it)
-        if not isinstance(v, int) or isinstance(v, bool):
+        v = game_int(w.get(k))                           # (3136.0 is 3136, as JavaScript reads it)
+        if v is None:
             return _BAD
         out[k] = v
-    if out == WHERE_ZANARIS:
-        return dict(WHERE_ZANARIS)
-    for k, (lo, hi) in (("x", WHERE_X), ("y", WHERE_Y)):
-        if not lo <= out[k] < hi or out[k] % WHERE_SQUARE != WHERE_SQUARE // 2:
+    world = {}
+    if len(w) == 3:
+        if not is_world(w["world"]):
             return _BAD
-    return out
+        world = {"world": game_int(w["world"])}
+    if out == WHERE_ZANARIS:
+        return dict(WHERE_ZANARIS, **world)
+    if not (is_square(out["x"], WHERE_X) and is_square(out["y"], WHERE_Y)):
+        return _BAD
+    return dict(out, **world)
+
+
+def game_int(v):
+    """A whole number as JavaScript reads one (3136.0 is 3136; true isn't one), or None."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def is_square(v, bounds):
+    """A square's middle along one side of the main map: a whole number k*128 + 64 from bounds[0] up to bounds[1]."""
+    v = game_int(v)
+    return v is not None and bounds[0] <= v < bounds[1] and v % WHERE_SQUARE == WHERE_SQUARE // 2
+
+
+def is_world(v):
+    """A world's number (WORLD_RANGE). The Worker's isWorld, the same."""
+    v = game_int(v)
+    return v is not None and WORLD_RANGE[0] <= v <= WORLD_RANGE[1]
+
+
+def game_activity(g):
+    """A {"game"} message's "activity" (what they're doing, 11/08/2026): one of {"kind": "skilling", "skill"} (one of
+    ACTIVITY_SKILLS), {"kind": "boss", "boss"} (one of ACTIVITY_BOSSES), {"kind": "fighting"} or {"kind": "idle"},
+    exactly (a copy); None to clear it (null); or _BAD for anything else (none, or not its shape: ignored, and the rest
+    of the message taken as ever). Never one of the game's fields. The Worker's gameActivity, the same."""
+    if not isinstance(g, dict) or "activity" not in g:
+        return _BAD
+    a = g["activity"]
+    if a is None:
+        return None
+    if not isinstance(a, dict):
+        return _BAD
+    kind = a.get("kind")
+    if kind in ("idle", "fighting") and len(a) == 1:
+        return {"kind": kind}
+    if kind == "skilling" and len(a) == 2 and isinstance(a.get("skill"), str) and a["skill"] in ACTIVITY_SKILLS:
+        return {"kind": "skilling", "skill": a["skill"]}
+    if kind == "boss" and len(a) == 2 and isinstance(a.get("boss"), str) and a["boss"] in ACTIVITY_BOSSES:
+        return {"kind": "boss", "boss": a["boss"]}
+    if kind == "raid" and len(a) == 2 and isinstance(a.get("raid"), str) and a["raid"] in ACTIVITY_RAIDS:
+        return {"kind": "raid", "raid": a["raid"]}
+    if kind == "minigame" and len(a) == 2 and isinstance(a.get("minigame"), str) and a["minigame"] in ACTIVITY_MINIGAMES:
+        return {"kind": "minigame", "minigame": a["minigame"]}
+    return _BAD
+
+
+def game_star(g):
+    """A {"game"} message's "star" (a shooting star found, 11/08/2026): {"world", "x", "y", "tier"} (a world, a square's
+    middle on the main map as "where"'s, a tier 1 to 9) or {"world", "x", "y", "gone": True}, exactly, each with "site"
+    (11/09/2026: one of STAR_SITES, in its own square) or without, and "credit": True (11/09/2026: the player's asked to
+    be named as its finder; opt-in) or without; or None for none or anything not its shape. The Worker's gameStar, the
+    same."""
+    s = g.get("star") if isinstance(g, dict) else None
+    if not isinstance(s, dict) or not is_world(s.get("world")) or not is_square(s.get("x"), WHERE_X) \
+            or not is_square(s.get("y"), WHERE_Y):
+        return None
+    at = {"world": game_int(s["world"]), "x": game_int(s["x"]), "y": game_int(s["y"])}
+    if "credit" in s and s["credit"] is not True:
+        return None
+    if "site" in s:
+        sq = STAR_SITES.get(s["site"]) if isinstance(s["site"], str) else None
+        if sq is None or sq != (at["x"], at["y"]):
+            return None
+        at["site"] = s["site"]
+    if s.get("credit") is True:
+        at["credit"] = True
+    keys = ",".join(sorted(k for k in s if k not in ("site", "credit")))
+    tier = game_int(s.get("tier"))
+    if keys == "tier,world,x,y" and tier is not None and 1 <= tier <= 9:
+        return dict(at, tier=tier)
+    if keys == "gone,world,x,y" and s["gone"] is True:
+        return dict(at, gone=True)
+    return None
+
+
+class StarList:
+    """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, however many told
+    of it, with the first outstation on the open outstations' list whose report asked for the credit as its finder
+    ("by", 11/09/2026: opt-in, "credit": true; a hidden outstation is never named) and how many did; in memory only. One outstation tells of STARS_AN_HOUR in an
+    hour at most. The Worker's StarList (stars.ts), the same. Times in ms."""
+
+    def __init__(self):
+        self.stars = {}              # "world:x:y" -> {"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}
+        self.tellers = {}            # "world:x:y" -> the channels that told of it (for "reports")
+        self.gone = {}               # "world:x:y" -> when it was told gone
+        self.recent = {}             # a channel -> when it told of one, the last hour
+
+    def expire(self, now):
+        """The stars and the gone past their time, and a quiet channel's times, forgotten."""
+        for k in [k for k, s in self.stars.items() if now - s["found"] >= STAR_LIFE_S * 1000]:
+            del self.stars[k]
+            self.tellers.pop(k, None)
+        for k in [k for k, t in self.gone.items() if now - t >= STAR_GONE_S * 1000]:
+            del self.gone[k]
+        for c in [c for c, t in self.recent.items() if now - t[-1] >= 3_600_000]:
+            del self.recent[c]
+
+    def add(self, channel, r, listed, now=None):
+        """A channel's report (game_star's), and whether the channel's on the open outstations' list: whether it was
+        counted (False past its STARS_AN_HOUR). A new star's added; one kept takes a tier as low or lower (a star's only
+        ever mined down) and when it was seen, and a site and a finder if it had none; gone takes it off, and keeps it
+        off for STAR_GONE_S."""
+        now = int(time.time() * 1000) if now is None else now
+        self.expire(now)
+        times = [t for t in self.recent.get(channel, []) if now - t < 3_600_000]
+        if len(times) >= STARS_AN_HOUR:
+            return False
+        times.append(now)
+        self.recent[channel] = times
+        k = "%d:%d:%d" % (r["world"], r["x"], r["y"])
+        if r.get("gone"):
+            self.stars.pop(k, None)
+            self.tellers.pop(k, None)
+            self.gone[k] = now
+            return True
+        if k in self.gone:
+            return True
+        had = self.stars.get(k)
+        if had is not None:
+            if r["tier"] <= had["tier"]:
+                had["tier"], had["seen"] = r["tier"], now
+            if had["site"] is None:
+                had["site"] = r.get("site")
+            if had["by"] is None and listed and r.get("credit") is True:
+                had["by"] = channel
+            self.tellers[k].add(channel)
+            had["reports"] = len(self.tellers[k])
+            return True
+        if len(self.stars) < STARS_KEPT:
+            self.stars[k] = {"world": r["world"], "x": r["x"], "y": r["y"], "site": r.get("site"), "tier": r["tier"],
+                             "found": now, "seen": now,
+                             "by": channel if listed and r.get("credit") is True else None, "reports": 1}
+            self.tellers[k] = {channel}
+        return True
+
+    def read(self, now=None):
+        """GET /stars: every star kept, by world, then x, then y."""
+        now = int(time.time() * 1000) if now is None else now
+        self.expire(now)
+        return {"stars": sorted((dict(s) for s in self.stars.values()), key=lambda s: (s["world"], s["x"], s["y"]))}
 
 
 class Game:
@@ -963,9 +1237,10 @@ class Aether:
 
 
 class Channel:
-    def __init__(self, name, key, array=None):
+    def __init__(self, name, key, array=None, stars=None):
         self.name, self.key = name, key
         self.array = array           # the relay's ArrayFeed: this channel's events go in while it's live and listed
+        self.stars = stars           # the relay's StarList: the shooting stars its plugin finds go in
         self.code = ""
         self.sender = None
         self.viewers = set()
@@ -1027,6 +1302,10 @@ class Channel:
         self.where = None
         self.where_at = None
         self.where_took = None
+        # what they're doing (11/08/2026; game_activity): kept, taken and dropped exactly as "where" is
+        self.activity = None
+        self.activity_at = None
+        self.activity_took = None
         # settling (11/08/2026): where it stands on outside.wiki's globe ({"lon", "lat"} or {"near"}; None: beside its
         # inviter), when that last changed (ms), and the app's one-time code for the page ({"code", "expires", "used"})
         self.home = None
@@ -1073,7 +1352,9 @@ class Channel:
             return
         fields = game_fields(m["game"])
         self.take_where(game_where(m["game"]), fields)
-        got = self.game.apply(fields)       # (never "where": game_fields leaves it out)
+        self.take_activity(game_activity(m["game"]), fields)
+        self.take_star(game_star(m["game"]), fields)
+        got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
         if got is None:
             return
         line = json.dumps({"game": dict(got, at=self.game.at)})
@@ -1095,6 +1376,30 @@ class Channel:
 
     def drop_where(self):
         self.where = self.where_at = None
+
+    def take_activity(self, a, fields):
+        """What they're doing (game_activity): taken and dropped exactly as take_where takes "where", one every
+        WHERE_EVERY_S at most, null whenever it comes; logged out or held for the player's safety, dropped; nothing taken
+        while no plugin's connected."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or a is None:
+            self.drop_activity()
+            return
+        now = time.monotonic()
+        if a is _BAD or self.gamer is None or (self.activity_took is not None and now - self.activity_took < WHERE_EVERY_S):
+            return
+        self.activity, self.activity_at, self.activity_took = a, now, now
+
+    def drop_activity(self):
+        self.activity = self.activity_at = None
+
+    def take_star(self, star, fields):
+        """A shooting star the plugin found (game_star): into the relay's StarList, which counts this channel's reports
+        and names it as the star's finder only if it's listed. Not from a message that logs out or holds for the player's safety, nor once
+        the plugin's gone (a report --delay held back)."""
+        if star is None or self.stars is None or self.gamer is None or fields.get("off") is True \
+                or isinstance(fields.get("paused"), str):
+            return
+        self.stars.add(self.name, star, self.listed())
 
     def on_air(self):
         """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
@@ -1411,12 +1716,19 @@ def too_old(v, min_client):
 
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
-                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S):
+                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S, almanac="off"):
         self.delay = delay
+        # the almanac (11/09/2026; almanac.py): Jagex's news, the world list and the Wiki's prices, fetched on a
+        # schedule (almanac_loop) and shared: "off" (nothing's fetched; GET /almanac answers its shape, empty), "on"
+        # (the real hosts) or an address everything's fetched under instead (tests)
+        self.almanac_on = almanac != "off"
+        self.almanac = almanac_sources.Almanac(almanac_sources.async_fetch, None if almanac in ("on", "off") else almanac,
+                                               log=log)
         self.settle_code_s = settle_code_s  # how long a settling code lasts (SETTLE_CODE_S; tests shorten it)
         self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
+        self.stars = StarList()        # shooting stars (11/08/2026): the ones the plugins found, and who found each
         self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
         self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
@@ -1475,8 +1787,8 @@ class Relay:
                                              or (path and path[0] in ("invites", "admin"))):
             # from the internet: no transmitting, no Dink posts, no invites, no settling code for a key (POST /settle),
             # no game socket, no outstation in the aether and none of the keeper's routes, whatever key comes with them
-            # (the game's read, GET /game, the aether's read, a visitor in the aether, the Array's events and the globe
-            # page's settling with a code are let through: what anyone on Outside may do anyway)
+            # (the game's read, GET /game, the aether's read, a visitor in the aether, the Array's events, the shooting
+            # stars and the globe page's settling with a code are let through: what anyone on Outside may do anyway)
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
@@ -1504,6 +1816,15 @@ class Relay:
             return
         if path == ["array", "events"] and not key:
             await self.array_read(writer, method, q)
+            return
+        if path == ["stars"] and not key:
+            await self.stars_read(writer, method)
+            return
+        if path == ["almanac"] and not key:
+            await self.almanac_read(writer, method)
+            return
+        if path == ["admin", "almanac"] and not key:
+            await self.almanac_keeper(writer, method, headers)
             return
         if path[:2] == ["admin", "aether"] and not key:
             await self.aether_keeper(reader, writer, method, headers, path)
@@ -1560,7 +1881,7 @@ class Relay:
             return
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key, self.array)
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
         elif ch.key is None:         # made by a viewer waiting for it: this key claims it
             ch.key = key
         elif ch.key != key:
@@ -1610,7 +1931,7 @@ class Relay:
             await sock.close(4003, "wrong watch code")
             return
         if ch is None:
-            ch = self.channels[name] = Channel(name, None, self.array)
+            ch = self.channels[name] = Channel(name, None, self.array, self.stars)
         sock.look_frames, sock.look_at = False, 0.0
         ch.lookers.add(sock)
         sock.send_nowait(ch.status())
@@ -1644,7 +1965,7 @@ class Relay:
             return
         if ch is None:
             # nobody has claimed it yet: wait as a viewer of an empty channel
-            ch = self.channels[name] = Channel(name, None, self.array)
+            ch = self.channels[name] = Channel(name, None, self.array, self.stars)
         sock.code = code
         self.next_who += 1
         sock.who, sock.device, sock.name = self.next_who, "", "visitor"
@@ -1752,7 +2073,7 @@ class Relay:
             return None
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key, self.array)
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:
@@ -1984,6 +2305,7 @@ class Relay:
             if ch.gamer is sock:
                 ch.gamer = None
                 ch.drop_where()              # (following: only while the plugin's connected)
+                ch.drop_activity()           # (what they're doing, the same)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
 
@@ -1994,8 +2316,9 @@ class Relay:
         "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
         counted under each inviter, [{"by", "n"}] sorted by "by" (the Worker's openPortals, the same). Never the
         invited names, and only under an inviter that's on the list itself, so nothing's said of a hidden outstation.
-        "where" (11/08/2026, following; game_where): the square the plugin last said, only while the channel's live and
-        listed, and only if it came within where_fresh_s; else null. Nowhere else."""
+        "where" (11/08/2026, following; game_where): the square the plugin last said (and its world, with "and my world"
+        on), only while the channel's live and listed, and only if it came within where_fresh_s; else null.
+        "activity" (11/08/2026; game_activity): what they were doing, the same way. Nowhere else."""
         # (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
         waiting = {ch.name for ch in self.channels.values() if ch.key is not None and ch.pending}
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
@@ -2003,7 +2326,9 @@ class Relay:
                  "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
                  "home": None if isinstance(ch.home, dict) and ch.home.get("near") in waiting else ch.home,
                  "where": dict(ch.where) if ch.where is not None and ch.sender is not None
-                          and time.monotonic() - ch.where_at <= self.where_fresh_s else None}
+                          and time.monotonic() - ch.where_at <= self.where_fresh_s else None,
+                 "activity": dict(ch.activity) if ch.activity is not None and ch.sender is not None
+                             and time.monotonic() - ch.activity_at <= self.where_fresh_s else None}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         shown, counts = {r["channel"] for r in rows}, {}
@@ -2122,6 +2447,73 @@ class Relay:
             await writer.drain()
         finally:
             writer.close()
+
+    async def stars_read(self, writer, method):
+        """GET /stars (11/08/2026; StarList): the shooting stars the plugins have found, and who found each, for
+        outside.wiki's globe: {"stars": [...]}. Anyone may read it (any origin, the public side too), never cached."""
+        status, body = ("200 OK", self.stars.read()) if method == "GET" else ("405 Method Not Allowed", None)
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\n"
+                      "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def almanac_read(self, writer, method):
+        """GET /almanac (11/09/2026; almanac.py, docs/protocol.md "The almanac"): Jagex's news, the world list and the
+        market, as last fetched on the relay's own schedule. Anyone may read it (any origin, the public side too); a
+        browser may keep it a minute. A read never asks a source, except the first when nothing's ever been tried (a
+        cold start: one refresh, shared by every read that comes while it runs)."""
+        if method != "GET":
+            status, body = "405 Method Not Allowed", None
+        else:
+            if self.almanac_on and self.almanac.cold():
+                await self.almanac.refresh()
+            status, body = "200 OK", self.almanac.read()
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        cache = "public, max-age=60" if body is not None else "no-cache"
+        writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: %s\r\n"
+                      "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, cache, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def almanac_keeper(self, writer, method, headers):
+        """The almanac's keeper (the Worker's, the same), with --admin-token: GET /admin/almanac, each source's schedule
+        and last error; POST /admin/almanac, every source asked now, whatever its schedule (then the same)."""
+        auth = headers.get("authorization", "").encode("latin-1")
+        if len(self.admin_token) < 16 or not hmac.compare_digest(auth, ("Bearer " + self.admin_token).encode("utf-8")):
+            status, body = "403 Forbidden", None
+        elif method == "POST":
+            if self.almanac_on:
+                await self.almanac.refresh(force=True)
+            status, body = "200 OK", self.almanac.status()
+        elif method == "GET":
+            status, body = "200 OK", self.almanac.status()
+        else:
+            status, body = "405 Method Not Allowed", None
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode()
+                     + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def almanac_loop(self):
+        """The almanac's schedule (the Worker's Cron Trigger, every 5 minutes, the same): each minute, whatever source
+        is due is asked (almanac.py's NEWS_EVERY, WORLDS_EVERY, PRICES_EVERY, MAPPING_EVERY, and its backoff)."""
+        while True:
+            try:
+                await self.almanac.refresh()
+            except Exception as e:  # noqa: BLE001 (never the loop's end)
+                self.log("the almanac: %s" % e)
+            await asyncio.sleep(60)
 
     async def aether_keeper(self, reader, writer, method, headers, path):
         """The aether's keeper (11/07/2026; the Worker's, the same), with --admin-token (Authorization: Bearer <it>):
@@ -2250,7 +2642,7 @@ class Relay:
             return await answer("409 Conflict", {"error": "that name has an outstation already"})
         new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
         if other is None:
-            other = self.channels[player] = Channel(player, new_key, self.array)
+            other = self.channels[player] = Channel(player, new_key, self.array, self.stars)
         else:
             other.key = new_key       # (a channel only viewers were waiting on: now it's handed out, and they hear so)
             other.tell_viewers()
@@ -2560,7 +2952,7 @@ class Relay:
             return await answer("403 Forbidden")
         ch = self.channels.get(name)
         if ch is None:
-            ch = self.channels[name] = Channel(name, key, self.array)
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
         elif ch.key is None:
             ch.key = key
         elif ch.key != key:
@@ -2924,15 +3316,19 @@ def dink_report(p):
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S,
-                where_fresh_s=WHERE_FRESH_S):
+                where_fresh_s=WHERE_FRESH_S, almanac="off"):
     """port: everything (keep it on this PC). public_port: the page and watching only,
-    for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes)."""
-    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s)
+    for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
+    almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
+    everything under instead (tests)."""
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s,
+                  almanac)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
     uploads = asyncio.ensure_future(relay.tell_upload())
     watcher = asyncio.ensure_future(relay.watch_settings(settings)) if settings else None
+    almanac_task = asyncio.ensure_future(relay.almanac_loop()) if relay.almanac_on else None
     log("the outstation relay on ws://%s:%d%s" % (host, port, "  (delay %g s)" % delay if delay else ""))
     if public:
         log("its public side (the page and watching only) on http://%s:%d" % (host, public_port))
@@ -2952,6 +3348,8 @@ async def serve(host, port, delay, ready=None, log=print, forward=None, public_p
         uploads.cancel()
         if watcher:
             watcher.cancel()
+        if almanac_task:
+            almanac_task.cancel()
 
 
 def main(argv=None):
@@ -2979,6 +3377,9 @@ def main(argv=None):
     ap.add_argument("--where-fresh-seconds", type=float, default=WHERE_FRESH_S,
                     help="how long a player's square shows on the open outstations' list after it came (%d; shorter "
                          "for tests)" % WHERE_FRESH_S)
+    ap.add_argument("--almanac", default="on",
+                    help="the almanac's sources (GET /almanac): on (Jagex's news and world list and the Wiki's prices, "
+                         "each on its own schedule), off, or an address to fetch them all under instead (tests)")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -2990,7 +3391,7 @@ def main(argv=None):
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds,
-                          where_fresh_s=a.where_fresh_seconds))
+                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac))
     except KeyboardInterrupt:
         pass
 

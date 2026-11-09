@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>Old School RuneScape - News</title>
+<link>https://secure.runescape.com/m=news/archive?oldschool=1</link>
+<description>The latest news from Old School RuneScape</description>
+<language>en-gb</language>
+<item>
+<title>Sailing Fixes &amp; Tweaks</title>
+<description>
+Some fixes &amp;amp; changes to Sailing, and a few quality-of-life tweaks&lt;br&gt;elsewhere. &lt;a href="https://example.com"&gt;Read more&lt;/a&gt;
+</description>
+<category>Game Updates</category>
+<link>https://secure.runescape.com/m=news/sailing-fixes--tweaks?oldschool=1</link>
+<guid isPermaLink="true">https://secure.runescape.com/m=news/sailing-fixes--tweaks?oldschool=1</guid>
+<enclosure url="https://cdn.runescape.com/assets/img/external/oldschool/2026/newsposts/2026-11-04/sailing_fixes.png" type="image/png" length="0"/>
+<pubDate>Wed, 04 Nov 2026 11:30:00 GMT</pubDate>
+</item>
+<item>
+<title><![CDATA[Leagues VI: Demonic Pacts — Out Now!]]></title>
+<description><![CDATA[<p>The sixth League is here. Unlock relics &amp; regions…</p>]]></description>
+<category>Game Updates</category>
+<link>https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1</link>
+<guid isPermaLink="true">https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1</guid>
+<pubDate>Wed, 05 Nov 2026 12:00:00 +0000</pubDate>
+</item>
+<item>
+<title>Community Clan Showcase</title>
+<description>A look at some of the community&#39;s clans, and a contest. Café &#x1F41F; fish &#xD800; &bogus; stays.</description>
+<category>Community</category>
+<link>javascript:alert(1)</link>
+<pubDate>Mon, 02 Nov 2026 15:00:00 +0100</pubDate>
+</item>
+<item>
+<title>   </title>
+<description>An item with no title is skipped.</description>
+<link>https://secure.runescape.com/m=news/no-title?oldschool=1</link>
+<pubDate>Tue, 03 Nov 2026 10:00:00 GMT</pubDate>
+</item>
+<item>
+<title>Poll 85 Results</title>
+<description>The results of Poll 85, with a description long enough that it has to be cut short at two hundred characters, so the globe's card never runs on and on and on with every word Jagex wrote about the poll and its many, many questions.</description>
+<category>Future Updates</category>
+<link>https://oldschool.runescape.com/poll-85</link>
+<pubDate>not a date</pubDate>
+</item>
+<item>
+<title>Elsewhere</title>
+<link>https://runescape.com.example.net/phish</link>
+<pubDate>Thu, 29 Oct 2026 09:00:00 GMT</pubDate>
+</item>
+</channel>
+</rss>

@@ -117,6 +117,7 @@ Your channel stays yours until Jace takes it back: ask him if you want it gone.
 - `relay-py/`: the same relay in Python, standard library only, for running on your own PC (`py relay-py/relay.py`). It's also the reference.
 - `docs/protocol.md`: what the client, the relay and the page say to each other.
 - `tests/protocol_test.py`: the same tests run against either relay.
+- `tests/fixtures/almanac/`: what the almanac's sources answer (made up, in their formats: an RSS feed, a world list built by `make_slr.py`, the Wiki's `/24h` and `/mapping`; and Jagex's real feed and world list of 11/09/2026, cut down by `trim_real.py`), and `expected.json`, what both relays make of them.
 - `tests/fanout_bench.py`, `tests/fanout_local.py`: how one channel holds up with many viewers and some stalled ones.
 - `tests/client_live.py`: the client end to end against either relay, with RuneLite open. `tests/client_screens.py` takes pictures of its screens.
 - `tests/safety_check.py`: what the built program can call in Windows, read from the file itself (SAFETY.md).
@@ -135,6 +136,16 @@ PORTAL_RELAY=worker py tests/protocol_test.py
 
 ```bash
 py relay-py/test_relay.py
+```
+
+The almanac (`GET /almanac`, 11/09/2026: Jagex's news, the world list and the Wiki's prices for outside.wiki's globe) has its own: the parsing and a day of its schedule, against `tests/fixtures/almanac`, nothing asked of the real hosts:
+
+```bash
+py relay-py/test_almanac.py
+```
+
+```bash
+cd relay && npm test
 ```
 
 ## Licence

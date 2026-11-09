@@ -105,7 +105,7 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); this list is the only place it's ever shown. The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "raid", "raid"}`, `{"kind": "minigame", "minigame"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown; the shooting stars the plugins find have a list of their own (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
 `pending` (11/08/2026, for outside.wiki's globe: a key beside an inviter for each invite still waiting) counts the invites not taken up yet: one entry per inviter with any, `n` how many, sorted by `by`; `[]` for none. Readers from before it ignore it.
 - An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips, invites or settling. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
@@ -247,6 +247,8 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
 - `where` (11/08/2026, following): not one of the game's fields, and never kept or sent with them (below, "Following").
+- `activity` (11/08/2026, what they're doing): the same (below, "What they're doing").
+- `star` (11/08/2026, a shooting star they found): the same (below, "Shooting stars").
 
 Each field given replaces the one kept, whole; `items` is merged instead (a name and a price for each id). Checked
 loosely:
@@ -268,10 +270,26 @@ The limits:
 **Following** (11/08/2026, Jace approved it with these safeguards). With the plugin's following on, it sends where the
 player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle of a 128-tile square of the main map
 (or Zanaris, as one place: below), at most once a minute, and the same square again every 3 minutes while it stays put. `{"game": {"where": null}}` clears
-it: sent at once on going into the Wilderness, a PvP area or world, Deadman or an instance, and when following's
-switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
+it: sent at once on going into the Wilderness, a PvP area or world, a PvP minigame or Deadman, and when following's
+switched off. **Instances** (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened") go as
+the square where their template lies on the map (the plugin reads it with RuneLite's `WorldPoint.fromLocalInstance`, as
+RuneLite's Discord plugin does): Vorkath's as Ungael's, Zulrah's, the Colosseum's in Varlamore, the Nightmare's under
+Slepe. One off the main map goes as its entrance's square (the plugin's `Follow.ENTRANCES`, by the template's region):
+the Inferno and the Fight Caves as the Karamja volcano's `{"x": 2880, "y": 3136}`, the Chambers of Xeric as Mount
+Quidamortem's `{"x": 1216, "y": 3520}`, the Theatre of Blood as Ver Sinhaza's `{"x": 3648, "y": 3264}`, the Tombs of
+Amascut as the Necropolis pyramid's `{"x": 3392, "y": 2752}`, the Grotesque Guardians as the Slayer Tower's `{"x": 3392,
+"y": 3520}`, the God Wars Dungeon's rooms as its Trollheim way in, `{"x": 2880, "y": 3776}`. The rest off the map (the
+Gauntlet, the Leviathan, the Whisperer, Duke Sucellus, the Phantom Muspah, the Abyssal Sire, the Corporeal Beast, the
+Fractured Archive) send nothing, as anywhere else off the map. An instance whose template lies in the Wilderness is
+still dangerous. Nothing changes on the relays: an instance's square is a square like any other. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
 `Channel.take_where`).
-- A `where` that isn't `null` must be an object with exactly `x` and `y`, each a whole number `k*128 + 64`, `x` from
+- **Which world** (11/08/2026): with the plugin's "and my world" on as well as following, `where` carries the world the
+  player was on with the square, from the same moment two minutes before: `{"x", "y", "world"}`. Never on its own,
+  never from a PvP, Deadman or other dangerous world (the plugin clears `where` there, as anywhere dangerous), and
+  switching "and my world" off clears `where` at once. `world` is a whole number from 1 to 999 (`WORLD_RANGE`): RuneLite
+  has reported 301 and up for years, and the range takes lower numbers too in case Jagex numbers worlds from 1. Anything
+  else in it (0, 1000, `"302"`, `true`, another key) and the whole `where` is ignored.
+- A `where` that isn't `null` must be an object with exactly `x` and `y` (and `world`, above), each a whole number `k*128 + 64`, `x` from
   1024 up to (not including) 4096 and `y` from 2496 up to 4224; or exactly `{"x": 2368, "y": 4416}`, Zanaris
   (`WHERE_ZANARIS`, 11/08/2026: the plugin sends any tile there, x 2368–2495 and y 4352–4479, as that one place, and
   the globe draws it on its moon). Anything else is ignored, Zanaris's neighbouring squares included, and the rest of
@@ -288,6 +306,55 @@ switched off. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `t
   watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
   Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
   desks, the whole state someone just come gets, `GET /game`, the Array's events, the aether or the keeper's list.
+
+**What they're doing** (11/08/2026, Jace's choice for the globe: the light's mood). With the plugin's "What I'm doing,
+on the globe" on (off to begin with; it doesn't need following), it sends what the player was doing two minutes
+before, as `{"game": {"activity": {...}}}`, one of exactly these:
+
+| `activity` | when |
+|---|---|
+| `{"kind": "skilling", "skill": "<skill>"}` | the skill of the player's own latest experience drop, within about a minute (one of `ACTIVITY_SKILLS`: RuneLite's skill names, `Agility` to `Woodcutting` and `Sailing`; not the total) |
+| `{"kind": "boss", "boss": "<boss>"}` | a fight with a boss: the NPC they're attacking, or one attacking them, is on the plugin's list (one of `ACTIVITY_BOSSES`, below) |
+| `{"kind": "raid", "raid": "<raid>"}` | in a raid (11/09/2026), by the region they're in, an instance's as its template lies: one of `ACTIVITY_RAIDS`, `Chambers of Xeric`, `Theatre of Blood`, `Tombs of Amascut`, `The Fractured Archive` |
+| `{"kind": "minigame", "minigame": "<minigame>"}` | in a minigame (11/09/2026), the same: one of `ACTIVITY_MINIGAMES` (below) |
+| `{"kind": "fighting"}` | a fight with anything else (a hit theirs or on them within 15 seconds) |
+| `{"kind": "idle"}` | none of those |
+
+The bosses (`ACTIVITY_BOSSES`; the plugin's `Activity.BOSSES` gives each NPC's name the label that goes, several NPCs
+as one: the six brothers as `Barrows`, Dusk and Dawn as `Grotesque Guardians`, Branda and Eldric as `Royal Titans`, the
+three Moons as `Moons of Peril`): Abyssal Sire, Alchemical Hydra, Amoxliatl, Araxxor, Barrows, Bryophyta, Cerberus,
+Commander Zilyana, Corporeal Beast, Dagannoth Prime, Dagannoth Rex, Dagannoth Supreme, Duke Sucellus, General Graardor,
+Giant Mole, Grotesque Guardians, Hespori, K'ril Tsutsaroth, Kalphite Queen, King Black Dragon, Kraken, Kree'arra, Moons
+of Peril, Nex, Obor, Phantom Muspah, Phosani's Nightmare, Royal Titans, Sarachnis, Scurrius, Skotizo, Sol Heredit, The
+Hueycoatl, The Leviathan, The Nightmare, The Whisperer, Thermonuclear smoke devil, TzKal-Zuk, TzTok-Jad, Vardorvis,
+Vorkath, Yama, Zalcano, Zulrah. None of the Wilderness's: nothing's sent there. Those fought in an instance keep their
+labels there (11/09/2026), and a boss fight comes first wherever it is (Jad in the Fight Caves is `TzTok-Jad`, Olm in the
+Chambers is the raid: Olm isn't on the list).
+
+The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Blast Furnace, Brimhaven Agility Arena, Fishing
+Trawler, Giants' Foundry, Guardians of the Rift, Hallowed Sepulchre, Mage Training Arena, Nightmare Zone, Pest Control,
+Pyramid Plunder, Rogues' Den, Sorceress's Garden, Tempoross, Temple Trekking, Tithe Farm, Trouble Brewing, Volcanic Mine,
+Wintertodt, the Colosseum, the Corrupted Gauntlet, the Fight Caves, the Gauntlet, the Inferno. The plugin tells a raid
+or a minigame by RuneLite's own Discord plugin's region ids (`DiscordGameEventType`), less its PvP minigames (Last Man
+Standing, Castle Wars, Clan Wars, Soul Wars, the Fight Pits, Emir's Arena), where nothing at all is sent for the globe.
+relay-py's tests check the plugin's, the Worker's and the Python relay's lists (skills, bosses, raids, minigames) match.
+
+The plugin sends it as following sends `where` (two minutes behind, at most once a minute, the same again every 3
+minutes; `{"activity": null}` at once on going anywhere dangerous, and when it's switched off; then
+nothing till two minutes clear of it), and both relays take it the same way (`relay/src/game.ts`'s `gameActivity` and
+channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activity`):
+- Anything not exactly one of those shapes (another key, a skill or boss not on the list, a different case) is ignored,
+  and the rest of the message is taken as ever. `null` clears it whenever it comes.
+- One every 50 seconds at most; one sooner is ignored (one ignored for its shape doesn't count).
+- Dropped when the game socket closes, when the plugin sends `"off": true` or a `paused` that's a string, and on
+  Cloudflare when the keeper gives the channel a new key or takes it back.
+- Held in memory only, with when it came. Shown only on `GET /channels` (above), while the channel's live and on that
+  list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers,
+  lookers or desks, `GET /game`, the Array's events, the aether or the keeper's list.
+
+**Shooting stars** (11/08/2026): with the plugin's "Shooting stars I find" on, a crashed star the player saw goes as
+`{"game": {"star": {...}}}`, for the relay's list of stars (below, "Shooting stars"). Never one of the game's fields: the
+list of stars shows it, with the outstation that found it first.
 
 **The read:** `GET /game/<channel>?code=<watch code>`, for a page while the outstation's dark:
 - 200 `{"game": {...the whole state}, "at": <ms, when it last changed>, "connected": bool}`
@@ -479,6 +546,218 @@ Worker's object) starts again, and a cursor from before still works. Treat it as
 **What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
 the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
 again; on the Python relay while it runs. Nothing of it is written to storage.
+
+## Shooting stars (11/08/2026)
+
+The crashed shooting stars the Outside plugins have found, for outside.wiki's globe, with the outstation that found each
+first (11/09/2026, Jace: "not sure where you got the idea stars need to be anonymous"). Both
+relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object that answers `GET /channels`), and
+`game.ts`'s `gameStar`; relay-py's `game_star` and `StarList`.
+
+    GET <relay>/stars        {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}, ...]}
+
+**The plugin** (with "Shooting stars I find" on; off to begin with) sends, on its game socket:
+- `{"game": {"star": {"world", "x", "y", "tier"}}}`: a star it saw two minutes before. `world` the world it's on (1 to
+  999, as `where`'s), `x` and `y` the middle of the 128-tile square of the main map it's in (as `where`'s; never
+  Zanaris), `tier` its size, 1 to 9 (the crashed star's object: RuneLite's `STAR_SIZE_ONE_STAR` to
+  `STAR_SIZE_NINE_STAR`, ids 41229 to 41020).
+- `{"game": {"star": {"world", "x", "y", "gone": true}}}`: it was mined out while the player watched (not a hop or a
+  new scene), two minutes before.
+- Either with `"credit": true` (11/09/2026, Jace: opt-in): the player's switched "Name me as a star's finder" on, so
+  the relay may name their outstation as the star's finder. Without it, the report is taken and counted as ever, but
+  names nobody. `credit` that isn't `true` makes the whole `star` not its shape.
+- Either with `"site"` (11/09/2026): its landing site's name, when the star's tile is one of the sites in Shooting Star
+  Info's table (its `Location.java`, BSD 2-Clause, Copyright (c) 2022, Cute Rock; the plugin's `Sites.java`), less its
+  Wilderness sites and Prifddinas's: 71 in all. The relays take only those names (`STAR_SITES`), each with the square
+  it's in, and only in that square; a star elsewhere goes without one.
+- At most one report of a star every 3 minutes (the newest of what's two minutes old), and only of a star seen from
+  somewhere safe: never one lying in the Wilderness (Jace's decision, 11/09/2026: never reported), nor seen from a PvP area, world or
+  minigame, or Deadman. A star seen and gone within the two minutes is never told of.
+
+**The relay** takes exactly those shapes (anything else in `star` is ignored, and the rest of the message taken as
+ever), not from a message with `"off": true` or a `paused` that's a string, and keeps:
+- one star for each world and square, however many told of it: several outstations telling of one star make one. Its
+  finder (`by`) is the first of them whose report carried `"credit": true` and that's on the open outstations' list
+  (handed out, no watch code, not an invite waiting to be taken up), or `null` while none is: an outstation that didn't
+  ask for the credit, or a hidden one, is never named, only counted. `reports` is how many
+  outstations have told of it. Its `site` is the first one told, or `null`.
+- a lower or equal tier replaces the kept one's (and `seen`); a higher one is older news and is ignored. A star's only
+  ever mined down.
+- `gone` takes it off the list, and for 10 minutes after, a report of it (another outstation's, as late) doesn't bring
+  it back.
+- each star for 2 hours after it was first told of (`found`), however often it's seen since: about a star's life.
+- 1,000 at most at once; past that, a new one's ignored.
+- one outstation tells of 30 an hour at most (counted over the last hour, by channel, forgotten an hour after its last
+  report); past that, its reports are ignored.
+
+**The read** answers every star kept, by world, then `x`, then `y`: `world`, `x`, `y`, `site` (or `null`), `tier`,
+`found` (when it was first told of, ms: two minutes or more after it was seen), `seen` (when its tier was last told
+of), `by` (its finder's channel, or `null`) and `reports`. Anyone may read
+it (any origin: `Access-Control-Allow-Origin: *`), it's never cached, and it's 405 for anything but `GET`. The Python
+relay's public side (the Funnel's port) allows it.
+
+**What's kept:** the stars, and for each the channels that told of it (for `reports`), in memory only. On Cloudflare in
+the Directory's memory, so an eviction (after a while unused, or a
+deploy) starts the list empty again; on the Python relay while it runs. Nothing of it is written to storage.
+
+## The almanac (11/09/2026)
+
+What the globe on outside.wiki shows of the game around the outstations: Jagex's game updates, the worlds (how many are
+playing, and any league or deadman season on worlds of its own) and the market's day. The relay fetches each source
+itself, on its own schedule, and every visitor reads the same copy, so no page ever asks Jagex or the Wiki (Jace's rule:
+the Wiki is fed up with sites scraping it constantly; nothing heavy, fetched once and shared). Both relays: the Worker's
+`relay/src/almanac.ts` (kept by the Directory, the object that answers `GET /channels`, refreshed by a Cron Trigger);
+relay-py's `almanac.py` (refreshed by a task in the relay). The globe's side is ghillie's
+`tools/release-kit/prototypes/outside-splash/almanac.js` (its `fromRelay`).
+
+    GET <relay>/almanac         {"at", "updates", "worlds", "market", "sources"}
+    GET <relay>/admin/almanac   the keeper's: each source's schedule and last error
+    POST <relay>/admin/almanac  the keeper's: every source asked now, whatever its schedule (then the same)
+
+**The answer**, with `at` when it was made (ms):
+- `updates`: Jagex's newest news posts, newest first, 8 at most (one without a date last):
+  `[{"id", "title", "url", "at", "category", "summary"}]`. `id` stays the same for the same post, fetch after fetch:
+  the feed's `guid` (one line, 200 characters at most), else its link when that's on runescape.com, else its title,
+  `@` and its `at` (`"<title>@null"` without a date); tell posts apart by it. `url` is the post's link only when it's on runescape.com (`https`
+  or `http`), else `null`; `at` the post's date (ms) or `null`; `category` as the feed has it ("Game Updates",
+  "Community", "Future Updates"…) or `null`; `summary` its description as one line of text, 200 characters at most (an
+  ellipsis when cut), or `null`. Titles are one line, 140 at most.
+- `worlds`: `{"players", "worlds", "at", "seasons", "list"}` (`seasons` always there: `[]` while none runs). `players` all the players on every world that's up, and
+  `worlds` how many worlds are up; `at` when the list was fetched (ms). `seasons` (in this order, each only while it has
+  a world): `[{"kind": "leagues" | "deadman", "name", "players", "worlds", "activity"}]`, `name` the same as `kind`,
+  `activity` the commonest of its worlds' activity texts (between equals, the lowest world's) or `null`. Both are
+  `SEASONAL` worlds (RuneLite's `WorldType`: "for leagues and seasonal deadman"): a league's those not flagged
+  `DEADMAN`, deadman's those flagged it. The permanent deadman world (on the real list, 11/09/2026: world 345,
+  "Deadman - Permanent", flagged `MEMBERS` and `DEADMAN` only) is never a season, nor any `BETA_WORLD`, `NOSAVE_MODE`
+  or `TOURNAMENT` world. (No season ran on 11/09/2026: the real list's `seasons` was `[]`.)
+  `list`: every world, by number, `{"world", "players", "region", "location", "activity", "types"}`: `players` `null`
+  while it's down, `region` an ISO 3166 alpha-2 code from its location (`US`, `GB`, `AU`, `DE`, `BR`, `JP`, `SG`, `ZA`;
+  `null` for one RuneLite doesn't know), `location` the list's own number for it, `activity` its one-line text (60
+  characters at most, `""` for none) and `types` the names of its flags (below).
+- `market`: the day's ticker, 10 at most: `[{"item", "at", "id", "price", "change", "volume", "value", "why"}]`. First the 6
+  biggest moves on the day before (by the size of `change`, `"why": "mover"`), picked among the 200 items most traded
+  in gp that day, then the 4 most traded in gp of the rest (`"why": "traded"`). `at` is the same on every line: when
+  the prices are from, the start (UTC midnight, ms) of the Wiki's day they're the averages of (its `/24h` `timestamp`),
+  not when the relay fetched them. It changes only when the Wiki's day does (about once a day, a day or two behind), so
+  a page that keeps the last `at` it saw can tell a new market from the same one read again. `item` its name (`"item <id>"` when the
+  Wiki has none), `id` the item's, `price` the day's average price in gp (the Wiki's high and low averages, each
+  weighted by its volume), `change` in % on the day before's average, to one decimal (`null` for a traded item with no
+  day before), `volume` how many traded in the day (high and low together), `value` price × volume, in gp.
+- `sources`: `{"updates", "worlds", "market", "names"}`, each `{"at", "ok", "age_s"}`: `at` when it was last fetched
+  well (ms, `null` for never), `ok` whether the last try was (`null` before any), `age_s` seconds since `at`. `market`
+  also has `day`, the start of the Wiki's day its numbers are (ms, UTC midnight). `names` is the Wiki's item names.
+- A part never fetched well is `null`. A source that fails keeps its last good part in the answer, with `ok` false and
+  its `at` (so its age) as it was: one failing never takes the others down.
+
+**The sources and their schedule** (the request counts: relay/README.md, "The almanac's sources"):
+- **Jagex's news:** `https://secure.runescape.com/m=news/latest_news.rss?oldschool=true`, every 20 minutes. RSS 2.0, in
+  the encoding its XML declaration names (Jagex's says ISO-8859-1, read as windows-1252, as browsers read that label;
+  without one, UTF-8): each `<item>`'s `title`, `link`, `pubDate` (RFC 822), `category` and `description` (CDATA taken as it is, entities
+  decoded, tags dropped). A feed that declares a DOCTYPE or an ENTITY is refused. The first 50 items are read.
+- **The world list:** `https://oldschool.runescape.com/slr.ws?order=LPWM`, every 5 minutes. The game's own binary list,
+  read as RuneLite read it (its http-service's `WorldsService`, until RuneLite 1.8.0): big-endian, a 4-byte length (of
+  what follows; bytes past it are ignored: the real answer is always 30,000 bytes, zeros after the list), the worlds' count (2 bytes), then each world's number (2), its flags (4),
+  its address and its activity (each ended by a 0 byte, Latin-1), its location (1) and its players (2, signed: -1 while
+  it's down). The address isn't passed on. The flags' names and values are RuneLite's own (`runelite-api`'s
+  `WorldType`, the same in the `http-api` 1.2.26 the client builds with): `MEMBERS` 1, `PVP` 1<<2, `BOUNTY` 1<<5,
+  `PVP_ARENA` 1<<6, `SKILL_TOTAL` 1<<7, `QUEST_SPEEDRUNNING` 1<<8, `HIGH_RISK` 1<<10, `HARDCORE_MAIN` 1<<11,
+  `LAST_MAN_STANDING` 1<<14, `BETA_WORLD` 1<<16, `LEGACY_ONLY` 1<<22, `EOC_ONLY` 1<<23, `NOSAVE_MODE` 1<<25,
+  `TOURNAMENT` 1<<26, `FRESH_START_WORLD` 1<<27, `DEADMAN` 1<<29, `SEASONAL` 1<<30 (any other bit is ignored). The
+  locations are RuneLite's `WorldRegion` (`http-api` 1.2.26): 0 US, 1 GB, 3 AU, 7 DE, 8 BR, 9 JP, 10 SG, 12 ZA. A list
+  that's cut short, says another length than its size, or has no worlds (or more than 1,000) is refused whole.
+- **The Wiki's prices:** `https://prices.runescape.wiki/api/v2/osrs/24h` and `/mapping`. The Wiki's page (RuneScape:
+  Real-time Prices) asks every user of its API to move from `/api/v1/osrs` to `/api/v2/osrs` (v1 "may be removed in
+  the future"; v2's averages may have two decimals), so the relay asks v2. `/24h` (`{"timestamp", "data": {id:
+  {"avgHighPrice", "highPriceVolume", "avgLowPrice", "lowPriceVolume"}}}`) is a whole UTC day, the same all day (its
+  `Expires` is the next UTC midnight): it's asked 15 minutes after UTC midnight and, while its `timestamp` is still the
+  day kept, again each hour until the new day's there. The day before it (to measure the change against) is the day
+  kept when it's the one before, so normally nothing more is asked; else `/24h?timestamp=<the day before>` once. Only
+  `/24h` and `/mapping` are asked, never one item at a time. `/mapping` (`[{"id", "name", …}]`) once a day, for the
+  names.
+
+**Every request** carries the relay's own User-Agent, `outstation-relay/1.0 (the almanac for outside.wiki's globe:
+fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)`, the one thing the Wiki's
+acceptable-use policy asks; nothing else goes with it: no visitor's address, header or anything a page sent. Each answer
+is 8 MB at most; a request gives up after 15 seconds.
+
+**Failures** back off: after a source's nth failure in a row, it's asked again after its usual wait doubled n − 1 times,
+to a cap (the news: 20 minutes, then 40, 80, then every 2 hours; the world list: 5 minutes up to an hour; `/24h`: an hour
+up to 6; `/mapping`: an hour up to a day). A good answer puts it back on its usual schedule.
+
+**The read never asks a source,** with one exception: the first read when a source has never been tried (a cold start:
+the Worker's first read after it's deployed, before the cron's first run; relay.py's first, if it comes before its own
+schedule's first round) waits for one refresh, and every read that comes meanwhile waits for that same one. After that,
+only the schedule asks: the Worker's Cron Trigger every 5 minutes (`wrangler.jsonc`, `triggers`), relay.py's task every
+minute, each asking whichever sources are due (30 s early counts, so a cron that fires a moment early still takes the
+world list every 5 minutes). Anyone may read it (any origin: `Access-Control-Allow-Origin: *`); a browser may keep an
+answer a minute (`Cache-Control: public, max-age=60`). 405 for anything but `GET`. The Python relay's public side (the
+Funnel's port) allows the read and refuses the keeper's routes, which need the keeper's token as `/admin/aether`'s do.
+
+**What's kept:** on Cloudflare in the Directory's storage (so an eviction or a deploy doesn't ask anything again): the
+answer's parts and each source's schedule (`alm:kept`), the Wiki's last two days of `/24h` reduced to each item's average
+price and volume (`alm:latest`, `alm:before`), and the item names (`alm:names`). On the Python relay in memory, while it
+runs. Nothing about any visitor is kept or sent.
+
+**relay.py's switch:** `--almanac on` (the default: the real hosts), `--almanac off` (nothing fetched; `GET /almanac`
+answers its shape, every part `null`), or an address, everything fetched under it at the real ones' paths (the tests'
+server). The Worker's `ALMANAC_UPSTREAM` var is the same address (tests only; unset on Cloudflare).
+
+**An example** (from the tests' fixtures, cut down):
+
+```json
+{"at": 1794201788313,
+ "updates": [{"id": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1",
+              "title": "Leagues VI: Demonic Pacts — Out Now!",
+              "url": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1", "at": 1793880000000,
+              "category": "Game Updates", "summary": "The sixth League is here. Unlock relics & regions…"}],
+ "worlds": {"players": 9569, "worlds": 13, "at": 1794201788295,
+            "seasons": [{"kind": "leagues", "name": "leagues", "players": 4500, "worlds": 3, "activity": "Leagues VI"},
+                        {"kind": "deadman", "name": "deadman", "players": 900, "worlds": 1,
+                         "activity": "Deadman: Annihilation"}],
+            "list": [{"world": 301, "players": 1200, "region": "US", "location": 0, "activity": "Trade - Free",
+                      "types": []},
+                     {"world": 305, "players": 2000, "region": "US", "location": 0, "activity": "Leagues VI",
+                      "types": ["MEMBERS", "SEASONAL"]},
+                     {"world": 310, "players": null, "region": "ZA", "location": 12, "activity": "-",
+                      "types": ["MEMBERS"]}]},
+ "market": [{"item": "Nature rune", "at": 1794009600000, "id": 561, "price": 120, "change": 10.1, "volume": 10900000,
+             "value": 1307900000, "why": "mover"},
+            {"item": "Twisted bow", "at": 1794009600000, "id": 20997, "price": 1438888889, "change": 3.6, "volume": 45,
+             "value": 64750000010, "why": "traded"}],
+ "sources": {"updates": {"at": 1794201788307, "ok": true, "age_s": 0},
+             "worlds": {"at": 1794201788295, "ok": true, "age_s": 0},
+             "market": {"at": 1794201788310, "ok": true, "age_s": 0, "day": 1794009600000},
+             "names": {"at": 1794201788309, "ok": true, "age_s": 0}}}
+```
+
+**What the globe reads of it** (almanac.js's `fromRelay`, ghillie's dd2b794): `market` whole (its "market" kind),
+each of `updates` it hasn't had (its "update" kind: `title`, `url`, `at`, `summary`; told apart by `url` and `title`)
+and `worlds` (its "worlds" kind: `players`, `worlds`, `at`, `seasons` as `[{kind, name, players, worlds}]`). The shape
+is the one it was written for, with more beside it (`id`, `category`, `list`, `activity`, the market lines' `at`,
+`value`, `why`, `sources`), which it can ignore. Stars aren't in the almanac: the globe reads `GET /stars` itself
+("Shooting stars", above).
+
+**What the globe should change to read it well** (none of it breaks today; it's in ghillie's repository):
+1. Tell a new market from the same one by its `at`. In `fromRelay`, in place of `if (a.market) emit("market", a.market);`:
+   `if (a.market && a.market.length && a.market[0].at !== marketAt) { marketAt = a.market[0].at; emit("market", a.market); }`
+   with `var marketAt = null, worldsAt = null;` beside `almanacOff`; and the same for the worlds, by `a.worlds.at` (it
+   changes every 5 minutes, as the list is fetched), in place of `if (a.worlds) emit("worlds", a.worlds);`:
+   `if (a.worlds && a.worlds.at !== worldsAt) { worldsAt = a.worlds.at; emit("worlds", a.worlds); }`.
+   login.js's market card says when the numbers are from with `ALM.marketAt` (when the page got them); `m.at` is when
+   they're from (a whole UTC day).
+2. Tell updates apart by `id` (`url` is `null` when the feed's link isn't on runescape.com, and two posts could share a
+   title): `list("update").some(function (o) { return o.id === u.id; })` in place of the `url` and `title` test.
+3. `fromRelay` is off unless the page has `?almanac=relay`, and turns itself off for the page's life after one failed
+   read (`!r.ok`, or any network error). Once this relay is deployed: ask by default, and on a failure just wait for the
+   next read (every 2 minutes, as now). A cold relay still answers 200 (every part `null`), never 404.
+4. login.js sorts the ticker by the size of `change` and keeps 6, which drops the most-traded lines unless they moved
+   most. Keep the relay's order (6 movers, then 4 most traded) or use `why`; `change` is `null` for a traded line with
+   no day before (now shown as ▲0.0%).
+5. A season's island is named from `name` ("leagues"); `activity` carries the worlds' own words ("Leagues VI"), if the
+   island should say which.
+6. `updates` are all of Jagex's news, every category; to show only game updates, filter on `category` ("Game Updates").
+7. When a source's `ok` is `false` its part is older than usual; `age_s` says by how much, if the page wants to say so.
+8. almanac.js's header still gives the old shape (`"worlds": {"players","worlds","at"}`): this section is the shape now.
 
 ## Settling (11/08/2026)
 
