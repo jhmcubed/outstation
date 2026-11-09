@@ -11,6 +11,7 @@ Standard library only (relay-py/wsmini.py plays every client).
 
 import asyncio
 import base64
+import http.server
 import json
 import os
 import secrets
@@ -21,6 +22,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -52,6 +54,7 @@ WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.star
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
+UPSTREAM = None       # the almanac's sources, served on this computer (Upstream, below): never the real hosts
 
 
 def free_port():
@@ -79,11 +82,69 @@ def wait_up(timeout):
     return False
 
 
+FIXTURES = os.path.join(HERE, "fixtures", "almanac")
+DAY_S = 1794009600   # the fixtures' /24h day (11/07/2026, UTC)
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name), "rb") as f:
+        return f.read()
+
+
+class Upstream(http.server.ThreadingHTTPServer):
+    """The almanac's sources (11/09/2026), on this computer, from tests/fixtures/almanac: Jagex's news and world list
+    and the Wiki's /24h (today's, or the next day's once `day` says so; the day before with ?timestamp=) and /mapping,
+    at the real ones' paths. `broken` maps a path to a status (or b"garbage"); `seen` is every request, with its
+    User-Agent. The relays fetch everything under it (relay.py's --almanac, the Worker's ALMANAC_UPSTREAM)."""
+    daemon_threads = True
+
+    def __init__(self):
+        self.seen, self.broken, self.day = [], {}, "24h-latest.json"
+        self.lock = threading.Lock()
+        super().__init__(("127.0.0.1", 0), UpstreamHandler)
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def base(self):
+        return "http://127.0.0.1:%d" % self.server_address[1]
+
+    def paths(self):
+        with self.lock:
+            return [p for p, _ in self.seen]
+
+
+class UpstreamHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        up = self.server
+        with up.lock:
+            up.seen.append((self.path, self.headers.get("User-Agent")))
+            broken = up.broken.get(self.path.split("?")[0])
+            files = {"/m=news/latest_news.rss?oldschool=true": "news.rss", "/slr.ws?order=LPWM": "slr.ws",
+                     "/api/v2/osrs/mapping": "mapping.json", "/api/v2/osrs/24h": up.day,
+                     "/api/v2/osrs/24h?timestamp=%d" % (DAY_S - 86400): "24h-before.json",
+                     "/api/v2/osrs/24h?timestamp=%d" % DAY_S: "24h-latest.json"}
+        name = files.get(self.path)
+        if isinstance(broken, int) or not name:
+            self.send_response(broken if isinstance(broken, int) else 404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = broken if isinstance(broken, bytes) else fixture(name)
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 def setUpModule():
-    global RELAY, PROC, STATE
+    global RELAY, PROC, STATE, UPSTREAM
     if MODE.startswith("ws"):
         RELAY = MODE.rstrip("/")
         return
+    UPSTREAM = Upstream()
     port = free_port()
     RELAY = "ws://127.0.0.1:%d" % port
     if MODE == "worker":
@@ -93,7 +154,8 @@ def setUpModule():
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
-             "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S],
+             "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
+             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--test-scheduled"],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
@@ -101,7 +163,8 @@ def setUpModule():
         STATE = tempfile.mkdtemp(prefix="portal-clips-")
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
-                                 "--settle-code-seconds", "%g" % SETTLE_CODE_S, "--where-fresh-seconds", "%g" % WHERE_FRESH_S],
+                                 "--settle-code-seconds", "%g" % SETTLE_CODE_S, "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
+                                 "--almanac", UPSTREAM.base],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -111,6 +174,9 @@ def setUpModule():
 
 
 def tearDownModule():
+    if UPSTREAM is not None:
+        UPSTREAM.shutdown()
+        UPSTREAM.server_close()
     if PROC is not None:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(PROC.pid)], capture_output=True)
@@ -3298,6 +3364,170 @@ class Reports(unittest.IsolatedAsyncioTestCase):
         self.assertIn(429, codes)
         for r in admin("GET", "/admin/reports")[1]:
             admin("DELETE", "/admin/reports/" + r["id"])
+
+
+def almanac_read():
+    """(status, headers, JSON) of GET /almanac."""
+    try:
+        with urllib.request.urlopen(http_url() + "/almanac", timeout=30) as r:
+            return r.status, {k.lower(): v for k, v in r.headers.items()}, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, {k.lower(): v for k, v in e.headers.items()}, None
+
+
+def almanac_force():
+    """The keeper's POST /admin/almanac: every source asked now. Its answer: each source's schedule."""
+    req = urllib.request.Request(http_url() + "/admin/almanac", method="POST", data=b"",
+                                 headers={"Authorization": "Bearer " + ADMIN})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read())
+
+
+@unittest.skipIf(MODE.startswith("ws"), "the almanac's sources are served by these tests (not for a relay already running)")
+class Almanac(unittest.TestCase):
+    """The almanac (11/09/2026; docs/protocol.md "The almanac"): Jagex's news, the world list and the Wiki's prices,
+    fetched by the relay alone on its own schedule (here, from Upstream: the fixtures) and shared. GET /almanac answers
+    {"at", "updates", "worlds", "market", "sources"} exactly as tests/fixtures/almanac/expected.json has them, on both
+    relays; a read never asks a source (but the first, cold); a source that fails keeps its last good data; /24h's day
+    before is asked once, then rolled over from the kept day. (The schedule itself, a day of it on a clock of its own:
+    relay-py/test_almanac.py and relay/test/almanac_test.mts.)"""
+
+    expected = json.loads(fixture("expected.json"))
+
+    def setUp(self):
+        UPSTREAM.broken, UPSTREAM.day = {}, "24h-latest.json"
+        if self._testMethodName != "test_0_a_cold_read_waits_for_one_refresh_shared":
+            almanac_force()
+
+    def test_0_a_cold_read_waits_for_one_refresh_shared(self):
+        # (the first read of the module: several at once, all answered with everything, each source asked once.
+        # relay.py's own schedule may have asked first, as it starts; the Worker's cron doesn't run under wrangler dev)
+        got = [None] * 4
+
+        def read(i):
+            got[i] = almanac_read()
+        ts = [threading.Thread(target=read, args=(i,)) for i in range(4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        for status, _, a in got:
+            self.assertEqual(status, 200)
+            self.assertEqual(a["updates"], self.expected["news"])
+            self.assertEqual(a["market"], self.expected["market"])
+        paths = UPSTREAM.paths()
+        for p in ("/slr.ws?order=LPWM", "/m=news/latest_news.rss?oldschool=true", "/api/v2/osrs/mapping",
+                  "/api/v2/osrs/24h", "/api/v2/osrs/24h?timestamp=%d" % (DAY_S - 86400)):
+            self.assertEqual(paths.count(p), 1, p)
+
+    def test_the_answer(self):
+        status, headers, a = almanac_read()
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("access-control-allow-origin"), "*")
+        self.assertEqual(headers.get("cache-control"), "public, max-age=60")
+        self.assertTrue(headers.get("content-type", "").startswith("application/json"))
+        self.assertEqual(set(a), {"at", "updates", "worlds", "market", "sources"})
+        self.assertAlmostEqual(a["at"] / 1000, time.time(), delta=60)
+        self.assertEqual(a["updates"], self.expected["news"])
+        self.assertEqual(a["market"], self.expected["market"])
+        worlds = dict(a["worlds"])
+        self.assertAlmostEqual(worlds.pop("at") / 1000, time.time(), delta=120)
+        self.assertEqual(worlds, {k: v for k, v in self.expected["worlds"].items() if k != "at"})
+        self.assertEqual(a["worlds"]["players"], 9537)
+        self.assertEqual([(x["kind"], x["players"], x["worlds"]) for x in a["worlds"]["seasons"]],
+                         [("leagues", 4500, 3), ("deadman", 900, 1)])
+        self.assertEqual(set(a["sources"]), {"updates", "worlds", "market", "names"})
+        for name, src in a["sources"].items():
+            self.assertIs(src["ok"], True, name)
+            self.assertIsInstance(src["at"], int)
+            self.assertIsInstance(src["age_s"], int)
+        self.assertEqual(a["sources"]["market"]["day"], DAY_S * 1000)
+        # (the market's own at: the Wiki's day, not the fetch; and each update's id, the same fetch after fetch)
+        self.assertEqual({m["at"] for m in a["market"]}, {DAY_S * 1000})
+        self.assertEqual([u["id"] for u in a["updates"]], [u["id"] for u in almanac_read()[2]["updates"]])
+        self.assertEqual(len({u["id"] for u in a["updates"]}), len(a["updates"]))
+
+    def test_reads_never_ask_a_source(self):
+        n = len(UPSTREAM.paths())
+        for _ in range(6):
+            self.assertEqual(almanac_read()[0], 200)
+        self.assertEqual(len(UPSTREAM.paths()), n)
+
+    def test_each_request_says_who_it_is(self):
+        with UPSTREAM.lock:
+            agents = {ua for _, ua in UPSTREAM.seen}
+        self.assertEqual(len(agents), 1, agents)
+        ua = agents.pop()
+        self.assertIn("https://github.com/jhmcubed/outstation", ua)
+        self.assertNotIn("@", ua)
+
+    def test_a_failing_source_keeps_its_last_good_data(self):
+        before = almanac_read()[2]
+        UPSTREAM.broken = {"/m=news/latest_news.rss": 500, "/slr.ws": b"\x00\x00\x00\x09garbage"}
+        try:
+            status = almanac_force()["sources"]
+            self.assertIs(status["updates"]["ok"], False)
+            self.assertEqual(status["updates"]["fails"], 1)
+            self.assertIn("500", status["updates"]["error"])
+            self.assertIs(status["worlds"]["ok"], False)
+            after = almanac_read()[2]
+            self.assertEqual(after["updates"], before["updates"])
+            self.assertEqual(after["worlds"], before["worlds"])
+            self.assertEqual(after["market"], before["market"])
+            for name in ("updates", "worlds"):
+                self.assertIs(after["sources"][name]["ok"], False)
+                self.assertEqual(after["sources"][name]["at"], before["sources"][name]["at"])
+            self.assertIs(after["sources"]["market"]["ok"], True)
+        finally:
+            UPSTREAM.broken = {}
+            almanac_force()
+        self.assertIs(almanac_read()[2]["sources"]["updates"]["ok"], True)
+
+    def test_the_next_day_rolls_the_kept_day_over(self):
+        UPSTREAM.day = "24h-next.json"
+        n = len(UPSTREAM.paths())
+        almanac_force()
+        asked = [p for p in UPSTREAM.paths()[n:] if p.startswith("/api/v2/osrs/24h")]
+        self.assertEqual(asked, ["/api/v2/osrs/24h"])        # (the day before is the day kept: not asked)
+        a = almanac_read()[2]
+        self.assertEqual(a["market"], self.expected["market_next"])
+        self.assertEqual(a["sources"]["market"]["day"], (DAY_S + 86400) * 1000)
+        self.assertEqual({m["at"] for m in a["market"]}, {(DAY_S + 86400) * 1000})
+        # (and back: the kept days aren't the one before it, so that's asked once)
+        UPSTREAM.day = "24h-latest.json"
+        n = len(UPSTREAM.paths())
+        almanac_force()
+        asked = [p for p in UPSTREAM.paths()[n:] if p.startswith("/api/v2/osrs/24h")]
+        self.assertEqual(asked, ["/api/v2/osrs/24h", "/api/v2/osrs/24h?timestamp=%d" % (DAY_S - 86400)])
+        self.assertEqual(almanac_read()[2]["market"], self.expected["market"])
+
+    def test_the_same_day_asks_nothing_more(self):
+        n = len(UPSTREAM.paths())
+        almanac_force()
+        asked = [p for p in UPSTREAM.paths()[n:] if p.startswith("/api/v2/osrs/24h")]
+        self.assertEqual(asked, ["/api/v2/osrs/24h"])
+
+    def test_only_get_and_the_keepers_routes(self):
+        status, body = http("POST", "/almanac")
+        self.assertEqual(status, 405)
+        req = urllib.request.Request(http_url() + "/admin/almanac", method="POST", data=b"",
+                                     headers={"Authorization": "Bearer nope-nope-nope-nope"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(e.exception.code, 403)
+        status, got = admin("GET", "/admin/almanac")
+        self.assertEqual(status, 200)
+        self.assertEqual(list(got["sources"]), ["worlds", "updates", "names", "market"])
+        for src in got["sources"].values():
+            self.assertEqual(set(src), {"at", "tried", "ok", "fails", "next_in_s", "error"})
+
+    @unittest.skipUnless(MODE == "worker", "the Worker's Cron Trigger (relay.py's schedule: its own tests)")
+    def test_the_cron_asks_only_whats_due(self):
+        n = len(UPSTREAM.paths())
+        with urllib.request.urlopen(http_url() + "/__scheduled?cron=*/5+*+*+*+*", timeout=30) as r:
+            r.read()
+        time.sleep(1)
+        self.assertEqual(UPSTREAM.paths()[n:], [])            # (everything was just asked: nothing's due)
 
 
 if __name__ == "__main__":

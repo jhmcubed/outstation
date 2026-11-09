@@ -1,0 +1,427 @@
+{
+ "_": "what both relays make of this folder's fixtures (relay-py/test_almanac.py and relay/test/almanac_test.ts check it; checked by hand 11/09/2026)",
+ "news": [
+  {
+   "id": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1",
+   "title": "Leagues VI: Demonic Pacts \u2014 Out Now!",
+   "url": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1",
+   "at": 1793880000000,
+   "category": "Game Updates",
+   "summary": "The sixth League is here. Unlock relics & regions\u2026"
+  },
+  {
+   "id": "https://secure.runescape.com/m=news/sailing-fixes--tweaks?oldschool=1",
+   "title": "Sailing Fixes & Tweaks",
+   "url": "https://secure.runescape.com/m=news/sailing-fixes--tweaks?oldschool=1",
+   "at": 1793791800000,
+   "category": "Game Updates",
+   "summary": "Some fixes & changes to Sailing, and a few quality-of-life tweaks elsewhere. Read more"
+  },
+  {
+   "id": "Community Clan Showcase@1793628000000",
+   "title": "Community Clan Showcase",
+   "url": null,
+   "at": 1793628000000,
+   "category": "Community",
+   "summary": "A look at some of the community's clans, and a contest. Caf\u00e9 \ud83d\udc1f fish &#xD800; &bogus; stays."
+  },
+  {
+   "id": "Elsewhere@1793264400000",
+   "title": "Elsewhere",
+   "url": null,
+   "at": 1793264400000,
+   "category": null,
+   "summary": null
+  },
+  {
+   "id": "https://oldschool.runescape.com/poll-85",
+   "title": "Poll 85 Results",
+   "url": "https://oldschool.runescape.com/poll-85",
+   "at": null,
+   "category": "Future Updates",
+   "summary": "The results of Poll 85, with a description long enough that it has to be cut short at two hundred characters, so the globe's card never runs on and on and on with every word Jagex wrote about the pol\u2026"
+  }
+ ],
+ "worlds_at": 1794200000000,
+ "worlds": {
+  "players": 9537,
+  "worlds": 12,
+  "at": 1794200000000,
+  "seasons": [
+   {
+    "kind": "leagues",
+    "name": "leagues",
+    "players": 4500,
+    "worlds": 3,
+    "activity": "Leagues VI"
+   },
+   {
+    "kind": "deadman",
+    "name": "deadman",
+    "players": 900,
+    "worlds": 1,
+    "activity": "Deadman: Annihilation"
+   }
+  ],
+  "list": [
+   {
+    "world": 301,
+    "players": 1200,
+    "region": "US",
+    "location": 0,
+    "activity": "Trade - Free",
+    "types": []
+   },
+   {
+    "world": 302,
+    "players": 1500,
+    "region": "GB",
+    "location": 1,
+    "activity": "Trade - Members",
+    "types": [
+     "MEMBERS"
+    ]
+   },
+   {
+    "world": 303,
+    "players": 400,
+    "region": "DE",
+    "location": 7,
+    "activity": "1500 skill total",
+    "types": [
+     "MEMBERS",
+     "SKILL_TOTAL"
+    ]
+   },
+   {
+    "world": 304,
+    "players": 300,
+    "region": "AU",
+    "location": 3,
+    "activity": "PvP World",
+    "types": [
+     "MEMBERS",
+     "PVP"
+    ]
+   },
+   {
+    "world": 305,
+    "players": 2000,
+    "region": "US",
+    "location": 0,
+    "activity": "Leagues VI",
+    "types": [
+     "MEMBERS",
+     "SEASONAL"
+    ]
+   },
+   {
+    "world": 306,
+    "players": 1800,
+    "region": "GB",
+    "location": 1,
+    "activity": "Leagues VI",
+    "types": [
+     "MEMBERS",
+     "SEASONAL"
+    ]
+   },
+   {
+    "world": 307,
+    "players": 700,
+    "region": "AU",
+    "location": 3,
+    "activity": "Leagues VI - Trade",
+    "types": [
+     "MEMBERS",
+     "SEASONAL"
+    ]
+   },
+   {
+    "world": 308,
+    "players": 900,
+    "region": "BR",
+    "location": 8,
+    "activity": "Deadman: Annihilation",
+    "types": [
+     "MEMBERS",
+     "DEADMAN",
+     "SEASONAL"
+    ]
+   },
+   {
+    "world": 309,
+    "players": 50,
+    "region": "US",
+    "location": 0,
+    "activity": "Beta",
+    "types": [
+     "MEMBERS",
+     "BETA_WORLD",
+     "SEASONAL"
+    ]
+   },
+   {
+    "world": 310,
+    "players": null,
+    "region": "ZA",
+    "location": 12,
+    "activity": "-",
+    "types": [
+     "MEMBERS"
+    ]
+   },
+   {
+    "world": 311,
+    "players": 77,
+    "region": null,
+    "location": 5,
+    "activity": "Caf\u00e9 world",
+    "types": [
+     "MEMBERS",
+     "HIGH_RISK"
+    ]
+   },
+   {
+    "world": 312,
+    "players": 600,
+    "region": "JP",
+    "location": 9,
+    "activity": "Fresh Start",
+    "types": [
+     "MEMBERS",
+     "FRESH_START_WORLD"
+    ]
+   },
+   {
+    "world": 313,
+    "players": 10,
+    "region": "SG",
+    "location": 10,
+    "activity": "",
+    "types": [
+     "MEMBERS"
+    ]
+   }
+  ]
+ },
+ "names": {
+  "20997": "Twisted bow",
+  "27277": "Tumeken's shadow (uncharged)",
+  "22486": "Scythe of vitur (uncharged)",
+  "13652": "Dragon claws",
+  "4151": "Abyssal whip",
+  "5295": "Ranarr seed",
+  "12934": "Zulrah's scales",
+  "565": "Blood rune",
+  "561": "Nature rune",
+  "385": "Shark",
+  "2": "Cannonball",
+  "11832": "Bandos chestplate",
+  "11834": "Bandos tassets"
+ },
+ "market": [
+  {
+   "item": "Nature rune",
+   "at": 1794009600000,
+   "id": 561,
+   "price": 120,
+   "change": 10.1,
+   "volume": 10900000,
+   "value": 1307900000,
+   "why": "mover"
+  },
+  {
+   "item": "Ranarr seed",
+   "at": 1794009600000,
+   "id": 5295,
+   "price": 44747,
+   "change": 9.8,
+   "volume": 65000,
+   "value": 2908540500,
+   "why": "mover"
+  },
+  {
+   "item": "Dragon claws",
+   "at": 1794009600000,
+   "id": 13652,
+   "price": 65480000,
+   "change": 8.3,
+   "volume": 1000,
+   "value": 65480000000,
+   "why": "mover"
+  },
+  {
+   "item": "Zulrah's scales",
+   "at": 1794009600000,
+   "id": 12934,
+   "price": 149,
+   "change": -6.3,
+   "volume": 4100000,
+   "value": 610800000,
+   "why": "mover"
+  },
+  {
+   "item": "Bandos chestplate",
+   "at": 1794009600000,
+   "id": 11832,
+   "price": 9900000,
+   "change": 4.2,
+   "volume": 210,
+   "value": 2079000000,
+   "why": "mover"
+  },
+  {
+   "item": "Tumeken's shadow (uncharged)",
+   "at": 1794009600000,
+   "id": 27277,
+   "price": 1244666667,
+   "change": -3.9,
+   "volume": 30,
+   "value": 37340000004,
+   "why": "mover"
+  },
+  {
+   "item": "Twisted bow",
+   "at": 1794009600000,
+   "id": 20997,
+   "price": 1438888889,
+   "change": 3.6,
+   "volume": 45,
+   "value": 64750000010,
+   "why": "traded"
+  },
+  {
+   "item": "Scythe of vitur (uncharged)",
+   "at": 1794009600000,
+   "id": 22486,
+   "price": 1094761905,
+   "change": -3.4,
+   "volume": 21,
+   "value": 22990000000,
+   "why": "traded"
+  },
+  {
+   "item": "Abyssal whip",
+   "at": 1794009600000,
+   "id": 4151,
+   "price": 1379888,
+   "change": -0.7,
+   "volume": 8900,
+   "value": 12281000000,
+   "why": "traded"
+  },
+  {
+   "item": "Cannonball",
+   "at": 1794009600000,
+   "id": 2,
+   "price": 212,
+   "change": 0,
+   "volume": 33260608,
+   "value": 7043398809,
+   "why": "traded"
+  }
+ ],
+ "market_next": [
+  {
+   "item": "Zulrah's scales",
+   "at": 1794096000000,
+   "id": 12934,
+   "price": 164,
+   "change": 10.1,
+   "volume": 4350000,
+   "value": 713450000,
+   "why": "mover"
+  },
+  {
+   "item": "Ranarr seed",
+   "at": 1794096000000,
+   "id": 5295,
+   "price": 42746,
+   "change": -4.5,
+   "volume": 63000,
+   "value": 2693000000,
+   "why": "mover"
+  },
+  {
+   "item": "Twisted bow",
+   "at": 1794096000000,
+   "id": 20997,
+   "price": 1490232558,
+   "change": 3.6,
+   "volume": 43,
+   "value": 64080000000,
+   "why": "mover"
+  },
+  {
+   "item": "Dragon claws",
+   "at": 1794096000000,
+   "id": 13652,
+   "price": 63484536,
+   "change": -3,
+   "volume": 970,
+   "value": 61580000000,
+   "why": "mover"
+  },
+  {
+   "item": "Nature rune",
+   "at": 1794096000000,
+   "id": 561,
+   "price": 117,
+   "change": -2.5,
+   "volume": 10700000,
+   "value": 1251800000,
+   "why": "mover"
+  },
+  {
+   "item": "Tumeken's shadow (uncharged)",
+   "at": 1794096000000,
+   "id": 27277,
+   "price": 1255000000,
+   "change": 0.8,
+   "volume": 30,
+   "value": 37650000000,
+   "why": "mover"
+  },
+  {
+   "item": "Scythe of vitur (uncharged)",
+   "at": 1794096000000,
+   "id": 22486,
+   "price": 1094761905,
+   "change": 0,
+   "volume": 21,
+   "value": 22990000000,
+   "why": "traded"
+  },
+  {
+   "item": "Abyssal whip",
+   "at": 1794096000000,
+   "id": 4151,
+   "price": 1384885,
+   "change": 0.4,
+   "volume": 8700,
+   "value": 12048500000,
+   "why": "traded"
+  },
+  {
+   "item": "Cannonball",
+   "at": 1794096000000,
+   "id": 2,
+   "price": 213,
+   "change": 0.5,
+   "volume": 31000000,
+   "value": 6598000000,
+   "why": "traded"
+  },
+  {
+   "item": "Blood rune",
+   "at": 1794096000000,
+   "id": 565,
+   "price": 210,
+   "change": 0,
+   "volume": 9100000,
+   "value": 1906600000,
+   "why": "traded"
+  }
+ ]
+}

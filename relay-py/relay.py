@@ -139,6 +139,14 @@ plugins have found, and who found each, for outside.wiki's globe.
   gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
   only. The public side allows the read.
 
+The almanac (11/09/2026; docs/protocol.md "The almanac"; almanac.py, and the Worker's almanac.ts, the same): Jagex's
+news, the world list (its seasons) and the Wiki's prices (the day's movers), for outside.wiki's globe, each fetched by
+the relay alone on its own schedule (almanac_loop; --almanac on, the default, off, or an address for tests) and shared.
+    read:      GET http://HOST:PORT/almanac     {"at", "updates", "worlds", "market", "sources"}
+    keeper:    GET /admin/almanac (each source's schedule), POST /admin/almanac (every source asked now)
+  A read never asks a source, except the first when nothing's been tried (shared by every read meanwhile). A source
+  that fails keeps its last good data, with its age, and backs off. The public side allows the read.
+
 Settling (11/08/2026; docs/protocol.md "Settling"; the Worker's settle.ts, the same): where an outstation stands on
 outside.wiki's globe of Gielinor (by default beside whoever invited it), chosen by its owner. The app trades its key for a
 one-time code, opens the globe page with only that, and the page settles with it, so the key never reaches a page.
@@ -172,6 +180,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from forward import DEFAULT as DEFAULT_FORWARD, Forward  # noqa: E402
+import almanac as almanac_sources  # noqa: E402
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 512 * 1024          # a frame is ~10-30 KB; anything bigger is refused
@@ -1707,8 +1716,14 @@ def too_old(v, min_client):
 
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
-                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S):
+                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S, almanac="off"):
         self.delay = delay
+        # the almanac (11/09/2026; almanac.py): Jagex's news, the world list and the Wiki's prices, fetched on a
+        # schedule (almanac_loop) and shared: "off" (nothing's fetched; GET /almanac answers its shape, empty), "on"
+        # (the real hosts) or an address everything's fetched under instead (tests)
+        self.almanac_on = almanac != "off"
+        self.almanac = almanac_sources.Almanac(almanac_sources.async_fetch, None if almanac in ("on", "off") else almanac,
+                                               log=log)
         self.settle_code_s = settle_code_s  # how long a settling code lasts (SETTLE_CODE_S; tests shorten it)
         self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
@@ -1804,6 +1819,12 @@ class Relay:
             return
         if path == ["stars"] and not key:
             await self.stars_read(writer, method)
+            return
+        if path == ["almanac"] and not key:
+            await self.almanac_read(writer, method)
+            return
+        if path == ["admin", "almanac"] and not key:
+            await self.almanac_keeper(writer, method, headers)
             return
         if path[:2] == ["admin", "aether"] and not key:
             await self.aether_keeper(reader, writer, method, headers, path)
@@ -2439,6 +2460,60 @@ class Relay:
             await writer.drain()
         finally:
             writer.close()
+
+    async def almanac_read(self, writer, method):
+        """GET /almanac (11/09/2026; almanac.py, docs/protocol.md "The almanac"): Jagex's news, the world list and the
+        market, as last fetched on the relay's own schedule. Anyone may read it (any origin, the public side too); a
+        browser may keep it a minute. A read never asks a source, except the first when nothing's ever been tried (a
+        cold start: one refresh, shared by every read that comes while it runs)."""
+        if method != "GET":
+            status, body = "405 Method Not Allowed", None
+        else:
+            if self.almanac_on and self.almanac.cold():
+                await self.almanac.refresh()
+            status, body = "200 OK", self.almanac.read()
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        cache = "public, max-age=60" if body is not None else "no-cache"
+        writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: %s\r\n"
+                      "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, cache, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def almanac_keeper(self, writer, method, headers):
+        """The almanac's keeper (the Worker's, the same), with --admin-token: GET /admin/almanac, each source's schedule
+        and last error; POST /admin/almanac, every source asked now, whatever its schedule (then the same)."""
+        auth = headers.get("authorization", "").encode("latin-1")
+        if len(self.admin_token) < 16 or not hmac.compare_digest(auth, ("Bearer " + self.admin_token).encode("utf-8")):
+            status, body = "403 Forbidden", None
+        elif method == "POST":
+            if self.almanac_on:
+                await self.almanac.refresh(force=True)
+            status, body = "200 OK", self.almanac.status()
+        elif method == "GET":
+            status, body = "200 OK", self.almanac.status()
+        else:
+            status, body = "405 Method Not Allowed", None
+        data = json.dumps(body).encode() if body is not None else b""
+        kind = "Content-Type: application/json\r\n" if body is not None else ""
+        writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode()
+                     + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def almanac_loop(self):
+        """The almanac's schedule (the Worker's Cron Trigger, every 5 minutes, the same): each minute, whatever source
+        is due is asked (almanac.py's NEWS_EVERY, WORLDS_EVERY, PRICES_EVERY, MAPPING_EVERY, and its backoff)."""
+        while True:
+            try:
+                await self.almanac.refresh()
+            except Exception as e:  # noqa: BLE001 (never the loop's end)
+                self.log("the almanac: %s" % e)
+            await asyncio.sleep(60)
 
     async def aether_keeper(self, reader, writer, method, headers, path):
         """The aether's keeper (11/07/2026; the Worker's, the same), with --admin-token (Authorization: Bearer <it>):
@@ -3241,15 +3316,19 @@ def dink_report(p):
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S,
-                where_fresh_s=WHERE_FRESH_S):
+                where_fresh_s=WHERE_FRESH_S, almanac="off"):
     """port: everything (keep it on this PC). public_port: the page and watching only,
-    for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes)."""
-    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s)
+    for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
+    almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
+    everything under instead (tests)."""
+    relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s,
+                  almanac)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
     uploads = asyncio.ensure_future(relay.tell_upload())
     watcher = asyncio.ensure_future(relay.watch_settings(settings)) if settings else None
+    almanac_task = asyncio.ensure_future(relay.almanac_loop()) if relay.almanac_on else None
     log("the outstation relay on ws://%s:%d%s" % (host, port, "  (delay %g s)" % delay if delay else ""))
     if public:
         log("its public side (the page and watching only) on http://%s:%d" % (host, public_port))
@@ -3269,6 +3348,8 @@ async def serve(host, port, delay, ready=None, log=print, forward=None, public_p
         uploads.cancel()
         if watcher:
             watcher.cancel()
+        if almanac_task:
+            almanac_task.cancel()
 
 
 def main(argv=None):
@@ -3296,6 +3377,9 @@ def main(argv=None):
     ap.add_argument("--where-fresh-seconds", type=float, default=WHERE_FRESH_S,
                     help="how long a player's square shows on the open outstations' list after it came (%d; shorter "
                          "for tests)" % WHERE_FRESH_S)
+    ap.add_argument("--almanac", default="on",
+                    help="the almanac's sources (GET /almanac): on (Jagex's news and world list and the Wiki's prices, "
+                         "each on its own schedule), off, or an address to fetch them all under instead (tests)")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -3307,7 +3391,7 @@ def main(argv=None):
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds,
-                          where_fresh_s=a.where_fresh_seconds))
+                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac))
     except KeyboardInterrupt:
         pass
 

@@ -75,6 +75,12 @@
 // Shooting stars (11/08/2026; stars.ts): the crashed stars the plugins have found, kept in the Directory's memory with
 // the outstation that found each first (11/09/2026), for the globe:
 //   GET    /stars    {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}]}
+//
+// The almanac (11/09/2026; almanac.ts): Jagex's news, the world list (its seasons) and the Wiki's prices (the day's
+// movers), for the globe, each fetched by the relay alone on its own schedule and kept in the Directory's storage. The
+// Cron Trigger (wrangler.jsonc, every 5 minutes: scheduled, below) asks it to refresh whatever's due:
+//   GET    /almanac          {"at", "updates", "worlds", "market", "sources"}
+//   GET    /admin/almanac    each source's schedule and last error; POST: every source asked now
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
@@ -83,8 +89,9 @@ import { type ArrayEvent, ArrayFeed, arrayAnswer, arraySince } from "./array";
 import { type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
-import { attachCode, oneLine, relayOf } from "./text";
+import { attachCode, oneLine, pyjson, relayOf } from "./text";
 import { SETTLE_BODY, settleAnswer, settlePreflight } from "./settle";
+import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
 
 export { Channel, Aether };
 
@@ -147,10 +154,43 @@ export class Directory extends DurableObject<Env> {
   // shooting stars (11/08/2026; stars.ts): each told by the channel whose plugin found it (Channel.takeStar), kept with
   // its first listed finder; in memory only, so an eviction forgets them (a star lasts two hours at most)
   stars = new StarList();
+  // the almanac (11/09/2026; almanac.ts): what's kept is in storage ("alm:kept", the two days' prices "alm:latest" and
+  // "alm:before", the names "alm:names"), read once a wake; refreshed by the Cron Trigger (POST /almanac/tick)
+  alm: Promise<Almanac> | null = null;
+
+  almanac(): Promise<Almanac> {
+    this.alm ??= (async () => {
+      const got = await this.ctx.storage.get<unknown>(["alm:kept", "alm:latest", "alm:before", "alm:names"]);
+      return new Almanac((got.get("alm:kept") as Kept | undefined) ?? freshKept(), (got.get("alm:latest") as Day | undefined) ?? null,
+                         (got.get("alm:before") as Day | undefined) ?? null, (got.get("alm:names") as Record<string, string> | undefined) ?? {},
+                         httpFetch, urls(this.env.ALMANAC_UPSTREAM));
+    })();
+    return this.alm;
+  }
+
+  /** The almanac refreshed (every source, with force; else what's due), and what changed written. */
+  async almanacRefresh(force: boolean): Promise<Almanac> {
+    const a = await this.almanac();
+    await a.refresh(force);
+    const out: Record<string, unknown> = {};
+    for (const k of a.dirty) out["alm:" + k] = k === "kept" ? a.kept : a[k];
+    a.dirty.clear();
+    if (Object.keys(out).length) await this.ctx.storage.put(out);
+    return a;
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url), name = url.searchParams.get("name") || "";
     if (url.pathname === "/channels") return this.openPortals();
+    if (url.pathname === "/almanac") {
+      // (a read: never a source asked, except while it's cold, the one refresh shared by every read meanwhile)
+      let a = await this.almanac();
+      if (a.cold()) a = await this.almanacRefresh(false);
+      return almanacAnswer(a.read());
+    }
+    if (url.pathname === "/almanac/tick") return Response.json((await this.almanacRefresh(false)).status());
+    if (url.pathname === "/almanac/force") return Response.json((await this.almanacRefresh(true)).status());
+    if (url.pathname === "/almanac/status") return Response.json((await this.almanac()).status());
     if (url.pathname === "/array") {
       if (request.method === "PUT") {
         const { channel, events } = (await request.json()) as { channel: string; events: ArrayEvent[] };
@@ -400,12 +440,25 @@ function dirRequests(env: Env, what: string, name: string, extra = ""): Request 
   return new Request("https://dir/requests?what=" + encodeURIComponent(what) + "&name=" + encodeURIComponent(name) + extra);
 }
 
+/** GET /almanac's answers: any page may read them (any origin), and a browser may keep one a minute. */
+function almanacAnswer(body: unknown, status = 200): Response {
+  const headers: Record<string, string> = { "access-control-allow-origin": "*", "cache-control": body === null ? "no-cache" : "public, max-age=60" };
+  if (body !== null) headers["content-type"] = "application/json";
+  return new Response(body === null ? null : pyjson(body), { status, headers });
+}
+
 async function admin(request: Request, env: Env, parts: string[]): Promise<Response> {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) {
     return new Response("no", { status: 403 });
   }
   const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+  if (parts[1] === "almanac" && parts.length === 2) {
+    // the almanac's keeper: each source's schedule and last error; POST: every source asked now, whatever its schedule
+    if (request.method === "GET") return dir.fetch("https://dir/almanac/status");
+    if (request.method === "POST") return dir.fetch("https://dir/almanac/force", { method: "POST" });
+    return new Response(null, { status: 405 });
+  }
   if (parts[1] === "aether") {
     // the aether's keeper (aether.ts): the lines with who wrote each, and taking one back or banning its writer
     const aether = env.AETHER.get(env.AETHER.idFromName("aether"));
@@ -497,7 +550,7 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether")) return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether" || parts[1] === "almanac")) return admin(request, env, parts);
 
     // the aether (11/07/2026; aether.ts): one room for every outstation and visitor, and its read for a page
     if (parts[0] === "aether" && parts.length === 1) {
@@ -608,6 +661,13 @@ export default {
       return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/stars");
     }
 
+    // the almanac (11/09/2026; almanac.ts): the news, the worlds and the market, as the relay last fetched them; any page
+    // may read it
+    if (parts[0] === "almanac" && parts.length === 1) {
+      if (request.method !== "GET") return almanacAnswer(null, 405);
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/almanac");
+    }
+
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)
     // (the Directory answers it from what each channel has told it: one request, whatever the number of channels)
     if (request.method === "GET" && url.pathname === "/channels") {
@@ -638,5 +698,10 @@ export default {
       return new Response("the relay for ⊂λ,ｍ⊙ outstation\n", { headers: { "content-type": "text/plain" } });
     }
     return new Response(null, { status: 404 });
+  },
+
+  // the Cron Trigger (wrangler.jsonc, every 5 minutes): the almanac's due sources asked, in the Directory
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/almanac/tick", { method: "POST" }).then(() => {}));
   },
 } satisfies ExportedHandler<Env>;

@@ -22,6 +22,9 @@
     { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] },
     { "tag": "v2", "new_sqlite_classes": ["Aether"] }
   ],
+  // the almanac (11/09/2026, src/almanac.ts): every 5 minutes the Directory asks whichever of its sources is due (the
+  // world list each time, Jagex's news every 20 minutes, the Wiki's prices about once a day, its names once a day)
+  "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
     "MAX_VIEWERS": "0",
     // the oldest client let in ("" lets every version in): raise it when the protocol changes in a way older
