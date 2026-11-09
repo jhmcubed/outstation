@@ -73,8 +73,8 @@
 // The home shows in each row of GET /channels, and the keeper's GET /admin/channels has it with when it changed (homeAt).
 //
 // Shooting stars (11/08/2026; stars.ts): the crashed stars the plugins have found, kept in the Directory's memory with
-// nobody's name, for the globe:
-//   GET    /stars    {"stars": [{"world", "x", "y", "tier", "found", "seen"}]}
+// the outstation that found each first (11/09/2026), for the globe:
+//   GET    /stars    {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}]}
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
@@ -145,7 +145,7 @@ export class Directory extends DurableObject<Env> {
   // in memory only, so an eviction forgets them (the feed's short-lived: a page only wants what's happening now)
   array = new ArrayFeed();
   // shooting stars (11/08/2026; stars.ts): each told by the channel whose plugin found it (Channel.takeStar), kept with
-  // nobody's name; in memory only, so an eviction forgets them (a star lasts two hours at most)
+  // its first listed finder; in memory only, so an eviction forgets them (a star lasts two hours at most)
   stars = new StarList();
 
   async fetch(request: Request): Promise<Response> {
@@ -161,8 +161,8 @@ export class Directory extends DurableObject<Env> {
     }
     if (url.pathname === "/stars") {
       if (request.method === "PUT") {
-        const { channel, star } = (await request.json()) as { channel: string; star: StarReport };
-        this.stars.add(channel, star);
+        const { channel, star, listed } = (await request.json()) as { channel: string; star: StarReport; listed: boolean };
+        this.stars.add(channel, star, !!listed);
         return new Response(null, { status: 204 });
       }
       return arrayAnswer(this.stars.read());
@@ -602,7 +602,7 @@ export default {
         .fetch("https://dir/array" + (since === undefined ? "" : "?since=" + since));
     }
 
-    // shooting stars (11/08/2026; stars.ts): the stars the plugins have found, with nobody's name; any page may read it
+    // shooting stars (11/08/2026; stars.ts): the stars the plugins have found, and who found each; any page may read it
     if (parts[0] === "stars" && parts.length === 1) {
       if (request.method !== "GET") return arrayAnswer(null, 405);
       return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/stars");

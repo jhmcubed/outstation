@@ -2085,7 +2085,8 @@ class Activity(Base):
 
     async def test_each_shape_it_takes(self):
         for a in ({"kind": "boss", "boss": "Vorkath"}, {"kind": "fighting"}, {"kind": "idle"},
-                  {"skill": "Sailing", "kind": "skilling"}, {"kind": "boss", "boss": "Barrows"}):
+                  {"skill": "Sailing", "kind": "skilling"}, {"kind": "boss", "boss": "Barrows"},
+                  {"kind": "raid", "raid": "Tombs of Amascut"}, {"kind": "minigame", "minigame": "the Colosseum"}):
             self.ch = "t" + secrets.token_hex(5)
             if WORKER:
                 status, got = admin("POST", "/admin/channels/" + self.ch)
@@ -2110,7 +2111,9 @@ class Activity(Base):
                {"kind": "skilling"}, {"kind": "boss", "boss": "Callisto"}, {"kind": "boss", "boss": "Jace"},
                {"kind": "fighting", "with": "Goblin"}, {"kind": "idle", "since": 5}, {"kind": "afk"}, {"kind": 1},
                {}, "idle", ["idle"], 5, True, {"kind": "skilling", "skill": ["Mining"]},
-               {"kind": "boss", "boss": "Vorkath", "kc": 50}]
+               {"kind": "boss", "boss": "Vorkath", "kc": 50}, {"kind": "raid", "raid": "ToB"},
+               {"kind": "minigame", "minigame": "Last Man Standing"}, {"kind": "minigame"},
+               {"kind": "raid", "raid": "Theatre of Blood", "room": "Verzik"}]
         for i, a in enumerate(bad):
             if i and i % 4 == 0:
                 await asyncio.sleep(1.0)
@@ -2195,10 +2198,11 @@ class Activity(Base):
 
 class Stars(Base):
     """Shooting stars (11/08/2026): the Outside plugin may send "star", a crashed star it saw two minutes before
-    ({"world", "x", "y", "tier"}, or "gone": true). The relay keeps one for each world and square, whoever told of it,
-    and GET /stars shows them with nobody's name: a lower tier replaces, a higher one's old news, gone takes it off (and
-    a late report doesn't bring it back). One outstation tells of 30 an hour at most. (Expiry, at two hours: relay-py's
-    own tests.) Each test has a world and a square of its own: the list is the whole relay's."""
+    ({"world", "x", "y", "tier"}, or "gone": true; with "site", its landing site, 11/09/2026). The relay keeps one for
+    each world and square, however many told of it, and GET /stars shows them with the first listed outstation to tell
+    of each ("by", 11/09/2026; null for a hidden one) and how many did: a lower tier replaces, a higher one's old news,
+    gone takes it off (and a late report doesn't bring it back). One outstation tells of 30 an hour at most. (Expiry, at
+    two hours: relay-py's own tests.) Each test has a world and a square of its own: the list is the whole relay's."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
@@ -2226,16 +2230,30 @@ class Stars(Base):
         self.assertLessEqual(len(found), 1)
         return found[0] if found else None
 
-    async def test_a_star_shows_with_nobodys_name_dark_or_not(self):
+    async def test_a_star_shows_with_its_finder_dark_or_not(self):
         g = await self.game()
         await self.say(g, self.star(tier=7))
         s = await self.mine()
         self.assertIsNotNone(s)
-        self.assertEqual(sorted(s), ["found", "seen", "tier", "world", "x", "y"])
-        self.assertEqual((s["world"], s["x"], s["y"], s["tier"]), (self.world, self.x, self.y, 7))
+        self.assertEqual(sorted(s), ["by", "found", "reports", "seen", "site", "tier", "world", "x", "y"])
+        self.assertEqual((s["world"], s["x"], s["y"], s["tier"], s["site"], s["by"], s["reports"]),
+                         (self.world, self.x, self.y, 7, None, self.ch, 1))
         self.assertEqual(s["found"], s["seen"])
         with urllib.request.urlopen(http_url() + "/stars", timeout=10) as r:
             self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+
+    async def test_a_landing_site_and_a_hidden_finder(self):
+        # (11/09/2026: Shooting Star Info's sites, each in its own square; a watch-coded outstation is never named)
+        self.x, self.y = 3008, 3264                                   # (Rimmington mine's square)
+        tx = await self.tx(code="moss")
+        await next_of(tx, "relay")
+        g = await self.game()
+        await self.say(g, self.star(tier=3, site="Varrock east bank"))  # (another square's site: ignored)
+        self.assertIsNone(await self.mine())
+        await self.say(g, self.star(tier=3, site="Rimmington mine"))
+        s = await self.mine()
+        self.assertEqual((s["site"], s["by"], s["reports"]), ("Rimmington mine", None, 1))
+        with urllib.request.urlopen(http_url() + "/stars", timeout=10) as r:
             self.assertNotIn(self.ch, r.read().decode())
 
     async def test_several_outstations_one_star_tiers_only_fall_and_gone_takes_it_off(self):
@@ -2247,11 +2265,13 @@ class Stars(Base):
             key = "secret-key-" + secrets.token_hex(4)
         h = await self.game(key=key, channel=other)
         await self.say(g, self.star(tier=6))
+        await self.pause(2)                                        # (this channel's first, on the Worker too)
         await self.say(h, self.star(tier=6))
         first = await self.mine()
+        self.assertEqual(first["by"], self.ch)
         await self.say(h, self.star(tier=5))
         s = await self.mine()
-        self.assertEqual((s["tier"], s["found"]), (5, first["found"]))
+        self.assertEqual((s["tier"], s["found"], s["by"], s["reports"]), (5, first["found"], self.ch, 2))
         self.assertGreaterEqual(s["seen"], first["seen"])
         await self.say(g, self.star(tier=6))                       # (older news: ignored)
         self.assertEqual((await self.mine())["tier"], 5)

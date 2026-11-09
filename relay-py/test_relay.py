@@ -580,7 +580,9 @@ class ActivityWords(unittest.TestCase):
         A = relay.game_activity
         for a in ({"kind": "idle"}, {"kind": "fighting"}, {"kind": "skilling", "skill": "Runecraft"},
                   {"skill": "Sailing", "kind": "skilling"}, {"kind": "boss", "boss": "K'ril Tsutsaroth"},
-                  {"kind": "boss", "boss": "Moons of Peril"}):
+                  {"kind": "boss", "boss": "Moons of Peril"}, {"kind": "raid", "raid": "Theatre of Blood"},
+                  {"raid": "The Fractured Archive", "kind": "raid"}, {"kind": "minigame", "minigame": "the Inferno"},
+                  {"kind": "minigame", "minigame": "Sorceress's Garden"}):
             self.assertEqual(A({"activity": a}), a)
             self.assertIsNot(A({"activity": a}), a)                                      # (a copy)
         self.assertIsNone(A({"activity": None}))
@@ -591,7 +593,13 @@ class ActivityWords(unittest.TestCase):
                   {"activity": {"kind": "skilling", "skill": "mining"}}, {"activity": {"kind": "skilling", "skill": 5}},
                   {"activity": {"kind": "skilling", "skill": ["Mining"]}}, {"activity": {"kind": "boss", "boss": "Callisto"}},
                   {"activity": {"kind": "boss", "boss": "Vorkath", "kc": 50}}, {"activity": {"kind": "boss"}},
-                  {"activity": {"kind": "boss", "boss": "Dharok the Wretched"}}):
+                  {"activity": {"kind": "boss", "boss": "Dharok the Wretched"}},
+                  {"activity": {"kind": "raid", "raid": "Chambers of Xeric (CM)"}}, {"activity": {"kind": "raid"}},
+                  {"activity": {"kind": "raid", "raid": "the Inferno"}}, {"activity": {"kind": "minigame", "minigame": "Inferno"}},
+                  {"activity": {"kind": "minigame", "minigame": "Last Man Standing"}},
+                  {"activity": {"kind": "minigame", "minigame": "Castle Wars"}},
+                  {"activity": {"kind": "minigame", "minigame": "Soul Wars"}},
+                  {"activity": {"kind": "minigame", "minigame": "the Inferno", "wave": 69}}):
             self.assertIs(A(g), relay._BAD, g)
         self.assertNotIn("activity", relay.game_fields({"world": 302, "activity": {"kind": "idle"}}))   # (never kept)
 
@@ -626,6 +634,29 @@ class ActivityLists(unittest.TestCase):
         self.assertEqual(sorted(labels), list(relay.ACTIVITY_BOSSES))
         self.assertEqual(sorted(relay.ACTIVITY_BOSSES), list(relay.ACTIVITY_BOSSES))       # (sorted, as the docs list them)
 
+    def test_the_raids_minigames_and_landing_sites_match_the_workers_and_the_plugins(self):
+        game = self.source("relay", "src", "game.ts")
+        self.assertEqual(self.ts_list(game, "ACTIVITY_RAIDS"), list(relay.ACTIVITY_RAIDS))
+        self.assertEqual(self.ts_list(game, "ACTIVITY_MINIGAMES"), list(relay.ACTIVITY_MINIGAMES))
+        java = self.source("plugin", "src", "main", "java", "wiki", "outside", "Activity.java")
+        for name, kept in (("RAIDS", relay.ACTIVITY_RAIDS), ("MINIGAMES", relay.ACTIVITY_MINIGAMES)):
+            body = re.search(r"static final Map<Integer, String> %s = regions\((.*?)\);" % name, java, re.S).group(1)
+            self.assertEqual(sorted(re.findall(r'"([^"]+)", new int', body)), sorted(kept))
+        self.assertEqual(sorted(relay.ACTIVITY_MINIGAMES), list(relay.ACTIVITY_MINIGAMES))
+        for pvp in ("Last Man Standing", "Castle Wars", "Clan Wars", "Soul Wars", "Fight Pits", "Emir's Arena"):
+            self.assertFalse([m for m in relay.ACTIVITY_MINIGAMES if pvp.lower() in m.lower()], pvp)
+        ts = dict((n, (int(x), int(y))) for n, x, y in
+                  re.findall(r'^  ("[^"]+"): \[(\d+), (\d+)\],$', re.search(r"STAR_SITES[^=]*= \{(.*?)\};", game, re.S)
+                             .group(1), re.M))
+        self.assertEqual({json.loads(n): v for n, v in ts.items()}, relay.STAR_SITES)
+        sites = self.source("plugin", "src", "main", "java", "wiki", "outside", "Sites.java")
+        java_sites = {}
+        for x, y, n in re.findall(r'site\((\d+), (\d+), "([^"]+)"\);', sites):
+            x, y = int(x), int(y)
+            java_sites[n] = (x // 128 * 128 + 64, y // 128 * 128 + 64)
+        self.assertEqual(java_sites, relay.STAR_SITES)
+        self.assertEqual(len(relay.STAR_SITES), 71)
+
     def test_the_world_and_the_stars_numbers_match_the_workers(self):
         game, stars = self.source("relay", "src", "game.ts"), self.source("relay", "src", "stars.ts")
         self.assertEqual(re.search(r"WORLD_RANGE = \[(\d+), (\d+)\]", game).groups(), tuple(map(str, relay.WORLD_RANGE)))
@@ -645,7 +676,18 @@ class StarWords(unittest.TestCase):
                          {"world": 1, "x": 1088, "y": 2496, "tier": 9})
         self.assertEqual(S({"star": {"world": 999, "x": 4032, "y": 4160, "gone": True}}),
                          {"world": 999, "x": 4032, "y": 4160, "gone": True})
+        self.assertEqual(S({"star": {"world": 302, "x": 3008, "y": 3264, "site": "Rimmington mine", "tier": 6}}),
+                         {"world": 302, "x": 3008, "y": 3264, "site": "Rimmington mine", "tier": 6})
+        self.assertEqual(S({"star": {"world": 302, "x": 3264, "y": 3392, "site": "Varrock east bank", "gone": True}}),
+                         {"world": 302, "x": 3264, "y": 3392, "site": "Varrock east bank", "gone": True})
         at = {"world": 302, "x": 3008, "y": 3264}
+        for g in ({"star": dict(at, tier=6, site="Varrock east bank")},                  # (a site in another square)
+                  {"star": dict(at, tier=6, site="Rimmington Mine")}, {"star": dict(at, tier=6, site=None)},
+                  {"star": dict(at, tier=6, site="")}, {"star": dict(at, tier=6, site=["Rimmington mine"])},
+                  {"star": dict(at, site="Rimmington mine")},
+                  {"star": {"world": 302, "x": 3072, "y": 3584, "site": "Mage of Zamorak mine (lvl 7 Wildy)", "tier": 6}},
+                  {"star": dict(at, tier=6, site="__proto__")}, {"star": dict(at, tier=6, site="constructor")}):
+            self.assertIsNone(S(g), g)
         for g in ({}, None, [], {"star": None}, {"star": "star"}, {"star": [302, 3008, 3264, 6]}, {"star": at},
                   {"star": dict(at, tier=0)}, {"star": dict(at, tier=10)}, {"star": dict(at, tier=6.5)},
                   {"star": dict(at, tier="6")}, {"star": dict(at, tier=True)}, {"star": dict(at, gone=False)},
@@ -659,60 +701,70 @@ class StarWords(unittest.TestCase):
 
 
 class StarListRing(unittest.TestCase):
-    """The stars' list (relay.StarList; the Worker's, the same): one a world and square, no names, tiers only fall,
-    gone stays gone a while, two hours at most, thirty reports an hour from an outstation."""
+    """The stars' list (relay.StarList; the Worker's, the same): one a world and square, its first listed finder and how
+    many told of it, its site, tiers only fall, gone stays gone a while, two hours at most, thirty reports an hour from
+    an outstation."""
 
     def star(self, tier=6, **more):
         return dict({"world": 302, "x": 3008, "y": 3264, "tier": tier}, **more)
 
-    def test_one_star_from_several_outstations_with_nobodys_name(self):
+    def test_one_star_from_several_outstations_its_finder_and_how_many(self):
         f = relay.StarList()
-        f.add("moss", self.star(6), now=1000)
-        f.add("fern", self.star(6), now=2000)
-        f.add("fern", self.star(7), now=3000)                       # (older news)
-        self.assertEqual(f.read(now=3000), {"stars": [{"world": 302, "x": 3008, "y": 3264, "tier": 6,
-                                                       "found": 1000, "seen": 2000}]})
-        f.add("moss", self.star(4), now=4000)
-        self.assertEqual([(s["tier"], s["seen"]) for s in f.read(now=4000)["stars"]], [(4, 4000)])
-        self.assertNotIn("moss", json.dumps(f.read(now=4000)))
-        self.assertNotIn("fern", json.dumps(f.read(now=4000)))
+        f.add("moss", self.star(6), True, now=1000)
+        f.add("fern", self.star(6, site="Rimmington mine"), True, now=2000)
+        f.add("fern", self.star(7), True, now=3000)                 # (older news)
+        self.assertEqual(f.read(now=3000), {"stars": [{"world": 302, "x": 3008, "y": 3264, "site": "Rimmington mine",
+                                                       "tier": 6, "found": 1000, "seen": 2000, "by": "moss",
+                                                       "reports": 2}]})
+        f.add("moss", self.star(4), True, now=4000)
+        self.assertEqual([(s["tier"], s["seen"], s["reports"]) for s in f.read(now=4000)["stars"]], [(4, 4000, 2)])
+
+    def test_a_hidden_finder_is_never_named_and_the_first_listed_one_is(self):
+        f = relay.StarList()
+        f.add("coded", self.star(6), False, now=0)                  # (a watch code: not on the open list)
+        self.assertEqual([(s["by"], s["reports"]) for s in f.read(now=0)["stars"]], [(None, 1)])
+        f.add("moss", self.star(6), True, now=10)
+        f.add("fern", self.star(5), True, now=20)
+        self.assertEqual([(s["by"], s["reports"]) for s in f.read(now=20)["stars"]], [("moss", 3)])
+        self.assertNotIn("coded", json.dumps(f.read(now=20)))
 
     def test_gone_takes_it_off_and_keeps_it_off_ten_minutes(self):
         f = relay.StarList()
-        f.add("moss", self.star(2), now=0)
-        f.add("fern", {"world": 302, "x": 3008, "y": 3264, "gone": True}, now=1000)
+        f.add("moss", self.star(2), True, now=0)
+        f.add("fern", {"world": 302, "x": 3008, "y": 3264, "gone": True}, True, now=1000)
         self.assertEqual(f.read(now=1000), {"stars": []})
-        f.add("moss", self.star(1), now=600_999)                    # (a late report of it)
+        f.add("moss", self.star(1), True, now=600_999)              # (a late report of it)
         self.assertEqual(f.read(now=600_999), {"stars": []})
-        f.add("moss", self.star(9), now=601_000)                    # (ten minutes on: a new star)
-        self.assertEqual([s["tier"] for s in f.read(now=601_000)["stars"]], [9])
+        f.add("peat", self.star(9), True, now=601_000)              # (ten minutes on: a new star, a new finder)
+        self.assertEqual([(s["tier"], s["by"], s["reports"]) for s in f.read(now=601_000)["stars"]], [(9, "peat", 1)])
 
     def test_two_hours_at_most_and_read_in_order(self):
         f = relay.StarList()
-        f.add("moss", self.star(9, world=330), now=0)
-        f.add("moss", self.star(5, world=302, x=3136), now=10)
-        f.add("moss", self.star(5, world=302), now=20)
+        f.add("moss", self.star(9, world=330), True, now=0)
+        f.add("moss", self.star(5, world=302, x=3136), True, now=10)
+        f.add("moss", self.star(5, world=302), True, now=20)
         self.assertEqual([(s["world"], s["x"]) for s in f.read(now=30)["stars"]], [(302, 3008), (302, 3136), (330, 3008)])
-        f.add("fern", self.star(1, world=330), now=7_199_999)        # (seen since: it still goes at two hours)
+        f.add("fern", self.star(1, world=330), True, now=7_199_999)  # (seen since: it still goes at two hours)
         self.assertEqual(len(f.read(now=7_199_999)["stars"]), 3)
         self.assertEqual([s["world"] for s in f.read(now=7_200_000)["stars"]], [302, 302])
+        self.assertEqual(sorted(f.tellers), ["302:3008:3264", "302:3136:3264"])
 
     def test_thirty_an_hour_from_one_outstation_and_a_quiet_ones_times_go(self):
         f = relay.StarList()
         for i in range(30):
-            self.assertTrue(f.add("moss", self.star(9, world=i + 1), now=1000 + i))
-        self.assertFalse(f.add("moss", self.star(9, world=31), now=2000))
-        self.assertTrue(f.add("fern", self.star(9, world=31), now=2000))                    # (another: its own thirty)
+            self.assertTrue(f.add("moss", self.star(9, world=i + 1), True, now=1000 + i))
+        self.assertFalse(f.add("moss", self.star(9, world=31), True, now=2000))
+        self.assertTrue(f.add("fern", self.star(9, world=31), True, now=2000))              # (another: its own thirty)
         self.assertEqual(len(f.read(now=2000)["stars"]), 31)
-        self.assertFalse(f.add("moss", self.star(9, world=32), now=3_600_999))
-        self.assertTrue(f.add("moss", self.star(9, world=32), now=3_601_000))               # (an hour on)
-        f.add("peat", self.star(9, world=33), now=9_000_000)
+        self.assertFalse(f.add("moss", self.star(9, world=32), True, now=3_600_999))
+        self.assertTrue(f.add("moss", self.star(9, world=32), True, now=3_601_000))         # (an hour on)
+        f.add("peat", self.star(9, world=33), True, now=9_000_000)
         self.assertEqual(sorted(f.recent), ["peat"])
 
     def test_a_thousand_at_most(self):
         f = relay.StarList()
         for i in range(relay.STARS_KEPT + 5):
-            f.add("c%d" % i, self.star(9, world=1 + i % 999, x=1088 + 128 * (i // 999)), now=i)
+            f.add("c%d" % i, self.star(9, world=1 + i % 999, x=1088 + 128 * (i // 999)), True, now=i)
         self.assertEqual(len(f.stars), relay.STARS_KEPT)
 
 
@@ -961,7 +1013,7 @@ class PublicSide(RelayTest):
         got = json.loads(body)
         self.assertEqual((status, kind), (200, "application/json"))
         self.assertEqual([(s["world"], s["tier"]) for s in got["stars"]], [(302, 6)])
-        self.assertNotIn("sburb", body if isinstance(body, str) else body.decode())
+        self.assertEqual(got["stars"][0]["by"], "sburb")
         self.assertEqual(await post(self.public_port, "/stars", b"{}", "application/json"), 403)
 
 

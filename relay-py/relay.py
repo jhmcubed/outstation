@@ -104,7 +104,7 @@ transmission and the chat, live, and as last known while dark.
   "boss"}, {"kind": "fighting"}, {"kind": "idle"}: game_activity's closed lists), or null; held, dropped and shown on
   GET /channels exactly as "where" is.
   Shooting stars (11/08/2026): "star", a crashed star the player found two minutes before ({"world", "x", "y", "tier"},
-  or "gone": true), into the relay's StarList with nobody's name: GET /stars (below).
+  or "gone": true; "site" with either), into the relay's StarList: GET /stars (below).
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
 
 The aether (11/07/2026, Jace: "a global chat... reminds me of IRC and AOL Instant Messenger. i want this to feel like a
@@ -131,9 +131,11 @@ happening across the open outstations, for outside.wiki's front page (each outst
   public side allows the read.
 
 Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): the crashed stars the
-plugins have found, with nobody's name on them, for outside.wiki's globe.
-    read:      GET http://HOST:PORT/stars       {"stars": [{"world", "x", "y", "tier", "found", "seen"}, ...]}
-  One for each world and square, whoever told of it; kept STAR_LIFE_S after it was first told of, or till it's told
+plugins have found, and who found each, for outside.wiki's globe.
+    read:      GET http://HOST:PORT/stars
+               {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}, ...]}
+  One for each world and square, however many told of it, with the first listed outstation to tell of it as its finder
+  ("by", 11/09/2026; null for a hidden one) and how many did; kept STAR_LIFE_S after it was first told of, or till it's told
   gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
   only. The public side allows the read.
 
@@ -220,6 +222,92 @@ ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "
                    "Skotizo", "Sol Heredit", "The Hueycoatl", "The Leviathan", "The Nightmare", "The Whisperer",
                    "Thermonuclear smoke devil", "TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Vorkath", "Yama", "Zalcano",
                    "Zulrah")
+# raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"; the Worker's ACTIVITY_RAIDS and
+# ACTIVITY_MINIGAMES, the same; the plugin's Activity.RAIDS and MINIGAMES's labels, by RuneLite's Discord plugin's region
+# ids). No PvP minigames.
+ACTIVITY_RAIDS = ("Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut")
+ACTIVITY_MINIGAMES = (
+    "Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Fishing Trawler", "Giants' Foundry",
+    "Guardians of the Rift", "Hallowed Sepulchre", "Mage Training Arena", "Nightmare Zone", "Pest Control",
+    "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Temple Trekking", "Tempoross", "Tithe Farm",
+    "Trouble Brewing", "Volcanic Mine", "Wintertodt", "the Colosseum", "the Corrupted Gauntlet", "the Fight Caves",
+    "the Gauntlet", "the Inferno")
+# the landing sites (11/09/2026, Jace: "named landing sites: yes"; the Worker's STAR_SITES, the same): Shooting Star
+# Info's (its Location.java; BSD 2-Clause, Copyright (c) 2022, Cute Rock: plugin/README.md, "Credits"), less the
+# Wilderness's and Prifddinas's, each name with the square it's in. A star's "site" must be one of these, in its square.
+STAR_SITES = {
+    "Rimmington mine": (3008, 3264),
+    "Crafting guild": (2880, 3264),
+    "West Falador mine": (2880, 3392),
+    "East Falador bank": (3008, 3392),
+    "North Dwarven Mine entrance": (3008, 3392),
+    "Taverley house portal": (2880, 3520),
+    "Brimhaven northwest gold mine": (2752, 3264),
+    "Brimhaven south dungeon entrance": (2752, 3136),
+    "Nature Altar mine north of Shilo": (2880, 3008),
+    "Shilo Village gem mine": (2880, 3008),
+    "North Crandor": (2880, 3264),
+    "South Crandor": (2880, 3264),
+    "Al Kharid mine": (3264, 3264),
+    "Al Kharid bank": (3264, 3136),
+    "Mage Training Arena entrance": (3392, 3264),
+    "Nw of Uzer (Eagle's Eyrie)": (3392, 3136),
+    "Nardah bank": (3392, 2880),
+    "Agility Pyramid mine": (3264, 2880),
+    "Desert Quarry mine": (3136, 2880),
+    "Corsair Cove bank": (2624, 2880),
+    "Corsair Resource Area": (2496, 2880),
+    "Myths' Guild": (2496, 2880),
+    "Feldip Hills (aks fairy ring)": (2624, 3008),
+    "Rantz cave": (2624, 3008),
+    "Soul Wars south mine": (2240, 2752),
+    "Fossil Island Volcanic Mine entrance": (3776, 3776),
+    "Fossil Island rune rocks": (3776, 3776),
+    "Mos Le'Harmless west bank": (3648, 3008),
+    "Keldagrim entrance mine": (2752, 3648),
+    "Rellekka mine": (2624, 3648),
+    "Jatizso mine entrance": (2368, 3776),
+    "Neitiznot south of rune rock": (2368, 3776),
+    "Miscellania mine (cip fairy ring)": (2496, 3904),
+    "Lunar Isle mine entrance": (2112, 3904),
+    "Yanille bank": (2624, 3136),
+    "Port Khazard mine": (2624, 3136),
+    "Ardougne Monastery": (2624, 3264),
+    "South of Legends' Guild": (2752, 3392),
+    "Catherby bank": (2752, 3392),
+    "Coal Trucks west of Seers'": (2624, 3520),
+    "Hosidius mine": (1728, 3520),
+    "Port Piscarilius mine in Kourend": (1728, 3648),
+    "Shayzien mine south of Kourend Castle": (1600, 3648),
+    "South Lovakengj bank": (1472, 3776),
+    "Lovakite mine": (1472, 3904),
+    "Arceuus dense essence mine": (1728, 3904),
+    "Mount Karuulm bank": (1344, 3776),
+    "Mount Karuulm mine": (1216, 3776),
+    "Kebos Swamp mine": (1216, 3648),
+    "Chambers of Xeric bank": (1216, 3520),
+    "Varrock east bank": (3264, 3392),
+    "South-east Varrock mine": (3264, 3392),
+    "Champions' Guild mine": (3136, 3392),
+    "Draynor Village": (3136, 3264),
+    "West Lumbridge Swamp mine": (3136, 3136),
+    "East Lumbridge Swamp mine": (3264, 3136),
+    "Darkmeyer ess. mine entrance": (3648, 3392),
+    "Theatre of Blood bank": (3648, 3264),
+    "Canifis bank": (3520, 3520),
+    "Burgh de Rott bank": (3520, 3264),
+    "Abandoned Mine west of Burgh": (3392, 3264),
+    "West of Grand Tree": (2496, 3520),
+    "Gnome Stronghold spirit tree": (2496, 3392),
+    "Piscatoris (akq fairy ring)": (2368, 3648),
+    "Lletya": (2368, 3136),
+    "Isafdar runite rocks": (2240, 3136),
+    "Arandar mine north of Lleyta": (2368, 3264),
+    "Mynydd nw of Prifddinas": (2112, 3392),
+    "Varlamore South East mine": (1728, 3008),
+    "Varlamore colosseum entrance bank": (1728, 3136),
+    "Mine north-west of hunter guild": (1472, 3136),
+}
 # shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): a star's kept
 # STAR_LIFE_S after it was first told of (a star lasts about two hours), or till it's told gone; for STAR_GONE_S after,
 # a late report of it doesn't bring it back; one outstation tells of STARS_AN_HOUR in an hour at most; STARS_KEPT at most
@@ -703,19 +791,29 @@ def game_activity(g):
         return {"kind": "skilling", "skill": a["skill"]}
     if kind == "boss" and len(a) == 2 and isinstance(a.get("boss"), str) and a["boss"] in ACTIVITY_BOSSES:
         return {"kind": "boss", "boss": a["boss"]}
+    if kind == "raid" and len(a) == 2 and isinstance(a.get("raid"), str) and a["raid"] in ACTIVITY_RAIDS:
+        return {"kind": "raid", "raid": a["raid"]}
+    if kind == "minigame" and len(a) == 2 and isinstance(a.get("minigame"), str) and a["minigame"] in ACTIVITY_MINIGAMES:
+        return {"kind": "minigame", "minigame": a["minigame"]}
     return _BAD
 
 
 def game_star(g):
     """A {"game"} message's "star" (a shooting star found, 11/08/2026): {"world", "x", "y", "tier"} (a world, a square's
-    middle on the main map as "where"'s, a tier 1 to 9) or {"world", "x", "y", "gone": True}, exactly; or None for none
-    or anything not its shape. The Worker's gameStar, the same."""
+    middle on the main map as "where"'s, a tier 1 to 9) or {"world", "x", "y", "gone": True}, exactly, each with "site"
+    (11/09/2026: one of STAR_SITES, in its own square) or without; or None for none or anything not its shape. The
+    Worker's gameStar, the same."""
     s = g.get("star") if isinstance(g, dict) else None
     if not isinstance(s, dict) or not is_world(s.get("world")) or not is_square(s.get("x"), WHERE_X) \
             or not is_square(s.get("y"), WHERE_Y):
         return None
     at = {"world": game_int(s["world"]), "x": game_int(s["x"]), "y": game_int(s["y"])}
-    keys = ",".join(sorted(s))
+    if "site" in s:
+        sq = STAR_SITES.get(s["site"]) if isinstance(s["site"], str) else None
+        if sq is None or sq != (at["x"], at["y"]):
+            return None
+        at["site"] = s["site"]
+    keys = ",".join(sorted(k for k in s if k != "site"))
     tier = game_int(s.get("tier"))
     if keys == "tier,world,x,y" and tier is not None and 1 <= tier <= 9:
         return dict(at, tier=tier)
@@ -725,12 +823,14 @@ def game_star(g):
 
 
 class StarList:
-    """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, whoever told of
-    it, never who did; in memory only. A channel's only trace is when it told of one in the last hour (STARS_AN_HOUR).
-    The Worker's StarList (stars.ts), the same. Times in ms."""
+    """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, however many told
+    of it, with the first outstation on the open outstations' list to tell of it as its finder ("by", 11/09/2026: a
+    hidden outstation is never named) and how many did; in memory only. One outstation tells of STARS_AN_HOUR in an
+    hour at most. The Worker's StarList (stars.ts), the same. Times in ms."""
 
     def __init__(self):
-        self.stars = {}              # "world:x:y" -> {"world", "x", "y", "tier", "found", "seen"}
+        self.stars = {}              # "world:x:y" -> {"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}
+        self.tellers = {}            # "world:x:y" -> the channels that told of it (for "reports")
         self.gone = {}               # "world:x:y" -> when it was told gone
         self.recent = {}             # a channel -> when it told of one, the last hour
 
@@ -738,15 +838,17 @@ class StarList:
         """The stars and the gone past their time, and a quiet channel's times, forgotten."""
         for k in [k for k, s in self.stars.items() if now - s["found"] >= STAR_LIFE_S * 1000]:
             del self.stars[k]
+            self.tellers.pop(k, None)
         for k in [k for k, t in self.gone.items() if now - t >= STAR_GONE_S * 1000]:
             del self.gone[k]
         for c in [c for c, t in self.recent.items() if now - t[-1] >= 3_600_000]:
             del self.recent[c]
 
-    def add(self, channel, r, now=None):
-        """A channel's report (game_star's): whether it was counted (False past its STARS_AN_HOUR). A new star's added;
-        one kept takes a tier as low or lower (a star's only ever mined down) and when it was seen; gone takes it off,
-        and keeps it off for STAR_GONE_S."""
+    def add(self, channel, r, listed, now=None):
+        """A channel's report (game_star's), and whether the channel's on the open outstations' list: whether it was
+        counted (False past its STARS_AN_HOUR). A new star's added; one kept takes a tier as low or lower (a star's only
+        ever mined down) and when it was seen, and a site and a finder if it had none; gone takes it off, and keeps it
+        off for STAR_GONE_S."""
         now = int(time.time() * 1000) if now is None else now
         self.expire(now)
         times = [t for t in self.recent.get(channel, []) if now - t < 3_600_000]
@@ -757,6 +859,7 @@ class StarList:
         k = "%d:%d:%d" % (r["world"], r["x"], r["y"])
         if r.get("gone"):
             self.stars.pop(k, None)
+            self.tellers.pop(k, None)
             self.gone[k] = now
             return True
         if k in self.gone:
@@ -765,9 +868,17 @@ class StarList:
         if had is not None:
             if r["tier"] <= had["tier"]:
                 had["tier"], had["seen"] = r["tier"], now
+            if had["site"] is None:
+                had["site"] = r.get("site")
+            if had["by"] is None and listed:
+                had["by"] = channel
+            self.tellers[k].add(channel)
+            had["reports"] = len(self.tellers[k])
             return True
         if len(self.stars) < STARS_KEPT:
-            self.stars[k] = {"world": r["world"], "x": r["x"], "y": r["y"], "tier": r["tier"], "found": now, "seen": now}
+            self.stars[k] = {"world": r["world"], "x": r["x"], "y": r["y"], "site": r.get("site"), "tier": r["tier"],
+                             "found": now, "seen": now, "by": channel if listed else None, "reports": 1}
+            self.tellers[k] = {channel}
         return True
 
     def read(self, now=None):
@@ -1114,7 +1225,7 @@ class Channel:
     def __init__(self, name, key, array=None, stars=None):
         self.name, self.key = name, key
         self.array = array           # the relay's ArrayFeed: this channel's events go in while it's live and listed
-        self.stars = stars           # the relay's StarList: the shooting stars its plugin finds go in, with no name
+        self.stars = stars           # the relay's StarList: the shooting stars its plugin finds go in
         self.code = ""
         self.sender = None
         self.viewers = set()
@@ -1268,12 +1379,12 @@ class Channel:
 
     def take_star(self, star, fields):
         """A shooting star the plugin found (game_star): into the relay's StarList, which counts this channel's reports
-        and keeps the star with no name. Not from a message that logs out or holds for the player's safety, nor once
+        and names it as the star's finder only if it's listed. Not from a message that logs out or holds for the player's safety, nor once
         the plugin's gone (a report --delay held back)."""
         if star is None or self.stars is None or self.gamer is None or fields.get("off") is True \
                 or isinstance(fields.get("paused"), str):
             return
-        self.stars.add(self.name, star)
+        self.stars.add(self.name, star, self.listed())
 
     def on_air(self):
         """A transmitter's come: a new stream's summary, unless it went off air only a little while ago."""
@@ -1596,7 +1707,7 @@ class Relay:
         self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
-        self.stars = StarList()        # shooting stars (11/08/2026): the ones the plugins found, with nobody's name
+        self.stars = StarList()        # shooting stars (11/08/2026): the ones the plugins found, and who found each
         self.admin_token = admin_token  # the keeper's (the aether's routes; 16 characters at least): "" refuses them
         self.clips_dir = clips_dir     # where clips are kept (None: the relay takes none)
         self.min_client = min_client   # the oldest client version let in (v=); "" lets every version in
@@ -2311,7 +2422,7 @@ class Relay:
             writer.close()
 
     async def stars_read(self, writer, method):
-        """GET /stars (11/08/2026; StarList): the shooting stars the plugins have found, with nobody's name, for
+        """GET /stars (11/08/2026; StarList): the shooting stars the plugins have found, and who found each, for
         outside.wiki's globe: {"stars": [...]}. Anyone may read it (any origin, the public side too), never cached."""
         status, body = ("200 OK", self.stars.read()) if method == "GET" else ("405 Method Not Allowed", None)
         data = json.dumps(body).encode() if body is not None else b""

@@ -20,7 +20,7 @@
 //
 // The globe's from the plugin (11/08/2026; game.ts): following's square (and its world), and what they're doing, held
 // in memory for the channel's row of GET /channels; and the shooting stars they find, passed to the Directory's list
-// (stars.ts) with nobody's name.
+// (stars.ts), which names the first listed outstation to find each (11/09/2026).
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
@@ -858,12 +858,14 @@ export class Channel extends DurableObject<Env> {
   }
 
   /** A shooting star the plugin found (game.ts, gameStar): to the Directory's list (stars.ts), which counts this
-   *  channel's reports (STARS_AN_HOUR) and keeps the star with nobody's name. Not from a message that logs out or holds
-   *  for the player's safety. */
+   *  channel's reports (STARS_AN_HOUR) and names it as the star's finder only if it's on the open outstations' list
+   *  (handed out, no watch code, not an invite waiting). Not from a message that logs out or holds for the player's
+   *  safety. */
   takeStar(star: StarReport | undefined, fields: Fields) {
     if (!star || !this.name || fields.off === true || typeof fields.paused === "string") return;
+    const listed = this.meta.keyHash !== null && !this.meta.code && !this.meta.pending;
     this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
-    this.ctx.waitUntil(this.directory.fetch("https://dir/stars", { method: "PUT", body: JSON.stringify({ channel: this.name, star }) })
+    this.ctx.waitUntil(this.directory.fetch("https://dir/stars", { method: "PUT", body: JSON.stringify({ channel: this.name, star, listed }) })
       .then(() => undefined, () => undefined)); // (one lost: the next outstation to see it tells of it)
   }
 
