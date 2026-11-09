@@ -233,4 +233,65 @@ public class FollowTest
 		assertNotNull(o);
 		assertTrue(o.get("where").isJsonNull());
 	}
+
+	/** A point in the middle of a region (RuneLite's, 64 tiles a side), as an instance's template would give it. */
+	static int[] in(int region)
+	{
+		return new int[]{(region >> 8) * 64 + 32, (region & 255) * 64 + 32};
+	}
+
+	static int[] place(int region)
+	{
+		int[] p = in(region);
+		assertEquals(region, Follow.region(p[0], p[1]));
+		return Follow.place(p[0], p[1]);
+	}
+
+	@Test
+	public void anInstanceGoesWhereItsOpened()
+	{
+		// (11/09/2026, Jace: "allow instances": each as its template lies, by RuneLite's region ids)
+		assertArrayEquals(new int[]{2240, 4032}, place(9023));                  // (Vorkath: Ungael)
+		assertArrayEquals(new int[]{2240, 3008}, place(9007));                  // (Zulrah)
+		assertArrayEquals(new int[]{1856, 3136}, place(7216));                  // (the Colosseum, in Varlamore)
+		assertArrayEquals(new int[]{3904, 3520}, place(15515));                 // (the Nightmare, under Slepe)
+		assertArrayEquals(new int[]{1088, 3392}, place(4405));                  // (Vardorvis)
+		assertArrayEquals(new int[]{1216, 3648}, place(5021));                  // (Hespori, under the Farming Guild)
+		assertArrayEquals(new int[]{3008, 2880}, place(12076));                 // (Tempoross)
+		assertArrayEquals(new int[]{3392, 2752}, place(13454));                 // (the Tombs' way in, under the pyramid)
+		// (off the map: their entrances)
+		assertArrayEquals(new int[]{2880, 3136}, place(9043));                  // (the Inferno: the Karamja volcano)
+		assertArrayEquals(new int[]{2880, 3136}, place(9551));                  // (the Fight Caves)
+		assertArrayEquals(new int[]{1216, 3520}, place(13137));                 // (the Chambers of Xeric)
+		assertArrayEquals(new int[]{3648, 3264}, place(12613));                 // (the Theatre of Blood)
+		assertArrayEquals(new int[]{3392, 2752}, place(15700));                 // (the Tombs of Amascut)
+		assertArrayEquals(new int[]{3392, 3520}, place(6727));                  // (the Grotesque Guardians)
+		assertArrayEquals(new int[]{2880, 3776}, place(11347));                 // (General Graardor's room)
+		// (off the map with no entrance on it: nothing)
+		assertNull(place(7512));                                                // (the Gauntlet, from Prifddinas)
+		assertNull(place(7768));
+		assertNull(place(8291));                                                // (the Leviathan)
+		assertNull(place(10595));                                               // (the Whisperer)
+		assertNull(place(12132));                                               // (Duke Sucellus)
+		assertNull(place(11330));                                               // (the Phantom Muspah)
+		assertNull(place(16214));                                               // (the Fractured Archive)
+		// (each entrance is on the main map, and none is in the Wilderness)
+		for (int[] at : Follow.ENTRANCES.values())
+		{
+			assertArrayEquals(at, Follow.square(at[0], at[1]));
+			assertTrue(!OutsidePlugin.inWilderness(at[0], at[1]));
+		}
+	}
+
+	@Test
+	public void anInstancesSquareGoesAsAnyOther()
+	{
+		// (into the Theatre: its entrance's square, two minutes behind, as anywhere)
+		Follow f = new Follow();
+		long[] clock = {0};
+		int[] tob = in(12613);
+		int[] sends = {0};
+		JsonObject o = walk(f, clock, 121_000, tob[0], tob[1], true, sends);
+		assertArrayEquals(new int[]{3648, 3264}, where(o));
+	}
 }

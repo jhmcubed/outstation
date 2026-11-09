@@ -56,8 +56,9 @@ public class StarsTest
 		java.util.List<JsonObject> got = watch(s, clock, 5_000, 330, 2974, 3241, 6, true);
 		assertEquals(1, got.size());
 		JsonObject star = got.get(0);
-		assertEquals(4, star.size());
+		assertEquals(5, star.size());
 		assertEquals(330, star.get("world").getAsInt());
+		assertEquals("Rimmington mine", star.get("site").getAsString());
 		assertEquals(2944 + 64, star.get("x").getAsInt());
 		assertEquals(3200 + 64, star.get("y").getAsInt());
 		assertEquals(6, star.get("tier").getAsInt());
@@ -135,5 +136,38 @@ public class StarsTest
 		t.see(0, 330, 2974, 3241, 6, true);
 		t.forget();
 		assertNull(t.due(200_000));
+	}
+
+	@Test
+	public void aSiteByItsTileFromShootingStarInfosTableAndNoneOffIt()
+	{
+		// (Star Info's Location table, less the Wilderness and Prifddinas: 71 sites, each on the main map)
+		assertEquals(71, Sites.BY_TILE.size());
+		assertEquals("Varrock east bank", Sites.name(3258, 3408));
+		assertEquals("Theatre of Blood bank", Sites.name(3650, 3214));
+		assertNull(Sites.name(3259, 3408));
+		assertNull(Sites.name(3108, 3569));
+		for (String tile : Sites.BY_TILE.keySet())
+		{
+			String[] xy = tile.split(",");
+			int x = Integer.parseInt(xy[0]), y = Integer.parseInt(xy[1]);
+			assertNotNull(tile, Follow.square(x, y));
+			assertFalse(tile, OutsidePlugin.inWilderness(x, y));
+		}
+		// (a star on a tile that isn't a site goes with its square alone)
+		Stars s = new Stars();
+		long[] clock = {0};
+		java.util.List<JsonObject> got = watch(s, clock, 125_000, 330, 2975, 3241, 3, true);
+		assertEquals(1, got.size());
+		assertFalse(got.get(0).has("site"));
+		assertEquals(4, got.get(0).size());
+		// (and gone says its site too)
+		Stars t = new Stars();
+		long[] c = {0};
+		watch(t, c, 121_000, 330, 3258, 3408, 1, true);
+		t.gone(c[0], 330, 3258, 3408);
+		got = watch(t, c, 200_000, 330, 3258, 3408, 0, true);
+		assertEquals("Varrock east bank", got.get(0).get("site").getAsString());
+		assertTrue(got.get(0).get("gone").getAsBoolean());
 	}
 }

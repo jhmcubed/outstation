@@ -89,8 +89,9 @@ public interface OutsideConfig extends Config
 		name = "Follow me on the globe",
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe travels to the rough area"
 			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
-			+ " your outstation's transmitting. Never in the Wilderness, a PvP area, on a PvP or Deadman world or in an"
-			+ " instance: there, what was sent is cleared at once.",
+			+ " your outstation's transmitting. In an instance (a raid, a boss room), the area it's opened from. Never in"
+			+ " the Wilderness, a PvP area or minigame, or on a PvP or Deadman world: there, what was sent is cleared at"
+			+ " once.",
 		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
 			+ " your outstation's relay, a server not controlled or verified by the RuneLite developers, at most once a"
 			+ " minute, and anyone who opens outside.wiki's globe can see it while your outstation's transmitting.",
@@ -121,12 +122,12 @@ public interface OutsideConfig extends Config
 		keyName = "activity",
 		name = "What I'm doing, on the globe",
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe shows what you were doing"
-			+ " two minutes ago, only as one word: skilling (and which skill), a boss (and which), fighting, or idle."
-			+ " At most once a minute, while your outstation's transmitting. Never in the Wilderness, a PvP area, on a"
-			+ " PvP or Deadman world or in an instance: there, what was sent is cleared at once. It doesn't need"
-			+ " following on.",
-		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss and which, fighting, or"
-			+ " idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
+			+ " two minutes ago, only as one word: skilling (and which skill), a boss, a raid or a minigame (and which),"
+			+ " fighting, or idle. At most once a minute, while your outstation's transmitting. Never in the Wilderness,"
+			+ " a PvP area or minigame, or on a PvP or Deadman world: there, what was sent is cleared at once. It doesn't"
+			+ " need following on.",
+		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss, raid or minigame and"
+			+ " which, fighting, or idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
 			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while your outstation's"
 			+ " transmitting.",
 		position = 8
@@ -140,12 +141,12 @@ public interface OutsideConfig extends Config
 		keyName = "stars",
 		name = "Shooting stars I find",
 		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
-			+ " its size, its world and the rough area it's in (a square about 128 tiles a side), two minutes late, with"
-			+ " nobody's name on it. Never one in the Wilderness, or seen from a PvP area or world, Deadman or an"
-			+ " instance.",
-		warning = "On, each shooting star you see (its size, world and rough area, two minutes late) goes to your"
-			+ " outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it to"
-			+ " anyone on outside.wiki's list of stars, without your name.",
+			+ " its size, its world, its landing site and the rough area it's in (a square about 128 tiles a side), two"
+			+ " minutes late, with your outstation's name as its finder if you're first. Never one in the Wilderness, or"
+			+ " seen from a PvP area, world or minigame, or Deadman.",
+		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
+			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it"
+			+ " to anyone on outside.wiki's list of stars, with your outstation's name if you found it first.",
 		position = 9
 	)
 	default boolean stars()

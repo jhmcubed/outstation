@@ -10,16 +10,17 @@ import net.runelite.api.gameval.ObjectID;
 
 /**
  * Shooting stars they find (11/08/2026, Jace's choice for the globe): a crashed star the player sees goes to the relay,
- * which keeps a list of the stars about, with nobody's name on them (docs/protocol.md, "Shooting stars"). A star is a
- * world object, never another player. The safeguards:
+ * which keeps a list of the stars about, with the outstation that found each first (11/09/2026; docs/protocol.md,
+ * "Shooting stars"). A star is a world object, never another player. The safeguards:
  * <ul>
- * <li>only its tier, its world, and the middle of the 128-tile square it's in (Follow.square), never its tile;</li>
+ * <li>only its tier, its world, the middle of the 128-tile square it's in (Follow.square), and the name of its landing
+ * site when it's one of Shooting Star Info's (Sites, 11/09/2026), never its tile;</li>
  * <li>two minutes late, so it never says the finder's standing there now;</li>
  * <li>at most one report of a star every 3 minutes (the newest of what's two minutes old: its tier, or that it's
  * gone);</li>
  * <li>nothing from anywhere dangerous: the plugin only tells of a star seen while it's safe (not the Wilderness, a PvP
- * area or world, Deadman or an instance), and never of one lying in the Wilderness or off the main map (Zanaris
- * included: no star lands there).</li>
+ * area, world or minigame, Deadman), and never of one lying in the Wilderness (still open: Jace hasn't said) or off the
+ * main map (Prifddinas's; Zanaris included: no star lands there).</li>
  * </ul>
  * Off by default (OutsideConfig.stars). The plugin tells it what's in the scene each tick (see) and when a star went
  * while it watched (gone); due() gives the next report to send. Only on the client's thread.
@@ -45,6 +46,7 @@ class Stars
 	private static class Star
 	{
 		final int world, x, y;
+		String site;
 		final Deque<long[]> seen = new ArrayDeque<>();
 		long lastLook;
 		long sentTier = -1;
@@ -103,6 +105,11 @@ class Stars
 		}
 		Star s = stars.computeIfAbsent(key(world, sq), k -> new Star(world, sq[0], sq[1]));
 		s.lastLook = now;
+		String site = Sites.name(x, y);
+		if (site != null)
+		{
+			s.site = site;
+		}
 		long[] last = s.seen.peekLast();
 		if (last == null || last[1] != tier)
 		{
@@ -126,7 +133,8 @@ class Stars
 		}
 	}
 
-	/** The next report due ({"star": {"world", "x", "y", "tier"}} or {..., "gone": true}), one at most; or null. */
+	/** The next report due ({"star": {"world", "x", "y", "tier"}} or {..., "gone": true}, with "site" when it's known),
+	 *  one at most; or null. */
 	JsonObject due(long now)
 	{
 		JsonObject out = null;
@@ -163,6 +171,10 @@ class Stars
 			star.addProperty("world", s.world);
 			star.addProperty("x", s.x);
 			star.addProperty("y", s.y);
+			if (s.site != null)
+			{
+				star.addProperty("site", s.site);
+			}
 			if (then[1] == 0)
 			{
 				star.addProperty("gone", true);

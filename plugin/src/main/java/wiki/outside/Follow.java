@@ -1,6 +1,9 @@
 package wiki.outside;
 
 import com.google.gson.JsonObject;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Following (11/08/2026, Jace: "add plugin following with those safeguards"): while it's on, the rough area the player
@@ -8,10 +11,11 @@ import com.google.gson.JsonObject;
  * <ul>
  * <li>only a square of the map 128 tiles a side (about a town and its surroundings), never the tile;</li>
  * <li>two minutes behind: what's sent is where they were two minutes ago, at most once a minute;</li>
- * <li>never somewhere dangerous: in the Wilderness, a PvP area, on a PvP or Deadman world or in an instance (raids,
- * boss rooms), nothing's recorded, and the moment they're there the area already sent is cleared;</li>
+ * <li>never somewhere dangerous: in the Wilderness, a PvP area or minigame, on a PvP or Deadman world, nothing's
+ * recorded, and the moment they're there the area already sent is cleared;</li>
  * <li>never anywhere off the main map (an underground area is counted where it lies under; Zanaris as one place, the
- * globe's moon; anything else, nothing).</li>
+ * globe's moon; an instance where its template lies, or off the map its entrance, ENTRANCES; anything else,
+ * nothing).</li>
  * </ul>
  * Off by default (OutsideConfig.follow), and the relay shows it only while their outstation's transmitting and open.
  * The client's thread calls tick() each game tick with where the player is; what it gives back, if anything, is sent.
@@ -29,6 +33,61 @@ class Follow
 	static final int ZX0 = 2368, ZX1 = 2496, ZY0 = 4352, ZY1 = 4480;
 	static final int[] ZANARIS = {2368, 4416};
 
+	/**
+	 * Instances (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened"): an instance goes
+	 * as where its template lies on the map (the plugin reads it with WorldPoint.fromLocalInstance, as RuneLite's Discord
+	 * plugin does). Most lie on the main map and need nothing more. These lie off it, so they go as the square of their
+	 * entrance, by the template's region (RuneLite's DiscordGameEventType's region ids). Any other place off the map
+	 * (the Gauntlet's and Zalcano's Prifddinas, the Leviathan, the Whisperer, Duke Sucellus, the Phantom Muspah, the
+	 * Abyssal Sire, the Corporeal Beast, the Fractured Archive...) goes as nothing, as before.
+	 */
+	static final Map<Integer, int[]> ENTRANCES;
+
+	static
+	{
+		Map<Integer, int[]> e = new HashMap<>();
+		// (the Inferno and the Fight Caves: TzHaar's way in, inside the Karamja volcano)
+		put(e, new int[]{2880, 3136}, 9043, 9551);
+		// (the Chambers of Xeric: Mount Quidamortem, its bank)
+		put(e, new int[]{1216, 3520}, 12889, 13136, 13137, 13138, 13139, 13140, 13141, 13145, 13393, 13394, 13395, 13396,
+			13397, 13401);
+		// (the Theatre of Blood: Ver Sinhaza)
+		put(e, new int[]{3648, 3264}, 12611, 12612, 12613, 12867, 12869, 13122, 13123, 13125, 13379);
+		// (the Tombs of Amascut: the Jaltevas pyramid in the Necropolis, the square its lobby lies under)
+		put(e, new int[]{3392, 2752}, 14160, 14162, 14164, 14672, 14674, 14676, 15184, 15186, 15188, 15696, 15698, 15700);
+		// (the Grotesque Guardians: the Slayer Tower's roof)
+		put(e, new int[]{3392, 3520}, 6727);
+		// (the God Wars Dungeon, each general's room: its way in, in Trollheim)
+		put(e, new int[]{2880, 3776}, 11346, 11347, 11601, 11602, 11603);
+		ENTRANCES = Collections.unmodifiableMap(e);
+	}
+
+	private static void put(Map<Integer, int[]> e, int[] at, int... regions)
+	{
+		for (int r : regions)
+		{
+			e.put(r, at);
+		}
+	}
+
+	/** A point's region, as RuneLite counts them (64 tiles a side). */
+	static int region(int x, int y)
+	{
+		return ((x >> 6) << 8) | (y >> 6);
+	}
+
+	/** Where a point goes: its square (square()), or off the map, its entrance's (ENTRANCES); null for neither. */
+	static int[] place(int x, int y)
+	{
+		int[] sq = square(x, y);
+		if (sq != null)
+		{
+			return sq;
+		}
+		int[] at = ENTRANCES.get(region(x, y));
+		return at == null ? null : at.clone();
+	}
+
 	/** the two minutes behind, the minute between, the clearing (Behind: the activity keeps the same ones) */
 	private final Behind behind = new Behind("where");
 
@@ -39,14 +98,15 @@ class Follow
 	}
 
 	/**
-	 * A tick: where the player is (x, y on the map; safe false somewhere dangerous or in an instance), and the world
+	 * A tick: where the player is (x, y on the map, an instance's as its template lies; safe false somewhere
+	 * dangerous), and the world
 	 * they're on (0 to leave it out: "and my world", 11/08/2026, is off). Gives what to send ({"where": {"x", "y"}},
 	 * with "world" when it's given, or {"where": null}), or null for nothing now. The world is part of the place, so
 	 * the square and the world that go are always from the same moment, two minutes ago.
 	 */
 	JsonObject tick(long now, int x, int y, int world, boolean safe)
 	{
-		int[] sq = safe ? square(x, y) : null;
+		int[] sq = safe ? place(x, y) : null;
 		JsonObject w = null;
 		if (sq != null)
 		{

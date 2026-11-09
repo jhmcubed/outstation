@@ -424,8 +424,7 @@ public class OutsidePlugin extends Plugin
 			follow.forget();
 			return gone;
 		}
-		Player me = client.getLocalPlayer();
-		WorldPoint at = me == null ? null : me.getWorldLocation();
+		WorldPoint at = here();
 		if (at == null)
 		{
 			return null;
@@ -444,6 +443,8 @@ public class OutsidePlugin extends Plugin
 			activity.forget();
 			return gone;
 		}
+		WorldPoint at = here();
+		activity.region(at == null ? -1 : at.getRegionID());
 		return doing.tick(now, activity.now(now), safe);
 	}
 
@@ -559,10 +560,27 @@ public class OutsidePlugin extends Plugin
 		return any;
 	}
 
-	/** Safe for the globe's features: not somewhere dangerous, not in an instance, not on a risky world. */
+	/**
+	 * Where the player is, an instance's as its template lies on the map (11/09/2026: instances are allowed, placed
+	 * where they're opened), as RuneLite's own Discord plugin reads it; outside one, where they are. Null before there's a
+	 * player.
+	 */
+	private WorldPoint here()
+	{
+		Player me = client.getLocalPlayer();
+		if (me == null || me.getLocalLocation() == null)
+		{
+			return null;
+		}
+		return WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+	}
+
+	/** Safe for the globe's features: not somewhere dangerous, not a PvP minigame, not on a risky world. Instances are
+	 *  (11/09/2026), unless their template lies in the Wilderness (dangerous() reads it). */
 	private boolean globeSafe()
 	{
-		if (dangerous() || client.getTopLevelWorldView().isInstance())
+		WorldPoint at = here();
+		if (dangerous() || (at != null && Activity.PVP_REGIONS.contains(at.getRegionID())))
 		{
 			return false;
 		}
@@ -576,7 +594,8 @@ public class OutsidePlugin extends Plugin
 		return true;
 	}
 
-	/** In the Wilderness, a PvP area, or on a PvP or Deadman world (read here, never sent). */
+	/** In the Wilderness (an instance's template there too), a PvP area, or on a PvP or Deadman world (read here, never
+	 *  sent). */
 	private boolean dangerous()
 	{
 		if (WorldType.isPvpWorld(client.getWorldType()) || client.getWorldType().contains(WorldType.DEADMAN))
@@ -587,8 +606,7 @@ public class OutsidePlugin extends Plugin
 		{
 			return true;
 		}
-		Player me = client.getLocalPlayer();
-		WorldPoint at = me == null ? null : me.getWorldLocation();
+		WorldPoint at = here();
 		return at != null && inWilderness(at.getX(), at.getY());
 	}
 
