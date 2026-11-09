@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1" version="2.0">
+<channel>
+<language>en</language>
+<title>Old School RuneScape Recent News</title>
+<description>The latest news for RuneScape, the massively-multiplayer online game developed and published by Jagex.</description>
+<link>https://secure.runescape.com/m=news</link>
+<docs>http://www.rssboard.org/rss-specification</docs>
+<generator>JagexRssFeedGenerator</generator>
+<ttl>30</ttl>
+<copyright></copyright>
+<lastBuildDate>Mon, 09 Nov 2026 05:51:48 GMT</lastBuildDate>
+<image>
+<link>https://secure.runescape.com/m=news</link>
+<title>Old School RuneScape Recent News</title>
+<url>https://www.runescape.com/img/responsive/common/logos/rss.svg</url>
+</image>
+<item>
+<title>Name Release Begins Today!</title>
+<dc:creator></dc:creator>
+<enclosure type="image/png" length="0" url="https://cdn.runescape.com/assets/img/external/oldschool/2026/Newsposts/2026-11-05/Thumbnail-Size.png" />
+<description>
+Our next name release begins today!
+</description>
+<category>Community</category>
+<link>https://secure.runescape.com/m=news/name-release-begins-today?oldschool=1</link>
+<pubDate>Thu, 05 Nov 2026 00:00:00 GMT</pubDate>
+<guid isPermaLink="true">https://secure.runescape.com/m=news/name-release-begins-today?oldschool=1</guid>
+</item>
+<item>
+<title>Hardcore Worlds | OUT TODAY</title>
+<dc:creator></dc:creator>
+<enclosure type="image/jpeg" length="0" url="https://cdn.runescape.com/assets/img/external/oldschool/2026/Newsposts/2026-11-04/HCW-OutToday.jpg" />
+<description>
+The time has come for your inevitable end as you try and take on Death&apos;s challenge.
+</description>
+<category>Game Updates</category>
+<link>https://secure.runescape.com/m=news/hardcore-worlds--out-today?oldschool=1</link>
+<pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate>
+<guid isPermaLink="true">https://secure.runescape.com/m=news/hardcore-worlds--out-today?oldschool=1</guid>
+</item>
+<item>
+<title>Game Status Information Centre</title>
+<dc:creator></dc:creator>
+<enclosure type="image/png" length="0" url="https://cdn.runescape.com/assets/img/external/oldschool/2022/thumbnail/Notes-Announcement.png" />
+<description>
+Check this post for planned downtime, routine maintenance and any live game issues.
+</description>
+<category>Technical</category>
+<link>https://secure.runescape.com/m=news/game-status-information-centre?oldschool=1</link>
+<pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate>
+<guid isPermaLink="true">https://secure.runescape.com/m=news/game-status-information-centre?oldschool=1</guid>
+</item>
+<item>
+<title>Quest Month Kick Off, TFA Tweaks &amp; More</title>
+<dc:creator></dc:creator>
+<enclosure type="image/jpeg" length="0" url="https://cdn.runescape.com/assets/img/external/oldschool/2026/Newsposts/2026-11-03/QM1.jpg" />
+<description>
+Quest Month begins with two new surprise quests and questing-related QoL improvements, while Hardcore Worlds open tomorrow at 11:00 UTC!
+</description>
+<category>Game Updates</category>
+<link>https://secure.runescape.com/m=news/quest-month-kick-off-tfa-tweaks--more?oldschool=1</link>
+<pubDate>Tue, 03 Nov 2026 00:00:00 GMT</pubDate>
+<guid isPermaLink="true">https://secure.runescape.com/m=news/quest-month-kick-off-tfa-tweaks--more?oldschool=1</guid>
+</item>
+</channel>
+</rss>

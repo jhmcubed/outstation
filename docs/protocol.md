@@ -625,9 +625,11 @@ relay-py's `almanac.py` (refreshed by a task in the relay). The globe's side is 
 - `worlds`: `{"players", "worlds", "at", "seasons", "list"}` (`seasons` always there: `[]` while none runs). `players` all the players on every world that's up, and
   `worlds` how many worlds are up; `at` when the list was fetched (ms). `seasons` (in this order, each only while it has
   a world): `[{"kind": "leagues" | "deadman", "name", "players", "worlds", "activity"}]`, `name` the same as `kind`,
-  `activity` the commonest of its worlds' activity texts (between equals, the lowest world's) or `null`. A league's
-  worlds are those flagged `SEASONAL` and not `DEADMAN`; deadman's those flagged `DEADMAN` (a seasonal deadman world is
-  flagged both, a tournament world too); `BETA_WORLD`, `NOSAVE_MODE` and `TOURNAMENT` worlds are never a season's.
+  `activity` the commonest of its worlds' activity texts (between equals, the lowest world's) or `null`. Both are
+  `SEASONAL` worlds (RuneLite's `WorldType`: "for leagues and seasonal deadman"): a league's those not flagged
+  `DEADMAN`, deadman's those flagged it. The permanent deadman world (on the real list, 11/09/2026: world 345,
+  "Deadman - Permanent", flagged `MEMBERS` and `DEADMAN` only) is never a season, nor any `BETA_WORLD`, `NOSAVE_MODE`
+  or `TOURNAMENT` world. (No season ran on 11/09/2026: the real list's `seasons` was `[]`.)
   `list`: every world, by number, `{"world", "players", "region", "location", "activity", "types"}`: `players` `null`
   while it's down, `region` an ISO 3166 alpha-2 code from its location (`US`, `GB`, `AU`, `DE`, `BR`, `JP`, `SG`, `ZA`;
   `null` for one RuneLite doesn't know), `location` the list's own number for it, `activity` its one-line text (60
@@ -648,12 +650,13 @@ relay-py's `almanac.py` (refreshed by a task in the relay). The globe's side is 
   its `at` (so its age) as it was: one failing never takes the others down.
 
 **The sources and their schedule** (the request counts: relay/README.md, "The almanac's sources"):
-- **Jagex's news:** `https://secure.runescape.com/m=news/latest_news.rss?oldschool=true`, every 20 minutes. RSS 2.0:
-  each `<item>`'s `title`, `link`, `pubDate` (RFC 822), `category` and `description` (CDATA taken as it is, entities
+- **Jagex's news:** `https://secure.runescape.com/m=news/latest_news.rss?oldschool=true`, every 20 minutes. RSS 2.0, in
+  the encoding its XML declaration names (Jagex's says ISO-8859-1, read as windows-1252, as browsers read that label;
+  without one, UTF-8): each `<item>`'s `title`, `link`, `pubDate` (RFC 822), `category` and `description` (CDATA taken as it is, entities
   decoded, tags dropped). A feed that declares a DOCTYPE or an ENTITY is refused. The first 50 items are read.
 - **The world list:** `https://oldschool.runescape.com/slr.ws?order=LPWM`, every 5 minutes. The game's own binary list,
   read as RuneLite read it (its http-service's `WorldsService`, until RuneLite 1.8.0): big-endian, a 4-byte length (of
-  what follows; bytes past it are ignored), the worlds' count (2 bytes), then each world's number (2), its flags (4),
+  what follows; bytes past it are ignored: the real answer is always 30,000 bytes, zeros after the list), the worlds' count (2 bytes), then each world's number (2), its flags (4),
   its address and its activity (each ended by a 0 byte, Latin-1), its location (1) and its players (2, signed: -1 while
   it's down). The address isn't passed on. The flags' names and values are RuneLite's own (`runelite-api`'s
   `WorldType`, the same in the `http-api` 1.2.26 the client builds with): `MEMBERS` 1, `PVP` 1<<2, `BOUNTY` 1<<5,
@@ -707,7 +710,7 @@ server). The Worker's `ALMANAC_UPSTREAM` var is the same address (tests only; un
               "title": "Leagues VI: Demonic Pacts — Out Now!",
               "url": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1", "at": 1793880000000,
               "category": "Game Updates", "summary": "The sixth League is here. Unlock relics & regions…"}],
- "worlds": {"players": 9537, "worlds": 12, "at": 1794201788295,
+ "worlds": {"players": 9569, "worlds": 13, "at": 1794201788295,
             "seasons": [{"kind": "leagues", "name": "leagues", "players": 4500, "worlds": 3, "activity": "Leagues VI"},
                         {"kind": "deadman", "name": "deadman", "players": 900, "worlds": 1,
                          "activity": "Deadman: Annihilation"}],

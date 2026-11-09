@@ -166,10 +166,32 @@ def days_from_civil(y, m, d):
     return era * 146097 + doe - 719468
 
 
+# (the feed says its encoding in its XML declaration: Jagex's is ISO-8859-1, 11/09/2026. Those labels are read as
+# windows-1252, as a browser and the Worker's TextDecoder read them; anything else as UTF-8)
+SINGLE_BYTE = ("iso-8859-1", "iso8859-1", "latin-1", "latin1", "l1", "windows-1252", "cp1252", "us-ascii", "ascii")
+CP1252 = {}
+for _b in range(0x80, 0xA0):
+    try:
+        CP1252[_b] = bytes([_b]).decode("cp1252")
+    except UnicodeDecodeError:
+        pass                                  # (the five it leaves undefined stay as they are, as WHATWG's does)
+
+
+def feed_text(raw):
+    """The feed's bytes as text, in the encoding its XML declaration names."""
+    if isinstance(raw, str):
+        return raw
+    raw = bytes(raw)
+    m = re.match(rb"\s*<\?xml[^>]*?encoding\s*=\s*[\"']([A-Za-z0-9._-]+)[\"']", raw)
+    if m and m.group(1).decode("ascii").lower() in SINGLE_BYTE:
+        return raw.decode("latin-1").translate(CP1252)
+    return raw.decode("utf-8", "replace")
+
+
 def parse_news(raw):
     """The feed (bytes or text) as [{"title", "url", "at", "category", "summary"}], newest first, UPDATES_KEPT at most.
     A DOCTYPE or an ENTITY declaration is refused (nothing in the feed needs one)."""
-    text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw
+    text = feed_text(raw)
     if re.search(r"<!DOCTYPE|<!ENTITY", text, re.I):
         raise SourceError("the feed declares a DOCTYPE or an ENTITY")
     if not re.search(r"<rss\b|<channel\b", text, re.I):
@@ -249,9 +271,10 @@ def parse_worlds(raw, now):
     online = [w for w in worlds if w["players"] is not None]
     seasons = []
     for kind in ("leagues", "deadman"):
-        mine = [w for w in online if not any(t in NOT_SEASONS for t in w["types"])
-                and (("DEADMAN" in w["types"]) if kind == "deadman"
-                     else ("SEASONAL" in w["types"] and "DEADMAN" not in w["types"]))]
+        # (both are SEASONAL, as RuneLite's WorldType says: "for leagues and seasonal deadman". The permanent deadman
+        # world, flagged DEADMAN alone ("Deadman - Permanent" on the real list, 11/09/2026), is never a season)
+        mine = [w for w in online if "SEASONAL" in w["types"] and not any(t in NOT_SEASONS for t in w["types"])
+                and ("DEADMAN" in w["types"]) == (kind == "deadman")]
         if not mine:
             continue
         counts = {}

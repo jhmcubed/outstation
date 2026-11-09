@@ -19,6 +19,18 @@ const tests: [string, () => void | Promise<void>][] = [];
 const test = (name: string, f: () => void | Promise<void>) => tests.push([name, f]);
 
 test("the news feed", () => deepStrictEqual(json(parseNews(bytes("news.rss"))), expected.news));
+test("the real feed and world list", () => {
+  // (Jagex's own, 11/09/2026, cut down: tests/fixtures/almanac/trim_real.py)
+  deepStrictEqual(json(parseNews(bytes("news-real.rss"))), expected.news_real);
+  deepStrictEqual(json(parseWorlds(bytes("slr-real.ws"), expected.worlds_at)), expected.worlds_real);
+  deepStrictEqual(expected.worlds_real.seasons, []); // (the permanent deadman world isn't a season)
+});
+test("the feed's own encoding", () => {
+  const latin = new Uint8Array([...new TextEncoder().encode('<?xml version="1.0" encoding="ISO-8859-1"?><rss><channel><item><title>Caf'),
+    0xe9, 0x20, 0x93, 0x77, 0x94, ...new TextEncoder().encode("</title></item></channel></rss>")]);
+  strictEqual(parseNews(latin)[0].title, "Caf\u00e9 \u201cw\u201d");
+  strictEqual(parseNews(new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8"?><rss><channel><item><title>Café</title></item></channel></rss>'))[0].title, "Caf\u00e9");
+});
 test("a feed with a DOCTYPE, or no feed", () => {
   throws(() => parseNews('<!DOCTYPE rss [<!ENTITY a "b">]><rss><channel></channel></rss>'), SourceError);
   throws(() => parseNews("<html>not a feed</html>"), SourceError);

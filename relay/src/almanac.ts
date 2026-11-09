@@ -147,10 +147,23 @@ export function pubDate(text: string): number | null {
   return ms;
 }
 
-/** The feed as [{title, url, at, category, summary}], newest first, UPDATES_KEPT at most. A DOCTYPE or an ENTITY
+// (the feed says its encoding in its XML declaration: Jagex's is ISO-8859-1, 11/09/2026. Those labels are read as
+// windows-1252, as TextDecoder reads them; anything else as UTF-8)
+const SINGLE_BYTE = ["iso-8859-1", "iso8859-1", "latin-1", "latin1", "l1", "windows-1252", "cp1252", "us-ascii", "ascii"];
+
+/** The feed's bytes as text, in the encoding its XML declaration names. */
+export function feedText(raw: Uint8Array | string): string {
+  if (typeof raw === "string") return raw;
+  let head = "";
+  for (let k = 0; k < Math.min(raw.length, 200); k++) head += String.fromCharCode(raw[k]);
+  const m = /^\s*<\?xml[^>]*?encoding\s*=\s*["']([A-Za-z0-9._-]+)["']/.exec(head);
+  return new TextDecoder(m && SINGLE_BYTE.includes(m[1].toLowerCase()) ? "windows-1252" : "utf-8").decode(raw);
+}
+
+/** The feed as [{id, title, url, at, category, summary}], newest first, UPDATES_KEPT at most. A DOCTYPE or an ENTITY
  *  declaration is refused (nothing in the feed needs one). */
 export function parseNews(raw: Uint8Array | string): Update[] {
-  const text = typeof raw === "string" ? raw : new TextDecoder("utf-8").decode(raw);
+  const text = feedText(raw);
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new SourceError("the feed declares a DOCTYPE or an ENTITY");
   if (!/<rss\b|<channel\b/i.test(text)) throw new SourceError("not an RSS feed");
   const items: Update[] = [];
@@ -219,8 +232,10 @@ export function parseWorlds(raw: Uint8Array, now: number): Worlds {
   const online = worlds.filter((w) => w.players !== null);
   const seasons: Season[] = [];
   for (const kind of ["leagues", "deadman"] as const) {
-    const mine = online.filter((w) => !w.types.some((t) => NOT_SEASONS.includes(t)) &&
-      (kind === "deadman" ? w.types.includes("DEADMAN") : w.types.includes("SEASONAL") && !w.types.includes("DEADMAN")));
+    // (both are SEASONAL, as RuneLite's WorldType says: "for leagues and seasonal deadman". The permanent deadman world,
+    // flagged DEADMAN alone ("Deadman - Permanent" on the real list, 11/09/2026), is never a season)
+    const mine = online.filter((w) => w.types.includes("SEASONAL") && !w.types.some((t) => NOT_SEASONS.includes(t)) &&
+      w.types.includes("DEADMAN") === (kind === "deadman"));
     if (!mine.length) continue;
     const counts = new Map<string, number>();
     for (const w of mine) if (w.activity) counts.set(w.activity, (counts.get(w.activity) || 0) + 1);

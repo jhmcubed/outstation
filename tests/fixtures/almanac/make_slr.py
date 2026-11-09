@@ -1,7 +1,7 @@
 """Writes slr.ws here: a world list in the game's own binary format, as RuneLite's WorldsService read it (a 4-byte
 length, the worlds' count in 2 bytes, then each world's number (2), type mask (4), address and activity (0-ended),
 location (1) and players (2, signed; -1 offline), big-endian), with made-up worlds that cover what the relays read:
-seasonal and deadman worlds, a beta, an offline world, every region RuneLite knows and one it doesn't, a Latin-1
+seasonal and deadman worlds, the permanent deadman world (not a season), a beta, an offline world, every region RuneLite knows and one it doesn't, a Latin-1
 activity, and a mask with a bit RuneLite has no name for. A few bytes past the length are left over (they're not read).
 
     python3 tests/fixtures/almanac/make_slr.py
@@ -25,6 +25,7 @@ WORLDS = [
     (311, M | HIGH_RISK, "oldschool11.runescape.com", "  Caf\xe9\tworld  ", 5, 77),
     (312, M | FRESH, "oldschool12.runescape.com", "Fresh Start", 9, 600),
     (313, M | (1 << 31), "oldschool13.runescape.com", "", 10, 10),
+    (345, M | DEADMAN, "oldschool345.runescape.com", "Deadman - Permanent", 0, 32),   # (the real list's: never a season)
 ]
 
 

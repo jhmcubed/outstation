@@ -1,5 +1,5 @@
 {
- "_": "what both relays make of this folder's fixtures (relay-py/test_almanac.py and relay/test/almanac_test.ts check it; checked by hand 11/09/2026)",
+ "_": "what both relays make of this folder's fixtures (relay-py/test_almanac.py and relay/test/almanac_test.mts check it; checked by hand 11/09/2026). news_real and worlds_real: the real feed and world list, cut down (trim_real.py)",
  "news": [
   {
    "id": "https://secure.runescape.com/m=news/leagues-vi-out-now?oldschool=1",
@@ -44,8 +44,8 @@
  ],
  "worlds_at": 1794200000000,
  "worlds": {
-  "players": 9537,
-  "worlds": 12,
+  "players": 9569,
+  "worlds": 13,
   "at": 1794200000000,
   "seasons": [
    {
@@ -201,6 +201,17 @@
     "activity": "",
     "types": [
      "MEMBERS"
+    ]
+   },
+   {
+    "world": 345,
+    "players": 32,
+    "region": "US",
+    "location": 0,
+    "activity": "Deadman - Permanent",
+    "types": [
+     "MEMBERS",
+     "DEADMAN"
     ]
    }
   ]
@@ -423,5 +434,245 @@
    "value": 1906600000,
    "why": "traded"
   }
- ]
+ ],
+ "news_real": [
+  {
+   "id": "https://secure.runescape.com/m=news/name-release-begins-today?oldschool=1",
+   "title": "Name Release Begins Today!",
+   "url": "https://secure.runescape.com/m=news/name-release-begins-today?oldschool=1",
+   "at": 1793836800000,
+   "category": "Community",
+   "summary": "Our next name release begins today!"
+  },
+  {
+   "id": "https://secure.runescape.com/m=news/hardcore-worlds--out-today?oldschool=1",
+   "title": "Hardcore Worlds | OUT TODAY",
+   "url": "https://secure.runescape.com/m=news/hardcore-worlds--out-today?oldschool=1",
+   "at": 1793750400000,
+   "category": "Game Updates",
+   "summary": "The time has come for your inevitable end as you try and take on Death's challenge."
+  },
+  {
+   "id": "https://secure.runescape.com/m=news/game-status-information-centre?oldschool=1",
+   "title": "Game Status Information Centre",
+   "url": "https://secure.runescape.com/m=news/game-status-information-centre?oldschool=1",
+   "at": 1793750400000,
+   "category": "Technical",
+   "summary": "Check this post for planned downtime, routine maintenance and any live game issues."
+  },
+  {
+   "id": "https://secure.runescape.com/m=news/quest-month-kick-off-tfa-tweaks--more?oldschool=1",
+   "title": "Quest Month Kick Off, TFA Tweaks & More",
+   "url": "https://secure.runescape.com/m=news/quest-month-kick-off-tfa-tweaks--more?oldschool=1",
+   "at": 1793664000000,
+   "category": "Game Updates",
+   "summary": "Quest Month begins with two new surprise quests and questing-related QoL improvements, while Hardcore Worlds open tomorrow at 11:00 UTC!"
+  }
+ ],
+ "worlds_real": {
+  "players": 2414,
+  "worlds": 19,
+  "at": 1794200000000,
+  "seasons": [],
+  "list": [
+   {
+    "world": 318,
+    "players": 180,
+    "region": "GB",
+    "location": 1,
+    "activity": "Bounty Hunter World",
+    "types": [
+     "MEMBERS",
+     "BOUNTY"
+    ]
+   },
+   {
+    "world": 345,
+    "players": 32,
+    "region": "US",
+    "location": 0,
+    "activity": "Deadman - Permanent",
+    "types": [
+     "MEMBERS",
+     "DEADMAN"
+    ]
+   },
+   {
+    "world": 354,
+    "players": 481,
+    "region": "US",
+    "location": 0,
+    "activity": "Castle Wars 2",
+    "types": [
+     "MEMBERS"
+    ]
+   },
+   {
+    "world": 383,
+    "players": 138,
+    "region": "DE",
+    "location": 7,
+    "activity": "Castle Wars - Free",
+    "types": []
+   },
+   {
+    "world": 393,
+    "players": 47,
+    "region": "US",
+    "location": 0,
+    "activity": "750 skill total",
+    "types": [
+     "SKILL_TOTAL"
+    ]
+   },
+   {
+    "world": 423,
+    "players": 0,
+    "region": "US",
+    "location": 0,
+    "activity": "Fresh Start",
+    "types": [
+     "MEMBERS",
+     "FRESH_START_WORLD"
+    ]
+   },
+   {
+    "world": 469,
+    "players": 115,
+    "region": "US",
+    "location": 0,
+    "activity": "LMS Casual",
+    "types": [
+     "LAST_MAN_STANDING"
+    ]
+   },
+   {
+    "world": 474,
+    "players": 240,
+    "region": "US",
+    "location": 0,
+    "activity": "High Risk World",
+    "types": [
+     "MEMBERS",
+     "HIGH_RISK"
+    ]
+   },
+   {
+    "world": 483,
+    "players": 128,
+    "region": "US",
+    "location": 0,
+    "activity": "PvP Arena (Legacy Duels)",
+    "types": []
+   },
+   {
+    "world": 539,
+    "players": 142,
+    "region": "US",
+    "location": 0,
+    "activity": "PvP World",
+    "types": [
+     "MEMBERS",
+     "PVP"
+    ]
+   },
+   {
+    "world": 548,
+    "players": 25,
+    "region": "DE",
+    "location": 7,
+    "activity": "PvP World - High Risk",
+    "types": [
+     "MEMBERS",
+     "PVP",
+     "HIGH_RISK"
+    ]
+   },
+   {
+    "world": 559,
+    "players": 210,
+    "region": "GB",
+    "location": 1,
+    "activity": "LMS Competitive",
+    "types": [
+     "MEMBERS",
+     "LAST_MAN_STANDING"
+    ]
+   },
+   {
+    "world": 565,
+    "players": 0,
+    "region": "GB",
+    "location": 1,
+    "activity": "Fresh Start",
+    "types": [
+     "FRESH_START_WORLD"
+    ]
+   },
+   {
+    "world": 574,
+    "players": 223,
+    "region": "US",
+    "location": 0,
+    "activity": "-",
+    "types": [
+     "MEMBERS"
+    ]
+   },
+   {
+    "world": 576,
+    "players": 0,
+    "region": "US",
+    "location": 0,
+    "activity": "Speedrunning World",
+    "types": [
+     "MEMBERS",
+     "QUEST_SPEEDRUNNING"
+    ]
+   },
+   {
+    "world": 577,
+    "players": 57,
+    "region": "US",
+    "location": 0,
+    "activity": "PvP World - Free",
+    "types": [
+     "PVP"
+    ]
+   },
+   {
+    "world": 578,
+    "players": 54,
+    "region": "US",
+    "location": 0,
+    "activity": "PvP Arena (US)",
+    "types": [
+     "MEMBERS",
+     "PVP_ARENA"
+    ]
+   },
+   {
+    "world": 618,
+    "players": 216,
+    "region": "US",
+    "location": 0,
+    "activity": "2350 skill total",
+    "types": [
+     "MEMBERS",
+     "SKILL_TOTAL"
+    ]
+   },
+   {
+    "world": 641,
+    "players": 126,
+    "region": "US",
+    "location": 0,
+    "activity": "Hardcore World",
+    "types": [
+     "MEMBERS",
+     "HARDCORE_MAIN"
+    ]
+   }
+  ]
+ }
 }

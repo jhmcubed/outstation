@@ -98,7 +98,7 @@ Every request has this User-Agent (the Wiki's acceptable-use policy's one ask: s
 outstation-relay/1.0 (the almanac for outside.wiki's globe: fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)
 ```
 
-The answers are capped at 8 MB and 15 seconds each. The sizes, as asked on 11/09/2026: `/24h` 390 KB (70 KB gzipped, which the Worker asks for), `/mapping` 870 KB. The world list and the news feed couldn't be reached from the session that built this (its network refused Jagex's hosts), so their formats come from RuneLite's parser and the feed's RSS 2.0, and the first real fetches happen on Cloudflare: look at `GET /admin/almanac` after the deploy, and if the world list fails there, `https://www.runescape.com/g=oldscape/slr.ws?order=LPWM` is the address RuneLite's own service used (`WORLDS_URL` in `src/almanac.ts` and `relay-py/almanac.py`).
+The answers are capped at 8 MB and 15 seconds each. The sizes, as asked on 11/09/2026: `/24h` 390 KB (70 KB gzipped, which the Worker asks for), `/mapping` 870 KB. The world list is 30,000 bytes (16 KB of it the list, 352 worlds on 11/09/2026, the rest zeros) and the news feed 10 KB (15 items, in ISO-8859-1), each fetched once on 11/09/2026 to check both relays' parsers against them; cut-down copies are the fixtures `news-real.rss` and `slr-real.ws`. If the world list's address ever stops answering, `https://www.runescape.com/g=oldscape/slr.ws?order=LPWM` is the one RuneLite's own service used (`WORLDS_URL` in `src/almanac.ts` and `relay-py/almanac.py`).
 
 The Python relay does the same in a task of its own (a look each minute), with `--almanac off` to fetch nothing. It keeps what came in memory only, so each start asks each source once.
 

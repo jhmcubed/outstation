@@ -3433,7 +3433,7 @@ class Almanac(unittest.TestCase):
         worlds = dict(a["worlds"])
         self.assertAlmostEqual(worlds.pop("at") / 1000, time.time(), delta=120)
         self.assertEqual(worlds, {k: v for k, v in self.expected["worlds"].items() if k != "at"})
-        self.assertEqual(a["worlds"]["players"], 9537)
+        self.assertEqual(a["worlds"]["players"], 9569)
         self.assertEqual([(x["kind"], x["players"], x["worlds"]) for x in a["worlds"]["seasons"]],
                          [("leagues", 4500, 3), ("deadman", 900, 1)])
         self.assertEqual(set(a["sources"]), {"updates", "worlds", "market", "names"})

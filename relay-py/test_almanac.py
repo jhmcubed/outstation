@@ -48,6 +48,19 @@ class Parsing(unittest.TestCase):
     def test_news(self):
         self.assertEqual(plain(A.parse_news(fixture("news.rss"))), EXPECTED["news"])
 
+    def test_the_real_feed_and_world_list(self):
+        # (Jagex's own, 11/09/2026, cut down: tests/fixtures/almanac/trim_real.py)
+        self.assertEqual(plain(A.parse_news(fixture("news-real.rss"))), EXPECTED["news_real"])
+        self.assertEqual(plain(A.parse_worlds(fixture("slr-real.ws"), EXPECTED["worlds_at"])), EXPECTED["worlds_real"])
+        self.assertEqual(EXPECTED["worlds_real"]["seasons"], [])     # (the permanent deadman world isn't a season)
+
+    def test_the_feeds_own_encoding(self):
+        latin = b'<?xml version="1.0" encoding="ISO-8859-1"?><rss><channel><item><title>Caf\xe9 \x93w\x94</title>' \
+                b'</item></channel></rss>'
+        self.assertEqual(A.parse_news(latin)[0]["title"], "Caf\u00e9 \u201cw\u201d")
+        utf8 = '<?xml version="1.0" encoding="UTF-8"?><rss><channel><item><title>Café</title></item></channel></rss>'
+        self.assertEqual(A.parse_news(utf8.encode())[0]["title"], "Caf\u00e9")
+
     def test_not_a_feed(self):
         with self.assertRaises(A.SourceError):
             A.parse_news('<!DOCTYPE rss [<!ENTITY a "b">]><rss><channel></channel></rss>')
