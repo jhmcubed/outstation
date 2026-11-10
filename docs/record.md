@@ -274,10 +274,13 @@ without times").
 
     {
       "v": 1,
+      "tz":         "Europe/London" or <minutes east of UTC>,               the poster's clock (11/10/2026)
       "range":      {"from": <ms>, "to": <ms>},
       "totals":     {"minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues"},
-      "heat":       [[x, y, minutes], …],                                   ≤ 4,096 squares, each once
-      "paths":      [[[x, y] or [x, y, t], …], …],                          ≤ 256 paths of 2 to 2,000 steps, ≤ 20,000 in all
+      "days":       [{"date": "YYYY-MM-DD", "minutes", "act"?}, …],         ≤ 400, each date once (11/10/2026)
+      "heat":       [[x, y, minutes] or [x, y, minutes, act], …],           ≤ 4,096 squares, each once
+      "paths":      [<steps> or {"steps": <steps>, "act"?}, …],             ≤ 256 paths of 2 to 2,000 steps, ≤ 20,000 in all;
+                                                                             <steps> is [[x, y] or [x, y, t], …]
       "activities": [{"activity": <label>, "minutes"}, …],                  ≤ 64
       "hours":      [24 whole numbers],                                      minutes in each hour of the day
       "places":     [{"x", "y", "minutes", "first"?, "last"?}, …],          ≤ 64
@@ -285,6 +288,19 @@ without times").
       "replay":     [[x, y] or [x, y, t], …]                                 ≤ 20,000 steps
     }
 
+- `tz` (11/10/2026): the time zone `hours` and `days` are counted in, so the page shows them in the poster's clock.
+  Either an IANA name, `UTC` or two or three parts of letters, digits and `_ + -` split by `/` (each part starting with
+  a letter or digit, at most 30 characters; 64 in all), such as `Europe/London`, `America/Argentina/Buenos_Aires` or
+  `Etc/GMT+5`; or a whole number of minutes east of UTC, -840 to 840 (`-300` for UTC-5). The relay checks only the
+  pattern, not that the zone exists: a page that doesn't know the name falls back to UTC. Without `tz`, UTC.
+- `days` (11/10/2026, the calendar strip): each `date` a real day, 2020-01-01 to a day past the relay's now, in `tz`'s
+  clock; `minutes` that day 0 to 1,440; `act` that day's main activity, optional. Any order; the relay keeps it.
+- `act` (11/10/2026; on a day, a heat cell or a path): an activity as one short closed label: `"idle"`, `"fighting"`,
+  or `"skilling:<skill>"`, `"boss:<boss>"`, `"raid:<raid>"`, `"minigame:<minigame>"`, the name exactly as one of the
+  plugin's lists has it (game.ts's ACTIVITY_SKILLS, ACTIVITY_BOSSES, ACTIVITY_RAIDS, ACTIVITY_MINIGAMES): for example
+  `"skilling:Mining"`, `"boss:Vorkath"`, `"minigame:the Inferno"`. A string, not gameActivity's object, so a heat cell
+  stays small. A path written as plain `<steps>` (as before) is kept that way; one written as an object is kept as
+  `{"steps", "act"?}`.
 - `totals`: any of those keys, each 0 to 1,000,000,000. `minutes` 0 to 10,000,000 wherever it's a part's weight.
 - `range`, `t`, `first`, `last`: from 2020-01-01 (1,577,836,800,000) to a day past the relay's now; `from` ≤ `to`,
   `first` ≤ `last`.
@@ -292,7 +308,12 @@ without times").
   characters) and `kc`; a level: `skill` and `level`; a pet: `name`?; a drop: `name`? and `value`; a log slot: `name`?;
   a clue: `tier`? and `count`?). These are the only words anywhere in a summary.
 - Anything else (an unknown part or field, a wrong type, a square off the map, a number out of range, a list too long)
-  is refused with 400 and the part named; the whole body at most 512 KB (413).
+  is refused with 400 and the part named; the whole body at most 2 MB (413; 512 KB before 11/10/2026). Every part at
+  its most fits: the main map has only 337 squares to heat (with Zanaris), so the heat's 4,096 is never reached, and
+  a summary with every list full and the longest names and labels measured 1.27 MB (paths and the replay, 20,000
+  timed steps each, are most of it).
+
+Every part is optional, so a summary from before `tz`, `days` and `act` is still valid as it was.
 
 The relay stores it as checked (re-written in the order above, so both relays store and answer the same bytes):
 

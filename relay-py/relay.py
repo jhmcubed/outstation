@@ -170,6 +170,7 @@ same). Nothing of it was ever kept here past a restart.
 import argparse
 import asyncio
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -1825,8 +1826,12 @@ RECORD_KEYS = 4                             # token pairs at most (a key pasted 
 RECORD_PAGE = 4 * 1024 * 1024               # a ?data=1 answer's chunks, in bytes of data, at most
 CHUNK_ID = re.compile(r"[A-Za-z0-9_-]{22}")  # (fullmatch)
 RECORD_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
-YEAR_MOST = 512 * 1024
-YEAR_PARTS = ("v", "range", "totals", "heat", "paths", "activities", "hours", "places", "moments", "replay")
+YEAR_MOST = 2 * 1024 * 1024               # (every part at its most fits: docs/record.md)
+YEAR_PARTS = ("v", "tz", "range", "totals", "days", "heat", "paths", "activities", "hours", "places", "moments",
+              "replay")
+YEAR_DAYS, YEAR_TZ_MOST = 400, 64
+YEAR_TZ = re.compile(r"UTC|[A-Za-z][A-Za-z0-9_+-]{0,29}(?:/[A-Za-z0-9][A-Za-z0-9_+-]{0,29}){1,2}")   # (fullmatch)
+YEAR_DATE = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")                                       # (fullmatch)
 YEAR_TOTALS = ("minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues")
 YEAR_HEAT, YEAR_PATHS, YEAR_PATH_STEPS, YEAR_STEPS, YEAR_LIST = 4096, 256, 2000, 20000, 64
 YEAR_TOTAL_MOST, YEAR_MINUTES_MOST, YEAR_T_LEAST = 1_000_000_000, 10_000_000, 1_577_836_800_000
@@ -1834,6 +1839,25 @@ YEAR_TOTAL_MOST, YEAR_MINUTES_MOST, YEAR_T_LEAST = 1_000_000_000, 10_000_000, 1_
 
 class YearNo(Exception):
     pass
+
+
+def act_label(v):
+    """An activity as a short closed label (11/10/2026: heat cells, paths and days): "idle", "fighting", or
+    "skilling:<skill>", "boss:<boss>", "raid:<raid>", "minigame:<minigame>" from the plugin's lists. The Worker's
+    actLabel, the same."""
+    if v in ("idle", "fighting") and isinstance(v, str):
+        return True
+    if not isinstance(v, str) or ":" not in v:
+        return False
+    kind, name = v.split(":", 1)
+    lists = {"skilling": ACTIVITY_SKILLS, "boss": ACTIVITY_BOSSES, "raid": ACTIVITY_RAIDS, "minigame": ACTIVITY_MINIGAMES}
+    return kind in lists and name in lists[kind]
+
+
+def year_act(v, part):
+    if not act_label(v):
+        raise YearNo('%s: act is "idle", "fighting" or "<skilling|boss|raid|minigame>:<one the plugin names>"' % part)
+    return v
 
 
 def year_whole(v, lo, hi):
@@ -1900,6 +1924,13 @@ def year_summary(body, now=None):
         if body.get("v") != 1 or isinstance(body.get("v"), bool):
             raise YearNo("v: 1")
         out = {"v": 1}
+        if "tz" in body:
+            z = body["tz"]
+            ok = (len(z) <= YEAR_TZ_MOST and bool(YEAR_TZ.fullmatch(z))) if isinstance(z, str) \
+                else year_whole(z, -840, 840) is not None
+            if not ok:
+                raise YearNo('tz: an IANA time zone\'s name ("Europe/London") or a UTC offset in whole minutes, -840 to 840')
+            out["tz"] = z if isinstance(z, str) else year_whole(z, -840, 840)
         if "range" in body:
             r = body["range"]
             if not isinstance(r, dict):
@@ -1923,27 +1954,59 @@ def year_summary(body, now=None):
                     raise YearNo("totals: %s a whole number, 0 to %d" % (k, YEAR_TOTAL_MOST))
                 o[k] = v
             out["totals"] = o
+        if "days" in body:
+            seen, days = set(), []
+            for d in year_list(body["days"], YEAR_DAYS, "days"):
+                if not isinstance(d, dict):
+                    raise YearNo("days: each {date, minutes, act?}")
+                year_only(d, ("date", "minutes", "act"), "days")
+                date = d.get("date")
+                m = YEAR_DATE.fullmatch(date) if isinstance(date, str) else None
+                try:
+                    ms = int(datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                                               tzinfo=datetime.timezone.utc).timestamp() * 1000) if m else None
+                except ValueError:
+                    ms = None
+                if ms is None or ms < YEAR_T_LEAST or ms > now + 86_400_000:
+                    raise YearNo("days: date a day as YYYY-MM-DD, from 2020 to a day past now")
+                if date in seen:
+                    raise YearNo("days: a date twice")
+                seen.add(date)
+                mins = year_whole(d.get("minutes"), 0, 1440)
+                if mins is None:
+                    raise YearNo("days: minutes a whole number, 0 to 1440")
+                o = {"date": date, "minutes": mins}
+                if "act" in d:
+                    o["act"] = year_act(d["act"], "days")
+                days.append(o)
+            out["days"] = days
         if "heat" in body:
             seen, heat = set(), []
             for c in year_list(body["heat"], YEAR_HEAT, "heat"):
-                if not isinstance(c, list) or len(c) != 3:
-                    raise YearNo("heat: each [x, y, minutes]")
+                if not isinstance(c, list) or len(c) not in (3, 4):
+                    raise YearNo("heat: each [x, y, minutes] or [x, y, minutes, act]")
                 xy = year_square(c[0], c[1], "heat")
                 if tuple(xy) in seen:
                     raise YearNo("heat: a square twice")
                 seen.add(tuple(xy))
-                heat.append(xy + [year_minutes(c[2], "heat")])
+                heat.append(xy + [year_minutes(c[2], "heat")] + ([year_act(c[3], "heat")] if len(c) == 4 else []))
             out["heat"] = heat
         if "paths" in body:
             n, paths = 0, []
             for p in year_list(body["paths"], YEAR_PATHS, "paths"):
-                steps = year_list(p, YEAR_PATH_STEPS, "paths")
+                # (a path is its steps, or {"steps", "act"}: 11/10/2026)
+                if isinstance(p, dict):
+                    year_only(p, ("steps", "act"), "paths")
+                steps = year_list(p.get("steps") if isinstance(p, dict) else p, YEAR_PATH_STEPS, "paths")
                 if len(steps) < 2:
                     raise YearNo("paths: two steps or more each")
                 n += len(steps)
                 if n > YEAR_STEPS:
                     raise YearNo("paths: %d steps at most in all" % YEAR_STEPS)
-                paths.append([year_step(s, "paths", now) for s in steps])
+                done = [year_step(s, "paths", now) for s in steps]
+                if isinstance(p, dict):
+                    done = dict({"steps": done}, **({"act": year_act(p["act"], "paths")} if "act" in p else {}))
+                paths.append(done)
             out["paths"] = paths
         if "activities" in body:
             acts = []

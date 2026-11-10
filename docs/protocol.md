@@ -513,7 +513,8 @@ channel back (DELETE /admin/channels/<channel>, the Worker) deletes its record a
 keeper leaves them as they are.
 
 **The public summary**, a fixed shape checked part by part (`docs/record.md`, "The public summary"), stored as checked
-(its parts in their order, numbers whole), at most 512 KB:
+(its parts in their order, numbers whole), at most 2 MB. Its parts: `v`, `tz`, `range`, `totals`, `days`, `heat`, `paths`,
+`activities`, `hours`, `places`, `moments`, `replay` (`tz`, `days` and the heat cells' and paths' `act` since 11/10/2026):
 
     PUT    /year/<channel>?key=<key>, or Authorization: Bearer <write token>   200 {"year", "at"}; 400 {"error"} naming the
                                                part; 403; 413

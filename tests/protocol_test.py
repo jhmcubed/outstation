@@ -3399,6 +3399,50 @@ class YourYear(Base):
         self.assertEqual(self.year("GET")[0], 404)
         self.assertEqual(self.year("PUT", {"v": 1})[0], 403)
 
+    async def test_days_acts_and_the_time_zone(self):
+        # (11/10/2026: the calendar strip's days, an activity on heat cells and paths, the poster's time zone; all
+        # optional, so a year without them is as it was)
+        await self.claim()
+        now = int(time.time() * 1000)
+        today = time.strftime("%Y-%m-%d", time.gmtime(now / 1000))
+        y = {"v": 1, "tz": "America/Argentina/Buenos_Aires",
+             "days": [{"date": "2026-01-31", "minutes": 95, "act": "boss:Vorkath"}, {"minutes": 0, "date": today}],
+             "heat": [[3264, 3264, 600, "skilling:Mining"], [2368, 4416, 30]],
+             "paths": [{"act": "minigame:the Inferno", "steps": [[3264, 3264], [3264, 3392, now]]}, {"steps": [[3264, 3264], [3264, 3392]]},
+                       [[3264, 3264], [3264, 3392]]],
+             "hours": [0] * 24}
+        st, _, got = self.year("PUT", y, key=self.key)
+        self.assertEqual(st, 200, got)
+        self.assertEqual(list(got["year"]), ["v", "tz", "days", "heat", "paths", "hours"])
+        self.assertEqual(got["year"]["days"], [{"date": "2026-01-31", "minutes": 95, "act": "boss:Vorkath"},
+                                               {"date": today, "minutes": 0}])
+        self.assertEqual(got["year"]["paths"][0], {"steps": [[3264, 3264], [3264, 3392, now]], "act": "minigame:the Inferno"})
+        self.assertEqual(self.year("GET")[2], got)
+        for tz in ("UTC", "Europe/London", "Etc/GMT+5", "America/Indiana/Knox", -300, 0, 840, -840, 330.0):
+            st, _, got = self.year("PUT", {"v": 1, "tz": tz}, key=self.key)
+            self.assertEqual((st, got["year"]["tz"]), (200, int(tz) if isinstance(tz, float) else tz), tz)
+        bad = [
+            ({"v": 1, "tz": "London"}, "tz"), ({"v": 1, "tz": "Europe/Lon don"}, "tz"), ({"v": 1, "tz": "../etc/passwd"}, "tz"),
+            ({"v": 1, "tz": "A/" + "b" * 70}, "tz"), ({"v": 1, "tz": 841}, "tz"), ({"v": 1, "tz": 1.5}, "tz"), ({"v": 1, "tz": True}, "tz"),
+            ({"v": 1, "tz": "a/b/c/d"}, "tz"), ({"v": 1, "tz": ""}, "tz"),
+            ({"v": 1, "days": [{"date": "2026-02-30", "minutes": 5}]}, "days"), ({"v": 1, "days": [{"date": "2019-12-31", "minutes": 5}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-1-5", "minutes": 5}]}, "days"), ({"v": 1, "days": [{"date": "2099-01-01", "minutes": 5}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 1441}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5}, {"date": "2026-01-05", "minutes": 6}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5, "act": "boss:Mum"}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5, "note": "x"}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5}] * 401}, "days"),
+            ({"v": 1, "heat": [[3264, 3264, 5, "skilling:Cheese"]]}, "heat"), ({"v": 1, "heat": [[3264, 3264, 5, {"kind": "idle"}]]}, "heat"),
+            ({"v": 1, "heat": [[3264, 3264, 5, "idle", 1]]}, "heat"),
+            ({"v": 1, "paths": [{"steps": [[3264, 3264], [3264, 3392]], "act": "dancing"}]}, "paths"),
+            ({"v": 1, "paths": [{"steps": [[3264, 3264], [3264, 3392]], "colour": "red"}]}, "paths"),
+            ({"v": 1, "paths": [{"act": "idle"}]}, "paths"),
+        ]
+        for body, part in bad:
+            st, _, got = self.year("PUT", body, key=self.key)
+            self.assertEqual(st, 400, body if len(json.dumps(body)) < 200 else part)
+            self.assertTrue(got["error"].startswith(part), (part, got["error"]))
+
     async def test_a_year_that_isnt_its_shape_is_refused_by_its_part(self):
         await self.claim()
         now = int(time.time() * 1000)
@@ -3427,7 +3471,7 @@ class YourYear(Base):
             self.assertEqual(st, 400, body if len(json.dumps(body)) < 200 else part)
             self.assertTrue(got["error"].startswith(part), (part, got["error"]))
         self.assertEqual(self.year("PUT", b"{not json", key=self.key)[0], 400)
-        self.assertEqual(self.year("PUT", b'{"v": 1, "replay": [' + b", ".join([b"[3264, 3264]"] * 60000) + b"]}", key=self.key)[0], 413)
+        self.assertEqual(self.year("PUT", b'{"v": 1, "replay": [' + b", ".join([b"[3264, 3264]"] * 200000) + b"]}", key=self.key)[0], 413)
         self.assertEqual(self.year("GET")[0], 404)                         # (nothing refused was kept)
 
 

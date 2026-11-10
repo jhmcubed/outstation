@@ -17,7 +17,7 @@
 // and a plaintext one (starting "{") is refused. relay-py/relay.py's, the same.
 
 import { DurableObject } from "cloudflare:workers";
-import { gameActivity, gameWhere } from "./game";
+import { ACTIVITY_BOSSES, ACTIVITY_MINIGAMES, ACTIVITY_RAIDS, ACTIVITY_SKILLS, gameActivity, gameWhere } from "./game";
 import { arrayBackfill } from "./array";
 import { pyjson } from "./text";
 
@@ -28,7 +28,7 @@ export const RECORD_KEYS = 4; // token pairs registered at most (a key pasted wr
 export const RECORD_PAGE = 4 * 1024 * 1024; // a ?data=1 answer's chunks, in bytes of data, at most
 export const CHUNK_ID = /^[A-Za-z0-9_-]{22}$/;
 export const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-export const YEAR_MOST = 512 * 1024; // a public summary's body at most
+export const YEAR_MOST = 2 * 1024 * 1024; // a public summary's body at most (every part at its most fits: docs/record.md)
 const DAY = 86_400_000;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -36,12 +36,28 @@ const whole = (v: unknown, lo: number, hi: number): v is number => typeof v === 
 
 // ---- the public summary ----
 
-export const YEAR_PARTS = ["v", "range", "totals", "heat", "paths", "activities", "hours", "places", "moments", "replay"];
+export const YEAR_PARTS = ["v", "tz", "range", "totals", "days", "heat", "paths", "activities", "hours", "places", "moments", "replay"];
+export const YEAR_DAYS = 400, YEAR_TZ = /^(?:UTC|[A-Za-z][A-Za-z0-9_+-]{0,29}(?:\/[A-Za-z0-9][A-Za-z0-9_+-]{0,29}){1,2})$/, YEAR_TZ_MOST = 64;
+const DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
 export const YEAR_TOTALS = ["minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues"];
 export const YEAR_HEAT = 4096, YEAR_PATHS = 256, YEAR_PATH_STEPS = 2000, YEAR_STEPS = 20_000, YEAR_LIST = 64;
 const TOTAL_MOST = 1_000_000_000, MINUTES_MOST = 10_000_000, T_LEAST = 1_577_836_800_000; // (2020-01-01)
 
-class No { constructor(public why: string) {} }
+class No { why: string; constructor(why: string) { this.why = why; } }
+
+/** An activity as a short closed label (11/10/2026: on heat cells, paths and days): "idle", "fighting", or
+ *  "skilling:<skill>", "boss:<boss>", "raid:<raid>", "minigame:<minigame>" from the plugin's lists (game.ts). */
+export function actLabel(v: unknown): boolean {
+  if (v === "idle" || v === "fighting") return true;
+  if (typeof v !== "string") return false;
+  const i = v.indexOf(":"), kind = v.slice(0, i), name = v.slice(i + 1);
+  const lists: Record<string, string[]> = { skilling: ACTIVITY_SKILLS, boss: ACTIVITY_BOSSES, raid: ACTIVITY_RAIDS, minigame: ACTIVITY_MINIGAMES };
+  return i > 0 && Object.hasOwn(lists, kind) && lists[kind].includes(name);
+}
+function act(v: unknown, part: string): string {
+  if (!actLabel(v)) throw new No(`${part}: act is "idle", "fighting" or "<skilling|boss|raid|minigame>:<one the plugin names>"`);
+  return v as string;
+}
 
 /** A square's middle as following's "where" takes it (the main map's, or Zanaris), or throws. */
 function square(x: unknown, y: unknown, part: string): [number, number] {
@@ -80,6 +96,14 @@ export function yearSummary(body: unknown, now = Date.now()): { year: Record<str
     for (const k of Object.keys(body)) if (!YEAR_PARTS.includes(k)) throw new No(`${k}: not a part of a year`);
     if (body.v !== 1) throw new No("v: 1");
     const out: Record<string, unknown> = { v: 1 };
+    if ("tz" in body) {
+      const z = body.tz;
+      const ok = typeof z === "string" ? z.length <= YEAR_TZ_MOST && YEAR_TZ.test(z) : whole(z, -840, 840);
+      if (!ok) {
+        throw new No("tz: an IANA time zone's name (\"Europe/London\") or a UTC offset in whole minutes, -840 to 840");
+      }
+      out.tz = z;
+    }
     if ("range" in body) {
       const r = body.range;
       if (!isObj(r)) throw new No("range: {from, to}");
@@ -100,24 +124,48 @@ export function yearSummary(body: unknown, now = Date.now()): { year: Record<str
       }
       out.totals = o;
     }
+    if ("days" in body) {
+      const seen = new Set<string>();
+      out.days = list(body.days, YEAR_DAYS, "days").map((d) => {
+        if (!isObj(d)) throw new No("days: each {date, minutes, act?}");
+        only(d, ["date", "minutes", "act"], "days");
+        const m = typeof d.date === "string" ? DATE.exec(d.date) : null;
+        const ms = m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN;
+        if (!m || new Date(ms).toISOString().slice(0, 10) !== d.date || ms < T_LEAST || ms > now + DAY) {
+          throw new No("days: date a day as YYYY-MM-DD, from 2020 to a day past now");
+        }
+        if (seen.has(d.date as string)) throw new No("days: a date twice");
+        seen.add(d.date as string);
+        if (!whole(d.minutes, 0, 1440)) throw new No("days: minutes a whole number, 0 to 1440");
+        const o: Record<string, unknown> = { date: d.date, minutes: d.minutes };
+        if ("act" in d) o.act = act(d.act, "days");
+        return o;
+      });
+    }
     if ("heat" in body) {
       const seen = new Set<string>();
       out.heat = list(body.heat, YEAR_HEAT, "heat").map((c) => {
-        if (!Array.isArray(c) || c.length !== 3) throw new No("heat: each [x, y, minutes]");
+        if (!Array.isArray(c) || (c.length !== 3 && c.length !== 4)) throw new No("heat: each [x, y, minutes] or [x, y, minutes, act]");
         const xy = square(c[0], c[1], "heat");
         if (seen.has(xy.join())) throw new No("heat: a square twice");
         seen.add(xy.join());
-        return [...xy, minutes(c[2], "heat")];
+        const cell: (number | string)[] = [...xy, minutes(c[2], "heat")];
+        if (c.length === 4) cell.push(act(c[3], "heat"));
+        return cell;
       });
     }
     if ("paths" in body) {
       let n = 0;
       out.paths = list(body.paths, YEAR_PATHS, "paths").map((p) => {
-        const steps = list(p, YEAR_PATH_STEPS, "paths");
+        // (a path is its steps, or {"steps", "act"}: 11/10/2026)
+        if (isObj(p)) only(p, ["steps", "act"], "paths");
+        const steps = list(isObj(p) ? p.steps : p, YEAR_PATH_STEPS, "paths");
         if (steps.length < 2) throw new No("paths: two steps or more each");
         n += steps.length;
         if (n > YEAR_STEPS) throw new No(`paths: ${YEAR_STEPS} steps at most in all`);
-        return steps.map((s) => step(s, "paths", now));
+        const done = steps.map((s) => step(s, "paths", now));
+        if (!isObj(p)) return done;
+        return "act" in p ? { steps: done, act: act(p.act, "paths") } : { steps: done };
       });
     }
     if ("activities" in body) {
