@@ -1878,9 +1878,35 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
                 }
             });
         }
-        let detach = button(ui, "attach another station key…", true, None).clicked();
-        if detach {
-            s.key.clear();
+        // (11/10/2026, Jace: "fix the attach another station key button so it asks before throwing the key away". One
+        // click had forgotten his key with no copy anywhere: now it asks, and offers the key to copy before it goes)
+        let ask_id = egui::Id::unique("detach: asking");
+        let asking = ui.ctx().data(|d| d.get_temp::<bool>(ask_id)).unwrap_or(false);
+        if !asking {
+            if button(ui, "attach another station key…", true, None).clicked() {
+                ui.ctx().data_mut(|d| d.insert_temp(ask_id, true));
+            }
+        } else {
+            ui.label(wrapped("going on forgets this outstation's key on this PC. copy it first and keep it somewhere private: without it, the listening post has to re-key the channel, and the old key stops working.",
+                14.0, PINK(), ui.available_width()));
+            ui.horizontal_wrapped(|ui| {
+                if s.attached() && button(ui, "copy the key", true, None).clicked() {
+                    win::copy_text(&crate::settings::make_attach(&s.relay, &s.channel, &s.key));
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("detach: copied"), Instant::now()));
+                }
+                if button(ui, "forget it and attach another", true, None).clicked() {
+                    s.key.clear();
+                    ui.ctx().data_mut(|d| d.remove::<bool>(ask_id));
+                }
+                if button(ui, "keep this one", true, None).clicked() {
+                    ui.ctx().data_mut(|d| d.remove::<bool>(ask_id));
+                }
+            });
+            let copied = ui.ctx().data(|d| d.get_temp::<Instant>(egui::Id::unique("detach: copied"))).is_some_and(|t| t.elapsed() < Duration::from_secs(4));
+            if copied {
+                ui.label(rich("the key is on the clipboard: keep it somewhere private", 14.0, LIME()));
+                ui.ctx().request_repaint_after(Duration::from_millis(500));
+            }
         }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
