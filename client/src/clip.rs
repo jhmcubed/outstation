@@ -75,6 +75,42 @@ pub fn default_folder() -> std::path::PathBuf {
     now
 }
 
+/// The clips folder as the settings have it (empty: Videos\outstation).
+pub fn folder_of(setting: &str) -> std::path::PathBuf {
+    if setting.trim().is_empty() { default_folder() } else { setting.into() }
+}
+
+/// A clip in the clips folder (the clips drawer's "on this PC", 11/10/2026).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Local { pub path: std::path::PathBuf, pub name: String, pub when: std::time::SystemTime, pub size: u64 }
+
+/// The newest `most` .mp4s in the folder, newest first (none if it isn't there yet).
+pub fn recent(folder: &std::path::Path, most: usize) -> Vec<Local> {
+    let Ok(dir) = std::fs::read_dir(folder) else { return Vec::new() };
+    let mut all: Vec<Local> = dir.flatten().filter_map(|e| {
+        let path = e.path();
+        if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")) { return None; }
+        let m = e.metadata().ok().filter(|m| m.is_file())?;
+        let name = path.file_stem()?.to_string_lossy().to_string();
+        Some(Local { when: m.modified().unwrap_or(std::time::UNIX_EPOCH), size: m.len(), name, path })
+    }).collect();
+    all.sort_by(|a, b| b.when.cmp(&a.when).then_with(|| b.name.cmp(&a.name)));
+    all.truncate(most);
+    all
+}
+
+/// The clips folder opened in Explorer (made first if it isn't there yet), as "the clips folder" always has.
+pub fn open_folder(folder: &std::path::Path) {
+    let _ = std::fs::create_dir_all(folder);
+    let _ = std::process::Command::new("explorer").arg(folder).spawn();
+}
+
+/// A clip played in whatever plays videos on this PC: the same call as the folder's (Explorer opens a file with the
+/// program Windows has for it). False if it's gone.
+pub fn play(file: &std::path::Path) -> bool {
+    file.is_file() && std::process::Command::new("explorer").arg(file).spawn().is_ok()
+}
+
 /// The clip key or "clip": the buffer saved as a clip, on a thread of its own.
 pub fn save(folder: &str) {
     save_as(folder, None)
@@ -90,7 +126,7 @@ pub fn save_as(folder: &str, what: Option<String>) {
         return say("no clip: one is still being written".into());
     }
     let items: Vec<(Instant, Vec<u8>)> = b.items.lock().unwrap().iter().cloned().collect();
-    let folder = if folder.trim().is_empty() { default_folder() } else { folder.into() };
+    let folder = folder_of(folder);
     let span = match (items.first(), items.last()) { (Some(a), Some(z)) => z.0.duration_since(a.0).as_secs_f64(), _ => 0.0 };
     say(format!("writing a clip of the last {:.1} s{}…", span, what.as_ref().map(|w| format!(" ({})", w)).unwrap_or_default()));
     let name = what.map(|w| format!("clip {} {}.mp4", stamp_now(), file_safe(&w)));
@@ -558,6 +594,27 @@ pub fn page_selftest(folder: &std::path::Path) -> Result<String, String> {
     Ok(format!("page.mp4 {} bytes, {:.1} s, {}x{}; still.jpg {} bytes; strip.jpg {} bytes, {} frames at {} a second; made in {:.1} s",
                page.mp4.len(), page.dur, page.w, page.h, page.still.len(), page.strip.len(), page.frames, page.fps,
                started.elapsed().as_secs_f64()))
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::*;
+
+    #[test]
+    fn the_newest_clips_first_and_only_mp4s() {
+        let dir = std::env::temp_dir().join(format!("outstation-recent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["clip a.mp4", "clip b.MP4", "notes.txt"] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let got: Vec<String> = recent(&dir, 10).into_iter().map(|c| c.name).collect();
+        assert_eq!(got, vec!["clip b".to_string(), "clip a".to_string()]);
+        assert_eq!(recent(&dir, 1).len(), 1);
+        assert!(recent(&dir.join("not there"), 10).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
