@@ -131,8 +131,9 @@ GET /game, a viewer's, a looker's or the transmitter's socket, the Array or the 
 The app writes each into the local record as it comes, at most one line every 3 s (`record::HERE_MS`; one that comes
 sooner waits, the latest of them with its own `t`, and is written once the 3 s are up, so the tile they stopped on is
 kept), and `null` at once. Into the relay's copy it goes as every other line does, sealed with the record key. The page
-draws the tiles: a path through them in order, a gap at a `null` or past `HOLD_MS`. The public summary never takes a
-tile: its places are squares (below).
+draws the tiles: a path through them in order, a gap at a `null` or past `HOLD_MS`. The public summary may carry them
+as finely as the player chooses (11/10/2026): its heat in cells down to 8 tiles, its paths and replay at exact tiles;
+its top places are still squares (below).
 
 ## Encryption
 
@@ -268,8 +269,9 @@ clearing the fragment keeps it out of the address bar; the history entry is the 
 ## The public summary
 
 A JSON the player builds, part by part, in the page (or the app), from their decrypted year. Each part is optional
-except `v`; each place is a square's middle as `where` gives it (gameWhere: the main map's squares, or Zanaris), never a
-world; every number is a whole number (minutes for time, ms since 1970 for times); and every time is optional ("with or
+except `v`; a heat cell is a cell's middle at the heat's cell size, a step (in paths and the replay) any tile, and a top
+place a 128-tile square's middle (all on the main map and its seas, x 960 up to 4096 and y 2048 up to 4224, or Zanaris
+as its one place, 2368, 4416), never a world nor a floor; every number is a whole number (minutes for time, ms since 1970 for times); and every time is optional ("with or
 without times").
 
     {
@@ -278,14 +280,15 @@ without times").
       "range":      {"from": <ms>, "to": <ms>},
       "totals":     {"minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues"},
       "days":       [{"date": "YYYY-MM-DD", "minutes", "act"?}, …],         ≤ 400, each date once (11/10/2026)
-      "heat":       [[x, y, minutes] or [x, y, minutes, act], …],           ≤ 4,096 squares, each once
-      "paths":      [<steps> or {"steps": <steps>, "act"?}, …],             ≤ 256 paths of 2 to 2,000 steps, ≤ 20,000 in all;
-                                                                             <steps> is [[x, y] or [x, y, t], …]
+      "heat":       <cells> or {"cell": 8|16|32|64|128, "cells": <cells>},  ≤ 32,768 cells, each once; a plain list is 128
+                                                                             <cells> is [[x, y, minutes] or [x, y, minutes, act], …]
+      "paths":      [<steps> or {"steps": <steps>, "act"?}, …],             ≤ 4,096 paths of 2 to 5,000 steps, ≤ 50,000 in all;
+                                                                             <steps> is [[x, y] or [x, y, t], …], any tiles
       "activities": [{"activity": <label>, "minutes"}, …],                  ≤ 64
       "hours":      [24 whole numbers],                                      minutes in each hour of the day
       "places":     [{"x", "y", "minutes", "first"?, "last"?}, …],          ≤ 64
       "moments":    [{"event": {"kind", …}, "t"?}, …],                      ≤ 64, arrayEvents' shapes
-      "replay":     [[x, y] or [x, y, t], …]                                 ≤ 20,000 steps
+      "replay":     [[x, y] or [x, y, t], …]                                 ≤ 20,000 steps, any tiles
     }
 
 - `tz` (11/10/2026): the time zone `hours` and `days` are counted in, so the page shows them in the poster's clock.
@@ -307,13 +310,29 @@ without times").
 - `activities`' labels as gameActivity takes them; `moments`' events as arrayEvents makes them (a kill: `boss` (60
   characters) and `kc`; a level: `skill` and `level`; a pet: `name`?; a drop: `name`? and `value`; a log slot: `name`?;
   a clue: `tier`? and `count`?). These are the only words anywhere in a summary.
-- Anything else (an unknown part or field, a wrong type, a square off the map, a number out of range, a list too long)
-  is refused with 400 and the part named; the whole body at most 2 MB (413; 512 KB before 11/10/2026). Every part at
-  its most fits: the main map has only 337 squares to heat (with Zanaris), so the heat's 4,096 is never reached, and
-  a summary with every list full and the longest names and labels measured 1.27 MB (paths and the replay, 20,000
-  timed steps each, are most of it).
+- **Heat cells** (11/10/2026, for the exact path): `cell` is the cell's size in tiles, 8, 16, 32, 64 or 128; each cell
+  is given by its middle, `x = k * cell + cell / 2` (and `y` the same), so at 8 tiles `3260, 3268` is the cell of tiles
+  3256 to 3263 by 3264 to 3271; Zanaris is `2368, 4416` at any size. A plain list (as before) is 128-tile squares, which
+  are where's squares. `minutes` may be 0: a cell only passed through. The relay keeps the form it was given.
+- **Steps** in paths and the replay are any tile (x 960 up to 4096, y 2048 up to 4224, or Zanaris), so exact-path
+  tiles go in as they are; old steps at squares' middles are tiles too.
+- Anything else (an unknown part or field, a wrong type, a place off the map or not a cell's middle, a number out of
+  range, a list too long) is refused with 400 and the part named; the whole body at most 5 MB (413; 512 KB before
+  11/10/2026, then 2 MB).
 
-Every part is optional, so a summary from before `tz`, `days` and `act` is still valid as it was.
+**Why those caps** (measured 11/10/2026 with a made-up year of the exact path, its `here` every 4 s while moving, the
+rest of each day's play in stays a few tiles across, teleporting most of the way between ~35 real places;
+tests/fixtures/record isn't involved): an ordinary year (three days in four, mostly two hours, ten favourite places)
+touched 14,000 8-tile cells (5,500 at 16, 1,800 at 32) and made 46,000 exact steps; a busy one (most days, four to
+eight hours, everywhere) touched 27,000 8-tile cells (7,900 at 16) and made 210,000 steps. So the heat takes 32,768
+cells, a busy year's every 8-tile cell with room to spare (about 0.95 MB of JSON, against 11 KB for only the cells with
+a minute or more); the paths take 50,000 steps in up to 4,096 journeys (a busy year made 4,099), which an ordinary
+year's exact path fits as it is and a busy one's after the page thins it (every second or fourth step, or dropping
+steps along a straight line); the replay stays at 20,000. Every part at its most, with the longest names and labels
+and times on every step, measured 4.02 MB, inside the 5 MB. (The page's own demo year, in the ghillie repo's
+`year.js`, has no exact path, so it can't measure this; its 128-tile year uses a few hundred squares.)
+
+Every part is optional, so a summary from before `tz`, `days`, `act` and fine cells is still valid as it was.
 
 The relay stores it as checked (re-written in the order above, so both relays store and answer the same bytes):
 

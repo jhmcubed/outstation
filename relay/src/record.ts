@@ -17,7 +17,7 @@
 // and a plaintext one (starting "{") is refused. relay-py/relay.py's, the same.
 
 import { DurableObject } from "cloudflare:workers";
-import { ACTIVITY_BOSSES, ACTIVITY_MINIGAMES, ACTIVITY_RAIDS, ACTIVITY_SKILLS, gameActivity, gameWhere } from "./game";
+import { ACTIVITY_BOSSES, ACTIVITY_MINIGAMES, ACTIVITY_RAIDS, ACTIVITY_SKILLS, WHERE_X, WHERE_Y, WHERE_ZANARIS, gameActivity, gameWhere } from "./game";
 import { arrayBackfill } from "./array";
 import { pyjson } from "./text";
 
@@ -28,7 +28,7 @@ export const RECORD_KEYS = 4; // token pairs registered at most (a key pasted wr
 export const RECORD_PAGE = 4 * 1024 * 1024; // a ?data=1 answer's chunks, in bytes of data, at most
 export const CHUNK_ID = /^[A-Za-z0-9_-]{22}$/;
 export const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-export const YEAR_MOST = 2 * 1024 * 1024; // a public summary's body at most (every part at its most fits: docs/record.md)
+export const YEAR_MOST = 5 * 1024 * 1024; // a public summary's body at most (every part at its most fits: docs/record.md)
 const DAY = 86_400_000;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -40,7 +40,11 @@ export const YEAR_PARTS = ["v", "tz", "range", "totals", "days", "heat", "paths"
 export const YEAR_DAYS = 400, YEAR_TZ = /^(?:UTC|[A-Za-z][A-Za-z0-9_+-]{0,29}(?:\/[A-Za-z0-9][A-Za-z0-9_+-]{0,29}){1,2})$/, YEAR_TZ_MOST = 64;
 const DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
 export const YEAR_TOTALS = ["minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues"];
-export const YEAR_HEAT = 4096, YEAR_PATHS = 256, YEAR_PATH_STEPS = 2000, YEAR_STEPS = 20_000, YEAR_LIST = 64;
+// (11/10/2026, for the exact path: heat in cells as fine as 8 tiles, paths in exact tiles. A busy year measured 27,000
+// 8-tile cells touched and 210,000 exact steps, so the heat takes 32,768 cells and the paths 50,000 steps, thinned by
+// the page; docs/record.md, "The public summary")
+export const YEAR_HEAT = 32_768, YEAR_PATHS = 4096, YEAR_PATH_STEPS = 5000, YEAR_STEPS = 50_000, YEAR_REPLAY = 20_000, YEAR_LIST = 64;
+export const YEAR_CELLS = [8, 16, 32, 64, 128];
 const TOTAL_MOST = 1_000_000_000, MINUTES_MOST = 10_000_000, T_LEAST = 1_577_836_800_000; // (2020-01-01)
 
 class No { why: string; constructor(why: string) { this.why = why; } }
@@ -82,9 +86,23 @@ function only(o: Record<string, unknown>, keys: string[], part: string) {
   for (const k of Object.keys(o)) if (!keys.includes(k)) throw new No(`${part}: no ${k} here`);
 }
 /** A step: [x, y] or [x, y, t]. */
+/** A cell's middle at this size (k*cell + cell/2), within the main map and its seas, or Zanaris's one place. */
+function cellMid(x: unknown, y: unknown, cell: number, part: string): [number, number] {
+  if (x === WHERE_ZANARIS.x && y === WHERE_ZANARIS.y) return [x, y];
+  const mid = (v: unknown, [lo, hi]: number[]) => typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi && v % cell === cell / 2;
+  if (!mid(x, WHERE_X) || !mid(y, WHERE_Y)) throw new No(`${part}: a ${cell}-tile cell's middle (x and y each k * ${cell} + ${cell / 2}) on the main map, or Zanaris`);
+  return [x as number, y as number];
+}
+/** A tile of the main map and its seas (as the exact path's "here"), or Zanaris's one place. */
+function tile(x: unknown, y: unknown, part: string): [number, number] {
+  if (x === WHERE_ZANARIS.x && y === WHERE_ZANARIS.y) return [x, y];
+  const ok = (v: unknown, [lo, hi]: number[]) => typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi;
+  if (!ok(x, WHERE_X) || !ok(y, WHERE_Y)) throw new No(`${part}: a tile on the main map (x ${WHERE_X[0]} up to ${WHERE_X[1]}, y ${WHERE_Y[0]} up to ${WHERE_Y[1]}), or Zanaris`);
+  return [x as number, y as number];
+}
 function step(s: unknown, part: string, now: number): number[] {
   if (!Array.isArray(s) || (s.length !== 2 && s.length !== 3)) throw new No(`${part}: each step [x, y] or [x, y, t]`);
-  const xy = square(s[0], s[1], part);
+  const xy = tile(s[0], s[1], part);
   return s.length === 3 ? [...xy, time(s[2], part, now)] : xy;
 }
 
@@ -143,16 +161,23 @@ export function yearSummary(body: unknown, now = Date.now()): { year: Record<str
       });
     }
     if ("heat" in body) {
-      const seen = new Set<string>();
-      out.heat = list(body.heat, YEAR_HEAT, "heat").map((c) => {
+      // (its cells as a list (128 tiles, as before 11/10/2026), or {"cell": 8|16|32|64|128, "cells": [...]})
+      const h = body.heat, seen = new Set<string>();
+      if (isObj(h)) {
+        only(h, ["cell", "cells"], "heat");
+        if (!YEAR_CELLS.includes(h.cell as number)) throw new No("heat: cell is 8, 16, 32, 64 or 128 tiles");
+      }
+      const size = isObj(h) ? (h.cell as number) : 128;
+      const cells = list(isObj(h) ? h.cells : h, YEAR_HEAT, "heat").map((c) => {
         if (!Array.isArray(c) || (c.length !== 3 && c.length !== 4)) throw new No("heat: each [x, y, minutes] or [x, y, minutes, act]");
-        const xy = square(c[0], c[1], "heat");
-        if (seen.has(xy.join())) throw new No("heat: a square twice");
+        const xy = cellMid(c[0], c[1], size, "heat");
+        if (seen.has(xy.join())) throw new No("heat: a cell twice");
         seen.add(xy.join());
         const cell: (number | string)[] = [...xy, minutes(c[2], "heat")];
         if (c.length === 4) cell.push(act(c[3], "heat"));
         return cell;
       });
+      out.heat = isObj(h) ? { cell: size, cells } : cells;
     }
     if ("paths" in body) {
       let n = 0;
@@ -205,7 +230,7 @@ export function yearSummary(body: unknown, now = Date.now()): { year: Record<str
         return "t" in m ? { event, t: time(m.t, "moments", now) } : { event };
       });
     }
-    if ("replay" in body) out.replay = list(body.replay, YEAR_STEPS, "replay").map((s) => step(s, "replay", now));
+    if ("replay" in body) out.replay = list(body.replay, YEAR_REPLAY, "replay").map((s) => step(s, "replay", now));
     return { year: out };
   } catch (e) {
     if (e instanceof No) return { error: e.why };
