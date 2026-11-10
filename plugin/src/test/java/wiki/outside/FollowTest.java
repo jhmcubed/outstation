@@ -153,9 +153,33 @@ public class FollowTest
 		int[] sends = {0};
 		walk(f, clock, 121_000, 3222, 3218, true, sends);
 		assertEquals(1, sends[0]);
-		// (Prifddinas: not dangerous, not on the map; the last square stands)
-		walk(f, clock, 400_000, 3260, 6100, true, sends);
+		// (the Abyss: not dangerous, not on the map; the last square stands. Prifddinas was the example till 11/10/2026,
+		// when it went where the world map draws it)
+		walk(f, clock, 400_000, 3039, 4834, true, sends);
 		assertEquals(1, sends[0]);
+	}
+
+	@Test
+	public void prifddinasIsWhereTheWorldMapDrawsIt()
+	{
+		// (11/10/2026: the city's tiles, off the map, go as the squares they lie over in Tirannwn, inside its gates)
+		assertArrayEquals(Follow.square(2240, 3386), Follow.place(3264, 6135));
+		assertArrayEquals(Follow.square(2240, 3269), Follow.place(3264, 6024));
+		assertArrayEquals(Follow.square(2184, 3328), Follow.place(3208, 6080));
+		assertArrayEquals(Follow.square(2295, 3328), Follow.place(3319, 6080));
+		// (the Gauntlet's lobby, the Gauntlet itself and Zalcano's mine: the city's middle)
+		int[] middle = Follow.square(2240, 3328);
+		assertArrayEquals(middle, Follow.place(3032, 6116));
+		assertArrayEquals(middle, Follow.place(1880, 5660));
+		assertArrayEquals(middle, Follow.place(1950, 5660));
+		assertArrayEquals(middle, Follow.place(3034, 6068));
+		// (and it goes like anywhere else, two minutes behind)
+		Follow f = new Follow();
+		long[] clock = {0};
+		int[] sends = {0};
+		JsonObject o = walk(f, clock, 121_000, 3264, 6080, true, sends);
+		assertEquals(1, sends[0]);
+		assertArrayEquals(Follow.square(2240, 3328), where(o));
 	}
 
 	@Test
@@ -263,7 +287,7 @@ public class FollowTest
 		// (off the map: nothing, the world included)
 		for (long end = 300_000; clock[0] < end; clock[0] += TICK)
 		{
-			assertNull(f.tick(clock[0], 3260, 6100, 302, true));
+			assertNull(f.tick(clock[0], 3039, 4834, 302, true));
 		}
 		for (long end = clock[0] + 121_000; clock[0] < end; clock[0] += TICK)
 		{
@@ -312,9 +336,9 @@ public class FollowTest
 		assertArrayEquals(new int[]{3392, 2752}, place(15700));                 // (the Tombs of Amascut)
 		assertArrayEquals(new int[]{3392, 3520}, place(6727));                  // (the Grotesque Guardians)
 		assertArrayEquals(new int[]{2880, 3776}, place(11347));                 // (General Graardor's room)
+		assertArrayEquals(Follow.square(2240, 3328), place(7512));              // (the Gauntlet: Prifddinas, 11/10/2026)
+		assertArrayEquals(Follow.square(2240, 3328), place(7768));              // (the Corrupted Gauntlet)
 		// (off the map with no entrance on it: nothing)
-		assertNull(place(7512));                                                // (the Gauntlet, from Prifddinas)
-		assertNull(place(7768));
 		assertNull(place(8291));                                                // (the Leviathan)
 		assertNull(place(10595));                                               // (the Whisperer)
 		assertNull(place(12132));                                               // (Duke Sucellus)
