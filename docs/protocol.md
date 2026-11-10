@@ -272,17 +272,21 @@ The limits:
 **Following** (11/08/2026, Jace approved it with these safeguards). With the plugin's following on, it sends where the
 player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle of a 128-tile square of the main map
 (or Zanaris, as one place: below), at most once a minute, and the same square again every 3 minutes while it stays put. `{"game": {"where": null}}` clears
-it: sent at once on going into the Wilderness, a PvP area or world, a PvP minigame or Deadman, and when following's
-switched off. **Instances** (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened") go as
+it: sent at once on going into the Wilderness (whatever the plugin's "In the Wilderness too" says), a PvP area or world,
+or Deadman, and when following's switched off. The PvP minigames (Last Man Standing, Castle Wars, Clan Wars, Soul Wars,
+the Fight Pits, Emir's Arena) aren't dangerous (11/10/2026, Jace: "there is no danger to someone tracking them there"):
+in their regions the game's PvP-area flag doesn't clear it. **Instances** (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened") go as
 the square where their template lies on the map (the plugin reads it with RuneLite's `WorldPoint.fromLocalInstance`, as
 RuneLite's Discord plugin does): Vorkath's as Ungael's, Zulrah's, the Colosseum's in Varlamore, the Nightmare's under
 Slepe. One off the main map goes as its entrance's square (the plugin's `Follow.ENTRANCES`, by the template's region):
 the Inferno and the Fight Caves as the Karamja volcano's `{"x": 2880, "y": 3136}`, the Chambers of Xeric as Mount
 Quidamortem's `{"x": 1216, "y": 3520}`, the Theatre of Blood as Ver Sinhaza's `{"x": 3648, "y": 3264}`, the Tombs of
 Amascut as the Necropolis pyramid's `{"x": 3392, "y": 2752}`, the Grotesque Guardians as the Slayer Tower's `{"x": 3392,
-"y": 3520}`, the God Wars Dungeon's rooms as its Trollheim way in, `{"x": 2880, "y": 3776}`. The rest off the map (the
-Gauntlet, the Leviathan, the Whisperer, Duke Sucellus, the Phantom Muspah, the Abyssal Sire, the Corporeal Beast, the
-Fractured Archive) send nothing, as anywhere else off the map. An instance whose template lies in the Wilderness is
+"y": 3520}`, the God Wars Dungeon's rooms as its Trollheim way in, `{"x": 2880, "y": 3776}`, the Gauntlets' lobby and
+both Gauntlets and Zalcano's mine as Prifddinas's middle where the world map draws it (11/10/2026), the Giant Mole's lair
+as Falador Park's `{"x": 3008, "y": 3392}` (11/10/2026). The rest off the map (the Leviathan, the Whisperer, Duke
+Sucellus, the Phantom Muspah, the Abyssal Sire, the Corporeal Beast, the Fractured Archive, the PvP minigames' arenas)
+send nothing, as anywhere else off the map. An instance whose template lies in the Wilderness is
 still dangerous. Nothing changes on the relays: an instance's square is a square like any other. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
 `Channel.take_where`).
 - **Which world** (11/08/2026): with the plugin's "and my world" on as well as following, `where` carries the world the
@@ -320,34 +324,53 @@ before, as `{"game": {"activity": {...}}}`, one of exactly these:
 | `activity` | when |
 |---|---|
 | `{"kind": "skilling", "skill": "<skill>"}` | the skill of the player's own latest experience drop, within about a minute (one of `ACTIVITY_SKILLS`: RuneLite's skill names, `Agility` to `Woodcutting` and `Sailing`; not the total) |
-| `{"kind": "boss", "boss": "<boss>"}` | a fight with a boss: the NPC they're attacking, or one attacking them, is on the plugin's list (one of `ACTIVITY_BOSSES`, below) |
+| `{"kind": "boss", "boss": "<boss>"}` | a fight with a boss: the NPC they're attacking, or one attacking them, is on the plugin's list (one of `ACTIVITY_BOSSES`, below); or inside the Gauntlet or the Corrupted Gauntlet, the whole run (11/10/2026) |
 | `{"kind": "raid", "raid": "<raid>"}` | in a raid (11/09/2026), by the region they're in, an instance's as its template lies: one of `ACTIVITY_RAIDS`, `Chambers of Xeric`, `Theatre of Blood`, `Tombs of Amascut`, `The Fractured Archive` |
 | `{"kind": "minigame", "minigame": "<minigame>"}` | in a minigame (11/09/2026), the same: one of `ACTIVITY_MINIGAMES` (below) |
 | `{"kind": "fighting"}` | a fight with anything else (a hit theirs or on them within 15 seconds) |
 | `{"kind": "idle"}` | none of those |
 
-The bosses (`ACTIVITY_BOSSES`; the plugin's `Activity.BOSSES` gives each NPC's name the label that goes, several NPCs
-as one: the six brothers as `Barrows`, Dusk and Dawn as `Grotesque Guardians`, Branda and Eldric as `Royal Titans`, the
-three Moons as `Moons of Peril`): Abyssal Sire, Alchemical Hydra, Amoxliatl, Araxxor, Barrows, Bryophyta, Cerberus,
-Commander Zilyana, Corporeal Beast, Dagannoth Prime, Dagannoth Rex, Dagannoth Supreme, Duke Sucellus, General Graardor,
-Giant Mole, Grotesque Guardians, Hespori, K'ril Tsutsaroth, Kalphite Queen, King Black Dragon, Kraken, Kree'arra, Moons
-of Peril, Nex, Obor, Phantom Muspah, Phosani's Nightmare, Royal Titans, Sarachnis, Scurrius, Skotizo, Sol Heredit, The
-Hueycoatl, The Leviathan, The Nightmare, The Whisperer, Thermonuclear smoke devil, TzKal-Zuk, TzTok-Jad, Vardorvis,
-Vorkath, Yama, Zalcano, Zulrah. None of the Wilderness's: nothing's sent there. Those fought in an instance keep their
-labels there (11/09/2026), and a boss fight comes first wherever it is (Jad in the Fight Caves is `TzTok-Jad`, Olm in the
-Chambers is the raid: Olm isn't on the list).
+The bosses (`ACTIVITY_BOSSES`; made whole 11/10/2026 from RuneLite's `HiscoreSkill`, the official hiscores' list, with
+each NPC's name as RuneLite's `NpcID` has it): every boss the hiscores count, but the raids (above) and Tempoross,
+Wintertodt and Zalcano (minigames, below). The plugin's `Activity.BOSSES` gives each NPC's name the label that goes:
+- Each as itself: Abyssal Sire, Alchemical Hydra, Amoxliatl, Araxxor, Bryophyta, Cerberus, Commander Zilyana, Corporeal
+  Beast, Dagannoth Prime, Dagannoth Rex, Dagannoth Supreme, Deranged archaeologist, Duke Sucellus, General Graardor,
+  Giant Mole, Hespori, K'ril Tsutsaroth, Kalphite Queen, King Black Dragon, Kraken, Kree'arra, Mad Angel, Maggot King,
+  Nex, Obor, Phantom Muspah, Phosani's Nightmare, Sarachnis, Scurrius, Shellbane gryphon, Skotizo, Sol Heredit, The
+  Leviathan, The Mimic, The Nightmare, The Whisperer, Thermonuclear smoke devil, TzKal-Zuk, TzTok-Jad, Vardorvis,
+  Vorkath, Yama, Zulrah.
+- The Wilderness's (11/10/2026, Jace: "Wilderness bosses should be included since we have the option for 'In the
+  Wilderness too'"): Artio, Callisto, Calvar'ion, Chaos Elemental, Chaos Fanatic, Crazy archaeologist, Scorpia,
+  Spindel, Venenatis, Vet'ion. The plugin sends anything from the Wilderness only with "In the Wilderness too" on, and
+  then only `activity` (below).
+- Several NPCs, or one by several names, as one: the six brothers as `Barrows`; Dusk and Dawn as `Grotesque
+  Guardians`; Branda and Eldric as `Royal Titans`; the Blue, Eclipse and Blood Moons as `Moons of Peril`; Brutus and
+  Demonic Brutus as `Brutus`; the Doom of Mokhaiotl, shielded or burrowed, as `Doom of Mokhaiotl`; the Hueycoatl, its
+  tail and its body as `The Hueycoatl`; the Crystalline Hunllef as `the Gauntlet`, the Corrupted Hunllef as `the
+  Corrupted Gauntlet`. Inside either Gauntlet (11/10/2026, Jace: "The Gauntlet and the Corrupted Gauntlet are bosses"),
+  the whole run is its label, the preparation too, by the instance's region (not the lobby in Prifddinas the two share).
 
-The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Blast Furnace, Brimhaven Agility Arena, Fishing
-Trawler, Giants' Foundry, Guardians of the Rift, Hallowed Sepulchre, Mage Training Arena, Nightmare Zone, Pest Control,
-Pyramid Plunder, Rogues' Den, Sorceress's Garden, Tempoross, Temple Trekking, Tithe Farm, Trouble Brewing, Volcanic Mine,
-Wintertodt, the Colosseum, the Corrupted Gauntlet, the Fight Caves, the Gauntlet, the Inferno. The plugin tells a raid
-or a minigame by RuneLite's own Discord plugin's region ids (`DiscordGameEventType`), less its PvP minigames (Last Man
-Standing, Castle Wars, Clan Wars, Soul Wars, the Fight Pits, Emir's Arena), where nothing at all is sent for the globe.
-relay-py's tests check the plugin's, the Worker's and the Python relay's lists (skills, bosses, raids, minigames) match.
+Those fought in an instance keep their labels there (11/09/2026), and a boss fight comes first wherever it is (Jad in the
+Fight Caves is `TzTok-Jad`, Zuk in the Inferno `TzKal-Zuk`, Sol Heredit in the Colosseum `Sol Heredit`, then the
+minigame again a minute after the last hit; Olm in the Chambers is the raid: Olm isn't on the list).
+
+The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Blast Furnace, Brimhaven Agility Arena, Castle
+Wars, Clan Wars, Emir's Arena, Fishing Trawler, Giants' Foundry, Guardians of the Rift, Hallowed Sepulchre, Last Man
+Standing, Mage Training Arena, Nightmare Zone, Pest Control, Pyramid Plunder, Rogues' Den, Sorceress's Garden, Soul
+Wars, Temple Trekking, Tempoross, Tithe Farm, Trouble Brewing, Volcanic Mine, Wintertodt, Zalcano, the Colosseum, the
+Fight Caves, the Fight Pits, the Inferno. The plugin tells a raid or a minigame by RuneLite's own Discord plugin's
+region ids (`DiscordGameEventType`), less its rat pits and games room. Tempoross, Wintertodt and Zalcano, which it and the
+hiscores count as bosses, are minigames here (11/10/2026); their kills still pop on the Array as any boss's do (below,
+"The Array's events"). The PvP minigames (Last Man Standing, Castle Wars, Clan Wars, Soul Wars, the Fight Pits, Emir's
+Arena) are minigames like the rest since 11/10/2026 (Jace: "they are just minigames"). relay-py's tests check the
+plugin's, the Worker's and the Python relay's lists (skills, bosses, raids, minigames) match.
 
 The plugin sends it as following sends `where` (two minutes behind, at most once a minute, the same again every 3
 minutes; `{"activity": null}` at once on going anywhere dangerous, and when it's switched off; then
-nothing till two minutes clear of it), and both relays take it the same way (`relay/src/game.ts`'s `gameActivity` and
+nothing till two minutes clear of it). In the Wilderness (11/10/2026), only with the plugin's "In the Wilderness too"
+on, since the player's already chosen to transmit there: then `activity` goes from there as anywhere else, two minutes
+behind, while `where` (and its world) and the stars stay off there whatever the setting. Never from a PvP, Deadman,
+high-risk or Bounty Hunter world. Both relays take it the same way (`relay/src/game.ts`'s `gameActivity` and
 channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activity`):
 - Anything not exactly one of those shapes (another key, a skill or boss not on the list, a different case) is ignored,
   and the rest of the message is taken as ever. `null` clears it whenever it comes.
@@ -510,7 +533,7 @@ relay-py's `array_events` and `ArrayFeed`.
 
 | kind | from | its fields |
 |---|---|---|
-| `"kill"` | a `KILL_COUNT` report | `boss`, `kc` (the kill count) |
+| `"kill"` | a `KILL_COUNT` report | `boss`, `kc` (the kill count): any boss's name Dink gives, the minigames the hiscores count as bosses too (11/10/2026: Dink names them from the game's messages, `Wintertodt`, `Tempoross`, `Zalcano`, the Gauntlets as `Crystalline Hunllef` and `Corrupted Hunllef`) |
 | `"level"` | a `LEVEL` report: one event for each skill it levelled | `skill`, `level` |
 | `"pet"` | a `PET` report | `name`, if Dink gave one |
 | `"loot"` | a `LOOT` report whose drop is worth 1,000,000 coins or more in all (less isn't one) | `name` (the drop's best item, by quantity × price; the first, in a tie), `value` (the drop's whole value) |
@@ -608,8 +631,8 @@ relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object tha
   Wilderness sites and Prifddinas's: 71 in all. The relays take only those names (`STAR_SITES`), each with the square
   it's in, and only in that square; a star elsewhere goes without one.
 - At most one report of a star every 3 minutes (the newest of what's two minutes old), and only of a star seen from
-  somewhere safe: never one lying in the Wilderness (Jace's decision, 11/09/2026: never reported), nor seen from a PvP area, world or
-  minigame, or Deadman. A star seen and gone within the two minutes is never told of.
+  somewhere safe: never one lying in the Wilderness (Jace's decision, 11/09/2026: never reported), nor seen from it
+  (whatever "In the Wilderness too" says), a PvP area (the PvP minigames aside, 11/10/2026) or world, or Deadman. A star seen and gone within the two minutes is never told of.
 
 **The relay** takes exactly those shapes (anything else in `star` is ignored, and the rest of the message taken as
 ever), not from a message with `"off": true` or a `paused` that's a string, and keeps:
