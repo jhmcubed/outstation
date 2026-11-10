@@ -120,9 +120,10 @@ public class OutsidePlugin extends Plugin
 	private final Stars stars = new Stars();
 	private final Map<WorldPoint, Integer> starsHere = new HashMap<>();
 	private final List<WorldPoint> starsWent = new ArrayList<>();
-	/** worlds where nothing goes to the globe: PvP of any kind, Deadman, high risk, Last Man Standing */
+	/** worlds where nothing goes to the globe: PvP, Deadman, high risk, Bounty Hunter (11/10/2026: not the PvP Arena's
+	 *  or Last Man Standing's, there only for those minigames, which are ordinary minigames now) */
 	private static final EnumSet<WorldType> RISKY = EnumSet.of(WorldType.PVP, WorldType.DEADMAN, WorldType.HIGH_RISK,
-		WorldType.BOUNTY, WorldType.PVP_ARENA, WorldType.LAST_MAN_STANDING);
+		WorldType.BOUNTY);
 	private volatile boolean resend;
 	/** sending held while somewhere dangerous (the Wilderness, a PvP world), and said so once */
 	private boolean paused;
@@ -222,10 +223,13 @@ public class OutsidePlugin extends Plugin
 		}
 		// (the globe's: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
 		// somewhere dangerous clears it at once, before anything else)
-		boolean safe = globeSafe();
+		WorldPoint at = here();
+		boolean riskyWorld = riskyWorld(), wild = wilderness(at), pvpArea = client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1;
+		int region = at == null ? -1 : at.getRegionID();
+		boolean safe = globeSafe(riskyWorld, wild, pvpArea, region);
 		long ms = System.currentTimeMillis();
 		JsonObject where = follow(ms, safe);
-		JsonObject what = activity(ms, safe);
+		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, region, config.wilderness()));
 		look(ms, safe);
 		if (!open)
 		{
@@ -575,27 +579,58 @@ public class OutsidePlugin extends Plugin
 		return WorldPoint.fromLocalInstance(client, me.getLocalLocation());
 	}
 
-	/** Safe for the globe's features: not somewhere dangerous, not a PvP minigame, not on a risky world. Instances are
-	 *  (11/09/2026), unless their template lies in the Wilderness (dangerous() reads it). */
-	private boolean globeSafe()
+	/**
+	 * Safe for the globe's features (following and its world, the activity, the stars): not on a risky world (PvP,
+	 * Deadman, high risk, Bounty Hunter), not in the Wilderness, and not where the game's PvP-area flag is up, but for
+	 * the PvP minigames' own regions (11/10/2026, Jace: "there is no danger to someone tracking them there":
+	 * Activity.PVP_MINIGAME_REGIONS). Instances are (11/09/2026), unless their template lies in the Wilderness. Kept
+	 * apart from the client so it's tested.
+	 */
+	static boolean globeSafe(boolean riskyWorld, boolean wilderness, boolean pvpArea, int region)
 	{
-		WorldPoint at = here();
-		if (dangerous() || (at != null && Activity.PVP_REGIONS.contains(at.getRegionID())))
+		return !riskyWorld && !wilderness && !(pvpArea && !Activity.PVP_MINIGAME_REGIONS.contains(region));
+	}
+
+	/**
+	 * Safe for the activity's label (11/10/2026, Jace: "Wilderness bosses should be included since we have the option
+	 * for 'In the Wilderness too'"): wherever the globe's features are, and in the Wilderness too (its PvP-area flag
+	 * with it) when they've said so (OutsideConfig.wilderness), since they've already chosen to transmit there. Never
+	 * on a risky world, and never a PvP area anywhere else. Following and the stars stay off in the Wilderness
+	 * whatever the setting (globeSafe): only the label goes, two minutes behind as ever.
+	 */
+	static boolean activitySafe(boolean riskyWorld, boolean wilderness, boolean pvpArea, int region, boolean wildernessToo)
+	{
+		return globeSafe(riskyWorld, wilderness, pvpArea, region) || (wildernessToo && wilderness && !riskyWorld);
+	}
+
+	/** On a world where nothing goes to the globe (RISKY, or any the client counts as PvP). */
+	private boolean riskyWorld()
+	{
+		EnumSet<WorldType> types = client.getWorldType();
+		if (WorldType.isPvpWorld(types))
 		{
-			return false;
+			return true;
 		}
-		for (WorldType t : client.getWorldType())
+		for (WorldType t : types)
 		{
 			if (RISKY.contains(t))
 			{
-				return false;
+				return true;
 			}
 		}
-		return true;
+		return false;
+	}
+
+	/** In the Wilderness: within its bounds (an instance's template there too), or where the game says so (its own
+	 *  in-the-Wilderness flag, for any part of it that lies outside them). */
+	private boolean wilderness(WorldPoint at)
+	{
+		return (at != null && inWilderness(at.getX(), at.getY())) || client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1;
 	}
 
 	/** In the Wilderness (an instance's template there too), a PvP area, or on a PvP or Deadman world (read here, never
-	 *  sent). */
+	 *  sent): where the stream holds, unless "In the Wilderness too" is on. (11/10/2026: unchanged for the PvP minigames,
+	 *  so it still holds wherever the game's PvP-area flag is up in one, as in LMS's or the PvP Arena's fights.) */
 	private boolean dangerous()
 	{
 		if (WorldType.isPvpWorld(client.getWorldType()) || client.getWorldType().contains(WorldType.DEADMAN))

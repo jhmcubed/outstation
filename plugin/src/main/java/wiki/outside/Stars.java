@@ -19,7 +19,7 @@ import net.runelite.api.gameval.ObjectID;
  * <li>at most one report of a star every 3 minutes (the newest of what's two minutes old: its tier, or that it's
  * gone);</li>
  * <li>nothing from anywhere dangerous: the plugin only tells of a star seen while it's safe (not the Wilderness, a PvP
- * area, world or minigame, Deadman), and never of one lying in the Wilderness (Jace, 11/09/2026: never reported) or off the
+ * area or world, Deadman; a PvP minigame is safe since 11/10/2026), and never of one lying in the Wilderness (Jace, 11/09/2026: never reported) or off the
  * main map (Prifddinas's; Zanaris included: no star lands there).</li>
  * </ul>
  * Off by default (OutsideConfig.stars). The plugin tells it what's in the scene each tick (see) and when a star went

@@ -3,6 +3,7 @@ package wiki.outside;
 import com.google.gson.JsonObject;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -105,16 +106,72 @@ public class ActivityTest
 	}
 
 	@Test
-	public void theBossesAreOnlyTheirLabelsAndNoneInTheWilderness()
+	public void theBossesAreOnlyTheirLabelsTheWildernessesToo()
 	{
 		assertTrue(Activity.bossLabels().contains("Grotesque Guardians"));
 		assertTrue(Activity.bossLabels().contains("Moons of Peril"));
+		// (11/10/2026: the Wilderness's bosses are on the list; OutsidePlugin.activitySafe says when they go)
 		for (String wild : new String[]{"Callisto", "Artio", "Vet'ion", "Calvar'ion", "Venenatis", "Spindel", "Scorpia",
 			"Chaos Elemental", "Chaos Fanatic", "Crazy archaeologist"})
 		{
-			assertNull(wild, Activity.BOSSES.get(wild));
+			assertEquals(wild, Activity.BOSSES.get(wild));
+			assertTrue(wild, Activity.WILDERNESS_BOSSES.contains(wild));
 		}
+		assertEquals(10, Activity.WILDERNESS_BOSSES.size());
+		assertTrue(Activity.bossLabels().containsAll(Activity.WILDERNESS_BOSSES));
 		assertEquals(24, Activity.SKILLS.size());
+	}
+
+	@Test
+	public void theNewBossesAndTheOnesOfSeveralNames()
+	{
+		// (11/10/2026, from RuneLite's HiscoreSkill and NpcID: every boss the hiscores count but the raids and the three
+		// minigames)
+		Activity a = new Activity();
+		String[][] fights = {{"Maggot King", "Maggot King"}, {"Mad Angel", "Mad Angel"}, {"Brutus", "Brutus"},
+			{"Demonic Brutus", "Brutus"}, {"Doom of Mokhaiotl (Burrowed)", "Doom of Mokhaiotl"},
+			{"Shellbane gryphon", "Shellbane gryphon"}, {"Deranged archaeologist", "Deranged archaeologist"},
+			{"The Mimic", "The Mimic"}, {"Hueycoatl tail", "The Hueycoatl"}, {"Enraged Blood Moon", null},
+			{"Crystalline Hunllef", "the Gauntlet"}, {"Corrupted Hunllef", "the Corrupted Gauntlet"},
+			{"Callisto", "Callisto"}, {"Vet'ion", "Vet'ion"}};
+		long t = 0;
+		for (String[] f : fights)
+		{
+			t += 200_000;
+			a.hit(t, f[0]);
+			assertEquals(f[0], f[1] == null ? "fighting" : "boss " + f[1], label(a.now(t)));
+		}
+		assertEquals(62, Activity.bossLabels().size());
+		for (String gone : new String[]{"Zalcano", "Tempoross", "Wintertodt"})
+		{
+			assertNull(gone, Activity.BOSSES.get(gone));
+			assertTrue(gone, Activity.minigameLabels().contains(gone));
+		}
+	}
+
+	@Test
+	public void theGauntletIsItsBossTheWholeTimeInside()
+	{
+		Activity a = new Activity();
+		a.region(7512, 0);                                               // (the Gauntlet's instance: preparing)
+		assertEquals("boss the Gauntlet", label(a.now(0)));
+		a.xp(0, "Mining", 100);
+		a.xp(1000, "Mining", 150);                                       // (gathering in it)
+		assertEquals("boss the Gauntlet", label(a.now(1000)));
+		a.hit(2000, "Crystalline rat");                                  // (its creatures)
+		assertEquals("boss the Gauntlet", label(a.now(2000)));
+		a.hit(300_000, "Crystalline Hunllef");                           // (and the Hunllef)
+		assertEquals("boss the Gauntlet", label(a.now(300_000)));
+		a.forget();
+		a.region(7768, 0);                                               // (the Corrupted Gauntlet's)
+		assertEquals("boss the Corrupted Gauntlet", label(a.now(400_000)));
+		a.region(12127, 0);                                              // (the lobby in Prifddinas, the two's: neither)
+		assertEquals("idle", label(a.now(400_000)));
+		assertNull(Activity.MINIGAMES.get(7512));
+		assertNull(Activity.MINIGAMES.get(7768));
+		assertNull(Activity.MINIGAMES.get(12127));
+		assertTrue(Activity.bossLabels().containsAll(Activity.BOSS_REGIONS.values()));
+		assertTrue(Activity.BOSSES.values().containsAll(Activity.BOSS_REGIONS.values()));
 	}
 
 	@Test
@@ -186,18 +243,25 @@ public class ActivityTest
 		// (the boss holds a minute after its last hit, 11/10/2026; then the minigame it's in)
 		assertEquals("boss TzTok-Jad", label2(a.now(17_000)));
 		assertEquals("minigame the Fight Caves", label2(a.now(62_000)));
+		a.region(12126, 0);                                              // (Zalcano: a minigame, 11/10/2026, its boss too)
+		a.hit(63_000, "Zalcano");
+		assertEquals("minigame Zalcano", label2(a.now(63_000)));
 		a.region(6462, 0);                                               // (Wintertodt, with its Firemaking)
 		a.xp(78_000, "Firemaking", 100);
 		a.xp(79_000, "Firemaking", 200);
 		assertEquals("minigame Wintertodt", label2(a.now(79_000)));
 		a.region(12850, 0);                                              // (Lumbridge: no minigame)
 		assertEquals("skilling Firemaking", label2(a.now(79_000)));
-		// (the PvP minigames are none of them: nothing goes from them at all)
-		for (int r : new int[]{13658, 14432, 9520, 9620, 8493, 9005, 9552, 13362, 12621})
+		// (the PvP minigames are minigames like the rest, 11/10/2026)
+		String[][] pvp = {{"13658", "Last Man Standing"}, {"14432", "Last Man Standing"}, {"9520", "Castle Wars"},
+			{"9620", "Castle Wars"}, {"8493", "Soul Wars"}, {"9005", "Soul Wars"}, {"9552", "the Fight Pits"},
+			{"13362", "Emir's Arena"}, {"12621", "Clan Wars"}, {"14156", "Clan Wars"}};
+		for (String[] p : pvp)
 		{
-			assertTrue(Activity.PVP_REGIONS.contains(r));
-			assertNull(Activity.MINIGAMES.get(r));
-			assertNull(Activity.RAIDS.get(r));
+			int r = Integer.parseInt(p[0]);
+			assertTrue(Activity.PVP_MINIGAME_REGIONS.contains(r));
+			a.region(r, 0);
+			assertEquals("minigame " + p[1], label2(a.now(79_000)));
 		}
 		// (Nightmare Zone above plane 0; the King Black Dragon's lair, the same region, on it)
 		a.region(9033, 1);
@@ -205,7 +269,80 @@ public class ActivityTest
 		a.region(9033, 0);
 		assertEquals("idle", label2(a.now(160_000)));
 		assertEquals(4, Activity.raidLabels().size());
-		assertEquals(24, Activity.minigameLabels().size());
+		assertEquals(29, Activity.minigameLabels().size());
+		assertEquals(6, Activity.PVP_MINIGAMES.size());
+		assertTrue(Activity.minigameLabels().containsAll(Activity.PVP_MINIGAMES));
+	}
+
+	@Test
+	public void thePvpMinigamesAreSafeForTheGlobeTheWildernessAndRiskyWorldsArent()
+	{
+		// (11/10/2026: the game's PvP-area flag, up inside a PvP minigame, doesn't hold the globe back there)
+		for (int r : Activity.PVP_MINIGAME_REGIONS)
+		{
+			assertTrue(r + "", OutsidePlugin.globeSafe(false, false, true, r));
+			assertTrue(r + "", OutsidePlugin.activitySafe(false, false, true, r, false));
+			// (none of them in the Wilderness: each corner of the region outside its bounds)
+			int x = (r >> 8) << 6, y = (r & 255) << 6;
+			for (int[] c : new int[][]{{x, y}, {x + 63, y}, {x, y + 63}, {x + 63, y + 63}})
+			{
+				assertFalse(r + "", OutsidePlugin.inWilderness(c[0], c[1]));
+			}
+		}
+		assertEquals(46, Activity.PVP_MINIGAME_REGIONS.size());
+		// (elsewhere the flag still holds it back; so do the Wilderness and a risky world, in a PvP minigame too)
+		assertFalse(OutsidePlugin.globeSafe(false, false, true, 12850));
+		assertFalse(OutsidePlugin.globeSafe(false, true, false, 12850));
+		assertFalse(OutsidePlugin.globeSafe(true, false, false, 13658));
+		assertFalse(OutsidePlugin.globeSafe(true, false, true, 9520));
+		assertTrue(OutsidePlugin.globeSafe(false, false, false, 12850));
+	}
+
+	@Test
+	public void aWildernessBossGoesOnlyWithInTheWildernessTooAndNeverWhereTheyAre()
+	{
+		// (11/10/2026, Jace: the activity from the Wilderness only with "In the Wilderness too" on; following and the
+		// stars never there, whatever the setting)
+		int callisto = 13116;                                            // (a region of the Wilderness; any will do)
+		for (boolean too : new boolean[]{false, true})
+		{
+			Activity a = new Activity();
+			Behind doing = new Behind("activity");
+			Follow follow = new Follow();
+			Stars stars = new Stars();
+			JsonObject said = null;
+			int places = 0;
+			for (long t = 0; t < 400_000; t += FollowTest.TICK)
+			{
+				// (the Wilderness: its bounds, the game's PvP-area flag up; on an ordinary world)
+				boolean globe = OutsidePlugin.globeSafe(false, true, true, callisto);
+				boolean act = OutsidePlugin.activitySafe(false, true, true, callisto, too);
+				a.hit(t, "Callisto");
+				JsonObject o = doing.tick(t, a.now(t), act);
+				said = o == null ? said : o;
+				if (follow.tick(t, 3290, 3850, 301, globe) != null)
+				{
+					places++;
+				}
+				stars.see(t, 301, 3290, 3850, 6, globe && !OutsidePlugin.inWilderness(3290, 3850));
+				assertFalse(globe);
+				assertNull(stars.due(t, true));
+			}
+			assertEquals(0, places);
+			if (too)
+			{
+				assertEquals("boss Callisto", label(said.getAsJsonObject("activity")));
+			}
+			else
+			{
+				assertNull(said);
+			}
+		}
+		// (never on a PvP, Deadman or other risky world, setting or not; never a PvP area outside the Wilderness)
+		assertFalse(OutsidePlugin.activitySafe(true, true, true, 13116, true));
+		assertFalse(OutsidePlugin.activitySafe(false, false, true, 12850, true));
+		assertTrue(OutsidePlugin.activitySafe(false, true, false, 13116, true));
+		assertFalse(OutsidePlugin.activitySafe(false, true, false, 13116, false));
 	}
 
 	static String label2(JsonObject a)
