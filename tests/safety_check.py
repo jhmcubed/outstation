@@ -235,12 +235,7 @@ ADDRESSES = {
                                                        "browser from \"report an anomaly\" (report.rs, win.rs open_page)",
     "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
                                                                      "screen's link (win.rs open_page)",
-    "https://outside.wiki": "the globe, opened in your browser to choose where your outstation stands (settle.rs, win.rs "
-                            "open_page): with a one-time code from the relay, never your key",
-    "http://127.0.0.1": "Dink's address on this PC, shown to you; and a copy of the globe on this PC, opened in your "
-                        "browser only if you set OUTSTATION_GLOBE to try it (settle.rs)",
-    "http://localhost": "a copy of the globe on this PC, opened in your browser only if you set OUTSTATION_GLOBE to try "
-                        "it (settle.rs, win.rs open_page)",
+    "http://127.0.0.1": "Dink's address on this PC, shown to you",
     "ws://127.0.0.1": "a relay of your own on this PC (relay-py), only when you choose one by hand",
     "https://discord.com/api/webhooks/": "the webhook box's hint, an example only",
 }
@@ -295,7 +290,7 @@ def main(argv):
     net = check_network()
     print("its addresses: %s" % ("; ".join(net) if net else "only the relay you attach to, your Discord webhook if you set one, "
                                                               "GitHub's releases, and the pages it opens in your browser (ghillie.wiki's, "
-                                                              "outside.wiki's globe, and its own SAFETY.md); it listens on 127.0.0.1 only"))
+                                                              "and its own SAFETY.md); it listens on 127.0.0.1 only"))
     failed |= bool(net)
     print("FAILED" if failed else "passed")
     return 1 if failed else 0

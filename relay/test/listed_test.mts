@@ -13,7 +13,7 @@ const MIN = 60_000;
 // a row as a live channel with the plugin and following tells it
 const row = (channel: string, at: number, extra: Record<string, unknown> = {}) => ({
   channel, set: true, code: false, at, live: true, open: true, static: false, viewers: 2, title: "barrows",
-  doing: { boss: "Giant Mole", kc: 12 }, game: true, home: { lon: 1.5, lat: -2.25 },
+  doing: { boss: "Giant Mole", kc: 12 }, game: true,
   where: { x: 3264, y: 3264, world: 302 }, whereAt: at, activity: { kind: "skilling", skill: "Mining" }, activityAt: at, ...extra });
 const NEVER = ["where", "whereAt", "activity", "activityAt"];
 const stored = (l: ListedRows) => JSON.parse(JSON.stringify(l.saved()));
@@ -23,7 +23,7 @@ test("what's stored of a row: never where or activity, nor their times", () => {
   const r = row("sburb", 1000), kept = keptRow(r) as Record<string, unknown>;
   for (const k of NEVER) ok(!(k in kept), k);
   deepStrictEqual(kept, { channel: "sburb", set: true, code: false, at: 1000, live: true, open: true, static: false, viewers: 2,
-                          title: "barrows", doing: { boss: "Giant Mole", kc: 12 }, game: true, home: { lon: 1.5, lat: -2.25 } });
+                          title: "barrows", doing: { boss: "Giant Mole", kc: 12 }, game: true });
   ok(!("extra" in (keptRow({ ...r, extra: 1 } as never) as Record<string, unknown>))); // (a field not named: not stored)
   const l = new ListedRows();
   l.heard(row("sburb", 1000), 5000);
@@ -40,6 +40,14 @@ test("a saved list comes back without where or activity, even if they'd been wri
   for (const k of NEVER) ok(!(k in l.rows.get("sburb")!.row), k);
   deepStrictEqual(ListedRows.from(undefined).rows.size, 0);
   deepStrictEqual(ListedRows.from({ rows: "no" }).rows.size, 0);
+});
+
+test("a row stored before settling went comes back without its home, and is written without it", () => {
+  ok(!(KEPT_FIELDS as readonly string[]).includes("home"));
+  const l = ListedRows.from({ rows: [{ row: row("sburb", 1000, { home: { near: "moss" } }), seen: 5000 },
+                                     { row: row("moss", 1000, { home: { lon: 1.5, lat: -2.25 } }), seen: 5000 }] });
+  for (const n of ["sburb", "moss"]) ok(!("home" in l.rows.get(n)!.row), n);
+  ok(!JSON.stringify(stored(l)).includes('"home"'));
 });
 
 test("after a sleep only the missing, the old, and the live with the plugin (once) are asked", () => {

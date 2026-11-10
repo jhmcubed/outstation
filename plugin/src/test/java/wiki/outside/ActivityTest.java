@@ -274,28 +274,89 @@ public class ActivityTest
 		assertTrue(Activity.minigameLabels().containsAll(Activity.PVP_MINIGAMES));
 	}
 
-	@Test
-	public void thePvpMinigamesAreSafeForTheGlobeTheWildernessAndRiskyWorldsArent()
+	/** The plugin's rules for a tile, from what it reads there (a risky world, the game's in-the-Wilderness and
+	 *  PvP-area flags): {safe for the globe, the activity safe with "In the Wilderness too" off, and on, the stream
+	 *  held}. A risky world here is a PvP one too. */
+	static boolean[] rules(boolean risky, int x, int y, boolean insideFlag, boolean pvpFlag)
 	{
-		// (11/10/2026: the game's PvP-area flag, up inside a PvP minigame, doesn't hold the globe back there)
+		int region = ((x >> 6) << 8) | (y >> 6);
+		boolean wild = OutsidePlugin.wilderness(x, y, insideFlag), pvp = OutsidePlugin.pvpArea(x, y, region, pvpFlag);
+		return new boolean[]{OutsidePlugin.globeSafe(risky, wild, pvp), OutsidePlugin.activitySafe(risky, wild, pvp, false),
+			OutsidePlugin.activitySafe(risky, wild, pvp, true), OutsidePlugin.held(risky, wild, pvp)};
+	}
+
+	static String rules(boolean[] r)
+	{
+		return (r[0] ? "globe " : "") + (r[1] ? "activity " : "") + (r[2] ? "activity-too " : "") + (r[3] ? "held" : "going");
+	}
+
+	@Test
+	public void thePvpMinigamesAreSafeForTheGlobeAndTheStreamKeepsGoing()
+	{
+		// (11/10/2026: the game's PvP-area flag, up inside a PvP minigame, holds back neither the globe nor the stream)
 		for (int r : Activity.PVP_MINIGAME_REGIONS)
 		{
-			assertTrue(r + "", OutsidePlugin.globeSafe(false, false, true, r));
-			assertTrue(r + "", OutsidePlugin.activitySafe(false, false, true, r, false));
-			// (none of them in the Wilderness: each corner of the region outside its bounds)
 			int x = (r >> 8) << 6, y = (r & 255) << 6;
+			for (boolean flag : new boolean[]{false, true})
+			{
+				assertEquals(r + "", "globe activity activity-too going", rules(rules(false, x + 32, y + 32, false, flag)));
+			}
+			// (none of them in the Wilderness: each corner of the region outside its bounds)
 			for (int[] c : new int[][]{{x, y}, {x + 63, y}, {x, y + 63}, {x + 63, y + 63}})
 			{
 				assertFalse(r + "", OutsidePlugin.inWilderness(c[0], c[1]));
 			}
+			// (a PvP or other risky world still holds everything back, in a PvP minigame too)
+			assertEquals(r + "", "held", rules(rules(true, x + 32, y + 32, false, true)));
 		}
 		assertEquals(46, Activity.PVP_MINIGAME_REGIONS.size());
-		// (elsewhere the flag still holds it back; so do the Wilderness and a risky world, in a PvP minigame too)
-		assertFalse(OutsidePlugin.globeSafe(false, false, true, 12850));
-		assertFalse(OutsidePlugin.globeSafe(false, true, false, 12850));
-		assertFalse(OutsidePlugin.globeSafe(true, false, false, 13658));
-		assertFalse(OutsidePlugin.globeSafe(true, false, true, 9520));
-		assertTrue(OutsidePlugin.globeSafe(false, false, false, 12850));
+		// (elsewhere the flag still holds both back: Lumbridge with the flag up, say)
+		assertEquals("held", rules(rules(false, 3222, 3218, false, true)));
+		assertEquals("globe activity activity-too going", rules(rules(false, 3222, 3218, false, false)));
+	}
+
+	@Test
+	public void feroxEnclaveIsAHavenAndTheWildernessRoundItIsnt()
+	{
+		// (11/10/2026, Jace: "Ferox Enclave should be included too because it is a safe area/haven in the wilderness":
+		// its town, as Shortest Path draws it, whatever the game's flags say there)
+		int[][] town = {{3130, 3630}, {3123, 3622}, {3140, 3639}, {3155, 3645}, {3147, 3619}, {3150, 3640}};
+		for (int[] t : town)
+		{
+			assertTrue(t[0] + "," + t[1], OutsidePlugin.inWilderness(t[0], t[1]));       // (inside the Wilderness's bounds)
+			assertTrue(t[0] + "," + t[1], OutsidePlugin.inFerox(t[0], t[1]));
+			for (boolean inside : new boolean[]{false, true})
+			{
+				for (boolean pvp : new boolean[]{false, true})
+				{
+					assertEquals(t[0] + "," + t[1], "globe activity activity-too going",
+						rules(rules(false, t[0], t[1], inside, pvp)));
+				}
+			}
+			assertEquals("held", rules(rules(true, t[0], t[1], false, false)));       // (a PvP world: still dangerous)
+		}
+		// (just outside its barriers, the Wilderness proper: the stream holds, only the activity with the setting)
+		for (int[] t : new int[][]{{3122, 3630}, {3130, 3616}, {3130, 3640}, {3156, 3640}, {3141, 3646}, {3148, 3620}})
+		{
+			assertFalse(t[0] + "," + t[1], OutsidePlugin.inFerox(t[0], t[1]));
+			assertEquals(t[0] + "," + t[1], "activity-too held", rules(rules(false, t[0], t[1], true, true)));
+		}
+		// (the dungeon under it isn't the town)
+		assertFalse(OutsidePlugin.inFerox(3158, 10027));
+		// (following there sends its own square; walking out into the Wilderness clears it at once)
+		Follow f = new Follow();
+		JsonObject sent = null;
+		long t = 0;
+		for (; t < 200_000; t += FollowTest.TICK)
+		{
+			JsonObject o = f.tick(t, 3133, 3631, rules(false, 3133, 3631, true, true)[0]);
+			sent = o == null ? sent : o;
+		}
+		assertEquals(3136, sent.getAsJsonObject("where").get("x").getAsInt());
+		assertEquals(3648, sent.getAsJsonObject("where").get("y").getAsInt());   // (the whole town in this one square)
+		JsonObject out = f.tick(t, 3133, 3660, rules(false, 3133, 3660, true, true)[0]);
+		assertNotNull(out);
+		assertTrue(out.get("where").isJsonNull());
 	}
 
 	@Test
@@ -303,7 +364,6 @@ public class ActivityTest
 	{
 		// (11/10/2026, Jace: the activity from the Wilderness only with "In the Wilderness too" on; following and the
 		// stars never there, whatever the setting)
-		int callisto = 13116;                                            // (a region of the Wilderness; any will do)
 		for (boolean too : new boolean[]{false, true})
 		{
 			Activity a = new Activity();
@@ -315,8 +375,9 @@ public class ActivityTest
 			for (long t = 0; t < 400_000; t += FollowTest.TICK)
 			{
 				// (the Wilderness: its bounds, the game's PvP-area flag up; on an ordinary world)
-				boolean globe = OutsidePlugin.globeSafe(false, true, true, callisto);
-				boolean act = OutsidePlugin.activitySafe(false, true, true, callisto, too);
+				boolean[] r = rules(false, 3290, 3850, true, true);
+				boolean globe = r[0], act = too ? r[2] : r[1];
+				assertTrue(r[3]);                                            // (the stream holds there, the setting off)
 				a.hit(t, "Callisto");
 				JsonObject o = doing.tick(t, a.now(t), act);
 				said = o == null ? said : o;
@@ -339,10 +400,10 @@ public class ActivityTest
 			}
 		}
 		// (never on a PvP, Deadman or other risky world, setting or not; never a PvP area outside the Wilderness)
-		assertFalse(OutsidePlugin.activitySafe(true, true, true, 13116, true));
-		assertFalse(OutsidePlugin.activitySafe(false, false, true, 12850, true));
-		assertTrue(OutsidePlugin.activitySafe(false, true, false, 13116, true));
-		assertFalse(OutsidePlugin.activitySafe(false, true, false, 13116, false));
+		assertEquals("held", rules(rules(true, 3290, 3850, true, true)));
+		assertEquals("held", rules(rules(false, 3222, 3218, false, true)));
+		assertEquals("activity-too held", rules(rules(false, 3290, 3850, false, false)));   // (its bounds alone)
+		assertEquals("activity-too held", rules(rules(false, 1760, 11540, true, true)));    // (the game's flag alone)
 	}
 
 	static String label2(JsonObject a)

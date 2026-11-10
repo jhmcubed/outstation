@@ -8,6 +8,9 @@
 // Free plan's 100,000. Now the rows are in its storage ("listed", one value: one row written per change, however many
 // channels changed), read back once a wake (Jace's decision, 11/10/2026).
 //
+// A row stored before settling went (11/10/2026) may still have a "home": keptRow leaves it out as the list is read
+// (ListedRows.from), so it's never in a row again, and it's gone from storage at the list's next write.
+//
 // What's never written: following's "where" and the "activity" (and when each came). SAFETY.md promises both are in
 // memory only, so they're kept in memory beside the stored row and nowhere else (keptRow names what's stored, rather
 // than what's left out, so a field added to Listing later isn't stored till it's named here). After a wake they're
@@ -35,7 +38,7 @@ type MemoryOnly = "where" | "whereAt" | "activity" | "activityAt";
 
 /** What of a row is written to storage: everything a row has but MemoryOnly (the type refuses one of those here). */
 export const KEPT_FIELDS: readonly Exclude<keyof Listing, MemoryOnly>[] =
-  ["channel", "set", "code", "at", "live", "open", "static", "viewers", "title", "doing", "game", "home", "pending"];
+  ["channel", "set", "code", "at", "live", "open", "static", "viewers", "title", "doing", "game", "pending"];
 
 /** A row as it's stored: only KEPT_FIELDS, copied one by one (never the row spread, which would carry the rest). */
 export function keptRow(row: Listing): Listing {

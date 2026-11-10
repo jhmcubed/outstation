@@ -13,7 +13,7 @@ import java.util.Map;
  * <li>two minutes behind: what's sent is where they were two minutes ago, at most once a minute;</li>
  * <li>never somewhere dangerous: in the Wilderness (whatever "In the Wilderness too" says), a PvP area, on a PvP or
  * Deadman world, nothing's recorded, and the moment they're there the area already sent is cleared (the PvP minigames
- * aren't dangerous, 11/10/2026: OutsidePlugin.globeSafe);</li>
+ * and Ferox Enclave aren't dangerous, 11/10/2026: OutsidePlugin.globeSafe);</li>
  * <li>never anywhere off the main map (an underground area is counted where it lies under; Zanaris as one place, the
  * globe's moon; an instance where its template lies, or off the map its entrance, ENTRANCES; anything else,
  * nothing).</li>

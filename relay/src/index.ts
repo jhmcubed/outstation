@@ -66,12 +66,10 @@
 //   GET    /array/events?since=<cursor>   {"events": [{"id", "at", "channel", "kind", ...}], "next": <cursor>}
 //   POST   /admin/array  {"channel", "events": [{"kind", ..., "at"}]}   the keeper's: a real event the feed lost, put back
 //
-// Settling (11/08/2026; settle.ts): where an outstation stands on outside.wiki's globe, chosen by its owner. The app
-// trades its key for a one-time code; the globe page, opened with only the code, checks it and settles with it:
-//   POST   /settle/<channel>?key=<key>&v=<version>   {"code", "expires"} (no CORS: the app's)
-//   GET    /settle/<channel>?code=<code>             {"channel", "home", "next"}
-//   POST   /home/<channel>  {"code", "lon", "lat"} | {"code", "near"} | {"code", "clear": true}   {"home", "next"}
-// The home shows in each row of GET /channels, and the keeper's GET /admin/channels has it with when it changed (homeAt).
+// Settling (11/08/2026 to 11/10/2026, gone): an outstation once chose where it stood on outside.wiki's globe. The globe
+// now shows only real positions on the land, and every other outstation at the receiver, so homes have no use (Jace's
+// decision, 11/10/2026). An app built between the two still has the button: its POST /settle, and anything else on
+// /settle/<channel> or /home/<channel>, is answered 410 with a line it shows (SETTLING_GONE).
 //
 // Shooting stars (11/08/2026; stars.ts): the crashed stars the plugins have found, kept in the Directory's storage
 // (11/10/2026; two hours each) with the outstation that found each first (11/09/2026), for the globe:
@@ -91,7 +89,6 @@ import { type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, pyjson, relayOf } from "./text";
-import { SETTLE_BODY, settleAnswer, settlePreflight } from "./settle";
 import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
 import { LISTING_CHECK_MS, ListedRows, keptRow } from "./listed";
 
@@ -99,6 +96,8 @@ export { Channel, Aether };
 
 const ROLES = new Set(["transmit", "watch", "desk", "sound", "game"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
+/** What /settle and /home answer now settling's gone (11/10/2026): the old app shows a 410's "error" as it is. */
+const SETTLING_GONE = "settling has gone: the globe now shows each outstation where it really is, or at the receiver";
 const MAX_POST = 16 * 1024 * 1024;
 
 const ASKS_AN_HOUR = 3; // requests from one address in an hour
@@ -306,8 +305,6 @@ export class Directory extends DurableObject<Env> {
       const form = url.searchParams.get("name") || "";
       return Response.json({ taken: [...(await this.givenNames()).keys()].some((n) => n.toLowerCase() === form) });
     }
-    // settling's (11/08/2026, channel.ts's home): whether an outstation to settle beside is a channel handed out
-    if (url.pathname === "/given") return Response.json({ given: (await this.givenNames()).has(name) });
     if (url.pathname === "/notice") {
       if (request.method === "PUT") {
         const { text } = (await request.json()) as { text: string };
@@ -372,16 +369,13 @@ export class Directory extends DurableObject<Env> {
     // (an invite not taken up: only an invite's channel, which has an inviter, is ever pending)
     const waits = (r: Listing) => !!r.pending && (given.get(r.channel) ?? null) !== null;
     const rows = names.map((n) => listed.rows.get(n)?.row).filter((r): r is Listing => !!r && r.set);
-    // (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
-    const waiting = new Set(rows.filter(waits).map((r) => r.channel));
-    const homeOf = (h: Listing["home"]) => (h && "near" in h && waiting.has(h.near) ? null : h ?? null);
     const fresh = (parseFloat(this.env.WHERE_FRESH_SECONDS || "") * 1000) || WHERE_FRESH_MS, at = Date.now();
     const whereOf = (r: Listing) => (r.live && r.where && at - (r.whereAt || 0) <= fresh ? { ...r.where } : null);
     const activityOf = (r: Listing) => (r.live && r.activity && at - (r.activityAt || 0) <= fresh ? { ...r.activity } : null);
     const open = rows.filter((r) => !r.code && !waits(r))
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
                      title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game,
-                     home: homeOf(r.home), where: whereOf(r), activity: activityOf(r) }));
+                     where: whereOf(r), activity: activityOf(r) }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     const shown = new Set(open.map((r) => r.channel)), counts = new Map<string, number>();
     for (const r of rows) {
@@ -629,11 +623,9 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     const rows = await Promise.all(given.map(async (c) => {
       try {
         const r = await channelStub(env, c.channel).fetch(toChannel(new Request(request.url), c.channel, "/_status"));
-        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number;
-                                         home?: unknown; homeAt?: number | null };
-        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0,
-                 home: st.home ?? null, homeAt: st.homeAt ?? null };
-      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0, home: null, homeAt: null }; } // (c: channel, since, by)
+        const st = (await r.json()) as { live: boolean; viewers: number; title?: string; client?: string; live_s?: number };
+        return { ...c, live: st.live, viewers: st.viewers, title: st.title || "", client: st.client || "", live_s: st.live_s || 0 };
+      } catch { return { ...c, live: false, viewers: 0, title: "", client: "", live_s: 0 }; } // (c: channel, since, by)
     }));
     return Response.json(rows);
   }
@@ -734,20 +726,10 @@ export default {
       return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST", headers: request.headers, body: raw }), name, "/_invites"));
     }
 
-    // settling (11/08/2026; settle.ts): the app's key for a code (POST /settle), and the globe page's check (GET /settle)
-    // and settle (POST /home) with it, all in the channel. The page's are on another origin, with a JSON body: they answer
-    // its preflight, and carry CORS whatever they answer. The app's has none: a page never has the key.
+    // settling, gone (11/10/2026; the file's head): an app built while it was here gets a line it shows, not a 404 that
+    // reads as an older relay; a page on another origin can read it too
     if ((parts[0] === "settle" || parts[0] === "home") && parts.length === 2) {
-      const name = parts[1], settle = parts[0] === "settle", page = !(settle && request.method === "POST");
-      if (request.method === "OPTIONS") return settlePreflight();
-      if (!NAME.test(name)) return settleAnswer({ error: "which outstation?" }, 400, page);
-      if (request.method !== "POST" && !(settle && request.method === "GET")) return settleAnswer(null, 405, page);
-      const n = parseInt(request.headers.get("content-length") || "0") || 0, big = { error: "a settle is 2 KB at most" };
-      if (n > SETTLE_BODY) return settleAnswer(big, 413, page);
-      if (settle) return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: request.method, headers: request.headers }), name, "/_settle"));
-      const raw = await request.arrayBuffer();
-      if (raw.byteLength > SETTLE_BODY) return settleAnswer(big, 413, page);
-      return channelStub(env, name).fetch(toChannel(new Request(request.url, { method: "POST", headers: request.headers, body: raw }), name, "/_home"));
+      return Response.json({ error: SETTLING_GONE }, { status: 410, headers: { "access-control-allow-origin": "*", "cache-control": "no-store" } });
     }
 
     // the Array's events (11/08/2026; array.ts): what's happening across the open outstations, for outside.wiki's front

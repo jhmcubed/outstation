@@ -125,7 +125,7 @@ public class OutsidePlugin extends Plugin
 	private static final EnumSet<WorldType> RISKY = EnumSet.of(WorldType.PVP, WorldType.DEADMAN, WorldType.HIGH_RISK,
 		WorldType.BOUNTY);
 	private volatile boolean resend;
-	/** sending held while somewhere dangerous (the Wilderness, a PvP world), and said so once */
+	/** sending held while somewhere dangerous (the Wilderness, a PvP area or world: held()), and said so once */
 	private boolean paused;
 	private volatile WebSocket socket;
 	private volatile boolean open;
@@ -224,12 +224,14 @@ public class OutsidePlugin extends Plugin
 		// (the globe's: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
 		// somewhere dangerous clears it at once, before anything else)
 		WorldPoint at = here();
-		boolean riskyWorld = riskyWorld(), wild = wilderness(at), pvpArea = client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1;
-		int region = at == null ? -1 : at.getRegionID();
-		boolean safe = globeSafe(riskyWorld, wild, pvpArea, region);
+		int x = at == null ? -1 : at.getX(), y = at == null ? -1 : at.getY(), region = at == null ? -1 : at.getRegionID();
+		boolean riskyWorld = riskyWorld();
+		boolean wild = wilderness(x, y, client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1);
+		boolean pvpArea = pvpArea(x, y, region, client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1);
+		boolean safe = globeSafe(riskyWorld, wild, pvpArea);
 		long ms = System.currentTimeMillis();
 		JsonObject where = follow(ms, safe);
-		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, region, config.wilderness()));
+		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, config.wilderness()));
 		look(ms, safe);
 		if (!open)
 		{
@@ -250,7 +252,7 @@ public class OutsidePlugin extends Plugin
 		}
 		// (somewhere dangerous: nothing more goes till they're out, unless they've said otherwise, so nobody
 		// watching their page sees what they risk)
-		if (!config.wilderness() && dangerous())
+		if (!config.wilderness() && held(pvpWorld(), wild, pvpArea))
 		{
 			if (!paused)
 			{
@@ -580,34 +582,78 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/**
-	 * Safe for the globe's features (following and its world, the activity, the stars): not on a risky world (PvP,
-	 * Deadman, high risk, Bounty Hunter), not in the Wilderness, and not where the game's PvP-area flag is up, but for
-	 * the PvP minigames' own regions (11/10/2026, Jace: "there is no danger to someone tracking them there":
-	 * Activity.PVP_MINIGAME_REGIONS). Instances are (11/09/2026), unless their template lies in the Wilderness. Kept
-	 * apart from the client so it's tested.
+	 * Ferox Enclave (11/10/2026, Jace: "it is a safe area/haven in the wilderness"): the town inside its barriers, where
+	 * no player can attack another, as Shortest Path's WildernessChecker draws it (github.com/Skretzo/shortest-path,
+	 * src/main/java/shortestpath/pathfinder/WildernessChecker.java at 78593f7, FEROX_ENCLAVE_1 to 5: each {x, y, width,
+	 * height}, on every floor). Not the semi-safe ground outside its barriers, nor the dungeon under it.
 	 */
-	static boolean globeSafe(boolean riskyWorld, boolean wilderness, boolean pvpArea, int region)
+	static final int[][] FEROX = {{3123, 3622, 2, 10}, {3125, 3617, 16, 23}, {3138, 3636, 18, 10}, {3141, 3625, 14, 11},
+		{3141, 3619, 7, 6}};
+
+	static boolean inFerox(int x, int y)
 	{
-		return !riskyWorld && !wilderness && !(pvpArea && !Activity.PVP_MINIGAME_REGIONS.contains(region));
+		for (int[] a : FEROX)
+		{
+			if (x >= a[0] && x < a[0] + a[2] && y >= a[1] && y < a[1] + a[3])
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** In the Wilderness: within its bounds (an instance's template there too), or where the game's own
+	 *  in-the-Wilderness flag says so (any part of it outside them); but never in Ferox Enclave, a haven (whatever the
+	 *  flag says there, which couldn't be checked in the game). Kept apart from the client so it's tested. */
+	static boolean wilderness(int x, int y, boolean insideFlag)
+	{
+		return !inFerox(x, y) && (inWilderness(x, y) || insideFlag);
+	}
+
+	/** In a PvP area: the game's PvP-area flag up, but not in Ferox Enclave and not in a PvP minigame's region
+	 *  (11/10/2026, Jace: "there is no danger to someone tracking them there": Activity.PVP_MINIGAME_REGIONS). */
+	static boolean pvpArea(int x, int y, int region, boolean pvpFlag)
+	{
+		return pvpFlag && !inFerox(x, y) && !Activity.PVP_MINIGAME_REGIONS.contains(region);
+	}
+
+	/**
+	 * Safe for the globe's features (following and its world, the activity, the stars): not on a risky world (PvP,
+	 * Deadman, high risk, Bounty Hunter), not in the Wilderness, not in a PvP area (each as above: Ferox Enclave and the
+	 * PvP minigames are safe). Instances are (11/09/2026), unless their template lies in the Wilderness.
+	 */
+	static boolean globeSafe(boolean riskyWorld, boolean wilderness, boolean pvpArea)
+	{
+		return !riskyWorld && !wilderness && !pvpArea;
 	}
 
 	/**
 	 * Safe for the activity's label (11/10/2026, Jace: "Wilderness bosses should be included since we have the option
 	 * for 'In the Wilderness too'"): wherever the globe's features are, and in the Wilderness too (its PvP-area flag
 	 * with it) when they've said so (OutsideConfig.wilderness), since they've already chosen to transmit there. Never
-	 * on a risky world, and never a PvP area anywhere else. Following and the stars stay off in the Wilderness
-	 * whatever the setting (globeSafe): only the label goes, two minutes behind as ever.
+	 * on a risky world. Following and the stars stay off in the Wilderness whatever the setting (globeSafe): only the
+	 * label goes, two minutes behind as ever.
 	 */
-	static boolean activitySafe(boolean riskyWorld, boolean wilderness, boolean pvpArea, int region, boolean wildernessToo)
+	static boolean activitySafe(boolean riskyWorld, boolean wilderness, boolean pvpArea, boolean wildernessToo)
 	{
-		return globeSafe(riskyWorld, wilderness, pvpArea, region) || (wildernessToo && wilderness && !riskyWorld);
+		return globeSafe(riskyWorld, wilderness, pvpArea) || (wildernessToo && wilderness && !riskyWorld);
+	}
+
+	/**
+	 * Where the stream holds (what they wear and carry, their vitals: Kit.held), unless "In the Wilderness too" is on:
+	 * a PvP or Deadman world, the Wilderness, a PvP area. Not in Ferox Enclave or a PvP minigame (11/10/2026, Jace:
+	 * "stream should keep going"), whatever the game's flags say there.
+	 */
+	static boolean held(boolean pvpWorld, boolean wilderness, boolean pvpArea)
+	{
+		return pvpWorld || wilderness || pvpArea;
 	}
 
 	/** On a world where nothing goes to the globe (RISKY, or any the client counts as PvP). */
 	private boolean riskyWorld()
 	{
 		EnumSet<WorldType> types = client.getWorldType();
-		if (WorldType.isPvpWorld(types))
+		if (pvpWorld())
 		{
 			return true;
 		}
@@ -621,28 +667,10 @@ public class OutsidePlugin extends Plugin
 		return false;
 	}
 
-	/** In the Wilderness: within its bounds (an instance's template there too), or where the game says so (its own
-	 *  in-the-Wilderness flag, for any part of it that lies outside them). */
-	private boolean wilderness(WorldPoint at)
+	/** On a PvP or Deadman world (read here, never sent). */
+	private boolean pvpWorld()
 	{
-		return (at != null && inWilderness(at.getX(), at.getY())) || client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1;
-	}
-
-	/** In the Wilderness (an instance's template there too), a PvP area, or on a PvP or Deadman world (read here, never
-	 *  sent): where the stream holds, unless "In the Wilderness too" is on. (11/10/2026: unchanged for the PvP minigames,
-	 *  so it still holds wherever the game's PvP-area flag is up in one, as in LMS's or the PvP Arena's fights.) */
-	private boolean dangerous()
-	{
-		if (WorldType.isPvpWorld(client.getWorldType()) || client.getWorldType().contains(WorldType.DEADMAN))
-		{
-			return true;
-		}
-		if (client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1)
-		{
-			return true;
-		}
-		WorldPoint at = here();
-		return at != null && inWilderness(at.getX(), at.getY());
+		return WorldType.isPvpWorld(client.getWorldType()) || client.getWorldType().contains(WorldType.DEADMAN);
 	}
 
 	/** The Wilderness's bounds, above ground and below (its levels count from y 3520 up, and 9920 under). */
