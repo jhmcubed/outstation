@@ -127,8 +127,9 @@ happening across the open outstations, for outside.wiki's front page (each outst
     read:      GET http://HOST:PORT/array/events?since=<cursor>      {"events": [...], "next": <cursor>}
   Each event is {"id", "at", "channel", "kind", ...}: a kill, a level (one a skill), a pet, a drop worth 1,000,000 or
   more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
-  GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
-  public side allows the read.
+  GET /channels (no watch code). The last ARRAY_KEPT in memory, for as long as the relay runs (the Worker keeps them in
+  its Directory's storage, 11/10/2026); one channel adds ARRAY_A_MINUTE a minute at most. The public side allows the
+  read.
 
 Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): the crashed stars the
 plugins have found, and who found each, for outside.wiki's globe.
@@ -136,8 +137,12 @@ plugins have found, and who found each, for outside.wiki's globe.
                {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}, ...]}
   One for each world and square, however many told of it, with the first listed outstation to tell of it with "credit":
   true as its finder ("by", 11/09/2026: opt-in; null for none, or a hidden one) and how many did; kept STAR_LIFE_S after it was first told of, or till it's told
-  gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
-  only. The public side allows the read.
+  gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory,
+  for as long as the relay runs (the Worker keeps them in its Directory's storage, 11/10/2026). The public side allows
+  the read.
+    tests:     POST http://HOST:PORT/test/forget   (only with --test-forget) 204, and nothing forgotten: the Worker's
+               puts its Directory to sleep, to show its storage keeps the Array's events and the stars; this relay's
+               memory is its keeping, so there's nothing to show. tests/protocol_test.py's Kept, against either.
 
 The almanac (11/09/2026; docs/protocol.md "The almanac"; almanac.py, and the Worker's almanac.ts, the same): Jagex's
 news, the world list (its seasons) and the Wiki's prices (the day's movers), for outside.wiki's globe, each fetched by
@@ -839,8 +844,9 @@ def game_star(g):
 class StarList:
     """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, however many told
     of it, with the first outstation on the open outstations' list whose report asked for the credit as its finder
-    ("by", 11/09/2026: opt-in, "credit": true; a hidden outstation is never named) and how many did; in memory only. One outstation tells of STARS_AN_HOUR in an
-    hour at most. The Worker's StarList (stars.ts), the same. Times in ms."""
+    ("by", 11/09/2026: opt-in, "credit": true; a hidden outstation is never named) and how many did; in memory, while the
+    relay runs. One outstation tells of STARS_AN_HOUR in an hour at most. The Worker's StarList (stars.ts), the same,
+    kept in its Directory's storage (11/10/2026). Times in ms."""
 
     def __init__(self):
         self.stars = {}              # "world:x:y" -> {"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}
@@ -1031,8 +1037,8 @@ def array_events(report):
 
 
 class ArrayFeed:
-    """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory only.
-    An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
+    """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory while
+    the relay runs (the Worker's ArrayFeed keeps them in its Directory's storage, 11/10/2026). An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
     keep going up after a restart and a page's cursor (since) still works."""
 
     def __init__(self, now=None):
@@ -1716,8 +1722,9 @@ def too_old(v, min_client):
 
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
-                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S, almanac="off"):
+                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False):
         self.delay = delay
+        self.test_forget = test_forget  # POST /test/forget answered (tests only: the Worker's TEST_FORGET)
         # the almanac (11/09/2026; almanac.py): Jagex's news, the world list and the Wiki's prices, fetched on a
         # schedule (almanac_loop) and shared: "off" (nothing's fetched; GET /almanac answers its shape, empty), "on"
         # (the real hosts) or an address everything's fetched under instead (tests)
@@ -1816,6 +1823,15 @@ class Relay:
             return
         if path == ["array", "events"] and not key:
             await self.array_read(writer, method, q)
+            return
+        if path == ["test", "forget"] and method == "POST" and self.test_forget:
+            # (the Worker's: its Directory put to sleep, to show what its storage keeps; here the process's memory is
+            # the keeping, so there's nothing to forget while it runs)
+            writer.write(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
             return
         if path == ["stars"] and not key:
             await self.stars_read(writer, method)
@@ -3316,13 +3332,13 @@ def dink_report(p):
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S,
-                where_fresh_s=WHERE_FRESH_S, almanac="off"):
+                where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
     almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
     everything under instead (tests)."""
     relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s,
-                  almanac)
+                  almanac, test_forget)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -3380,6 +3396,8 @@ def main(argv=None):
     ap.add_argument("--almanac", default="on",
                     help="the almanac's sources (GET /almanac): on (Jagex's news and world list and the Wiki's prices, "
                          "each on its own schedule), off, or an address to fetch them all under instead (tests)")
+    ap.add_argument("--test-forget", action="store_true",
+                    help="answer POST /test/forget, as the Worker does for its tests (nothing is forgotten here)")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -3391,7 +3409,7 @@ def main(argv=None):
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds,
-                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac))
+                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac, test_forget=a.test_forget))
     except KeyboardInterrupt:
         pass
 

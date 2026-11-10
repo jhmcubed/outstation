@@ -301,7 +301,10 @@ still dangerous. Nothing changes on the relays: an instance's square is a square
   message holds; and on Cloudflare when the keeper gives the channel a new key or takes it back. On the Python relay a
   `where` that `--delay` held back isn't taken once the plugin's gone.
 - It's held in memory only, with when it came, never in storage: a channel's object that sleeps (Cloudflare), or a
-  restart, forgets it, and the plugin says it again within 3 minutes.
+  restart, forgets it, and the plugin says it again within 3 minutes (the same square again every 3 minutes, a new one
+  a minute after the last at most, and at once on a new connection). On Cloudflare a channel doesn't sleep while it's
+  live (the transmitter's frames, and the desk's upload line each second, keep it awake), which is the only time it's
+  shown; one that slept while dark shows `where` `null` from going live till the plugin's next, 3 minutes at worst.
 - It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live and on that list (no
   watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
   Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
@@ -543,9 +546,18 @@ Worker's object) starts again, and a cursor from before still works. Treat it as
 **The read:** anyone may read it (any origin: `Access-Control-Allow-Origin: *`), and it's never cached
 (`Cache-Control: no-cache`). 405 for anything but `GET`. The Python relay's public side (the Funnel's port) allows it.
 
-**What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
-the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
-again; on the Python relay while it runs. Nothing of it is written to storage.
+**What's kept:** the last 500 events, the newest `id` given, and when each outstation's events of the last minute came
+(for the limit). On Cloudflare in the Directory's storage (since 11/10/2026: the key `array`, one value, written with
+each report that adds an event and read back once each time the object wakes), so the feed, its ids and the limit
+outlive the Directory's sleeps and deploys. (Before, it was kept in the Directory's memory only. That object holds no
+sockets, so Cloudflare puts it to sleep about 10 seconds after its last request, and an event showed for those seconds
+and was gone: seen live on 11/10/2026, a Giant Mole kill and a pet, with `GET /array/events` empty minutes later.) On
+the Python relay in memory, while it runs: a restart starts it empty, and ids still go up.
+
+**For tests:** `POST /test/forget` (204) puts the Worker's Directory to sleep as Cloudflare does, everything in its
+memory gone, so a test can see what its storage brings back. Only with the Worker's `TEST_FORGET` var at `"1"` (never on
+Cloudflare: without it the route is 404) and relay.py's `--test-forget` (where it forgets nothing: the process's memory
+is the keeping). `tests/protocol_test.py`'s `Kept`, against either.
 
 ## Shooting stars (11/08/2026)
 
@@ -596,9 +608,13 @@ of), `by` (its finder's channel, or `null`) and `reports`. Anyone may read
 it (any origin: `Access-Control-Allow-Origin: *`), it's never cached, and it's 405 for anything but `GET`. The Python
 relay's public side (the Funnel's port) allows it.
 
-**What's kept:** the stars, and for each the channels that told of it (for `reports`), in memory only. On Cloudflare in
-the Directory's memory, so an eviction (after a while unused, or a
-deploy) starts the list empty again; on the Python relay while it runs. Nothing of it is written to storage.
+**What's kept:** the stars, and for each the channels that told of it (for `reports`, and so one telling again isn't
+counted twice), the gone ones for their 10 minutes, and when each outstation told of one in the last hour (for the
+30). On Cloudflare in the Directory's storage (since 11/10/2026: the key `stars`, one value, written when a report
+changes it or a star passes its two hours, and read back once each time the object wakes; the Cron Trigger's look every
+5 minutes takes a star past its two hours out of storage, though nobody's read or told of one since). Before, it was in
+the Directory's memory only, and that object sleeps about 10 seconds after its last request (above, "The Array's
+events"). On the Python relay in memory, while it runs. `POST /test/forget` (above) shows it.
 
 ## The almanac (11/09/2026)
 

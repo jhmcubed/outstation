@@ -62,7 +62,7 @@
 //
 // The Array's events (11/08/2026, Jace: each outstation on outside.wiki's front page should look alive, its icon popping
 // "+1"; array.ts): a kill, a level, a pet, a big drop, a log slot or a clue, from each open outstation's field reports
-// while it's live, kept in the Directory's memory (the last 500; one channel adds 10 a minute at most):
+// while it's live, kept in the Directory's storage (the last 500, since 11/10/2026; one channel adds 10 a minute at most):
 //   GET    /array/events?since=<cursor>   {"events": [{"id", "at", "channel", "kind", ...}], "next": <cursor>}
 //
 // Settling (11/08/2026; settle.ts): where an outstation stands on outside.wiki's globe, chosen by its owner. The app
@@ -72,8 +72,8 @@
 //   POST   /home/<channel>  {"code", "lon", "lat"} | {"code", "near"} | {"code", "clear": true}   {"home", "next"}
 // The home shows in each row of GET /channels, and the keeper's GET /admin/channels has it with when it changed (homeAt).
 //
-// Shooting stars (11/08/2026; stars.ts): the crashed stars the plugins have found, kept in the Directory's memory with
-// the outstation that found each first (11/09/2026), for the globe:
+// Shooting stars (11/08/2026; stars.ts): the crashed stars the plugins have found, kept in the Directory's storage
+// (11/10/2026; two hours each) with the outstation that found each first (11/09/2026), for the globe:
 //   GET    /stars    {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}]}
 //
 // The almanac (11/09/2026; almanac.ts): Jagex's news, the world list (its seasons) and the Wiki's prices (the day's
@@ -148,15 +148,36 @@ export class Directory extends DurableObject<Env> {
   // handed out or taken back
   given: Map<string, string | null> | null = null;
   listed = new Map<string, { row: Listing; seen: number }>();
-  // the Array's events (11/08/2026; array.ts): each told by its channel (Channel.tellArray) while it's live and listed;
-  // in memory only, so an eviction forgets them (the feed's short-lived: a page only wants what's happening now)
-  array = new ArrayFeed();
+  // the Array's events (11/08/2026; array.ts): each told by its channel (Channel.tellArray) while it's live and listed.
+  // In storage ("array") since 11/10/2026, read once a wake (arrayFeed): the Directory holds no sockets or timers, so
+  // Cloudflare puts it to sleep about 10 seconds after its last request, and in memory only the feed lasted that long.
+  array: Promise<ArrayFeed> | null = null;
   // shooting stars (11/08/2026; stars.ts): each told by the channel whose plugin found it (Channel.takeStar), kept with
-  // its first listed finder; in memory only, so an eviction forgets them (a star lasts two hours at most)
-  stars = new StarList();
+  // its first listed finder. In storage ("stars") since 11/10/2026, the same way (starList).
+  stars: Promise<StarList> | null = null;
   // the almanac (11/09/2026; almanac.ts): what's kept is in storage ("alm:kept", the two days' prices "alm:latest" and
   // "alm:before", the names "alm:names"), read once a wake; refreshed by the Cron Trigger (POST /almanac/tick)
   alm: Promise<Almanac> | null = null;
+
+  /** The Array's feed, read from storage once a wake (a failed read is tried again by the next request). */
+  arrayFeed(): Promise<ArrayFeed> {
+    this.array ??= this.ctx.storage.get("array").then((saved) => ArrayFeed.from(saved), (e) => { this.array = null; throw e; });
+    return this.array;
+  }
+
+  /** The shooting stars, read from storage once a wake (the same). */
+  starList(): Promise<StarList> {
+    this.stars ??= this.ctx.storage.get("stars").then((saved) => StarList.from(saved), (e) => { this.stars = null; throw e; });
+    return this.stars;
+  }
+
+  /** The stars written to storage if they've changed (a report taken, or one past its time gone): one row. Nothing's
+   *  waited on between the change and this, so each write is the whole list as it stands, in the order they came. */
+  saveStars(list: StarList): Promise<void> | undefined {
+    if (!list.changed) return;
+    list.changed = false;
+    return this.ctx.storage.put("stars", list.saved());
+  }
 
   almanac(): Promise<Almanac> {
     this.alm ??= (async () => {
@@ -188,24 +209,44 @@ export class Directory extends DurableObject<Env> {
       if (a.cold()) a = await this.almanacRefresh(false);
       return almanacAnswer(a.read());
     }
-    if (url.pathname === "/almanac/tick") return Response.json((await this.almanacRefresh(false)).status());
+    if (url.pathname === "/almanac/tick") {
+      // (and the stars past their two hours taken out of storage, though nobody's read or told of one since)
+      const list = await this.starList();
+      list.expire(Date.now());
+      await this.saveStars(list);
+      return Response.json((await this.almanacRefresh(false)).status());
+    }
     if (url.pathname === "/almanac/force") return Response.json((await this.almanacRefresh(true)).status());
     if (url.pathname === "/almanac/status") return Response.json((await this.almanac()).status());
     if (url.pathname === "/array") {
       if (request.method === "PUT") {
         const { channel, events } = (await request.json()) as { channel: string; events: ArrayEvent[] };
-        this.array.add(channel, events);
+        const feed = await this.arrayFeed();
+        // (the whole feed, one row, written with each report that adds to it: a report's several events are one write.
+        // Nothing's waited on between the add and the put, so two reports can't race: each write has every event before
+        // it, and the answer waits for the write.)
+        if (feed.add(channel, events).length) await this.ctx.storage.put("array", feed.saved());
         return new Response(null, { status: 204 });
       }
-      return arrayAnswer(this.array.read(arraySince(url.searchParams.get("since")) ?? undefined));
+      return arrayAnswer((await this.arrayFeed()).read(arraySince(url.searchParams.get("since")) ?? undefined));
     }
     if (url.pathname === "/stars") {
+      const list = await this.starList();
       if (request.method === "PUT") {
         const { channel, star, listed } = (await request.json()) as { channel: string; star: StarReport; listed: boolean };
-        this.stars.add(channel, star, !!listed);
+        list.add(channel, star, !!listed);
+        await this.saveStars(list);
         return new Response(null, { status: 204 });
       }
-      return arrayAnswer(this.stars.read());
+      const read = list.read();
+      await this.saveStars(list); // (one gone past its time meanwhile: out of storage too)
+      return arrayAnswer(read);
+    }
+    if (url.pathname === "/forget" && request.method === "POST" && this.env.TEST_FORGET === "1") {
+      // (tests only, under `wrangler dev` with TEST_FORGET: this object put to sleep as Cloudflare does it, everything in
+      // its memory gone, so a test can see what its storage brings back; never set on Cloudflare)
+      this.ctx.abort("forgotten, for a test");
+      return new Response(null, { status: 204 }); // (not reached: abort throws)
     }
     if (url.pathname === "/listed" && request.method === "PUT") {
       const row = (await request.json()) as Listing;
@@ -659,6 +700,12 @@ export default {
     if (parts[0] === "stars" && parts.length === 1) {
       if (request.method !== "GET") return arrayAnswer(null, 405);
       return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/stars");
+    }
+
+    // (tests only, with TEST_FORGET: the Directory put to sleep, so a test can see what its storage brings back)
+    if (url.pathname === "/test/forget" && request.method === "POST" && env.TEST_FORGET === "1") {
+      await env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/forget", { method: "POST" }).catch(() => null);
+      return new Response(null, { status: 204 });
     }
 
     // the almanac (11/09/2026; almanac.ts): the news, the worlds and the market, as the relay last fetched them; any page

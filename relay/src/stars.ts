@@ -6,7 +6,8 @@
 //
 // The plugin sends each star it sees on its game socket ("star": game.ts's gameStar), two minutes late. Its channel
 // passes it to the Directory (Channel.takeStar), with whether the channel's on the open outstations' list, and the
-// Directory keeps the list here (StarList), in memory only: one star for each world and square (several outstations
+// Directory keeps the list here (StarList), in its storage ("stars", 11/10/2026: it had been in memory only, and the
+// Directory sleeps about 10 seconds after its last request; saved, from): one star for each world and square (several outstations
 // telling of one star make one), the first of them on that list whose report asked for the credit as its finder ("by",
 // 11/09/2026: opt-in, the report's "credit": true; a channel with a watch code, or an invite not taken up, is never
 // named, so nothing's said of a hidden outstation), and how many outstations told of it (credit or not).
@@ -25,17 +26,51 @@ export const STAR_LIFE_MS = 2 * 3_600_000, STAR_GONE_MS = 10 * 60_000, STARS_AN_
 export type Star = { world: number; x: number; y: number; site: string | null; tier: number; found: number; seen: number;
                      by: string | null; reports: number };
 
+/** The list as the Directory keeps it in storage ("stars"): the stars, the channels that told of each, the gone ones and
+ *  each channel's times of the last hour (so STARS_AN_HOUR and STAR_GONE_MS hold across a sleep). One value, so a report
+ *  is one row written. */
+export type SavedStars = { stars: Star[]; tellers: [string, string[]][]; gone: [string, number][]; recent: [string, number[]][] };
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const pairs = (v: unknown): [string, unknown][] =>
+  (Array.isArray(v) ? v : []).filter((p): p is [string, unknown] => Array.isArray(p) && typeof p[0] === "string");
+
 export class StarList {
   stars = new Map<string, Star>(); // "world:x:y" -> the star
   tellers = new Map<string, Set<string>>(); // "world:x:y" -> the channels that told of it (for "reports")
   gone = new Map<string, number>(); // "world:x:y" -> when it was told gone
   recent = new Map<string, number[]>(); // a channel -> when (ms) it told of one, the last hour (STARS_AN_HOUR)
+  changed = false; // whether it's changed since it was last saved (the Directory writes it, then clears this)
 
-  /** The stars and the gone past their time, and a quiet channel's times, forgotten. */
+  /** The list from what was saved (none, or not its shape: an empty one), what's past its time forgotten. */
+  static from(saved: unknown, now = Date.now()): StarList {
+    const s = isObj(saved) ? saved : {}, l = new StarList();
+    for (const st of Array.isArray(s.stars) ? s.stars : []) {
+      if (isObj(st) && typeof st.world === "number" && typeof st.x === "number" && typeof st.y === "number") {
+        l.stars.set(st.world + ":" + st.x + ":" + st.y, st as Star);
+      }
+    }
+    for (const [k, t] of pairs(s.tellers)) if (Array.isArray(t) && l.stars.has(k)) l.tellers.set(k, new Set(t as string[]));
+    for (const k of l.stars.keys()) if (!l.tellers.has(k)) l.tellers.set(k, new Set());
+    for (const [k, t] of pairs(s.gone)) if (typeof t === "number") l.gone.set(k, t);
+    for (const [c, t] of pairs(s.recent)) if (Array.isArray(t) && t.length) l.recent.set(c, t as number[]);
+    l.expire(now);
+    return l;
+  }
+
+  /** What the Directory writes to storage: the whole list, as one value. */
+  saved(): SavedStars {
+    return { stars: [...this.stars.values()], tellers: [...this.tellers].map(([k, t]) => [k, [...t]]),
+             gone: [...this.gone], recent: [...this.recent] };
+  }
+
+  /** The stars and the gone past their time, and a quiet channel's times, forgotten (changed, if any was). */
   expire(now: number) {
-    for (const [k, s] of this.stars) if (now - s.found >= STAR_LIFE_MS) { this.stars.delete(k); this.tellers.delete(k); }
-    for (const [k, t] of this.gone) if (now - t >= STAR_GONE_MS) this.gone.delete(k);
-    for (const [c, t] of this.recent) if (now - t[t.length - 1] >= 3_600_000) this.recent.delete(c);
+    for (const [k, s] of this.stars) {
+      if (now - s.found >= STAR_LIFE_MS) { this.stars.delete(k); this.tellers.delete(k); this.changed = true; }
+    }
+    for (const [k, t] of this.gone) if (now - t >= STAR_GONE_MS) { this.gone.delete(k); this.changed = true; }
+    for (const [c, t] of this.recent) if (now - t[t.length - 1] >= 3_600_000) { this.recent.delete(c); this.changed = true; }
   }
 
   /** A channel's report (gameStar's), and whether the channel's on the open outstations' list: whether it was counted
@@ -48,6 +83,7 @@ export class StarList {
     if (times.length >= STARS_AN_HOUR) return false;
     times.push(now);
     this.recent.set(channel, times);
+    this.changed = true; // (its count, at least)
     const k = r.world + ":" + r.x + ":" + r.y, had = this.stars.get(k);
     if ("gone" in r) {
       this.stars.delete(k);

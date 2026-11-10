@@ -5,14 +5,17 @@
 //   GET <relay>/array/events?since=<cursor>      {"events": [{"id", "at", "channel", "kind", ...}, ...], "next": <cursor>}
 //
 // A channel works out what each field report adds (arrayEvents) while it's live and listed (handed out, no watch code:
-// on GET /channels), and tells the Directory (Channel.tellArray), which keeps the last ARRAY_KEPT in memory (ArrayFeed)
-// and answers the read. So a dark or coded outstation's reports never show. relay-py/relay.py's array_events and
-// ArrayFeed, the same.
+// on GET /channels), and tells the Directory (Channel.tellArray), which keeps the last ARRAY_KEPT (ArrayFeed) and answers
+// the read. So a dark or coded outstation's reports never show. relay-py/relay.py's array_events and ArrayFeed, the same.
+// (11/10/2026, Jace: "make the feed keep its events": the Directory holds no sockets, so Cloudflare puts it to sleep
+// about 10 seconds after its last request, and the feed had lived only in its memory: a kill showed for those seconds
+// and was gone. Now the Directory writes the feed to its storage with each report that adds to it (saved, from), and
+// reads it back once a wake.)
 
 import { SKILL } from "./game";
 import { oneLine, pyjson } from "./text";
 
-// the last ARRAY_KEPT kept, in memory; one channel adds ARRAY_A_MINUTE a minute at most (the rest are dropped); a read
+// the last ARRAY_KEPT kept; one channel adds ARRAY_A_MINUTE a minute at most (the rest are dropped); a read
 // without since has the last ARRAY_LATEST, one with since at most ARRAY_PAGE after it; a drop goes in only when it's
 // worth ARRAY_LOOT or more; a name in an event is ARRAY_WORD characters at most (Dink's are cut to 60 already)
 export const ARRAY_KEPT = 500, ARRAY_A_MINUTE = 10, ARRAY_LATEST = 50, ARRAY_PAGE = 100, ARRAY_LOOT = 1_000_000;
@@ -84,9 +87,13 @@ export function arrayEvents(report: unknown): ArrayEvent[] {
   return [];
 }
 
-/** The Array's events: the last ARRAY_KEPT, oldest first, in memory only (an eviction of the Directory forgets them). An
- *  id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids keep
- *  going up after the Directory starts again and a page's cursor (since) still works. */
+/** The feed as the Directory keeps it in storage ("array"): the events, the newest id given, and each channel's times of
+ *  the last minute (so ARRAY_A_MINUTE holds across a sleep). One value, so a report that adds to it is one row written. */
+export type SavedFeed = { last: number; events: Kept[]; recent: [string, number[]][] };
+
+/** The Array's events: the last ARRAY_KEPT, oldest first. An id goes up with each event, and is about the moment's ms
+ *  (one more than the last, when that's later), so ids keep going up after the Directory starts again (the newest is
+ *  kept with them) and a page's cursor (since) still works. */
 export class ArrayFeed {
   events: Kept[] = [];
   last: number; // the newest id given, or when the feed began
@@ -94,6 +101,24 @@ export class ArrayFeed {
 
   constructor(now = Date.now()) {
     this.last = now;
+  }
+
+  /** The feed from what was saved (none: a new one, beginning now). A saved one that isn't its shape starts afresh,
+   *  its newest id kept if it has one. */
+  static from(saved: unknown, now = Date.now()): ArrayFeed {
+    const s = isObj(saved) ? saved : {}, f = new ArrayFeed(now);
+    if (typeof s.last === "number" && Number.isSafeInteger(s.last)) f.last = Math.max(f.last, s.last);
+    if (Array.isArray(s.events)) f.events = (s.events as Kept[]).filter((e) => isObj(e) && Number.isSafeInteger(e.id)).slice(-ARRAY_KEPT);
+    if (f.events.length) f.last = Math.max(f.last, f.events[f.events.length - 1].id);
+    if (Array.isArray(s.recent)) {
+      for (const r of s.recent) if (Array.isArray(r) && typeof r[0] === "string" && Array.isArray(r[1])) f.recent.set(r[0], r[1]);
+    }
+    return f;
+  }
+
+  /** What the Directory writes to storage: the whole feed, as one value. */
+  saved(): SavedFeed {
+    return { last: this.last, events: this.events, recent: [...this.recent] };
   }
 
   /** A channel's events into the feed, as many as ARRAY_A_MINUTE leaves room for (the rest dropped); those kept. */

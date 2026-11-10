@@ -155,7 +155,7 @@ def setUpModule():
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
-             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--test-scheduled"],
+             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled"],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
@@ -164,7 +164,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--settle-code-seconds", "%g" % SETTLE_CODE_S, "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base],
+                                 "--almanac", UPSTREAM.base, "--test-forget"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -2423,6 +2423,104 @@ class Stars(Base):
         with self.assertRaises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(e.exception.code, 405)
+
+class Kept(Base):
+    """What the Array's feed and the stars list keep through a sleep (11/10/2026, Jace: "make the feed keep its events").
+    The Worker's Directory holds no sockets, so Cloudflare puts it to sleep about 10 seconds after its last request; both
+    had lived only in its memory, so a kill showed for those seconds and was gone. POST /test/forget (the Worker's
+    TEST_FORGET; relay.py's --test-forget, where the process's memory is the keeping and nothing's forgotten) puts it to
+    sleep as Cloudflare does, and everything here must come back from its storage."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual(status, 200)
+        self.since = body["next"]                                              # (what came before this test: left out)
+        self.world = 1 + secrets.randbelow(999)                                # (a star of its own, as Stars's)
+        self.x = 1088 + 128 * secrets.randbelow(24)
+        self.y = 2496 + 128 * secrets.randbelow(14)
+
+    # (the feed's helpers, ArrayEvents's; the stars', Stars's)
+    dink, mine, other, what = ArrayEvents.dink, ArrayEvents.mine, ArrayEvents.other, staticmethod(ArrayEvents.what)
+    game, say, star, star_now = Stars.game, Stars.say, Stars.star, Stars.mine
+
+    async def forget(self):
+        status = (await asyncio.to_thread(http, "POST", "/test/forget"))[0]
+        if status == 404:
+            self.skipTest("this relay wasn't started with the test hook (TEST_FORGET, --test-forget)")
+        self.assertEqual(status, 204)
+
+    async def test_the_feed_keeps_its_events_their_ids_and_the_cursor(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2503}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Baby mole"}})
+        before = await self.mine(2)
+        self.assertEqual(self.what(before), [{"kind": "kill", "boss": "Giant Mole", "kc": 2503},
+                                             {"kind": "pet", "name": "Baby mole"}])
+        await self.forget()
+        self.assertEqual(await self.mine(wait=0), before)                      # (the same events, the same ids)
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual((status, body["events"][-2:], body["next"]), (200, before, before[-1]["id"]))
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % before[0]["id"])
+        self.assertEqual(body, {"events": before[1:], "next": before[1]["id"]})
+        # (a kill after the sleep, from the same live outstation: its id goes on up, and since finds only it)
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2504}})
+        after = (await self.mine(3))[2:]
+        self.assertEqual(self.what(after), [{"kind": "kill", "boss": "Giant Mole", "kc": 2504}])
+        self.assertGreater(after[0]["id"], before[-1]["id"])
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % before[-1]["id"])
+        self.assertEqual(body, {"events": after, "next": after[0]["id"]})
+        await self.forget()
+        self.assertEqual(await self.mine(wait=0), before + after)
+
+    async def test_ten_a_minute_holds_through_a_sleep(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 70 for s in SKILLS[:8]}}})
+        await self.mine(8)
+        await self.forget()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 71 for s in SKILLS[8:12]}}})
+        await self.mine(10)
+        got = await self.mine(wait=self.settle * 5)
+        self.assertEqual([e["skill"] for e in got], SKILLS[:10])               # (the last two dropped, as without a sleep)
+
+    async def test_the_stars_keep_their_finder_count_and_gone(self):
+        g = await self.game()
+        await self.say(g, self.star(tier=7))
+        first = await self.star_now()
+        self.assertEqual((first["tier"], first["by"], first["reports"]), (7, self.ch, 1))
+        await self.forget()
+        self.assertEqual(await self.star_now(), first)                         # (as it was: when found and seen, its finder)
+        other, key = await self.other()
+        h = await self.game(key=key, channel=other)
+        await self.say(h, self.star(tier=6))
+        s = await self.star_now()
+        self.assertEqual((s["tier"], s["found"], s["by"], s["reports"]), (6, first["found"], self.ch, 2))
+        await self.forget()
+        await self.say(g, self.star(tier=5))                                   # (this one told of it already: still two)
+        s = await self.star_now()
+        self.assertEqual((s["tier"], s["by"], s["reports"]), (5, self.ch, 2))
+        await self.say(h, self.star(gone=True))
+        self.assertIsNone(await self.star_now())
+        await self.forget()
+        await self.say(g, self.star(tier=1))                                   # (a late report after the sleep: still gone)
+        self.assertIsNone(await self.star_now())
+
+    async def test_thirty_stars_an_hour_holds_through_a_sleep(self):
+        g = await self.game()
+        other = self.world % 999 + 1                                           # (thirty stars on a world of their own)
+        for i in range(30):
+            if i and i % 5 == 0:
+                await asyncio.sleep(1.05)                                      # (5 a second at most)
+            if i == 20:
+                await self.pause(2)
+                await self.forget()
+            await self.say(g, dict(self.star(tier=9), world=other, y=2496 + 128 * (i % 13), x=1088 + 128 * (i // 13)))
+        await asyncio.sleep(1.05)
+        await self.say(g, self.star(tier=9))                                   # (the 31st: ignored, as without a sleep)
+        self.assertIsNone(await self.star_now())
+
 
 async def nothing_game(c, wait=0.5):
     """The game line someone just come is sent, or None if none comes in `wait` seconds."""

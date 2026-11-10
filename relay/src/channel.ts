@@ -49,6 +49,7 @@ export interface Env {
   SETTLE_CODE_SECONDS?: string; // (tests) how long a settling code lasts (settle.ts's SETTLE_CODE_MS: 600)
   WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" or an "activity" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
   ALMANAC_UPSTREAM?: string; // (tests) the almanac's sources all fetched under this address instead of the real hosts (almanac.ts's urls)
+  TEST_FORGET?: string; // (tests) "1": POST /test/forget puts the Directory to sleep (index.ts), to see what its storage brings back
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
@@ -428,10 +429,32 @@ export class Channel extends DurableObject<Env> {
       const row = this.listing(), line = JSON.stringify({ ...row, at: 0 });
       if (line === this.listingRow) return;
       this.listingRow = line;
-      this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
-      this.ctx.waitUntil(this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) })
+      this.ctx.waitUntil(this.tellDirectory("/listed", JSON.stringify(row))
         .then((r) => { if (!r.ok) this.listingRow = ""; }, () => { this.listingRow = ""; })); // (told again at the next change)
     }, LISTING_WAIT);
+  }
+
+  /** The Directory's stub, kept so what's told arrives in the order it was told. */
+  dir(): DurableObjectStub {
+    return (this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory")));
+  }
+
+  /** Something told to the Directory (a PUT: a listing row, a report's events, a star). A stub whose request fails is
+   *  broken for good once the Directory's been reset (11/10/2026: seen under `wrangler dev`; a deploy, or Cloudflare
+   *  moving the object, resets it), and a live channel never sleeps, so every telling after it failed too while it stayed
+   *  on air. The stub's dropped and the telling sent once more on a new one; it rejects only if that fails too. */
+  async tellDirectory(path: string, body: string): Promise<Response> {
+    try {
+      return await this.dir().fetch("https://dir" + path, { method: "PUT", body });
+    } catch {
+      this.directory = null;
+    }
+    try {
+      return await this.dir().fetch("https://dir" + path, { method: "PUT", body });
+    } catch (e) {
+      this.directory = null;
+      throw e;
+    }
   }
 
   /** A field report's events (array.ts) told to the Directory, for the Array's feed (11/08/2026): only while this
@@ -441,8 +464,7 @@ export class Channel extends DurableObject<Env> {
     if (!this.name || !this.live() || this.meta.keyHash === null || this.meta.code) return;
     const events = arrayEvents(report);
     if (!events.length) return;
-    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
-    this.ctx.waitUntil(this.directory.fetch("https://dir/array", { method: "PUT", body: JSON.stringify({ channel: this.name, events }) })
+    this.ctx.waitUntil(this.tellDirectory("/array", JSON.stringify({ channel: this.name, events }))
       .then(() => undefined, () => undefined)); // (one lost is one less "+1")
   }
 
@@ -865,8 +887,7 @@ export class Channel extends DurableObject<Env> {
   takeStar(star: StarReport | undefined, fields: Fields) {
     if (!star || !this.name || fields.off === true || typeof fields.paused === "string") return;
     const listed = this.meta.keyHash !== null && !this.meta.code && !this.meta.pending;
-    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
-    this.ctx.waitUntil(this.directory.fetch("https://dir/stars", { method: "PUT", body: JSON.stringify({ channel: this.name, star, listed }) })
+    this.ctx.waitUntil(this.tellDirectory("/stars", JSON.stringify({ channel: this.name, star, listed }))
       .then(() => undefined, () => undefined)); // (one lost: the next outstation to see it tells of it)
   }
 
@@ -1597,11 +1618,17 @@ export class Channel extends DurableObject<Env> {
     if (this.inviting.has(player)) return taken();
     this.inviting.add(player);
     try {
-      const dir = (this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory")));
+      const dir = this.dir();
       const row = "https://dir/?name=" + encodeURIComponent(player);
       // the name in the Directory first (only if nobody has it), then the new channel's key; the row taken back if the
       // key can't be made
-      const r = await dir.fetch(row + "&by=" + encodeURIComponent(this.name), { method: "PUT" });
+      let r: Response;
+      try {
+        r = await dir.fetch(row + "&by=" + encodeURIComponent(this.name), { method: "PUT" });
+      } catch {
+        this.directory = null; // (a stub that failed: a new one next time, tellDirectory's; not sent again here, as the
+        return json({ error: "the invite didn't go through: try again" }, 503); // name may have been taken by it)
+      }
       if (r.status === 409) return taken();
       if (!r.ok) return json({ error: "the invite didn't go through: try again" }, 503);
       let minted: Response | null = null;
@@ -1682,10 +1709,10 @@ export class Channel extends DurableObject<Env> {
       if (home.near === this.name) return settleAnswer({ error: "that's your own outstation" }, 400, true);
       let given: boolean;
       try {
-        this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
-        const r = await this.directory.fetch("https://dir/given?name=" + encodeURIComponent(home.near));
+        const r = await this.dir().fetch("https://dir/given?name=" + encodeURIComponent(home.near));
         given = ((await r.json()) as { given: boolean }).given === true;
       } catch {
+        this.directory = null; // (a stub that failed: a new one next time, tellDirectory's)
         return settleAnswer({ error: "the relay couldn't look for that outstation just then: try again" }, 503, true);
       }
       if (!given) return settleAnswer({ error: "no outstation called that here" }, 400, true);
@@ -1715,9 +1742,8 @@ export class Channel extends DurableObject<Env> {
     if (!this.name) return;
     const row = this.listing();
     this.listingRow = JSON.stringify({ ...row, at: 0 });
-    this.directory ??= this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
     try {
-      const r = await this.directory.fetch("https://dir/listed", { method: "PUT", body: JSON.stringify(row) });
+      const r = await this.tellDirectory("/listed", JSON.stringify(row));
       if (!r.ok) this.listingRow = "";
     } catch {
       this.listingRow = ""; // (told again at the next change; and the Directory asks a row it hasn't had in a while)
