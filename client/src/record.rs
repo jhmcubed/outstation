@@ -4,7 +4,8 @@
 //! The record: what the relay passes this outstation's own desk ({"mine"}: following's square, what they're doing,
 //! their Array events) and the status line's live or dark, one JSON line each, appended to
 //! %APPDATA%\outstation\record\<YYYY-MM>.jsonl (desk.rs hands each line here). Only while the app's open; nothing finer
-//! than the relay already has. Plain JSON on this PC: it's the player's own.
+//! than the relay already has, but the exact path (`here`, with the plugin's "Record my exact path for my year" on,
+//! 11/10/2026), which the relay passes only to this desk and never keeps. Plain JSON on this PC: it's the player's own.
 //!
 //! The copy (with "keep an encrypted copy on the relay" on): each day's lines from this PC, sealed with the record key
 //! (recordfmt.rs: AES-256-GCM, a key only the player's own computers hold) and uploaded under an id that says nothing,
@@ -23,6 +24,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const YEAR_PAGE: &str = "https://ghillie.wiki/outside";
 /// a heartbeat at most this often while a place or an activity is held (docs/record.md, "The local record")
 const HEARTBEAT_MS: i64 = 60_000;
+/// the exact path (docs/record.md, "The exact path"): one `here` line written at most this often; one that comes sooner
+/// waits (the latest of them, with its own time) and is written once the time's up, so the tile they stopped on is never
+/// lost
+const HERE_MS: i64 = 3_000;
 /// the copy brought up to date this often while the app runs (and on going dark, and when asked)
 const SYNC_EVERY: Duration = Duration::from_secs(3600);
 const FIRST_SYNC: Duration = Duration::from_secs(60);
@@ -53,6 +58,12 @@ struct Held {
     /// what was last written of each (None: nothing yet since the desk came up)
     place: Option<Value>,
     activity: Option<Value>,
+    /// the exact path's last `here` line (its value, its `t`, and when it was written by this PC's clock), and the
+    /// latest that came too soon after it (its `at`, its value), waiting
+    here: Option<Value>,
+    here_t: i64,
+    here_wrote: i64,
+    here_waiting: Option<(i64, Value)>,
     live: Option<bool>,
     /// when a place or activity line was last written (this PC's clock), for the heartbeat
     last: i64,
@@ -102,16 +113,51 @@ impl Recorder {
         if !s.record { return; }
         let now = now_ms();
         let mut h = self.held.lock().unwrap();
-        if !h.up || now - h.last < HEARTBEAT_MS { return; }
+        if !h.up { return; }
+        // (a `here` that came too soon after the last: written once its time's up)
+        if h.here_waiting.is_some() && now - h.here_wrote >= HERE_MS {
+            let (t, v) = h.here_waiting.take().unwrap();
+            h.here = Some(v.clone());
+            h.here_t = t;
+            h.here_wrote = now;
+            drop(h);
+            self.write(&fmt::line(t, &[("here", &v)]), t);
+            h = self.held.lock().unwrap();
+        }
+        if now - h.last < HEARTBEAT_MS { return; }
         let place = h.place.clone().filter(|v| !v.is_null());
         let activity = h.activity.clone().filter(|v| !v.is_null());
-        if place.is_none() && activity.is_none() { return; }
+        let here = h.here.clone().filter(|v| !v.is_null());
+        if place.is_none() && activity.is_none() && here.is_none() { return; }
         let mut fields: Vec<(&str, &Value)> = Vec::new();
         if let Some(p) = &place { fields.push(("where", p)); }
         if let Some(a) = &activity { fields.push(("activity", a)); }
+        if let Some(x) = &here { fields.push(("here", x)); }
         h.last = now;
         drop(h);
         self.write(&fmt::line(now, &fields), now);
+    }
+
+    /// The exact path's `here` (docs/record.md, "The exact path"): written as it comes, but at most one line every
+    /// HERE_MS (one sooner waits, the latest of them, for tick); null at once, if a tile was the last said.
+    fn take_here(&self, new: &Value, at: i64, now: i64) {
+        let mut h = self.held.lock().unwrap();
+        if new.is_null() {
+            h.here_waiting = None;
+            if !h.here.as_ref().is_some_and(|v| !v.is_null()) { return; }
+        } else if h.here.as_ref() == Some(new) {
+            h.here_waiting = None;
+            return;
+        } else if h.here.is_some() && at - h.here_t < HERE_MS {
+            h.here_waiting = Some((at, new.clone()));
+            return;
+        }
+        h.here = Some(new.clone());
+        h.here_t = at;
+        h.here_wrote = now;
+        h.last = now;
+        drop(h);
+        self.write(&fmt::line(at, &[("here", new)]), at);
     }
 
     /// A line from the desk: {"mine": {...}} (the owner's own, docs/record.md) or a status line ({"relay": {"live"}}).
@@ -122,6 +168,9 @@ impl Recorder {
             let at = m.get("at").and_then(|x| x.as_i64()).filter(|t| *t > 0).unwrap_or(now);
             if let Some(e) = m.get("event").filter(|e| e.is_object()) {
                 self.write(&fmt::line(at, &[("event", e)]), at);
+            }
+            if let Some(new) = m.get("here").filter(|x| x.is_null() || x.is_object()) {
+                self.take_here(new, at, now);
             }
             for (field, which) in [("where", 0), ("activity", 1)] {
                 let Some(new) = m.get(field) else { continue };
@@ -372,4 +421,51 @@ pub fn local_size(dir: &Path) -> (usize, u64) {
         }
     }
     (days.len(), bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn lines(dir: &Path) -> Vec<Value> {
+        let mut out: Vec<Value> = Vec::new();
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().is_some_and(|x| x == "jsonl") {
+                for l in std::fs::read_to_string(&p).unwrap().lines() { out.push(serde_json::from_str(l).unwrap()); }
+            }
+        }
+        out.sort_by_key(|v| v["t"].as_i64());
+        out
+    }
+
+    /// The exact path (docs/record.md, "The exact path"): a `here` line as it comes, at most one every 3 s, the
+    /// latest that came too soon written once its time's up, the same tile not again, null at once.
+    #[test]
+    fn here_lines_at_most_one_every_three_seconds() {
+        let dir = std::env::temp_dir().join(format!("outstation-record-test-{}", now_ms()));
+        let r = Recorder::new(dir.clone());
+        r.on.store(true, Ordering::Relaxed);
+        r.up();
+        let at = 1_794_268_800_000i64;
+        let tile = |x: i64| json!({"x": x, "y": 3218, "plane": 0, "world": 302});
+        let mine = |h: Value, t: i64| json!({"mine": {"here": h, "at": t}});
+        r.take(&mine(tile(3222), at));
+        r.take(&mine(tile(3222), at + 3_500));                  // (the same tile: nothing)
+        r.take(&mine(tile(3223), at + 4_000));
+        r.take(&mine(tile(3224), at + 5_000));                  // (too soon: waits...)
+        r.take(&mine(tile(3225), at + 6_000));                  // (...and a later one takes its place)
+        {
+            let mut h = r.held.lock().unwrap();
+            h.here_wrote -= HERE_MS;                            // (its time's up)
+        }
+        let s = Settings { record: true, ..Settings::default() };
+        r.tick(&s);
+        r.take(&mine(Value::Null, at + 6_500));                 // (null at once)
+        r.take(&mine(Value::Null, at + 7_000));                 // (and once)
+        let got: Vec<(i64, Value)> = lines(&dir).into_iter().map(|v| (v["t"].as_i64().unwrap(), v["here"].clone())).collect();
+        assert_eq!(got, vec![(at, tile(3222)), (at + 4_000, tile(3223)), (at + 6_000, tile(3225)), (at + 6_500, Value::Null)]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
