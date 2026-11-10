@@ -554,6 +554,28 @@ sockets, so Cloudflare puts it to sleep about 10 seconds after its last request,
 and was gone: seen live on 11/10/2026, a Giant Mole kill and a pet, with `GET /array/events` empty minutes later.) On
 the Python relay in memory, while it runs: a restart starts it empty, and ids still go up.
 
+**The keeper's backfill** (11/10/2026, Jace: his pet, lost to the Directory's sleeps that morning, put back on the
+record): `POST /admin/array` with the keeper's token (`Authorization: Bearer <ADMIN_TOKEN>` on the Worker,
+`--admin-token` on the Python relay; 403 without it, 405 for anything but `POST`), for a real event the feed lost:
+
+    {"channel": "<channel>", "events": [{"kind": "pet", "name": "Baby mole", "at": 1794286233000}, ...]}
+
+- Each event exactly as a report would have made it (the table above): one of the six kinds, only its own fields, each
+  as the relay would have written it (a name one line of 60 characters at most, as it stands; a number whole, 0 to
+  2⁵³ − 1; a kill's `boss` and `kc`, a level's `skill` and `level`, and a drop's `value` of 1,000,000 or more, needed),
+  and `at`, when it happened (ms), not after now. 50 at most at once. Anything else is 400 `{"error"}`, naming the
+  event and why, and nothing's added.
+- Only for a channel handed out (404 otherwise) and on the open outstations' list, no watch code and not an invite
+  waiting (409 otherwise): only such a channel's reports ever make events.
+- Each goes in its place by `at`, after any event with the same time or earlier, with an `id` between its neighbours'
+  (its own `at` when that fits), so the feed stays in `id` order and every cursor still works. One with no room there
+  (its neighbours' ids one apart) gets a new `id` at the end, as an event that came now would, and keeps its own `at`:
+  so the feed's `at`s aren't always in order, its `id`s always are. A page already past its place doesn't get it (it's
+  history, not news); a read without `since`, or from a cursor before it, does.
+- Not counted against the outstation's 10 a minute, and it doesn't use any of them. When the feed's full (500), none
+  older than its oldest (it would go at once): 400.
+- 200 `{"events": [...]}`: each as kept, with its `id` and `channel`. It's kept as the rest are (above).
+
 **For tests:** `POST /test/forget` (204) puts the Worker's Directory to sleep as Cloudflare does, everything in its
 memory gone, so a test can see what its storage brings back. Only with the Worker's `TEST_FORGET` var at `"1"` (never on
 Cloudflare: without it the route is 404) and relay.py's `--test-forget` (where it forgets nothing: the process's memory

@@ -64,6 +64,7 @@
 // "+1"; array.ts): a kill, a level, a pet, a big drop, a log slot or a clue, from each open outstation's field reports
 // while it's live, kept in the Directory's storage (the last 500, since 11/10/2026; one channel adds 10 a minute at most):
 //   GET    /array/events?since=<cursor>   {"events": [{"id", "at", "channel", "kind", ...}], "next": <cursor>}
+//   POST   /admin/array  {"channel", "events": [{"kind", ..., "at"}]}   the keeper's: a real event the feed lost, put back
 //
 // Settling (11/08/2026; settle.ts): where an outstation stands on outside.wiki's globe, chosen by its owner. The app
 // trades its key for a one-time code; the globe page, opened with only the code, checks it and settles with it:
@@ -85,7 +86,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
 import { Aether } from "./aether";
-import { type ArrayEvent, ArrayFeed, arrayAnswer, arraySince } from "./array";
+import { type ArrayEvent, ArrayFeed, type Lost, arrayAnswer, arrayBackfill, arraySince } from "./array";
 import { type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
@@ -229,6 +230,15 @@ export class Directory extends DurableObject<Env> {
         return new Response(null, { status: 204 });
       }
       return arrayAnswer((await this.arrayFeed()).read(arraySince(url.searchParams.get("since")) ?? undefined));
+    }
+    if (url.pathname === "/array/backfill" && request.method === "PUT") {
+      // the keeper's (admin(), its events already checked): only for a channel handed out
+      const { channel, events } = (await request.json()) as { channel: string; events: Lost[] };
+      if (!(await this.givenNames()).has(channel)) return Response.json({ error: "no outstation called that here" }, { status: 404 });
+      const feed = await this.arrayFeed(), got = feed.backfill(channel, events);
+      if ("error" in got) return Response.json(got, { status: 400 });
+      await this.ctx.storage.put("array", feed.saved());
+      return Response.json(got);
     }
     if (url.pathname === "/stars") {
       const list = await this.starList();
@@ -500,6 +510,24 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
     if (request.method === "POST") return dir.fetch("https://dir/almanac/force", { method: "POST" });
     return new Response(null, { status: 405 });
   }
+  if (parts[1] === "array" && parts.length === 2) {
+    // the keeper's backfill (11/10/2026; array.ts's arrayBackfill): a real event the feed lost, put back in its place.
+    // Only for a channel handed out and on the open outstations' list (no watch code, not an invite waiting), as only
+    // such a channel's reports ever make events.
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const raw = await request.text();
+    if (raw.length > 16 * 1024) return Response.json({ error: "16 KB at most" }, { status: 413 });
+    let body: unknown = null;
+    try { body = JSON.parse(raw); } catch { /* (below) */ }
+    const channel = (body && typeof body === "object" && (body as { channel?: unknown }).channel) || "";
+    if (typeof channel !== "string" || !NAME.test(channel)) return Response.json({ error: "channel: which outstation" }, { status: 400 });
+    const got = arrayBackfill(body);
+    if ("error" in got) return Response.json(got, { status: 400 });
+    const row = (await (await channelStub(env, channel).fetch(toChannel(new Request(request.url), channel, "/_listing"))).json()) as Listing;
+    if (!row.set) return Response.json({ error: "no outstation called that here" }, { status: 404 });
+    if (row.code || row.pending) return Response.json({ error: "that outstation isn't on the open list: its events never go on the feed" }, { status: 409 });
+    return dir.fetch(new Request("https://dir/array/backfill", { method: "PUT", body: JSON.stringify({ channel, events: got.events }) }));
+  }
   if (parts[1] === "aether") {
     // the aether's keeper (aether.ts): the lines with who wrote each, and taking one back or banning its writer
     const aether = env.AETHER.get(env.AETHER.idFromName("aether"));
@@ -591,7 +619,7 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
-    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether" || parts[1] === "almanac")) return admin(request, env, parts);
+    if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether" || parts[1] === "almanac" || parts[1] === "array")) return admin(request, env, parts);
 
     // the aether (11/07/2026; aether.ts): one room for every outstation and visitor, and its read for a page
     if (parts[0] === "aether" && parts.length === 1) {

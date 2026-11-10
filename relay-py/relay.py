@@ -125,6 +125,8 @@ outstation and every visitor on the relay.
 The Array's events (11/08/2026; docs/protocol.md "The Array's events"; the Worker's array.ts, the same): what's
 happening across the open outstations, for outside.wiki's front page (each outstation's icon pops "+1").
     read:      GET http://HOST:PORT/array/events?since=<cursor>      {"events": [...], "next": <cursor>}
+    keeper:    POST /admin/array {"channel", "events": [{"kind", ..., "at": ms}]}   (--admin-token) a real event the feed
+               lost, put back in its place by when it happened (array_backfill, ArrayFeed.backfill; 11/10/2026)
   Each event is {"id", "at", "channel", "kind", ...}: a kill, a level (one a skill), a pet, a drop worth 1,000,000 or
   more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
   GET /channels (no watch code). The last ARRAY_KEPT in memory, for as long as the relay runs (the Worker keeps them in
@@ -1036,6 +1038,69 @@ def array_events(report):
     return []
 
 
+# the keeper's backfill (POST /admin/array, 11/10/2026): a real event the feed lost, put back in its place. Each kind's
+# fields as array_events makes them: (field, what it is, needed). ARRAY_BACKFILL at most at once. The Worker's
+# arrayBackfill and ArrayFeed.backfill (array.ts), the same.
+ARRAY_BACKFILL = 50
+ARRAY_KINDS = {"kill": [("boss", "word", True), ("kc", "whole", True)],
+               "level": [("skill", "skill", True), ("level", "whole", True)],
+               "pet": [("name", "word", False)],
+               "loot": [("name", "word", False), ("value", "loot", True)],
+               "clog": [("name", "word", False)],
+               "clue": [("tier", "word", False), ("count", "whole", False)]}
+
+
+def array_backfill(body, now=None):
+    """The keeper's events ({"channel", "events": [{"kind", ...its fields, "at": ms}]}), each exactly as array_events
+    would have made it (the same kinds and fields, a name one line of ARRAY_WORD at most, a number whole; a kill's boss
+    and count, a level's skill and level, a drop's value of ARRAY_LOOT or more needed; nothing else), with when it
+    happened, not after now: (events, None), or (None, why not)."""
+    now = int(time.time() * 1000) if now is None else now
+    lst = body.get("events") if isinstance(body, dict) else None
+    if not isinstance(lst, list) or not lst:
+        return None, "events: a list of one event or more"
+    if len(lst) > ARRAY_BACKFILL:
+        return None, "%d events at most at once" % ARRAY_BACKFILL
+    out = []
+    for n, e in enumerate(lst):
+        def no(why):
+            return None, "event %d: %s" % (n + 1, why)
+        if not isinstance(e, dict):
+            return no("not an event")
+        fields = ARRAY_KINDS.get(e.get("kind")) if isinstance(e.get("kind"), str) else None
+        if fields is None:
+            return no("kind is one of " + ", ".join(ARRAY_KINDS))
+        at = array_whole(e.get("at")) if "at" in e else None
+        if at is None:
+            return no("at: when it happened, in ms")
+        if at > now:
+            return no("at is after now")
+        for k in e:
+            if k not in ("kind", "at") and not any(f == k for f, _, _ in fields):
+                return no("a %s has no %s" % (e["kind"], k))
+        ev = {"kind": e["kind"]}
+        for f, what, needed in fields:
+            if f not in e:
+                if needed:
+                    return no("a %s needs its %s" % (e["kind"], f))
+                continue
+            v = e[f]
+            if what == "whole":
+                ok = array_whole(v) is not None
+            elif what == "loot":
+                ok = array_whole(v) is not None and v >= ARRAY_LOOT
+            else:
+                ok = isinstance(v, str) and array_word(v) == v and (what != "skill" or bool(GAME_SKILL.fullmatch(v)))
+            if not ok:
+                return no("value: a whole number, %d or more" % ARRAY_LOOT if what == "loot" else
+                          "%s: a whole number" % f if what == "whole" else
+                          "%s: one line of %d characters at most%s" % (f, ARRAY_WORD, ", a skill's name" if what == "skill" else ""))
+            ev[f] = array_whole(v) if what in ("whole", "loot") else v
+        ev["at"] = at
+        out.append(ev)
+    return out, None
+
+
 class ArrayFeed:
     """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory while
     the relay runs (the Worker's ArrayFeed keeps them in its Directory's storage, 11/10/2026). An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
@@ -1063,6 +1128,35 @@ class ArrayFeed:
         if times:
             self.recent[channel] = times
         return added
+
+    def backfill(self, channel, lost, now=None):
+        """The keeper's backfill (array_backfill's events, for a channel claimed and listed): each put in its place by
+        when it happened, with an id between its neighbours' (its own ms when that fits), so the feed stays in id order
+        and every cursor still works. One with no room there (its neighbours' ids one apart) gets a new id at the end,
+        as a new event would, and keeps its own time. Counted against nothing. None older than the oldest kept when the
+        feed is full (it would go at once): (the events kept, None), or (None, why not) and nothing added."""
+        now = int(time.time() * 1000) if now is None else now
+        events = list(self.events)
+        if len(events) >= ARRAY_KEPT and any(e["at"] < events[0]["at"] for e in lost):
+            return None, "older than the feed holds now (its oldest is from %d)" % events[0]["at"]
+        kept = []
+        for e in sorted(lost, key=lambda e: e["at"]):
+            at = e["at"]
+            i = len(events)
+            while i > 0 and events[i - 1]["at"] > at:
+                i -= 1
+            lo = events[i - 1]["id"] if i > 0 else 0
+            hi = events[i]["id"] if i < len(events) else None
+            ident = max(at, lo + 1) if hi is None else min(max(at, lo + 1), hi - 1)
+            if ident <= lo:             # (no room between its neighbours: a new id, at the end)
+                ident = self.last = max(now, self.last + 1)
+                i = len(events)
+            self.last = max(self.last, ident)
+            k = dict({"id": ident, "at": at, "channel": channel}, **{f: v for f, v in e.items() if f != "at"})
+            events.insert(i, k)
+            kept.append(k)
+        self.events = deque(events[-ARRAY_KEPT:], maxlen=ARRAY_KEPT)
+        return kept, None
 
     def read(self, since=None):
         """GET /array/events: without since the last ARRAY_LATEST, with it the first ARRAY_PAGE after it; next, the
@@ -1842,6 +1936,9 @@ class Relay:
         if path == ["admin", "almanac"] and not key:
             await self.almanac_keeper(writer, method, headers)
             return
+        if path == ["admin", "array"] and not key:
+            await self.array_keeper(reader, writer, method, headers)
+            return
         if path[:2] == ["admin", "aether"] and not key:
             await self.aether_keeper(reader, writer, method, headers, path)
             return
@@ -2530,6 +2627,58 @@ class Relay:
             except Exception as e:  # noqa: BLE001 (never the loop's end)
                 self.log("the almanac: %s" % e)
             await asyncio.sleep(60)
+
+    async def array_keeper(self, reader, writer, method, headers):
+        """POST /admin/array {"channel", "events": [{"kind", ..., "at"}]} (11/10/2026; the Worker's, the same), with
+        --admin-token: the keeper puts a real event the Array's feed lost back in its place (array_backfill,
+        ArrayFeed.backfill), for a channel claimed and on the open outstations' list (only such a channel's reports ever
+        make events): 200 {"events": [as kept]}; 400 {"error"}; 404 for a channel nobody's claimed; 409 for a hidden one."""
+        async def answer(status, body=None, plain=None):
+            data = json.dumps(body).encode() if body is not None else (plain or b"")
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode()
+                         + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        auth = headers.get("authorization", "").encode("latin-1")
+        if len(self.admin_token) < 16 or not hmac.compare_digest(auth, ("Bearer " + self.admin_token).encode("utf-8")):
+            return await answer("403 Forbidden", plain=b"no")
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        try:
+            if headers.get("transfer-encoding", "").lower() == "chunked":
+                raw = await read_chunked(reader)
+            else:
+                n = int(headers.get("content-length", "0") or 0)
+                if n > 16 * 1024:
+                    return await answer("413 Payload Too Large", {"error": "16 KB at most"})
+                raw = await reader.readexactly(n)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request")
+        if len(raw) > 16 * 1024:
+            return await answer("413 Payload Too Large", {"error": "16 KB at most"})
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        channel = body.get("channel") if isinstance(body, dict) else None
+        if not isinstance(channel, str) or not CHANNEL_NAME.fullmatch(channel):
+            return await answer("400 Bad Request", {"error": "channel: which outstation"})
+        events, why = array_backfill(body)
+        if why:
+            return await answer("400 Bad Request", {"error": why})
+        ch = self.channels.get(channel)
+        if ch is None or ch.key is None:
+            return await answer("404 Not Found", {"error": "no outstation called that here"})
+        if not ch.listed():
+            return await answer("409 Conflict", {"error": "that outstation isn't on the open list: its events never go on the feed"})
+        kept, why = self.array.backfill(channel, events)
+        if why:
+            return await answer("400 Bad Request", {"error": why})
+        self.log("array     the keeper put back %d on %s" % (len(kept), channel))
+        return await answer("200 OK", {"events": kept})
 
     async def aether_keeper(self, reader, writer, method, headers, path):
         """The aether's keeper (11/07/2026; the Worker's, the same), with --admin-token (Authorization: Bearer <it>):

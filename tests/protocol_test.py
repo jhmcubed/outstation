@@ -2522,6 +2522,157 @@ class Kept(Base):
         self.assertIsNone(await self.star_now())
 
 
+class Backfill(Base):
+    """The keeper's backfill (11/10/2026, Jace: his pet, lost to the Directory's sleeps, back on the record): POST
+    /admin/array {"channel", "events": [{"kind", ..., "at"}]} puts a real event the feed lost back in its place by when
+    it happened, with an id between its neighbours' (or, with no room there, a new one at the end, its time kept), for a
+    channel handed out and on the open list. Each event exactly as a report would have made it; counted against nothing."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        if not WORKER:
+            tx = await self.tx()                                               # (relay.py: the channel's claimed by it)
+            await next_of(tx, "relay")
+            tx.close()
+            await self.pause()
+
+    @staticmethod
+    def keeper(body, auth=True):
+        """(status, JSON or None) of POST /admin/array, an error's JSON too."""
+        req = urllib.request.Request(http_url() + "/admin/array", method="POST", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json",
+                                              **({"Authorization": "Bearer " + ADMIN} if auth else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read() or b"null")
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            try:
+                return e.code, json.loads(raw) if raw else None
+            except ValueError:
+                return e.code, None
+
+    async def put_back(self, events, channel=None, auth=True):
+        return await asyncio.to_thread(self.keeper, {"channel": channel or self.ch, "events": events}, auth)
+
+    @staticmethod
+    def feed():
+        return array_since(0)
+
+    def in_order(self, feed):
+        ids = [e["id"] for e in feed]
+        self.assertEqual(ids, sorted(set(ids)))
+
+    async def test_a_lost_pet_goes_back_in_its_place_and_stays(self):
+        await self.tx()
+        await self.pause()
+        since = (await asyncio.to_thread(array_read))[2]["next"]
+        await ArrayEvents.dink(self, {"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2500}})
+        await ArrayEvents.dink(self, {"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2501}})
+        self.since = since
+        a, b = await ArrayEvents.mine(self, 2)
+        at = a["at"] - 60_000                                                  # (a minute before the first kill)
+        status, got = await self.put_back([{"kind": "pet", "name": "Baby mole", "at": at}])
+        self.assertEqual(status, 200)
+        pet = got["events"][0]
+        self.assertEqual(list(pet), ["id", "at", "channel", "kind", "name"])
+        self.assertEqual({k: pet[k] for k in ("at", "channel", "kind", "name")},
+                         {"at": at, "channel": self.ch, "kind": "pet", "name": "Baby mole"})
+        self.assertLess(pet["id"], a["id"])
+        feed = await asyncio.to_thread(self.feed)
+        self.in_order(feed)
+        self.assertIn(pet, feed)
+        mine = [e for e in feed if e["channel"] == self.ch]
+        self.assertEqual(mine, [pet, a, b])                                    # (in its place by when it happened)
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % b["id"])
+        self.assertEqual(body, {"events": [], "next": b["id"]})                # (a page past it isn't sent it again)
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % (pet["id"] - 1))
+        self.assertEqual(body["events"][0], pet)
+        if (await asyncio.to_thread(http, "POST", "/test/forget"))[0] == 204:
+            self.assertIn(pet, await asyncio.to_thread(self.feed))             # (kept, as the rest)
+
+    async def test_with_no_room_between_its_neighbours_it_gets_a_new_id_and_keeps_its_time(self):
+        t = int(time.time() * 1000) - 2000
+        status, got = await self.put_back([{"kind": "clog", "name": "Tanzanite fang", "at": t},
+                                           {"kind": "clog", "name": "Magic fang", "at": t},
+                                           {"kind": "clog", "name": "Serpentine visage", "at": t + 1}])
+        self.assertEqual(status, 200)
+        self.assertEqual([e["id"] for e in got["events"]][1:], [got["events"][0]["id"] + 1, got["events"][0]["id"] + 2])
+        before = max(e["id"] for e in await asyncio.to_thread(self.feed))
+        status, got = await self.put_back([{"kind": "clue", "tier": "Elite", "count": 12, "at": t}])
+        self.assertEqual(status, 200)
+        late = got["events"][0]
+        self.assertEqual((late["at"], late["tier"], late["count"]), (t, "Elite", 12))
+        self.assertGreater(late["id"], before)                                 # (at the end, as a new event would be)
+        feed = await asyncio.to_thread(self.feed)
+        self.in_order(feed)
+        self.assertEqual(feed[-1], late)
+
+    async def test_every_kind_exactly_as_a_report_makes_it_and_counted_against_nothing(self):
+        t = int(time.time() * 1000) - 5000
+        lost = [{"kind": "kill", "boss": "Vorkath", "kc": 412, "at": t}, {"kind": "loot", "name": "Skeletal visage", "value": 1206000, "at": t},
+                {"kind": "loot", "value": 1000000, "at": t}, {"kind": "clog", "at": t}, {"kind": "clue", "at": t}, {"kind": "pet", "at": t}]
+        lost += [{"kind": "level", "skill": s, "level": 80, "at": t + 1} for s in SKILLS]   # (twelve: past ten a minute)
+        status, got = await self.put_back(lost)
+        self.assertEqual(status, 200)
+        self.assertEqual([{k: v for k, v in e.items() if k not in ("id", "channel")} for e in got["events"]], lost)
+        await self.tx()
+        await self.pause()
+        self.since = (await asyncio.to_thread(array_read))[2]["next"]
+        await ArrayEvents.dink(self, {"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 81 for s in SKILLS}}})
+        await ArrayEvents.mine(self, 10)
+        self.assertEqual(len(await ArrayEvents.mine(self, wait=self.settle * 5)), 10)   # (its own ten still there)
+
+    async def test_only_the_keeper_only_post_only_an_open_outstation(self):
+        pet = [{"kind": "pet", "name": "Baby mole", "at": int(time.time() * 1000) - 1000}]
+        self.assertEqual((await self.put_back(pet, auth=False))[0], 403)
+        self.assertEqual((await asyncio.to_thread(admin, "GET", "/admin/array"))[0], 405)
+        status, got = await self.put_back(pet, channel="t" + secrets.token_hex(5))
+        self.assertEqual((status, sorted(got)), (404, ["error"]))
+        hidden = "t" + secrets.token_hex(5)
+        if WORKER:
+            key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + hidden))[1]["key"]
+        else:
+            key = "secret-key-" + secrets.token_hex(4)
+        c = await Client().open("%s/transmit/%s?key=%s&code=moss" % (RELAY, hidden, key))
+        self.clients.append(c)
+        await next_of(c, "relay")
+        status, got = await self.put_back(pet, channel=hidden)
+        self.assertEqual((status, sorted(got)), (409, ["error"]))
+        self.assertNotIn(hidden, json.dumps(await asyncio.to_thread(self.feed)))
+
+    async def test_anything_not_an_events_shape_is_refused_and_nothing_added(self):
+        now = int(time.time() * 1000)
+        before = await asyncio.to_thread(self.feed)
+        for bad in ([], [{"kind": "quest", "at": now}], [{"kind": "kill", "boss": "Vorkath", "at": now}],
+                    [{"kind": "kill", "boss": "Vorkath", "kc": 1.5, "at": now}], [{"kind": "level", "skill": "9", "level": 5, "at": now}],
+                    [{"kind": "loot", "value": 999999, "at": now}], [{"kind": "pet", "name": "Baby\nmole", "at": now}],
+                    [{"kind": "pet", "name": "x" * 61, "at": now}], [{"kind": "pet", "name": "", "at": now}],
+                    [{"kind": "pet", "boss": "Giant Mole", "at": now}], [{"kind": "pet", "at": now + 600_000}],
+                    [{"kind": "pet"}], [{"kind": "pet", "at": "1794286233000"}], [{"kind": "pet", "at": -1}],
+                    [{"kind": "pet", "name": "Baby mole", "at": now}, "pet"],
+                    [{"kind": "pet", "at": now - 1000}] * 51):
+            status, got = await self.put_back(bad)
+            self.assertEqual((status, sorted(got)), (400, ["error"]), bad)
+        status, got = await asyncio.to_thread(self.keeper, {"events": [{"kind": "pet", "at": now}]})
+        self.assertEqual(status, 400)
+        self.assertEqual(await asyncio.to_thread(self.feed), before)
+
+    async def test_none_older_than_a_full_feed_holds(self):
+        t = int(time.time() * 1000) - 600_000
+        for n in range(10):                                                    # (the feed filled: 500 of this channel's)
+            status, _ = await self.put_back([{"kind": "level", "skill": "Mining", "level": 50, "at": t + 50 * n + i} for i in range(50)])
+            self.assertEqual(status, 200)
+        feed = await asyncio.to_thread(self.feed)
+        self.assertEqual(len(feed), 500)
+        oldest = feed[0]["at"]
+        status, got = await self.put_back([{"kind": "pet", "at": oldest - 1}])
+        self.assertEqual((status, sorted(got)), (400, ["error"]))
+        status, got = await self.put_back([{"kind": "pet", "at": oldest}])
+        self.assertEqual(status, 200)
+        self.assertEqual(len(await asyncio.to_thread(self.feed)), 500)
+
+
 async def nothing_game(c, wait=0.5):
     """The game line someone just come is sent, or None if none comes in `wait` seconds."""
     try:

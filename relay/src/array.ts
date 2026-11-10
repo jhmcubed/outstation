@@ -138,6 +138,35 @@ export class ArrayFeed {
     return added;
   }
 
+  /** The keeper's backfill (arrayBackfill's events, for a channel handed out and listed): each put in its place by
+   *  when it happened, with an id between its neighbours' (its own ms when that fits), so the feed stays in id order
+   *  and every cursor still works. One with no room there (its neighbours' ids one apart) gets a new id at the end, as
+   *  a new event would, and keeps its own time. Counted against nothing. None older than the oldest kept when the feed
+   *  is full (it would go at once): the events kept, or why not (and nothing added). */
+  backfill(channel: string, lost: Lost[], now = Date.now()): { events: Kept[] } | { error: string } {
+    if (this.events.length >= ARRAY_KEPT && lost.some((e) => e.at < this.events[0].at)) {
+      return { error: `older than the feed holds now (its oldest is from ${this.events[0].at})` };
+    }
+    const kept: Kept[] = [];
+    for (const e of [...lost].sort((a, b) => a.at - b.at)) {
+      const { at, ...rest } = e;
+      let i = this.events.length;
+      while (i > 0 && this.events[i - 1].at > at) i--;
+      const lo = i > 0 ? this.events[i - 1].id : 0, hi = i < this.events.length ? this.events[i].id : Infinity;
+      let id = Math.min(Math.max(at, lo + 1), hi - 1);
+      if (id <= lo) { // (no room between its neighbours: a new id, at the end)
+        id = this.last = Math.max(now, this.last + 1);
+        i = this.events.length;
+      }
+      this.last = Math.max(this.last, id);
+      const k = { id, at, channel, ...rest } as Kept;
+      this.events.splice(i, 0, k);
+      kept.push(k);
+    }
+    if (this.events.length > ARRAY_KEPT) this.events.splice(0, this.events.length - ARRAY_KEPT);
+    return { events: kept };
+  }
+
   /** GET /array/events: without since the last ARRAY_LATEST, with it the first ARRAY_PAGE after it; next, the cursor for
    *  the next read (the last event's id, or with none, since, or the newest id when since is past it). */
   read(since?: number): { events: Kept[]; next: number } {
@@ -153,6 +182,54 @@ export function arraySince(raw: string | null): number | undefined | null {
   if (!raw) return undefined;
   const n = Number(raw);
   return CURSOR.test(raw) && n <= Number.MAX_SAFE_INTEGER ? n : null;
+}
+
+/** The keeper's backfill (POST /admin/array, 11/10/2026, Jace: a pet lost to the Directory's sleeps, put back on the
+ *  record): {"channel", "events": [{"kind", ...its fields, "at": <ms>}]}. Each event exactly as arrayEvents would have
+ *  made it (the same kinds, the same fields, each field as it would have been: a name one line of ARRAY_WORD at most, a
+ *  number whole; a kill's boss and count, a level's skill and level, and a drop's value of ARRAY_LOOT or more, needed;
+ *  nothing else), with when it happened, not after now. ARRAY_BACKFILL at most at once. The events, or why not. */
+export const ARRAY_BACKFILL = 50;
+const KINDS: Record<string, [string, "word" | "whole" | "skill" | "loot", boolean][]> = {
+  kill: [["boss", "word", true], ["kc", "whole", true]],
+  level: [["skill", "skill", true], ["level", "whole", true]],
+  pet: [["name", "word", false]],
+  loot: [["name", "word", false], ["value", "loot", true]],
+  clog: [["name", "word", false]],
+  clue: [["tier", "word", false], ["count", "whole", false]],
+};
+export type Lost = ArrayEvent & { at: number };
+
+export function arrayBackfill(body: unknown, now = Date.now()): { events: Lost[] } | { error: string } {
+  const list = isObj(body) ? body.events : undefined;
+  if (!Array.isArray(list) || !list.length) return { error: "events: a list of one event or more" };
+  if (list.length > ARRAY_BACKFILL) return { error: `${ARRAY_BACKFILL} events at most at once` };
+  const out: Lost[] = [];
+  for (const [n, e] of list.entries()) {
+    const no = (why: string) => ({ error: `event ${n + 1}: ${why}` });
+    if (!isObj(e)) return no("not an event");
+    const fields = typeof e.kind === "string" && Object.hasOwn(KINDS, e.kind) ? KINDS[e.kind] : undefined;
+    if (!fields) return no("kind is one of " + Object.keys(KINDS).join(", "));
+    const at = whole(e.at);
+    if (at === undefined) return no("at: when it happened, in ms");
+    if (at > now) return no("at is after now");
+    for (const k of Object.keys(e)) if (k !== "kind" && k !== "at" && !fields.some(([f]) => f === k)) return no(`a ${e.kind} has no ${k}`);
+    const ev: Record<string, string | number> = { kind: e.kind as string };
+    for (const [f, what, needed] of fields) {
+      const v = e[f];
+      if (v === undefined) { if (needed) return no(`a ${e.kind} needs its ${f}`); continue; }
+      const ok = what === "whole" ? whole(v) !== undefined
+        : what === "loot" ? whole(v) !== undefined && (v as number) >= ARRAY_LOOT
+        : typeof v === "string" && word(v) === v && (what !== "skill" || SKILL.test(v));
+      if (!ok) {
+        return no(what === "loot" ? `value: a whole number, ${ARRAY_LOOT} or more` : what === "whole" ? `${f}: a whole number`
+                  : `${f}: one line of ${ARRAY_WORD} characters at most${what === "skill" ? ", a skill's name" : ""}`);
+      }
+      ev[f] = v as string | number;
+    }
+    out.push({ ...(ev as ArrayEvent), at });
+  }
+  return { events: out };
 }
 
 /** The read's answers: any page may read them (any origin), and they're never cached. */
