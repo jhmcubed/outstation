@@ -57,6 +57,52 @@ test("the shapes", () => {
   ok(!USER_AGENT.includes("@"));
 });
 
+test("the Outside page's shapes (11/10/2026): periods, stretches, timelines, RuneProfile's parts and pages", () => {
+  const now = Date.UTC(2026, 10, 10, 12), Q = (p: string, q: Record<string, string>) => want(p.split("/").filter(Boolean), null, q, now);
+  strictEqual(Q("lookup/wom/x/gained", { period: "month" })!.url, WOM + "x/gained?period=month");
+  strictEqual(Q("lookup/wom/x/gained", { period: "month" })!.key, "wom:x/gained?period=month");
+  strictEqual(Q("lookup/wom/x/gained", {})!.key, "wom:x/gained?period=week");
+  strictEqual(Q("lookup/wom/x/gained", { period: "forever" }), null);
+  // (a stretch: its end clamped to now upstream, the key as asked; one wholly past an hour ago keeps 30 days)
+  const a = Q("lookup/wom/x/gained", { from: "2026-11-01T07:00:00.000Z", to: "2026-11-30T07:00:00.000Z" })!;
+  strictEqual(a.url, WOM + "x/gained?startDate=2026-11-01T07%3A00%3A00.000Z&endDate=2026-11-10T12%3A00%3A00.000Z");
+  strictEqual(a.key, "wom:x/gained?from=2026-11-01T07:00:00.000Z&to=2026-11-30T07:00:00.000Z");
+  strictEqual(a.fresh, HOUR);
+  const past = Q("lookup/wom/x/gained", { from: "2026-10-01T06:00:00.000Z", to: "2026-11-01T06:00:00.000Z" })!;
+  strictEqual(past.url, WOM + "x/gained?startDate=2026-10-01T06%3A00%3A00.000Z&endDate=2026-11-01T06%3A00%3A00.000Z");
+  strictEqual(past.fresh, 30 * DAY);
+  strictEqual(Q("lookup/wom/x/gained", { from: "2025-02-03T04:05:06.789Z" })!.url,
+    WOM + "x/gained?startDate=2025-02-03T04%3A05%3A06.789Z&endDate=2026-11-10T12%3A00%3A00.000Z");
+  for (const bad of [{ from: "yesterday" }, { from: "2026-11-02T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z" },
+                     { from: "2027-01-01T00:00:00.000Z" }, { from: "2026-11-01T00:00:00.000Z", to: "x" }]) {
+    strictEqual(Q("lookup/wom/x/gained", bad), null, JSON.stringify(bad));
+  }
+  strictEqual(Q("lookup/wom/x/timeline", { metric: "zulrah", period: "year" })!.url, WOM + "x/snapshots/timeline?metric=zulrah&period=year");
+  strictEqual(Q("lookup/wom/x/timeline", { metric: "overall", from: "2025-01-01T00:00:00.000Z" })!.url,
+    WOM + "x/snapshots/timeline?metric=overall&startDate=2025-01-01T00%3A00%3A00.000Z&endDate=2026-11-10T12%3A00%3A00.000Z");
+  strictEqual(Q("lookup/wom/x/timeline", { period: "year" }), null);
+  strictEqual(Q("lookup/wom/x/timeline", { metric: "Zulrah", period: "year" }), null);
+  strictEqual(Q("lookup/wom/x/timeline", { metric: "zulrah" }), null);
+  strictEqual(Q("lookup/wom/x/progress", {})!.url, WOM + "x/achievements/progress");
+  for (const [p, up] of [["skills", "/skills"], ["quests", "/quests"], ["diaries", "/achievement-diaries"],
+                         ["combat", "/combat-achievements/tasks"], ["log", "/collection-log"]]) {
+    strictEqual(Q("lookup/rp/x/" + p, {})!.url, RP + "x" + up);
+  }
+  strictEqual(Q("lookup/rp/x/activities", { limit: "15" })!.url, RP + "x/activities?limit=15");
+  const pg = Q("lookup/rp/x/activities", { limit: "50", activityTypes: "new_item_obtained", cursor: "t-msc:n=7_i-3p" })!;
+  strictEqual(pg.url, RP + "x/activities?limit=50&activityTypes=new_item_obtained&cursor=t-msc%3An%3D7_i-3p");
+  strictEqual(pg.key, "rp:x/activities?limit=50&activityTypes=new_item_obtained&cursor=t-msc%3An%3D7_i-3p");
+  strictEqual(pg.fresh, 6 * HOUR);
+  for (const bad of [{ limit: "0" }, { limit: "51" }, { limit: "5x" }, { cursor: "a b" }, { activityTypes: "DROP" }]) {
+    strictEqual(Q("lookup/rp/x/activities", bad), null, JSON.stringify(bad));
+  }
+  strictEqual(Q("lookup/wom/x/constructor", {}), null);
+  strictEqual(Q("lookup/rp/x/gained", { period: "week" }), null);
+  strictEqual(Q("lookup/wom/x/activities", {}), null);
+  // (anything else in the query is ignored: the same key)
+  strictEqual(Q("lookup/wom/x", { cachebust: "1" })!.key, "wom:x");
+});
+
 test("asked once, then kept while fresh", async () => {
   const r = rig({ [WOM + "sburb"]: okJson({ username: "sburb" }) });
   const a = await r.shelf.read(W("lookup/wom/sburb"));

@@ -40,10 +40,79 @@ ITEM_ID = re.compile(r"^[0-9]{1,6}\.png$")
 METRIC = re.compile(r"^[a-z0-9_]{1,40}\.png$")
 PNG = b"\x89PNG\r\n\x1a\n"
 PARTS = {
-    "wom": {"": ("", HOUR), "achievements": ("/achievements", HOUR), "gained": ("/gained?period=week", HOUR),
+    "wom": {"": ("", HOUR), "achievements": ("/achievements", HOUR), "progress": ("/achievements/progress", HOUR),
             "groups": ("/groups", 6 * HOUR)},
-    "rp": {"": ("", HOUR), "activities": ("/activities?limit=20", 30 * MINUTE)},
+    "rp": {"": ("", HOUR), "skills": ("/skills", HOUR), "quests": ("/quests", HOUR),
+           "diaries": ("/achievement-diaries", HOUR), "combat": ("/combat-achievements/tasks", HOUR),
+           "log": ("/collection-log", HOUR)},
 }
+# (11/10/2026, ghillie.wiki's Outside page: gains and timelines by period or between two moments, activities by page)
+PERIODS = ("day", "week", "month", "year")
+ISO = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$")
+METRIC_KEY = re.compile(r"^[a-z0-9_]{1,40}$")
+CURSOR = re.compile(r"^[A-Za-z0-9_.:=-]{1,200}$")
+RP_TYPES = re.compile(r"^[a-z_]{1,40}(,[a-z_]{1,40}){0,7}$")
+LONG_PAST = 30 * DAY
+
+
+def enc(v):
+    """As JavaScript's encodeURIComponent (the Worker's)."""
+    return urllib.parse.quote(v, safe="-_.!~*'()")
+
+
+def moment(v):
+    """A moment as toISOString makes it, in seconds, or None."""
+    if v is None or not ISO.match(v):
+        return None
+    import datetime
+    try:
+        t = datetime.datetime.strptime(v[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except ValueError:
+        return None
+    t += float("0" + v[19:-1]) if len(v) > 20 else 0.0
+    return t if t >= 1262304000 else None
+
+
+def iso(t):
+    """A moment (seconds) as toISOString makes it."""
+    import datetime
+    d = datetime.datetime.fromtimestamp(t, datetime.timezone.utc)
+    return d.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (d.microsecond // 1000)
+
+
+def part(source, name, q, now):
+    """A part that takes a query: (the key's end, the path after the name, fresh), or None (the Worker's part)."""
+    if source == "wom" and name in ("gained", "timeline"):
+        up, key = ("/gained?", "gained?") if name == "gained" else ("", "timeline")
+        if name == "timeline":
+            if not METRIC_KEY.match(q.get("metric") or ""):
+                return None
+            up = "/snapshots/timeline?metric=" + q["metric"] + "&"
+            key += "?metric=" + q["metric"] + "&"
+        if "from" in q:
+            frm, to = moment(q["from"]), (moment(q["to"]) if "to" in q else None)
+            if frm is None or ("to" in q and to is None) or (to is not None and to <= frm) or frm > now:
+                return None
+            end = now if to is None else min(to, now)
+            return (key + "from=" + q["from"] + ("&to=" + q["to"] if "to" in q else ""),
+                    up + "startDate=" + enc(q["from"]) + "&endDate=" + enc(iso(end)),
+                    LONG_PAST if to is not None and to < now - HOUR else HOUR)
+        period = q.get("period", "week" if name == "gained" else "")
+        if period not in PERIODS:
+            return None
+        return key + "period=" + period, up + "period=" + period, HOUR
+    if source == "rp" and name == "activities":
+        lim = q.get("limit", "20")
+        if not re.match(r"^[1-9][0-9]?$", lim) or not 1 <= int(lim) <= 50:
+            return None
+        if "cursor" in q and not CURSOR.match(q["cursor"]):
+            return None
+        if "activityTypes" in q and not RP_TYPES.match(q["activityTypes"]):
+            return None
+        tail = "limit=" + lim + ("&activityTypes=" + q["activityTypes"] if "activityTypes" in q else "") + \
+            ("&cursor=" + enc(q["cursor"]) if "cursor" in q else "")
+        return "activities?" + tail, "/activities?" + tail, 6 * HOUR if "cursor" in q else 30 * MINUTE
+    return None
 CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "x-lookup-at, x-lookup-stale"}
 
 
@@ -55,18 +124,23 @@ def plain_name(raw):
     return n or None
 
 
-def want(parts, base=None):
-    """The address's parts as {source, key, url, fresh, miss_fresh, json}, or None if it isn't one of the shapes."""
+def want(parts, base=None, q=None, now=None):
+    """The address's parts (and its query, a dict) as {source, key, url, fresh, miss_fresh, json}, or None if it isn't
+    one of the shapes."""
     miss_fresh, is_json = MISS_FRESH, True
+    q, now = q or {}, time.time() if now is None else now
     if len(parts) in (3, 4) and parts[0] == "lookup" and parts[1] in ("wom", "rp"):
-        name, part = plain_name(parts[2]), parts[3] if len(parts) == 4 else ""
-        spec = PARTS[parts[1]].get(part)
-        if not name or not spec or (len(parts) == 4 and not part):
+        name, p = plain_name(parts[2]), parts[3] if len(parts) == 4 else ""
+        if not name or (len(parts) == 4 and not p):
+            return None
+        spec = PARTS[parts[1]].get(p)
+        with_q = None if spec else part(parts[1], p, q, now)
+        if not spec and not with_q:
             return None
         source = parts[1]
-        key = source + ":" + name + ("/" + part if part else "")
-        path = urllib.parse.quote(name, safe="") + spec[0]
-        fresh = spec[1]
+        key = source + ":" + name + ("/" + (with_q[0] if with_q else p) if p else "")
+        path = urllib.parse.quote(name, safe="") + (with_q[1] if with_q else spec[0])
+        fresh = with_q[2] if with_q else spec[1]
     elif len(parts) == 3 and parts[0] == "icon" and parts[1] in ("item", "metric"):
         f = parts[2]
         if not (ITEM_ID if parts[1] == "item" else METRIC).match(f):

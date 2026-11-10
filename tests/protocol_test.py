@@ -99,6 +99,11 @@ LOOKUP_FILES = {"/v2/players/sburb": "wom-sburb.json", "/v2/players/sburb/achiev
                 "/v2/players/sburb/gained?period=week": 500, "/v2/players/nobody": 404,
                 "/v1/accounts/sburb": "rp-sburb.json", "/v1/accounts/sburb/activities?limit=20": "rp-sburb-activities.json",
                 "/v1/accounts/nobody": 400, "/cache/item/icon/4151.png": "item-4151.png",
+                # (the Outside page's shapes, 11/10/2026)
+                "/v2/players/sburb/gained?period=month": "wom-sburb-achievements.json",
+                "/v2/players/sburb/gained?startDate=2026-10-01T06%3A00%3A00.000Z&endDate=2026-11-01T06%3A00%3A00.000Z": "wom-sburb.json",
+                "/v1/accounts/sburb/skills": "rp-sburb.json",
+                "/v1/accounts/sburb/activities?limit=50&activityTypes=new_item_obtained&cursor=abc%3D": "rp-sburb-activities.json",
                 "/gh/wise-old-man/wise-old-man@master/app/public/img/metrics_small/zulrah.png": "metric-zulrah.png"}
 
 
@@ -1031,6 +1036,29 @@ class RoundTwo(Base):
         await b.send(json.dumps({"hello": {"name": "fern", "device": "device-two-bbbb"}}))
         await self.pause()
         return tx, desk, a, b
+
+    async def test_the_transmitter_hears_who_watches_viewers_and_lookers_asking_for_frames(self):
+        # (11/10/2026, docs/protocol.md "Who's watching": with neither, the client sends a frame now and then and no
+        # sound; with no lookers, no small frames)
+        tx = await self.tx()
+        st = await last_status(tx)
+        self.assertEqual((st["viewers"], st["lookers"]), (0, 0))
+        look = await self.connect("watch", "look=1")
+        st = await last_status(tx)
+        self.assertEqual((st or {}).get("lookers", 0), 0)  # (a looker not asking for frames isn't counted: no line, or 0)
+        await look.send(json.dumps({"look": {"frames": True}}))
+        self.assertEqual((await last_status(tx))["lookers"], 1)
+        v = await self.watch()
+        st = await last_status(tx)
+        self.assertEqual((st["viewers"], st["lookers"]), (1, 1))
+        await look.send(json.dumps({"look": {"frames": False}}))
+        self.assertEqual((await last_status(tx))["lookers"], 0)
+        await look.send(json.dumps({"look": {"frames": True}}))
+        self.assertEqual((await last_status(tx))["lookers"], 1)
+        look.close()
+        self.assertEqual((await last_status(tx, settle=1.0))["lookers"], 0)
+        v.close()
+        self.assertEqual((await last_status(tx, settle=1.0))["viewers"], 0)
 
     async def test_a_looker_takes_no_seat_and_gets_few_frames_only_when_it_asks(self):
         tx = await self.tx()
@@ -4175,6 +4203,24 @@ class Lookups(unittest.TestCase):
         n = self.asked("/v2/players/sburb/gained?period=week")
         lookup_read("/lookup/wom/sburb/gained")
         self.assertEqual(self.asked("/v2/players/sburb/gained?period=week"), n)  # (it waits before asking again)
+
+    def test_the_outside_pages_shapes(self):
+        # (11/10/2026: a period, a stretch wholly past (its end as asked), RuneProfile's skills and a page by cursor;
+        # each passed on in one order, whatever order the page's query had, and asked once)
+        for path, upstream in (("/lookup/wom/sburb/gained?period=month", "/v2/players/sburb/gained?period=month"),
+                               ("/lookup/wom/sburb/gained?to=2026-11-01T06:00:00.000Z&from=2026-10-01T06:00:00.000Z",
+                                "/v2/players/sburb/gained?startDate=2026-10-01T06%3A00%3A00.000Z&endDate=2026-11-01T06%3A00%3A00.000Z"),
+                               ("/lookup/rp/sburb/skills", "/v1/accounts/sburb/skills"),
+                               ("/lookup/rp/sburb/activities?cursor=abc%3D&activityTypes=new_item_obtained&limit=50",
+                                "/v1/accounts/sburb/activities?limit=50&activityTypes=new_item_obtained&cursor=abc%3D")):
+            status, _, body = lookup_read(path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(json.loads(body), json.loads(lookup_fixture(LOOKUP_FILES[upstream])), path)
+            lookup_read(path)
+            self.assertEqual(self.asked(upstream), 1, upstream)
+        for path in ("/lookup/wom/sburb/gained?period=forever", "/lookup/wom/sburb/timeline?period=year",
+                     "/lookup/rp/sburb/activities?limit=500", "/lookup/wom/sburb/gained?from=yesterday"):
+            self.assertEqual(lookup_read(path)[0], 404, path)
 
     def test_only_the_shapes(self):
         n = len(UPSTREAM.paths())
