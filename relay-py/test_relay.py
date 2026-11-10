@@ -582,7 +582,10 @@ class ActivityWords(unittest.TestCase):
                   {"skill": "Sailing", "kind": "skilling"}, {"kind": "boss", "boss": "K'ril Tsutsaroth"},
                   {"kind": "boss", "boss": "Moons of Peril"}, {"kind": "raid", "raid": "Theatre of Blood"},
                   {"raid": "The Fractured Archive", "kind": "raid"}, {"kind": "minigame", "minigame": "the Inferno"},
-                  {"kind": "minigame", "minigame": "Sorceress's Garden"}):
+                  {"kind": "minigame", "minigame": "Sorceress's Garden"}, {"kind": "boss", "boss": "Callisto"},
+                  {"kind": "boss", "boss": "Maggot King"}, {"kind": "boss", "boss": "the Gauntlet"},
+                  {"kind": "minigame", "minigame": "Zalcano"}, {"kind": "minigame", "minigame": "Last Man Standing"},
+                  {"kind": "minigame", "minigame": "Castle Wars"}, {"kind": "minigame", "minigame": "Soul Wars"}):
             self.assertEqual(A({"activity": a}), a)
             self.assertIsNot(A({"activity": a}), a)                                      # (a copy)
         self.assertIsNone(A({"activity": None}))
@@ -591,14 +594,15 @@ class ActivityWords(unittest.TestCase):
                   {"activity": {"kind": "idle", "since": 5}}, {"activity": {"kind": "fighting", "with": "Goblin"}},
                   {"activity": {"kind": "skilling"}}, {"activity": {"kind": "skilling", "skill": "Overall"}},
                   {"activity": {"kind": "skilling", "skill": "mining"}}, {"activity": {"kind": "skilling", "skill": 5}},
-                  {"activity": {"kind": "skilling", "skill": ["Mining"]}}, {"activity": {"kind": "boss", "boss": "Callisto"}},
+                  {"activity": {"kind": "skilling", "skill": ["Mining"]}}, {"activity": {"kind": "boss", "boss": "Callisto Jr"}},
+                  {"activity": {"kind": "boss", "boss": "Zalcano"}}, {"activity": {"kind": "boss", "boss": "Wintertodt"}},
+                  {"activity": {"kind": "minigame", "minigame": "the Gauntlet"}},
                   {"activity": {"kind": "boss", "boss": "Vorkath", "kc": 50}}, {"activity": {"kind": "boss"}},
                   {"activity": {"kind": "boss", "boss": "Dharok the Wretched"}},
                   {"activity": {"kind": "raid", "raid": "Chambers of Xeric (CM)"}}, {"activity": {"kind": "raid"}},
                   {"activity": {"kind": "raid", "raid": "the Inferno"}}, {"activity": {"kind": "minigame", "minigame": "Inferno"}},
-                  {"activity": {"kind": "minigame", "minigame": "Last Man Standing"}},
-                  {"activity": {"kind": "minigame", "minigame": "Castle Wars"}},
-                  {"activity": {"kind": "minigame", "minigame": "Soul Wars"}},
+                  {"activity": {"kind": "minigame", "minigame": "LMS - Deserted Island"}},
+                  {"activity": {"kind": "minigame", "minigame": "castle wars"}},
                   {"activity": {"kind": "minigame", "minigame": "the Inferno", "wave": 69}}):
             self.assertIs(A(g), relay._BAD, g)
         self.assertNotIn("activity", relay.game_fields({"world": 302, "activity": {"kind": "idle"}}))   # (never kept)
@@ -631,7 +635,12 @@ class ActivityLists(unittest.TestCase):
             labels.update(re.findall(r'"([^"]+)"', names))
         labels.update(re.findall(r'b\.put\(n, "([^"]+)"\)', bosses))
         labels.update(re.findall(r'b\.put\("[^"]+", "([^"]+)"\)', bosses))
+        places = re.search(r"static final Map<Integer, String> BOSS_REGIONS = regions\((.*?)\);", java, re.S).group(1)
+        labels.update(re.findall(r'"([^"]+)", new int', places))                    # (the Gauntlets, by where)
         self.assertEqual(sorted(labels), list(relay.ACTIVITY_BOSSES))
+        wild = re.search(r"WILDERNESS_BOSSES = .*?asList\((.*?)\)\)\);", java, re.S).group(1)
+        self.assertEqual(len(re.findall(r'"([^"]+)"', wild)), 10)
+        self.assertLessEqual(set(re.findall(r'"([^"]+)"', wild)), set(relay.ACTIVITY_BOSSES))
         self.assertEqual(sorted(relay.ACTIVITY_BOSSES), list(relay.ACTIVITY_BOSSES))       # (sorted, as the docs list them)
 
     def test_the_raids_minigames_and_landing_sites_match_the_workers_and_the_plugins(self):
@@ -643,8 +652,12 @@ class ActivityLists(unittest.TestCase):
             body = re.search(r"static final Map<Integer, String> %s = regions\((.*?)\);" % name, java, re.S).group(1)
             self.assertEqual(sorted(re.findall(r'"([^"]+)", new int', body)), sorted(kept))
         self.assertEqual(sorted(relay.ACTIVITY_MINIGAMES), list(relay.ACTIVITY_MINIGAMES))
-        for pvp in ("Last Man Standing", "Castle Wars", "Clan Wars", "Soul Wars", "Fight Pits", "Emir's Arena"):
-            self.assertFalse([m for m in relay.ACTIVITY_MINIGAMES if pvp.lower() in m.lower()], pvp)
+        for pvp in ("Last Man Standing", "Castle Wars", "Clan Wars", "Soul Wars", "the Fight Pits", "Emir's Arena",
+                    "Tempoross", "Wintertodt", "Zalcano"):                               # (minigames, 11/10/2026)
+            self.assertIn(pvp, relay.ACTIVITY_MINIGAMES)
+        for boss in ("the Gauntlet", "the Corrupted Gauntlet"):                         # (bosses, 11/10/2026)
+            self.assertNotIn(boss, relay.ACTIVITY_MINIGAMES)
+            self.assertIn(boss, relay.ACTIVITY_BOSSES)
         ts = dict((n, (int(x), int(y))) for n, x, y in
                   re.findall(r'^  ("[^"]+"): \[(\d+), (\d+)\],$', re.search(r"STAR_SITES[^=]*= \{(.*?)\};", game, re.S)
                              .group(1), re.M))
@@ -1627,6 +1640,10 @@ class ArrayWords(unittest.TestCase):
             self.assertEqual(self.ev(kind, {"boss": "Vorkath", "count": 1, "pet": "x"}), [], kind)
         for nothing in (None, "x", 5, ["x"], {"data": {"boss": "x", "count": 1}}):
             self.assertEqual(relay.array_events(nothing), [], nothing)
+        # (the minigames the hiscores count as bosses, 11/10/2026: Dink names them as the game's message does, and each
+        # is a kill like any other, whatever its name)
+        for boss in ("Wintertodt", "Tempoross", "Zalcano", "Crystalline Hunllef", "Corrupted Hunllef", "Penance Queen"):
+            self.assertEqual(self.ev("KILL_COUNT", {"boss": boss, "count": 300}), [{"kind": "kill", "boss": boss, "kc": 300}])
         self.assertEqual(self.ev("KILL_COUNT", {"boss": "Vorkath"}), [])        # (a kill needs its boss and its count)
         self.assertEqual(self.ev("KILL_COUNT", {"count": 5}), [])
         self.assertEqual(self.ev("LEVEL", {"total": 2000}), [])

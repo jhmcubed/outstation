@@ -229,28 +229,32 @@ WHERE_ZANARIS = {"x": 2368, "y": 4416}
 # Shooting stars' worlds are checked the same.
 WORLD_RANGE = (1, 999)
 # what they're doing (11/08/2026; the Worker's ACTIVITY_SKILLS and ACTIVITY_BOSSES, the same; the bosses are the
-# plugin's Activity.BOSSES's labels: test_relay.py checks the three lists match)
+# plugin's Activity.bossLabels(): test_relay.py checks the three lists match; made whole from the official hiscores'
+# list 11/10/2026, the Wilderness's bosses and the Gauntlets with them, Zalcano a minigame)
 ACTIVITY_SKILLS = ("Agility", "Attack", "Construction", "Cooking", "Crafting", "Defence", "Farming", "Firemaking",
                    "Fishing", "Fletching", "Herblore", "Hitpoints", "Hunter", "Magic", "Mining", "Prayer", "Ranged",
                    "Runecraft", "Sailing", "Slayer", "Smithing", "Strength", "Thieving", "Woodcutting")
-ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Barrows", "Bryophyta", "Cerberus",
-                   "Commander Zilyana", "Corporeal Beast", "Dagannoth Prime", "Dagannoth Rex", "Dagannoth Supreme",
-                   "Duke Sucellus", "General Graardor", "Giant Mole", "Grotesque Guardians", "Hespori",
-                   "K'ril Tsutsaroth", "Kalphite Queen", "King Black Dragon", "Kraken", "Kree'arra", "Moons of Peril",
-                   "Nex", "Obor", "Phantom Muspah", "Phosani's Nightmare", "Royal Titans", "Sarachnis", "Scurrius",
-                   "Skotizo", "Sol Heredit", "The Hueycoatl", "The Leviathan", "The Nightmare", "The Whisperer",
-                   "Thermonuclear smoke devil", "TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Vorkath", "Yama", "Zalcano",
-                   "Zulrah")
+ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Artio", "Barrows", "Brutus",
+                   "Bryophyta", "Callisto", "Calvar'ion", "Cerberus", "Chaos Elemental", "Chaos Fanatic",
+                   "Commander Zilyana", "Corporeal Beast", "Crazy archaeologist", "Dagannoth Prime", "Dagannoth Rex",
+                   "Dagannoth Supreme", "Deranged archaeologist", "Doom of Mokhaiotl", "Duke Sucellus",
+                   "General Graardor", "Giant Mole", "Grotesque Guardians", "Hespori", "K'ril Tsutsaroth",
+                   "Kalphite Queen", "King Black Dragon", "Kraken", "Kree'arra", "Mad Angel", "Maggot King",
+                   "Moons of Peril", "Nex", "Obor", "Phantom Muspah", "Phosani's Nightmare", "Royal Titans",
+                   "Sarachnis", "Scorpia", "Scurrius", "Shellbane gryphon", "Skotizo", "Sol Heredit", "Spindel",
+                   "The Hueycoatl", "The Leviathan", "The Mimic", "The Nightmare", "The Whisperer",
+                   "Thermonuclear smoke devil", "TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Venenatis", "Vet'ion",
+                   "Vorkath", "Yama", "Zulrah", "the Corrupted Gauntlet", "the Gauntlet")
 # raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"; the Worker's ACTIVITY_RAIDS and
 # ACTIVITY_MINIGAMES, the same; the plugin's Activity.RAIDS and MINIGAMES's labels, by RuneLite's Discord plugin's region
-# ids). No PvP minigames.
+# ids). The PvP minigames are minigames like the rest (11/10/2026).
 ACTIVITY_RAIDS = ("Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut")
-ACTIVITY_MINIGAMES = (
-    "Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Fishing Trawler", "Giants' Foundry",
-    "Guardians of the Rift", "Hallowed Sepulchre", "Mage Training Arena", "Nightmare Zone", "Pest Control",
-    "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Temple Trekking", "Tempoross", "Tithe Farm",
-    "Trouble Brewing", "Volcanic Mine", "Wintertodt", "the Colosseum", "the Corrupted Gauntlet", "the Fight Caves",
-    "the Gauntlet", "the Inferno")
+ACTIVITY_MINIGAMES = ("Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Castle Wars", "Clan Wars",
+                      "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift",
+                      "Hallowed Sepulchre", "Last Man Standing", "Mage Training Arena", "Nightmare Zone",
+                      "Pest Control", "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Soul Wars",
+                      "Temple Trekking", "Tempoross", "Tithe Farm", "Trouble Brewing", "Volcanic Mine", "Wintertodt",
+                      "Zalcano", "the Colosseum", "the Fight Caves", "the Fight Pits", "the Inferno")
 # the landing sites (11/09/2026, Jace: "named landing sites: yes"; the Worker's STAR_SITES, the same): Shooting Star
 # Info's (its Location.java; BSD 2-Clause, Copyright (c) 2022, Cute Rock: plugin/README.md, "Credits"), less the
 # Wilderness's and Prifddinas's, each name with the square it's in. A star's "site" must be one of these, in its square.

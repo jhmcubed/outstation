@@ -1351,6 +1351,17 @@ class ArrayEvents(Base):
             {"kind": "loot", "name": "Coins", "value": 1000000},             # (1,000,000 is enough; 2^53 isn't a number)
         ])
 
+    async def test_the_minigames_the_hiscores_count_as_bosses_are_kills_too(self):
+        # (11/10/2026, Jace: Wintertodt, Tempoross and Zalcano pop on the map as any boss's kill does; Dink names them
+        # from the game's messages, the Gauntlets by their Hunllefs)
+        await self.tx()
+        await self.pause()
+        bosses = ["Wintertodt", "Tempoross", "Zalcano", "Crystalline Hunllef", "Corrupted Hunllef"]
+        for i, boss in enumerate(bosses):
+            await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": boss, "count": 100 + i}})
+        got = await self.mine(len(bosses))
+        self.assertEqual(self.what(got), [{"kind": "kill", "boss": b, "kc": 100 + i} for i, b in enumerate(bosses)])
+
     async def test_since_moves_on_and_a_read_without_it_has_the_last_fifty(self):
         await self.tx()
         await self.pause()
@@ -2156,7 +2167,9 @@ class Activity(Base):
     async def test_each_shape_it_takes(self):
         for a in ({"kind": "boss", "boss": "Vorkath"}, {"kind": "fighting"}, {"kind": "idle"},
                   {"skill": "Sailing", "kind": "skilling"}, {"kind": "boss", "boss": "Barrows"},
-                  {"kind": "raid", "raid": "Tombs of Amascut"}, {"kind": "minigame", "minigame": "the Colosseum"}):
+                  {"kind": "raid", "raid": "Tombs of Amascut"}, {"kind": "minigame", "minigame": "the Colosseum"},
+                  {"kind": "boss", "boss": "Callisto"}, {"kind": "boss", "boss": "the Gauntlet"},
+                  {"kind": "minigame", "minigame": "Last Man Standing"}, {"kind": "minigame", "minigame": "Zalcano"}):
             self.ch = "t" + secrets.token_hex(5)
             if WORKER:
                 status, got = admin("POST", "/admin/channels/" + self.ch)
@@ -2178,11 +2191,11 @@ class Activity(Base):
         v = await self.watch()
         await self.pause()
         bad = [{"kind": "skilling", "skill": "Overall"}, {"kind": "skilling", "skill": "mining"},
-               {"kind": "skilling"}, {"kind": "boss", "boss": "Callisto"}, {"kind": "boss", "boss": "Jace"},
+               {"kind": "skilling"}, {"kind": "boss", "boss": "Zalcano"}, {"kind": "boss", "boss": "Jace"},
                {"kind": "fighting", "with": "Goblin"}, {"kind": "idle", "since": 5}, {"kind": "afk"}, {"kind": 1},
                {}, "idle", ["idle"], 5, True, {"kind": "skilling", "skill": ["Mining"]},
                {"kind": "boss", "boss": "Vorkath", "kc": 50}, {"kind": "raid", "raid": "ToB"},
-               {"kind": "minigame", "minigame": "Last Man Standing"}, {"kind": "minigame"},
+               {"kind": "minigame", "minigame": "the Gauntlet"}, {"kind": "minigame"},
                {"kind": "raid", "raid": "Theatre of Blood", "room": "Verzik"}]
         for i, a in enumerate(bad):
             if i and i % 4 == 0:
@@ -2231,7 +2244,7 @@ class Activity(Base):
         await next_of(tx, "relay")
         g = await self.game()
         self.clients.append(g)
-        await self.say(g, {"activity": {"kind": "boss", "boss": "Zalcano"}})
+        await self.say(g, {"activity": {"kind": "minigame", "minigame": "Zalcano"}})
         self.assertIsNone(await self.row())
 
     @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")

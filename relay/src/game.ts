@@ -154,29 +154,33 @@ export function isWorld(v: unknown): v is number {
 // /channels while live and listed and within WHERE_FRESH_MS), and it doesn't need following. Only these, exactly:
 //   {"kind": "skilling", "skill": <one of ACTIVITY_SKILLS>}   {"kind": "boss", "boss": <one of ACTIVITY_BOSSES>}
 //   {"kind": "fighting"}                                       {"kind": "idle"}
-// ACTIVITY_BOSSES is the plugin's Activity.BOSSES's labels (relay-py/test_relay.py checks the three lists match):
-// none of the Wilderness's, where nothing's sent. relay.py's game_activity, the same.
+// ACTIVITY_BOSSES is the plugin's Activity.bossLabels() (relay-py/test_relay.py checks the three lists match): every boss
+// on the official hiscores (RuneLite's HiscoreSkill, 11/10/2026) but the raids and Tempoross, Wintertodt and Zalcano
+// (minigames); the Wilderness's too, which the plugin sends only with "In the Wilderness too" on; the Gauntlets by
+// where they are. relay.py's game_activity, the same.
 export const ACTIVITY_SKILLS = ["Agility", "Attack", "Construction", "Cooking", "Crafting", "Defence", "Farming",
   "Firemaking", "Fishing", "Fletching", "Herblore", "Hitpoints", "Hunter", "Magic", "Mining", "Prayer", "Ranged",
   "Runecraft", "Sailing", "Slayer", "Smithing", "Strength", "Thieving", "Woodcutting"];
-export const ACTIVITY_BOSSES = ["Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Barrows", "Bryophyta",
-  "Cerberus", "Commander Zilyana", "Corporeal Beast", "Dagannoth Prime", "Dagannoth Rex", "Dagannoth Supreme",
-  "Duke Sucellus", "General Graardor", "Giant Mole", "Grotesque Guardians", "Hespori", "K'ril Tsutsaroth",
-  "Kalphite Queen", "King Black Dragon", "Kraken", "Kree'arra", "Moons of Peril", "Nex", "Obor", "Phantom Muspah",
-  "Phosani's Nightmare", "Royal Titans", "Sarachnis", "Scurrius", "Skotizo", "Sol Heredit", "The Hueycoatl",
-  "The Leviathan", "The Nightmare", "The Whisperer", "Thermonuclear smoke devil", "TzKal-Zuk", "TzTok-Jad", "Vardorvis",
-  "Vorkath", "Yama", "Zalcano", "Zulrah"];
+export const ACTIVITY_BOSSES = ["Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "Artio", "Barrows",
+  "Brutus", "Bryophyta", "Callisto", "Calvar'ion", "Cerberus", "Chaos Elemental", "Chaos Fanatic",
+  "Commander Zilyana", "Corporeal Beast", "Crazy archaeologist", "Dagannoth Prime", "Dagannoth Rex",
+  "Dagannoth Supreme", "Deranged archaeologist", "Doom of Mokhaiotl", "Duke Sucellus", "General Graardor",
+  "Giant Mole", "Grotesque Guardians", "Hespori", "K'ril Tsutsaroth", "Kalphite Queen", "King Black Dragon", "Kraken",
+  "Kree'arra", "Mad Angel", "Maggot King", "Moons of Peril", "Nex", "Obor", "Phantom Muspah", "Phosani's Nightmare",
+  "Royal Titans", "Sarachnis", "Scorpia", "Scurrius", "Shellbane gryphon", "Skotizo", "Sol Heredit", "Spindel",
+  "The Hueycoatl", "The Leviathan", "The Mimic", "The Nightmare", "The Whisperer", "Thermonuclear smoke devil",
+  "TzKal-Zuk", "TzTok-Jad", "Vardorvis", "Venenatis", "Vet'ion", "Vorkath", "Yama", "Zulrah",
+  "the Corrupted Gauntlet", "the Gauntlet"];
 // Raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"): the plugin tells them by the
 // region the player's in, an instance's as its template lies (its Activity.RAIDS and MINIGAMES, from RuneLite's Discord
-// plugin's region ids), a boss fight first. No PvP minigames.
+// plugin's region ids), a boss fight first. The PvP minigames are minigames like the rest (11/10/2026).
 //   {"kind": "raid", "raid": <one of ACTIVITY_RAIDS>}          {"kind": "minigame", "minigame": <one of ACTIVITY_MINIGAMES>}
 export const ACTIVITY_RAIDS = ["Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut"];
-export const ACTIVITY_MINIGAMES = [
-  "Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Fishing Trawler", "Giants' Foundry",
-  "Guardians of the Rift", "Hallowed Sepulchre", "Mage Training Arena", "Nightmare Zone", "Pest Control",
-  "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Temple Trekking", "Tempoross", "Tithe Farm",
-  "Trouble Brewing", "Volcanic Mine", "Wintertodt", "the Colosseum", "the Corrupted Gauntlet", "the Fight Caves",
-  "the Gauntlet", "the Inferno"];
+export const ACTIVITY_MINIGAMES = ["Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Castle Wars",
+  "Clan Wars", "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift", "Hallowed Sepulchre",
+  "Last Man Standing", "Mage Training Arena", "Nightmare Zone", "Pest Control", "Pyramid Plunder", "Rogues' Den",
+  "Sorceress's Garden", "Soul Wars", "Temple Trekking", "Tempoross", "Tithe Farm", "Trouble Brewing", "Volcanic Mine",
+  "Wintertodt", "Zalcano", "the Colosseum", "the Fight Caves", "the Fight Pits", "the Inferno"];
 export type Activity = { kind: "idle" | "fighting" } | { kind: "skilling"; skill: string } | { kind: "boss"; boss: string }
   | { kind: "raid"; raid: string } | { kind: "minigame"; minigame: string };
 

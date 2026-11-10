@@ -11,8 +11,9 @@ import java.util.Map;
  * <ul>
  * <li>only a square of the map 128 tiles a side (about a town and its surroundings), never the tile;</li>
  * <li>two minutes behind: what's sent is where they were two minutes ago, at most once a minute;</li>
- * <li>never somewhere dangerous: in the Wilderness, a PvP area or minigame, on a PvP or Deadman world, nothing's
- * recorded, and the moment they're there the area already sent is cleared;</li>
+ * <li>never somewhere dangerous: in the Wilderness (whatever "In the Wilderness too" says), a PvP area, on a PvP or
+ * Deadman world, nothing's recorded, and the moment they're there the area already sent is cleared (the PvP minigames
+ * aren't dangerous, 11/10/2026: OutsidePlugin.globeSafe);</li>
  * <li>never anywhere off the main map (an underground area is counted where it lies under; Zanaris as one place, the
  * globe's moon; an instance where its template lies, or off the map its entrance, ENTRANCES; anything else,
  * nothing).</li>
@@ -68,6 +69,9 @@ class Follow
 		// (Prifddinas's own, 11/10/2026: the Gauntlet's lobby and the Gauntlet, Corrupted too, and Zalcano's mine, in the city's
 		// middle where the world map draws it)
 		put(e, square(PRIFDDINAS[0], PRIFDDINAS[1]), 12127, 7512, 7768, 12126);
+		// (the Giant Mole's lair, 11/10/2026, Jace: "it's under falador park": its tiles lie off the map, around 1752,5237,
+		// where Falador Park's mole hills lead (Shortest Path's transports); Falador Park's square)
+		put(e, new int[]{3008, 3392}, 6992, 6993);
 		// (the God Wars Dungeon, each general's room: its way in, in Trollheim)
 		put(e, new int[]{2880, 3776}, 11346, 11347, 11601, 11602, 11603);
 		ENTRANCES = Collections.unmodifiableMap(e);
