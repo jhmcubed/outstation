@@ -11,6 +11,8 @@ Standard library only (relay-py/wsmini.py plays every client).
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import http.server
 import json
 import os
@@ -156,7 +158,7 @@ def setUpModule():
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
              "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
-             "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S],
+             "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
@@ -165,7 +167,8 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base, "--test-forget"],
+                                 "--almanac", UPSTREAM.base, "--test-forget",
+                                 "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -1886,7 +1889,7 @@ class Following(Base):
     """Following (11/08/2026): the Outside plugin may send "where", the middle of the 128-tile square of the main map the
     player was in two minutes before, or null. The relay holds it (one every 50 s at most; null whenever it comes), drops
     it when the plugin goes, logs out or holds for the player's safety, and shows it only on GET /channels, while the
-    channel's live and listed and it came within WHERE_FRESH_S. Never to viewers, lookers or desks, in GET /game or in
+    channel's live and listed and it came within WHERE_FRESH_S. Never to viewers or lookers, in GET /game or in
     the Array's events. (The throttle's end and --delay: relay-py/test_relay.py's.)"""
 
     LUMBRIDGE = {"x": 3264, "y": 3264}
@@ -1966,7 +1969,7 @@ class Following(Base):
         self.clients.append(g)
         v = await self.watch()
         await self.pause()
-        bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 960, "y": 3264},
+        bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 832, "y": 3264},
                {"x": 3264, "y": 3264, "plane": 0}, {"x": 3264}, {"x": "3264", "y": 3264}, {"x": 3264.5, "y": 3264},
                {"x": True, "y": 3264}, [3264, 3264], "lumbridge", 3264, True,
                {"x": 2368, "y": 4544}, {"x": 2496, "y": 4416}, {"x": 2368, "y": 4288}]   # (Zanaris's neighbours: off the map)
@@ -1986,6 +1989,17 @@ class Following(Base):
         # location as being on Zanaris": the plugin sends any tile there as this, which the globe draws on its moon)
         await self.live_and_following({"x": 2368, "y": 4416})
         self.assertEqual(await self.where(), {"x": 2368, "y": 4416})
+
+    async def test_the_seas_squares_show(self):
+        # (11/10/2026, Sailing: the band of sea round the old map, x 960-1023 and 3968-4031, y 2048-2495 and 4160-4223,
+        # is the main map's too: its south-west corner's square, the furthest from the old map's)
+        await self.live_and_following({"x": 960, "y": 2112})
+        self.assertEqual(await self.where(), {"x": 960, "y": 2112})
+
+    async def test_the_great_conchs_square_shows(self):
+        # (11/10/2026: the Great Conch, Sailing's island south of the old map, its square y 2432-2559)
+        await self.live_and_following({"x": 3264, "y": 2496})
+        self.assertEqual(await self.where(), {"x": 3264, "y": 2496})
 
     async def test_one_every_50_seconds_and_null_clears_whenever(self):
         tx, g = await self.live_and_following()
@@ -2046,7 +2060,11 @@ class Following(Base):
                 pass
             self.assertTrue(any('"game"' in line for line in heard))  # (the game reached it, the world)
             for line in heard:
+                if c in (d, late[2]) and line.startswith('{"mine": {"where"'):
+                    continue                                         # (your year, 11/10/2026: the owner's desk only, as {"mine"})
                 self.assertNotIn("where", line)
+            if c in (d, late[2]):
+                self.assertTrue(any(line.startswith('{"mine": {"where"') for line in heard))
         self.assertNotIn("where", json.dumps(self.read_game()))
         with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
             self.assertNotIn("where", r.read().decode())
@@ -2119,7 +2137,7 @@ class Activity(Base):
     """What they're doing (11/08/2026): the Outside plugin may send "activity", one coarse label from closed lists
     ({"kind": "skilling", "skill"}, {"kind": "boss", "boss"}, {"kind": "fighting"}, {"kind": "idle"}), or null. Held,
     taken (one every 50 s), dropped and shown on GET /channels exactly as following's "where", and without it. Never to
-    viewers, lookers or desks, in GET /game or in the Array's events. (The throttle's end: relay-py/test_relay.py's.)"""
+    viewers or lookers, in GET /game or in the Array's events; the owner's desk only as {"mine"} (YourYear). (The throttle's end: relay-py/test_relay.py's.)"""
 
     MINING = {"kind": "skilling", "skill": "Mining"}
 
@@ -2269,8 +2287,12 @@ class Activity(Base):
                 pass
             self.assertTrue(any('"game"' in line for line in heard))
             for line in heard:
+                if c is d and line.startswith('{"mine": {"activity"'):
+                    continue                                         # (your year, 11/10/2026: the owner's desk only, as {"mine"})
                 self.assertNotIn("Kraken", line)
                 self.assertNotIn("activity", line)
+            if c is d:
+                self.assertTrue(any(line.startswith('{"mine": {"activity"') for line in heard))
         self.assertNotIn("Kraken", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
         with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
             self.assertNotIn("Kraken", r.read().decode())
@@ -3005,6 +3027,420 @@ class Invites(Base):
         rows, pending, raw = await self.open_list()
         self.assertNotIn(self.ch, pending)
         self.assertNotIn(a, raw)
+
+
+VECTORS = json.load(open(os.path.join(HERE, "fixtures", "record", "vectors.json"), encoding="utf-8"))
+RECORD_CHUNKS = 6      # (a channel's chunks at most, as the relays under test are started; 2000 as they're run)
+
+
+def raw(method, path, data=None, headers=None):
+    """(status, headers, body bytes) from any route, with any body."""
+    req = urllib.request.Request(http_url() + path, method=method, data=data, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+def b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def made(key, label):
+    return hmac.new(key, label.encode(), hashlib.sha256).digest()
+
+
+def year_key(i):
+    """A record key of a test's own (the vectors' for 0), and its tokens."""
+    key = bytes.fromhex(VECTORS["key_hex"]) if i == 0 else hashlib.sha256(b"another record key %d" % i).digest()
+    return key, b64u(made(key, "outstation record read v1")), b64u(made(key, "outstation record write v1"))
+
+
+def a_chunk(n, size=200):
+    """A made-up sealed chunk: the format byte, then bytes that only look encrypted (the relay can't tell)."""
+    body = bytes([1]) + hashlib.sha256(b"chunk %d" % n).digest() * (size // 32 + 1)
+    return body[:size]
+
+
+def chunk_id(n):
+    return b64u(hashlib.sha256(b"id %d" % n).digest()[:16])
+
+
+class YourYear(Base):
+    """Your year (11/10/2026; docs/record.md): the owner's own where, activity and events to their own desk only, as
+    {"mine"} lines; the record's sealed chunks kept, read with the record key's read token and refused as plaintext; the
+    public summary checked, kept and taken down. Known-key vectors: tests/fixtures/record/vectors.json (WebCrypto's)."""
+
+    LUMBRIDGE = {"x": 3264, "y": 3264}
+
+    async def claim(self):
+        """(relay.py: a channel is claimed by its first socket with a key; the Worker's are handed out already)"""
+        if not WORKER:
+            await self.desk()
+            await self.pause()
+
+    async def game(self):
+        g = await Client().open("%s/game/%s?key=%s&v=0.0.1" % (RELAY, self.ch, self.key))
+        self.clients.append(g)
+        return g
+
+    async def lines(self, c, wait=0.8):
+        """Every text line a client gets in `wait` seconds."""
+        out, end = [], time.monotonic() + wait
+        while True:
+            try:
+                k, line = await c.recv(timeout=max(0.01, end - time.monotonic()))
+            except asyncio.TimeoutError:
+                return out
+            if k == "close":
+                return out
+            if k == "text":
+                out.append(line)
+
+    def rec(self, method, path="", data=None, key=None, token=None, query=""):
+        headers = {"Authorization": "Bearer " + token} if token else {}
+        if data is not None and not isinstance(data, bytes):
+            data, headers["Content-Type"] = json.dumps(data).encode(), "application/json"
+        q = ("key=" + urllib.parse.quote(key)) if key else ""
+        q = "&".join(x for x in (q, query) if x)
+        return raw(method, "/record/%s%s%s" % (self.ch, path, "?" + q if q else ""), data, headers)
+
+    def register(self, i=0, key=None):
+        _, read, write = year_key(i)
+        return self.rec("POST", "/token", {"read": read, "write": write}, key=key or self.key)[0]
+
+    def listing(self, token, query=""):
+        st, h, body = self.rec("GET", token=token, query=query)
+        return st, json.loads(body) if body else None
+
+    def year(self, method, body=None, key=None, token=None):
+        headers = {"Authorization": "Bearer " + token} if token else {}
+        data = None
+        if body is not None:
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        st, h, out = raw(method, "/year/%s%s" % (self.ch, "?key=" + urllib.parse.quote(key) if key else ""), data, headers)
+        return st, h, json.loads(out) if out else None
+
+    # ---- the desk's {"mine"} lines ----
+
+    async def test_the_desk_hears_its_own_where_and_activity_and_no_viewer_does(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        desk, v = await self.desk(), await self.watch()
+        look = await self.connect("watch", "look=1")
+        g = await self.game()
+        await self.pause()
+        began = time.time() * 1000
+        await g.send(json.dumps({"game": {"world": 302, "where": dict(self.LUMBRIDGE, world=302),
+                                          "activity": {"kind": "skilling", "skill": "Mining"}}}))
+        w = await next_of(desk, "mine")
+        self.assertEqual(w["where"], {"x": 3264, "y": 3264, "world": 302})
+        self.assertTrue(began - 1000 <= w["at"] <= time.time() * 1000 + 1000, w)
+        a = await next_of(desk, "mine")
+        self.assertEqual(a["activity"], {"kind": "skilling", "skill": "Mining"})
+        self.assertLess(abs(a["at"] - w["at"]), 1000)
+        await asyncio.sleep(0.25)
+        await g.send(json.dumps({"game": {"where": None, "activity": None}}))
+        self.assertIsNone((await next_of(desk, "mine"))["where"])
+        self.assertIsNone((await next_of(desk, "mine"))["activity"])
+        for c in (v, look, tx, g):
+            for line in await self.lines(c, 0.5):
+                for word in ('"mine"', '"where"', '"activity"'):
+                    self.assertNotIn(word, line)
+
+    async def test_dark_and_coded_too_and_a_new_desk_gets_whats_held(self):
+        tx = await self.tx("moss")
+        await next_of(tx, "relay")
+        tx.close()                                             # (dark, with a watch code: still the owner's own)
+        await self.pause(2)
+        g = await self.game()
+        await self.pause()
+        await g.send(json.dumps({"game": {"where": self.LUMBRIDGE, "activity": {"kind": "idle"}}}))
+        await self.pause(3)
+        desk = await self.desk()
+        got = {}
+        while len(got) < 2:
+            m = await next_of(desk, "mine")
+            got.update({k: v for k, v in m.items() if k != "at"})
+        self.assertEqual(got, {"where": self.LUMBRIDGE, "activity": {"kind": "idle"}})
+        g.close()                                              # (the plugin gone: what it said is dropped)
+        cleared = {}
+        while len(cleared) < 2:
+            m = await next_of(desk, "mine")
+            cleared.update({k: v for k, v in m.items() if k != "at"})
+        self.assertEqual(cleared, {"where": None, "activity": None})
+
+    # ---- the exact path (11/10/2026: "here", the owner's own desk only, never kept) ----
+
+    HERE = {"x": 3222, "y": 3218, "plane": 0, "world": 302}
+
+    async def test_the_exact_path_reaches_its_own_desk_only_and_is_never_kept(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        desk, v = await self.desk(), await self.watch()
+        look = await self.connect("watch", "look=1")
+        g = await self.game()
+        await self.pause()
+        await g.send(json.dumps({"game": {"world": 302, "here": self.HERE}}))
+        h = await next_of(desk, "mine")
+        self.assertEqual(sorted(h), ["at", "here"])
+        self.assertEqual(h["here"], self.HERE)
+        # (another within 2 s: ignored; one at sea, past the old map, and Zanaris, after it: taken)
+        await g.send(json.dumps({"game": {"here": dict(self.HERE, x=3223)}}))
+        await asyncio.sleep(2.2)
+        sea = {"x": 3180, "y": 2420, "plane": 0, "world": 302}
+        await g.send(json.dumps({"game": {"here": sea}}))
+        self.assertEqual((await next_of(desk, "mine"))["here"], sea)
+        # (never on a viewer's, a looker's, the transmitter's or the plugin's own socket)
+        for c in (v, look, tx, g):
+            for line in await self.lines(c, 0.5):
+                for word in ('"mine"', '"plane"'):
+                    self.assertNotIn(word, line)
+        # (never kept: not in GET /game, not on GET /channels, and a desk that comes later gets none of it)
+        self.assertNotIn("3180", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+        await self.pause(2)
+        self.assertNotIn("3180", json.dumps(http("GET", "/channels")[1]))
+        late = await self.desk()
+        for line in await self.lines(late, 1.0):
+            self.assertNotIn('"here"', line)
+        # (null clears it, once; logging out clears it)
+        await asyncio.sleep(2.2)
+        await g.send(json.dumps({"game": {"here": None}}))
+        self.assertIsNone((await next_of(desk, "mine"))["here"])
+
+    async def test_a_bad_here_is_ignored_and_logging_out_clears_it(self):
+        await self.claim()
+        desk = await self.desk()
+        g = await self.game()
+        await self.pause()
+        for i, bad in enumerate([{"x": 3222, "y": 3218, "plane": 4, "world": 302}, {"x": 3222, "y": 3218, "world": 302},
+                                 {"x": 3222, "y": 3218, "plane": 0, "world": 0}, {"x": 959, "y": 3218, "plane": 0, "world": 302},
+                                 {"x": 3222, "y": 9618, "plane": 0, "world": 302}, {"x": 3222.5, "y": 3218, "plane": 0, "world": 302},
+                                 {"x": "3222", "y": 3218, "plane": 0, "world": 302}, [3222, 3218, 0, 302],
+                                 dict(self.HERE, tile=1)]):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)                           # (5 a second at most)
+            await g.send(json.dumps({"game": {"here": bad}}))
+        await asyncio.sleep(1.0)
+        await g.send(json.dumps({"game": {"here": {"x": 2368, "y": 4416, "plane": 0, "world": 302}}}))   # (Zanaris)
+        got = await next_of(desk, "mine")
+        self.assertEqual(got["here"], {"x": 2368, "y": 4416, "plane": 0, "world": 302})
+        await asyncio.sleep(0.3)
+        await g.send(json.dumps({"game": {"off": True}}))
+        self.assertIsNone((await next_of(desk, "mine"))["here"])
+
+    async def test_its_own_events_reach_its_desk_live_or_dark(self):
+        desk = await self.desk()                               # (dark: no transmitter)
+        await self.pause()
+        payload = {"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412}}
+        self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), json.dumps(payload).encode(), "application/json"), 204)
+        m = await next_of(desk, "mine")
+        self.assertEqual(m["event"], {"kind": "kill", "boss": "Vorkath", "kc": 412})
+        self.assertIsInstance(m["at"], int)
+        v = await self.watch()
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        await tx.send(json.dumps({"report": {"type": "LEVEL", "text": "", "data": {"skills": {"Mining": 72}}}}))
+        self.assertEqual((await next_of(desk, "mine"))["event"], {"kind": "level", "skill": "Mining", "level": 72})
+        for line in await self.lines(v, 0.5):
+            self.assertNotIn('"mine"', line)
+
+    # ---- the record ----
+
+    async def test_a_sealed_chunk_is_kept_as_it_came_and_read_with_the_read_token(self):
+        await self.claim()
+        _, read, write = year_key(0)
+        self.assertEqual(VECTORS["read_token"], read)                      # (the vectors' tokens: HMAC, as the page makes them)
+        self.assertEqual(VECTORS["write_token"], write)
+        self.assertEqual(self.listing(read)[0], 403)                       # (none registered yet)
+        self.assertEqual(self.register(key="wrong-key-123456"), 403)
+        self.assertEqual(self.register(), 204)
+        self.assertEqual(self.register(), 204)                             # (the same pair again: nothing new)
+        sealed, cid = bytes.fromhex(VECTORS["sealed_hex"]), VECTORS["chunk_id"]
+        st, _, body = self.rec("PUT", "/" + cid, sealed, key=self.key)
+        self.assertEqual(st, 201)
+        put = json.loads(body)
+        self.assertEqual((put["id"], put["size"]), (cid, len(sealed)))
+        st, got = self.listing(read)
+        self.assertEqual((st, got), (200, {"chunks": [{"id": cid, "at": put["at"], "size": len(sealed)}], "bytes": len(sealed)}))
+        st, got = self.listing(read, "data=1")
+        self.assertEqual(got["next"], None)
+        self.assertEqual(base64.b64decode(got["chunks"][0]["data"]), sealed)
+        for token in (None, write, "x" * 43, read[:-1]):                   # (the write token can't read)
+            self.assertEqual(self.listing(token)[0], 403, token)
+        # what the relay keeps is the ciphertext as it came: the plaintext is nowhere in its storage
+        if MODE in ("python", "worker"):
+            plain = VECTORS["plaintext"].encode()
+            for marker in (VECTORS["device"].encode(), b'"where": {"x": 3264', plain[:40]):
+                for root, _, files in os.walk(STATE):
+                    for f in files:
+                        try:
+                            with open(os.path.join(root, f), "rb") as fh:
+                                self.assertNotIn(marker, fh.read(), os.path.join(root, f))
+                        except OSError:
+                            pass
+
+    async def test_plaintext_and_what_isnt_sealed_are_refused(self):
+        await self.claim()
+        plain = VECTORS["plaintext"].encode()
+        for body, status in ((plain, 415), (b"\x01" + b"\x00" * 28, 415), (b"\x02" + b"\x00" * 64, 415),
+                             (b"\x01" + b"\x00" * (256 * 1024), 413)):
+            self.assertEqual(self.rec("PUT", "/" + chunk_id(1), body, key=self.key)[0], status, body[:8])
+        self.assertEqual(self.rec("PUT", "/" + chunk_id(1), a_chunk(1), key="wrong-key-123456")[0], 403)
+        self.assertEqual(self.rec("PUT", "/" + chunk_id(1), a_chunk(1))[0], 403)                  # (no key)
+        self.assertEqual(self.rec("PUT", "/not-an-id", a_chunk(1), key=self.key)[0], 400)
+        self.assertEqual(self.register(), 204)
+        self.assertEqual(self.listing(year_key(0)[1]), (200, {"chunks": [], "bytes": 0}))
+
+    async def test_a_chunk_is_replaced_by_its_id_and_a_channel_holds_so_many(self):
+        await self.claim()
+        self.assertEqual(self.register(), 204)
+        for n in range(RECORD_CHUNKS):
+            self.assertEqual(self.rec("PUT", "/" + chunk_id(n), a_chunk(n), key=self.key)[0], 201)
+        self.assertEqual(self.rec("PUT", "/" + chunk_id(99), a_chunk(99), key=self.key)[0], 507)
+        self.assertEqual(self.rec("PUT", "/" + chunk_id(0), a_chunk(0, 300), key=self.key)[0], 201)   # (a day grown)
+        st, got = self.listing(year_key(0)[1])
+        self.assertEqual(sorted(c["id"] for c in got["chunks"]), sorted(chunk_id(n) for n in range(RECORD_CHUNKS)))
+        self.assertEqual([c["id"] for c in got["chunks"]], sorted(c["id"] for c in got["chunks"]))     # (in id order)
+        self.assertEqual(got["bytes"], 300 + 200 * (RECORD_CHUNKS - 1))
+        first = got["chunks"][0]["id"]
+        st, page = self.listing(year_key(0)[1], "data=1&after=" + first)
+        self.assertEqual([c["id"] for c in page["chunks"]], [c["id"] for c in got["chunks"][1:]])
+        self.assertEqual(self.rec("DELETE", "/" + chunk_id(1), key=self.key)[0], 204)
+        self.assertEqual(self.rec("DELETE", "/" + chunk_id(1), key=self.key)[0], 404)
+        self.assertEqual(len(self.listing(year_key(0)[1])[1]["chunks"]), RECORD_CHUNKS - 1)
+
+    async def test_four_record_keys_at_most_each_reads_and_a_new_station_key_keeps_it(self):
+        await self.claim()
+        for i in range(4):
+            self.assertEqual(self.register(i), 204)
+        self.assertEqual(self.register(4), 409)
+        self.assertEqual(self.rec("PUT", "/" + chunk_id(1), a_chunk(1), key=self.key)[0], 201)
+        for i in range(4):
+            self.assertEqual(len(self.listing(year_key(i)[1])[1]["chunks"]), 1, i)
+        self.assertEqual(self.listing(year_key(4)[1])[0], 403)
+        self.assertEqual(self.rec("POST", "/token", {"read": "short", "write": "x"}, key=self.key)[0], 400)
+        if WORKER:
+            # (a new station key from the keeper: the record's untouched, and the old key no longer reaches it)
+            old = self.key
+            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch)
+            self.assertEqual(status, 200)
+            self.key = got["key"]
+            self.assertEqual(len(self.listing(year_key(0)[1])[1]["chunks"]), 1)
+            self.assertEqual(self.rec("DELETE", key=old)[0], 403)
+
+    async def test_delete_everything_takes_the_chunks_the_tokens_and_the_year(self):
+        await self.claim()
+        self.assertEqual(self.register(), 204)
+        self.assertEqual(self.rec("PUT", "/" + chunk_id(1), a_chunk(1), key=self.key)[0], 201)
+        self.assertEqual(self.year("PUT", {"v": 1, "hours": [0] * 24}, key=self.key)[0], 200)
+        self.assertEqual(self.rec("DELETE", key="wrong-key-123456")[0], 403)
+        self.assertEqual(self.rec("DELETE", key=self.key)[0], 204)
+        self.assertEqual(self.listing(year_key(0)[1])[0], 403)              # (its tokens gone too)
+        self.assertEqual(self.register(), 204)
+        self.assertEqual(self.listing(year_key(0)[1])[1], {"chunks": [], "bytes": 0})
+        self.assertEqual(self.year("GET")[0], 404)
+
+    async def test_routes_methods_and_a_pages_preflight(self):
+        await self.claim()
+        st, h, _ = raw("OPTIONS", "/record/" + self.ch, headers={"Origin": "https://ghillie.wiki",
+                                                                   "Access-Control-Request-Method": "GET",
+                                                                   "Access-Control-Request-Headers": "authorization"})
+        self.assertEqual(st, 204)
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+        self.assertIn("authorization", h.get("Access-Control-Allow-Headers").lower())
+        self.assertEqual(self.rec("POST")[0], 405)
+        self.assertEqual(self.rec("GET", "/token", key=self.key)[0], 405)
+        self.assertEqual(self.rec("PUT", "/token", a_chunk(1), key=self.key)[0], 400)
+        self.assertEqual(raw("GET", "/record/bad%20name")[0], 400)
+        st, h, _ = self.rec("GET", token=year_key(0)[1])
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+
+    # ---- the public summary ----
+
+    def full_year(self):
+        now = int(time.time() * 1000)
+        return {
+            "v": 1, "range": {"from": now - 86_400_000, "to": now},
+            "totals": {"kills": 4120, "minutes": 48000.0, "pets": 2},
+            "heat": [[3264, 3264, 600], [2368, 4416, 30]],
+            "paths": [[[3264, 3264], [3264, 3392, now]]],
+            "activities": [{"minutes": 90, "activity": {"kind": "boss", "boss": "Vorkath"}}],
+            "hours": list(range(24)),
+            "places": [{"x": 3264, "y": 3264, "minutes": 600, "first": now - 3_600_000, "last": now}],
+            "moments": [{"event": {"kind": "pet", "name": "Vorki"}, "t": now}, {"event": {"kind": "kill", "boss": "Vorkath", "kc": 412}}],
+            "replay": [[3264, 3264, now - 60_000], [3264, 3392]],
+        }
+
+    async def test_a_year_is_checked_kept_and_served_as_its_parts_in_order(self):
+        await self.claim()
+        y = self.full_year()
+        st, h, got = self.year("PUT", y, key=self.key)
+        self.assertEqual(st, 200)
+        want = dict(y, totals={"minutes": 48000, "kills": 4120, "pets": 2},
+                    activities=[{"activity": {"kind": "boss", "boss": "Vorkath"}, "minutes": 90}])
+        self.assertEqual(got["year"], want)
+        self.assertEqual(list(got["year"]), ["v", "range", "totals", "heat", "paths", "activities", "hours", "places",
+                                             "moments", "replay"])
+        self.assertEqual(list(got["year"]["totals"]), ["minutes", "kills", "pets"])
+        st, h, again = self.year("GET")
+        self.assertEqual((st, again), (200, got))
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+        # (the record key's write token posts and takes it down; the read token can't; a wrong key can't)
+        self.assertEqual(self.register(), 204)
+        _, read, write = year_key(0)
+        self.assertEqual(self.year("PUT", {"v": 1}, token=read)[0], 403)
+        self.assertEqual(self.year("PUT", {"v": 1}, key="wrong-key-123456")[0], 403)
+        self.assertEqual(self.year("PUT", {"v": 1}, token=write)[1:][1]["year"], {"v": 1})
+        self.assertEqual(self.year("DELETE", token=read)[0], 403)
+        self.assertEqual(self.year("DELETE", token=write)[0], 204)
+        self.assertEqual(self.year("GET")[0], 404)
+        self.assertEqual(self.year("PUT", {"v": 1})[0], 403)
+
+    async def test_a_year_that_isnt_its_shape_is_refused_by_its_part(self):
+        await self.claim()
+        now = int(time.time() * 1000)
+        bad = [
+            ({"v": 2}, "v"), ({}, "v"), ({"v": 1, "notes": "hi"}, "notes"), ([1], "a year"),
+            ({"v": 1, "range": {"from": now, "to": now - 1}}, "range"), ({"v": 1, "range": {"from": 5, "to": now}}, "range"),
+            ({"v": 1, "range": {"from": now, "to": now + 3 * 86_400_000}}, "range"),
+            ({"v": 1, "totals": {"gold": 5}}, "totals"), ({"v": 1, "totals": {"kills": -1}}, "totals"),
+            ({"v": 1, "totals": {"kills": 1.5}}, "totals"), ({"v": 1, "totals": {"kills": True}}, "totals"),
+            ({"v": 1, "heat": [[3265, 3264, 5]]}, "heat"), ({"v": 1, "heat": [[3264, 3264, 5], [3264, 3264, 6]]}, "heat"),
+            ({"v": 1, "heat": [[3264, 3264]]}, "heat"), ({"v": 1, "heat": [[3264, 3264, 5]] * 2}, "heat"),
+            ({"v": 1, "heat": [[64 + 128 * i, 2560, 1] for i in range(4097)]}, "heat"),
+            ({"v": 1, "paths": [[[3264, 3264]]]}, "paths"), ({"v": 1, "paths": [[[3264, 3264], [3264, 3264, 1]]]}, "paths"),
+            ({"v": 1, "activities": [{"activity": {"kind": "boss", "boss": "Mum"}, "minutes": 5}]}, "activities"),
+            ({"v": 1, "activities": [{"activity": {"kind": "idle"}, "minutes": 5, "note": "x"}]}, "activities"),
+            ({"v": 1, "hours": [0] * 23}, "hours"), ({"v": 1, "hours": [0] * 23 + [-1]}, "hours"),
+            ({"v": 1, "places": [{"x": 3264, "y": 3264, "minutes": 5, "name": "home"}]}, "places"),
+            ({"v": 1, "places": [{"x": 3264, "y": 3264, "minutes": 5, "first": now, "last": now - 1}]}, "places"),
+            ({"v": 1, "moments": [{"event": {"kind": "kill", "boss": "Vorkath"}}]}, "moments"),
+            ({"v": 1, "moments": [{"event": {"kind": "loot", "value": 5}}]}, "moments"),
+            ({"v": 1, "moments": [{"event": {"kind": "pet", "at": now}}]}, "moments"),
+            ({"v": 1, "replay": [[3264, 3264, now, 1]]}, "replay"),
+        ]
+        for body, part in bad:
+            st, _, got = self.year("PUT", body, key=self.key)
+            self.assertEqual(st, 400, body if len(json.dumps(body)) < 200 else part)
+            self.assertTrue(got["error"].startswith(part), (part, got["error"]))
+        self.assertEqual(self.year("PUT", b"{not json", key=self.key)[0], 400)
+        self.assertEqual(self.year("PUT", b'{"v": 1, "replay": [' + b", ".join([b"[3264, 3264]"] * 60000) + b"]}", key=self.key)[0], 413)
+        self.assertEqual(self.year("GET")[0], 404)                         # (nothing refused was kept)
+
+
+@unittest.skipUnless(WORKER, "the keeper takes channels back only on the Worker")
+class YourYearTakenBack(Base):
+    async def test_a_channel_taken_back_takes_its_record_and_year(self):
+        _, read, write = year_key(0)
+        self.assertEqual(raw("POST", "/record/%s/token?key=%s" % (self.ch, self.key), json.dumps({"read": read, "write": write}).encode(),
+                             {"Content-Type": "application/json"})[0], 204)
+        self.assertEqual(raw("PUT", "/year/%s?key=%s" % (self.ch, self.key), b'{"v": 1}', {"Content-Type": "application/json"})[0], 200)
+        self.assertEqual(await asyncio.to_thread(admin, "DELETE", "/admin/channels/" + self.ch), (204, None))
+        self.assertEqual(raw("GET", "/year/" + self.ch)[0], 404)
+        self.assertEqual(raw("GET", "/record/" + self.ch, headers={"Authorization": "Bearer " + read})[0], 403)
 
 
 class SettlingGone(Base):

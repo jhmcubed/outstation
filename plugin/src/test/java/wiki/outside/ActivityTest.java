@@ -269,7 +269,8 @@ public class ActivityTest
 		a.region(9033, 0);
 		assertEquals("idle", label2(a.now(160_000)));
 		assertEquals(4, Activity.raidLabels().size());
-		assertEquals(29, Activity.minigameLabels().size());
+		assertEquals(30, Activity.minigameLabels().size());
+		assertTrue(Activity.minigameLabels().contains("Barracuda Trials"));
 		assertEquals(6, Activity.PVP_MINIGAMES.size());
 		assertTrue(Activity.minigameLabels().containsAll(Activity.PVP_MINIGAMES));
 	}
@@ -415,5 +416,25 @@ public class ActivityTest
 			return kind + " " + a.get(kind).getAsString();
 		}
 		return label(a);
+	}
+
+	@Test
+	public void aBarracudaTrialIsAMinigameWhileItsRun()
+	{
+		// (11/10/2026: Sailing's obstacle courses, told by the game's own flag wherever the course is; a boss fight still
+		// comes first, and once the trial's over it's skilling Sailing again)
+		Activity a = new Activity();
+		a.xp(0, "Sailing", 1000);
+		a.xp(1_000, "Sailing", 1200);
+		assertEquals("skilling Sailing", label2(a.now(2_000)));
+		a.trial(true);
+		assertEquals("minigame Barracuda Trials", label2(a.now(3_000)));
+		a.region(12850, 0);                                                     // (anywhere at sea, or not)
+		assertEquals("minigame Barracuda Trials", label2(a.now(4_000)));
+		a.trial(false);
+		assertEquals("skilling Sailing", label2(a.now(5_000)));
+		a.trial(true);
+		a.forget();
+		assertEquals("idle", label2(a.now(6_000)));
 	}
 }

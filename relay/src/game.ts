@@ -104,11 +104,14 @@ export function gameFields(g: unknown): Fields {
 
 // Following (11/08/2026, Jace approved it with these safeguards): the plugin may send "where", the middle of the 128-tile
 // square of the main map the player was in two minutes before ({"x", "y"}; Zanaris as one place), or null to clear it. It's never one of the
-// game's fields: never kept with them, never sent to viewers, lookers or desks, never in GET /game. The channel holds it
+// game's fields: never kept with them, never sent to viewers or lookers, never in GET /game; the channel's own desks get it only
+// as {"mine"} (your year, 11/10/2026; channel.ts, tellMine). The channel holds it
 // in memory only (channel.ts, takeWhere), at most one every WHERE_EVERY_MS (null whenever it comes), and the open
 // outstations' list (GET /channels) shows it while the channel's live and listed and it came within WHERE_FRESH_MS
 // (index.ts; the Worker's WHERE_FRESH_SECONDS shortens it, for tests). relay.py's game_where, the same.
-export const WHERE_SQUARE = 128, WHERE_X = [1024, 4096], WHERE_Y = [2496, 4224];
+// The main map's bounds take in Sailing's seas (11/10/2026: the band of sea and islands round the old map, x 960-1023 and
+// 3968-4031, y 2048-2495 and 4160-4223, from the game's own map squares; the plugin's Follow.X0 and Y0).
+export const WHERE_SQUARE = 128, WHERE_X = [960, 4096], WHERE_Y = [2048, 4224];
 export const WHERE_EVERY_MS = 50_000, WHERE_FRESH_MS = 240_000;
 export type Where = { x: number; y: number; world?: number };
 // Which world (11/08/2026, Jace's choice for the globe): with the plugin's "and my world" on as well as following, the
@@ -122,8 +125,8 @@ export const WORLD_RANGE = [1, 999];
 // the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
 export const WHERE_ZANARIS: Readonly<Where> = { x: 2368, y: 4416 };
 
-/** A message's "where": {x, y} for a square's middle (each a whole number k*128 + 64, x from 1024 up to 4096, y from
- *  2496 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS, exactly), null to clear it, or undefined for
+/** A message's "where": {x, y} for a square's middle (each a whole number k*128 + 64, x from 960 up to 4096, y from
+ *  2048 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS, exactly), null to clear it, or undefined for
  *  anything else (none, or not its shape: ignored, and the rest of the message taken as ever). */
 export function gameWhere(g: unknown): Where | null | undefined {
   if (!isObj(g) || !("where" in g)) return undefined;
@@ -136,6 +139,32 @@ export function gameWhere(g: unknown): Where | null | undefined {
   const world = n === 3 ? { world: w.world as number } : {};
   if (w.x === WHERE_ZANARIS.x && w.y === WHERE_ZANARIS.y) return { ...WHERE_ZANARIS, ...world };
   return isSquare(w.x, WHERE_X) && isSquare(w.y, WHERE_Y) ? { x: w.x as number, y: w.y as number, ...world } : undefined;
+}
+
+// The exact path (11/10/2026, Jace: "your year" records the exact tile, privately; docs/record.md, "The exact path"):
+// with the plugin's "Record my exact path for my year" on, "here" is the tile the player's on, {"x", "y", "plane",
+// "world"}, as following places it (on the main map or its seas, underground as the tile above, an instance at its
+// entrance, Zanaris as WHERE_ZANARIS), or null to clear it. It's never one of the game's fields: the channel passes it
+// at once to its own desks only, as {"mine": {"here", "at"}} (channel.ts, takeHere), at most one every HERE_EVERY_MS,
+// and never keeps it, not even in memory: never to viewers, lookers, GET /game, GET /channels, the Array or the aether.
+// relay.py's game_here, the same.
+export const HERE_EVERY_MS = 2_000, HERE_PLANES = [0, 3];
+export type Here = { x: number; y: number; plane: number; world: number };
+
+/** A message's "here": exactly {x, y, plane, world}, x a whole number from WHERE_X[0] up to WHERE_X[1] and y the same
+ *  with WHERE_Y (a tile, not a square's middle), or exactly Zanaris's (WHERE_ZANARIS), plane 0 to 3 and world as
+ *  WORLD_RANGE; null to clear it; undefined for anything else (none, or not its shape: ignored, and the rest of the
+ *  message taken as ever). */
+export function gameHere(g: unknown): Here | null | undefined {
+  if (!isObj(g) || !("here" in g)) return undefined;
+  const h = g.here;
+  if (h === null) return null;
+  if (!isObj(h) || Object.keys(h).sort().join(",") !== "plane,world,x,y") return undefined;
+  const ok = (v: unknown, [lo, hi]: number[]) => typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi;
+  const zanaris = h.x === WHERE_ZANARIS.x && h.y === WHERE_ZANARIS.y;
+  if (!zanaris && !(ok(h.x, WHERE_X) && ok(h.y, WHERE_Y))) return undefined;
+  if (!ok(h.plane, [HERE_PLANES[0], HERE_PLANES[1] + 1]) || !isWorld(h.world)) return undefined;
+  return { x: h.x as number, y: h.y as number, plane: h.plane as number, world: h.world as number };
 }
 
 /** A square's middle along one side of the main map: a whole number k*128 + 64 from lo up to hi. */
@@ -173,11 +202,12 @@ export const ACTIVITY_BOSSES = ["Abyssal Sire", "Alchemical Hydra", "Amoxliatl",
   "the Corrupted Gauntlet", "the Gauntlet"];
 // Raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"): the plugin tells them by the
 // region the player's in, an instance's as its template lies (its Activity.RAIDS and MINIGAMES, from RuneLite's Discord
-// plugin's region ids), a boss fight first. The PvP minigames are minigames like the rest (11/10/2026).
+// plugin's region ids; Barracuda Trials by the game's own in-trial flag, its Activity.TRIALS, 11/10/2026), a boss fight
+// first. The PvP minigames are minigames like the rest (11/10/2026).
 //   {"kind": "raid", "raid": <one of ACTIVITY_RAIDS>}          {"kind": "minigame", "minigame": <one of ACTIVITY_MINIGAMES>}
 export const ACTIVITY_RAIDS = ["Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut"];
-export const ACTIVITY_MINIGAMES = ["Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Castle Wars",
-  "Clan Wars", "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift", "Hallowed Sepulchre",
+export const ACTIVITY_MINIGAMES = ["Barbarian Assault", "Barracuda Trials", "Blast Furnace", "Brimhaven Agility Arena",
+  "Castle Wars", "Clan Wars", "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift", "Hallowed Sepulchre",
   "Last Man Standing", "Mage Training Arena", "Nightmare Zone", "Pest Control", "Pyramid Plunder", "Rogues' Den",
   "Sorceress's Garden", "Soul Wars", "Temple Trekking", "Tempoross", "Tithe Farm", "Trouble Brewing", "Volcanic Mine",
   "Wintertodt", "Zalcano", "the Colosseum", "the Fight Caves", "the Fight Pits", "the Inferno"];

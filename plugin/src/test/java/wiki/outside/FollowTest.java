@@ -365,4 +365,72 @@ public class FollowTest
 		JsonObject o = walk(f, clock, 121_000, tob[0], tob[1], true, sends);
 		assertArrayEquals(new int[]{3648, 3264}, where(o));
 	}
+
+	@Test
+	public void theSeaRoundTheMapGoesAsItsSquare()
+	{
+		// (11/10/2026, Sailing: the band of sea round the old map, x 960-1023 and 3968-4031, y 2048-2495 and 4160-4223,
+		// from the game's own map squares; each tile as its square's middle, as on land)
+		assertArrayEquals(new int[]{3264, 2496}, Follow.square(3200, 2435));      // (the Great Conch)
+		assertArrayEquals(new int[]{2240, 2368}, Follow.square(2209, 2330));      // (Sunbleak Island)
+		assertArrayEquals(new int[]{2496, 2240}, Follow.square(2532, 2215));      // (Wyrmscraig, the Mad Angel's)
+		assertArrayEquals(new int[]{3392, 2240}, Follow.square(3357, 2203));      // (the Unquiet Ocean)
+		assertArrayEquals(new int[]{960, 3264}, Follow.square(960, 3300));        // (the western edge)
+		assertArrayEquals(new int[]{960, 2112}, Follow.square(1000, 2048));       // (the south-west corner)
+		assertArrayEquals(new int[]{4032, 4160}, Follow.square(4031, 4223));      // (the north-east corner)
+		assertArrayEquals(new int[]{3264, 4160}, Follow.square(3264, 4200));      // (the north's new strip)
+		// (past the sea: nothing, as ever)
+		assertNull(Follow.square(959, 3300));
+		assertNull(Follow.square(3200, 2047));
+		assertNull(Follow.square(3200, 4224));
+		assertNull(Follow.square(4096, 3200));
+		// (its relays take every square it gives: the middles x 960-4032, y 2112-4160)
+		for (int x = 960; x < 4096; x += 37)
+		{
+			for (int y = 2048; y < 4224; y += 41)
+			{
+				int[] sq = Follow.square(x, y);
+				assertNotNull(sq);
+				assertTrue(sq[0] >= 960 && sq[0] <= 4032 && sq[0] % 128 == 64);
+				assertTrue(sq[1] >= 2112 && sq[1] <= 4160 && sq[1] % 128 == 64);
+			}
+		}
+	}
+
+	@Test
+	public void aSeaPointGoesTwoMinutesBehindAsAnywhere()
+	{
+		// (sailing past the Great Conch: its square, two minutes later)
+		Follow f = new Follow();
+		long[] clock = {0};
+		int[] sends = {0};
+		JsonObject o = walk(f, clock, 121_000, 3180, 2420, true, sends);
+		assertArrayEquals(new int[]{3136, 2368}, where(o));
+		assertEquals(1, sends[0]);
+	}
+
+	@Test
+	public void underTheNewSeaOnlyTheIslandsCavesGo()
+	{
+		// (the caves of Sailing's islands, 6400 tiles north of them: their island's square)
+		assertArrayEquals(Follow.square(2227, 2338), Follow.square(2227, 8738));  // (Sunbleak Cave)
+		assertArrayEquals(Follow.square(2590, 2215), Follow.square(2590, 8615));  // (Wyrmscraig Cavern)
+		assertArrayEquals(Follow.square(2684, 2464), Follow.square(2684, 8864));  // (the Charred Dungeon)
+		assertArrayEquals(Follow.square(3088, 2468), Follow.square(3088, 8868));  // (the Great Conch's gryphons)
+		assertArrayEquals(Follow.square(3285, 2459), Follow.square(3285, 8859));  // (its coral)
+		for (int r : Follow.SEA_CAVES)
+		{
+			int x = (r >> 8) << 6, y = (r & 255) << 6;
+			assertTrue(y >= Follow.Y0 + Follow.UNDER && y < Follow.UNDER_Y0 + Follow.UNDER);
+			assertNotNull(Follow.square(x + 10, y + 10));
+		}
+		// (the older squares south of the old underground, under no sea, and anything else there: nothing)
+		assertNull(Follow.square(3200, 8700));                                    // (region 12936, there before Sailing)
+		assertNull(Follow.square(3600, 8600));
+		assertNull(Follow.square(2850, 8860));                                    // (a Sailing region whose place isn't known)
+		assertNull(Follow.square(1000, 8500));
+		// (the old underground, as before)
+		assertArrayEquals(new int[]{3264, 3264}, Follow.square(3222, 3218 + 6400));
+		assertArrayEquals(new int[]{3264, 2496}, Follow.square(3264, 2496 + 6400));
+	}
 }

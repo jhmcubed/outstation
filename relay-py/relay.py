@@ -98,11 +98,15 @@ transmission and the chat, live, and as last known while dark.
   minutes before ({"x", "y"}; Zanaris as one place, WHERE_ZANARIS), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
   whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
   and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
-  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read. With the plugin's "and my
+  (--where-fresh-seconds, for tests). Never to viewers or lookers, nor in the read; the channel's
+  own desks get it only as {"mine"} (your year, 11/10/2026; Channel.tell_mine). With the plugin's "and my
   world" on too, "where" carries the world with the square, {"x", "y", "world"} (WORLD_RANGE).
   What they're doing (11/08/2026): "activity", one coarse label ({"kind": "skilling", "skill"}, {"kind": "boss",
   "boss"}, {"kind": "fighting"}, {"kind": "idle"}: game_activity's closed lists), or null; held, dropped and shown on
   GET /channels exactly as "where" is.
+  The exact path (11/10/2026): "here", the tile the player's on ({"x", "y", "plane", "world"}), or null (game_here),
+  with the plugin's "Record my exact path for my year" on: passed at once to the channel's own desks only, as
+  {"mine": {"here", "at"}}, one every HERE_EVERY_S at most, and never kept (Channel.take_here).
   Shooting stars (11/08/2026): "star", a crashed star the player found two minutes before ({"world", "x", "y", "tier"},
   or "gone": true; "site" with either), into the relay's StarList: GET /stars (below).
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
@@ -172,6 +176,7 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import sys
 import time
@@ -210,8 +215,9 @@ GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the 
 # following (11/08/2026; docs/protocol.md "The game"; the Worker's game.ts, the same): "where" is the middle of a
 # WHERE_SQUARE-tile square of the main map (x from WHERE_X[0] up to WHERE_X[1], y the same with WHERE_Y), taken at most
 # one every WHERE_EVERY_S, and shown on GET /channels for WHERE_FRESH_S after it came (the relay's where_fresh_s,
-# --where-fresh-seconds)
-WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096), (2496, 4224), 50, 240
+# --where-fresh-seconds). The bounds take in Sailing's seas (11/10/2026: x 960-1023 and 3968-4031, y 2048-2495 and
+# 4160-4223 round the old map, from the game's own map squares; the plugin's Follow.X0 and Y0)
+WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (960, 4096), (2048, 4224), 50, 240
 # Zanaris (11/08/2026, Jace: "if someone goes to zanaris through a fairy ring on Gielinor make sure it shows their
 # location as being on Zanaris"): the plugin sends any tile there (x 2368-2495, y 4352-4479) as this one place, which
 # the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
@@ -239,10 +245,11 @@ ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "
                    "Vorkath", "Yama", "Zulrah", "the Corrupted Gauntlet", "the Gauntlet")
 # raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"; the Worker's ACTIVITY_RAIDS and
 # ACTIVITY_MINIGAMES, the same; the plugin's Activity.RAIDS and MINIGAMES's labels, by RuneLite's Discord plugin's region
-# ids). The PvP minigames are minigames like the rest (11/10/2026).
+# ids, and Barracuda Trials by the game's own in-trial flag, Activity.TRIALS, 11/10/2026). The PvP minigames are
+# minigames like the rest (11/10/2026).
 ACTIVITY_RAIDS = ("Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut")
-ACTIVITY_MINIGAMES = ("Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Castle Wars", "Clan Wars",
-                      "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift",
+ACTIVITY_MINIGAMES = ("Barbarian Assault", "Barracuda Trials", "Blast Furnace", "Brimhaven Agility Arena",
+                      "Castle Wars", "Clan Wars", "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift",
                       "Hallowed Sepulchre", "Last Man Standing", "Mage Training Arena", "Nightmare Zone",
                       "Pest Control", "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Soul Wars",
                       "Temple Trekking", "Tempoross", "Tithe Farm", "Trouble Brewing", "Volcanic Mine", "Wintertodt",
@@ -354,6 +361,7 @@ SETTLING_GONE = "settling has gone: the globe now shows each outstation where it
 KEPT_MOST = 3                     # kept for good (never in the 20, never too old): the Worker's KEPT_MOST
 CLIP_ID = re.compile(r"^[A-Za-z0-9_-]{16,32}$")
 DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "clips")
+DEFAULT_RECORDS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "records")
 VIEWER_TEXT = 2048                # anything longer from a viewer is thrown away unread
 CHAT_KEPT = 50                    # lines a late viewer (or a newly opened desk) gets at once
 SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: room to spam a little for fun (Jace, 11/05)
@@ -691,7 +699,7 @@ def game_fields(g):
 
 def game_where(g):
     """A {"game"} message's "where" (following, 11/08/2026): {"x", "y"} for a square's middle (each a whole number
-    k*128 + 64, x from 1024 up to 4096, y from 2496 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS,
+    k*128 + 64, x from 960 up to 4096, y from 2048 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS,
     exactly), None to clear it (null), or _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). Never one of
     the game's fields (game_fields leaves it out). The Worker's gameWhere, the same."""
     if not isinstance(g, dict) or "where" not in g:
@@ -717,6 +725,36 @@ def game_where(g):
     if not (is_square(out["x"], WHERE_X) and is_square(out["y"], WHERE_Y)):
         return _BAD
     return dict(out, **world)
+
+
+# the exact path (11/10/2026, Jace: "your year" records the exact tile, privately; docs/record.md, "The exact path"; the
+# Worker's gameHere, the same): "here", {"x", "y", "plane", "world"}, a tile of the main map or its seas (WHERE_X, WHERE_Y)
+# or Zanaris's one place, plane 0 to 3, a world; passed at once to the channel's own desks only, as {"mine": {"here",
+# "at"}}, one every HERE_EVERY_S at most, and never kept (Channel.take_here)
+HERE_EVERY_S, HERE_PLANES = 2.0, (0, 3)
+
+
+def game_here(g):
+    """A {"game"} message's "here" (the exact path, 11/10/2026): exactly {"x", "y", "plane", "world"}, x a whole number
+    from WHERE_X[0] up to WHERE_X[1] and y the same with WHERE_Y (a tile), or Zanaris's (WHERE_ZANARIS), plane 0 to 3
+    and a world (WORLD_RANGE); None to clear it (null), or _BAD for anything else (ignored, and the rest of the message
+    taken as ever). Never one of the game's fields. The Worker's gameHere, the same."""
+    if not isinstance(g, dict) or "here" not in g:
+        return _BAD
+    h = g["here"]
+    if h is None:
+        return None
+    if not isinstance(h, dict) or sorted(h) != ["plane", "world", "x", "y"]:
+        return _BAD
+    out = {k: game_int(h[k]) for k in ("x", "y", "plane", "world")}
+    if any(v is None for v in out.values()):
+        return _BAD
+    zanaris = out["x"] == WHERE_ZANARIS["x"] and out["y"] == WHERE_ZANARIS["y"]
+    if not zanaris and not (WHERE_X[0] <= out["x"] < WHERE_X[1] and WHERE_Y[0] <= out["y"] < WHERE_Y[1]):
+        return _BAD
+    if not (HERE_PLANES[0] <= out["plane"] <= HERE_PLANES[1]) or not is_world(out["world"]):
+        return _BAD
+    return out
 
 
 def game_int(v):
@@ -1352,10 +1390,16 @@ class Channel:
         self.where = None
         self.where_at = None
         self.where_took = None
+        self.where_ms = 0            # (your year: when it came, ms since 1970, for the desks' {"mine"})
+        # the exact path (11/10/2026; game_here): never kept, only when the last one was taken (for HERE_EVERY_S) and
+        # whether one's out to the desks (so a drop can say null)
+        self.here_took = None
+        self.here_out = False
         # what they're doing (11/08/2026; game_activity): kept, taken and dropped exactly as "where" is
         self.activity = None
         self.activity_at = None
         self.activity_took = None
+        self.activity_ms = 0
 
     def seconds_in_all(self):
         """Seconds on air in all, the stretch going on now included (for invites)."""
@@ -1380,6 +1424,7 @@ class Channel:
         fields = game_fields(m["game"])
         self.take_where(game_where(m["game"]), fields)
         self.take_activity(game_activity(m["game"]), fields)
+        self.take_here(game_here(m["game"]), fields)
         self.take_star(game_star(m["game"]), fields)
         got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
         if got is None:
@@ -1400,9 +1445,42 @@ class Channel:
         if w is _BAD or self.gamer is None or (self.where_took is not None and now - self.where_took < WHERE_EVERY_S):
             return
         self.where, self.where_at, self.where_took = w, now, now
+        self.where_ms = int(time.time() * 1000)
+        self.tell_mine({"where": w, "at": self.where_ms})
 
     def drop_where(self):
+        held = self.where is not None
         self.where = self.where_at = None
+        if held:
+            self.tell_mine({"where": None, "at": int(time.time() * 1000)})
+
+    def tell_mine(self, m):
+        """Your year (11/10/2026; docs/record.md): one of the owner's own things, {"mine": {...}}, to this channel's
+        desks only (the app's chat window, which only the key opens): never a viewer, a looker or anything else. The
+        Worker's tellMine, the same."""
+        if not self.desks:
+            return
+        line = json.dumps({"mine": m})
+        for d in list(self.desks):
+            d.send_nowait(line)
+
+    def take_here(self, h, fields):
+        """The exact path (game_here): passed at once to this channel's desks only ({"mine": {"here", "at"}}), one every
+        HERE_EVERY_S at most (more are ignored), never kept; nothing while no plugin's connected. null, logging out or
+        holding for the player's safety passes null, if one was out. The Worker's takeHere, the same."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or h is None:
+            self.drop_here()
+            return
+        now = time.monotonic()
+        if h is _BAD or self.gamer is None or (self.here_took is not None and now - self.here_took < HERE_EVERY_S):
+            return
+        self.here_took, self.here_out = now, True
+        self.tell_mine({"here": h, "at": int(time.time() * 1000)})
+
+    def drop_here(self):
+        if self.here_out:
+            self.here_out = False
+            self.tell_mine({"here": None, "at": int(time.time() * 1000)})
 
     def take_activity(self, a, fields):
         """What they're doing (game_activity): taken and dropped exactly as take_where takes "where", one every
@@ -1415,9 +1493,14 @@ class Channel:
         if a is _BAD or self.gamer is None or (self.activity_took is not None and now - self.activity_took < WHERE_EVERY_S):
             return
         self.activity, self.activity_at, self.activity_took = a, now, now
+        self.activity_ms = int(time.time() * 1000)
+        self.tell_mine({"activity": a, "at": self.activity_ms})
 
     def drop_activity(self):
+        held = self.activity is not None
         self.activity = self.activity_at = None
+        if held:
+            self.tell_mine({"activity": None, "at": int(time.time() * 1000)})
 
     def take_star(self, star, fields):
         """A shooting star the plugin found (game_star): into the relay's StarList, which counts this channel's reports
@@ -1584,6 +1667,15 @@ class Channel:
                     self.array.add(self.name, array_events(report))
                 except (TypeError, ValueError, AttributeError, KeyError):
                     pass
+            if self.desks:
+                # (your year: the owner's own events, live or dark, listed or not, to its desks only)
+                try:
+                    events = array_events(report)
+                except (TypeError, ValueError, AttributeError, KeyError):
+                    events = []
+                at = int(time.time() * 1000)
+                for e in events:
+                    self.tell_mine({"event": e, "at": at})
         elif isinstance(msg, str):
             self.last_data = msg
             if msg.startswith('{"state"'):
@@ -1722,6 +1814,343 @@ class Channel:
             self.say("✼", "%s at kill %s: %s guessed closest (%s off)" % (item or "the drop", kc, ", ".join(winners), best), host=True)
 
 
+# Your year (11/10/2026; docs/record.md, docs/protocol.md "Your year"; the Worker's record.ts, the same): each player's
+# record of their own travels, sealed by their app with a key only their own computers hold, so only ciphertext is ever
+# kept here, and the public summary they may choose to post. Kept in a folder (--records), one a channel: its tokens'
+# SHA-256 (tokens.json), its chunks (chunks/<id>, with meta.json: each one's time and size) and its summary (year.json).
+RECORD_CHUNK = 256 * 1024                   # a sealed chunk at most
+RECORD_CHUNK_LEAST = 1 + 12 + 1 + 16        # the format, the nonce, a byte, the tag
+RECORD_CHUNKS, RECORD_BYTES, RECORD_DAYS, RECORD_AN_HOUR = 2000, 32 * 1024 * 1024, 400, 240
+RECORD_KEYS = 4                             # token pairs at most (a key pasted wrong on one PC never wipes another's)
+RECORD_PAGE = 4 * 1024 * 1024               # a ?data=1 answer's chunks, in bytes of data, at most
+CHUNK_ID = re.compile(r"[A-Za-z0-9_-]{22}")  # (fullmatch)
+RECORD_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
+YEAR_MOST = 512 * 1024
+YEAR_PARTS = ("v", "range", "totals", "heat", "paths", "activities", "hours", "places", "moments", "replay")
+YEAR_TOTALS = ("minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues")
+YEAR_HEAT, YEAR_PATHS, YEAR_PATH_STEPS, YEAR_STEPS, YEAR_LIST = 4096, 256, 2000, 20000, 64
+YEAR_TOTAL_MOST, YEAR_MINUTES_MOST, YEAR_T_LEAST = 1_000_000_000, 10_000_000, 1_577_836_800_000
+
+
+class YearNo(Exception):
+    pass
+
+
+def year_whole(v, lo, hi):
+    """A whole number from lo to hi (5.0 is 5, as JavaScript reads it), or None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return v if isinstance(v, int) and lo <= v <= hi else None
+
+
+def year_square(x, y, part):
+    w = game_where({"where": {"x": x, "y": y}})
+    if w is _BAD or w is None:
+        raise YearNo('%s: a square\'s middle, as following\'s "where" gives it' % part)
+    return [w["x"], w["y"]]
+
+
+def year_time(v, part, now):
+    t = year_whole(v, YEAR_T_LEAST, now + 86_400_000)
+    if t is None:
+        raise YearNo("%s: a time in ms, from 2020 to a day past now" % part)
+    return t
+
+
+def year_minutes(v, part):
+    m = year_whole(v, 0, YEAR_MINUTES_MOST)
+    if m is None:
+        raise YearNo("%s: whole minutes, 0 to %d" % (part, YEAR_MINUTES_MOST))
+    return m
+
+
+def year_list(v, most, part):
+    if not isinstance(v, list):
+        raise YearNo("%s: a list" % part)
+    if len(v) > most:
+        raise YearNo("%s: %d at most" % (part, most))
+    return v
+
+
+def year_only(o, keys, part):
+    for k in o:
+        if k not in keys:
+            raise YearNo("%s: no %s here" % (part, k))
+
+
+def year_step(s, part, now):
+    if not isinstance(s, list) or len(s) not in (2, 3):
+        raise YearNo("%s: each step [x, y] or [x, y, t]" % part)
+    xy = year_square(s[0], s[1], part)
+    return xy + [year_time(s[2], part, now)] if len(s) == 3 else xy
+
+
+def year_summary(body, now=None):
+    """A public summary checked (docs/record.md, "The public summary"): (the summary as it's stored, its parts in their
+    order, None), or (None, why not), the part named. The Worker's yearSummary, the same."""
+    now = int(time.time() * 1000) if now is None else now
+    try:
+        if not isinstance(body, dict):
+            raise YearNo("a year is an object of its parts")
+        for k in body:
+            if k not in YEAR_PARTS:
+                raise YearNo("%s: not a part of a year" % k)
+        if body.get("v") != 1 or isinstance(body.get("v"), bool):
+            raise YearNo("v: 1")
+        out = {"v": 1}
+        if "range" in body:
+            r = body["range"]
+            if not isinstance(r, dict):
+                raise YearNo("range: {from, to}")
+            year_only(r, ("from", "to"), "range")
+            a, b = year_time(r.get("from"), "range", now), year_time(r.get("to"), "range", now)
+            if a > b:
+                raise YearNo("range: from comes before to")
+            out["range"] = {"from": a, "to": b}
+        if "totals" in body:
+            t = body["totals"]
+            if not isinstance(t, dict):
+                raise YearNo("totals: an object")
+            year_only(t, YEAR_TOTALS, "totals")
+            o = {}
+            for k in YEAR_TOTALS:
+                if k not in t:
+                    continue
+                v = year_whole(t[k], 0, YEAR_TOTAL_MOST)
+                if v is None:
+                    raise YearNo("totals: %s a whole number, 0 to %d" % (k, YEAR_TOTAL_MOST))
+                o[k] = v
+            out["totals"] = o
+        if "heat" in body:
+            seen, heat = set(), []
+            for c in year_list(body["heat"], YEAR_HEAT, "heat"):
+                if not isinstance(c, list) or len(c) != 3:
+                    raise YearNo("heat: each [x, y, minutes]")
+                xy = year_square(c[0], c[1], "heat")
+                if tuple(xy) in seen:
+                    raise YearNo("heat: a square twice")
+                seen.add(tuple(xy))
+                heat.append(xy + [year_minutes(c[2], "heat")])
+            out["heat"] = heat
+        if "paths" in body:
+            n, paths = 0, []
+            for p in year_list(body["paths"], YEAR_PATHS, "paths"):
+                steps = year_list(p, YEAR_PATH_STEPS, "paths")
+                if len(steps) < 2:
+                    raise YearNo("paths: two steps or more each")
+                n += len(steps)
+                if n > YEAR_STEPS:
+                    raise YearNo("paths: %d steps at most in all" % YEAR_STEPS)
+                paths.append([year_step(s, "paths", now) for s in steps])
+            out["paths"] = paths
+        if "activities" in body:
+            acts = []
+            for a in year_list(body["activities"], YEAR_LIST, "activities"):
+                if not isinstance(a, dict):
+                    raise YearNo("activities: each {activity, minutes}")
+                year_only(a, ("activity", "minutes"), "activities")
+                label = game_activity(a)
+                if label is _BAD or label is None:
+                    raise YearNo("activities: an activity as the plugin names one")
+                acts.append({"activity": label, "minutes": year_minutes(a.get("minutes"), "activities")})
+            out["activities"] = acts
+        if "hours" in body:
+            h = year_list(body["hours"], 24, "hours")
+            if len(h) != 24:
+                raise YearNo("hours: 24 of them, one for each hour of the day")
+            out["hours"] = [year_minutes(m, "hours") for m in h]
+        if "places" in body:
+            places = []
+            for p in year_list(body["places"], YEAR_LIST, "places"):
+                if not isinstance(p, dict):
+                    raise YearNo("places: each {x, y, minutes, first?, last?}")
+                year_only(p, ("x", "y", "minutes", "first", "last"), "places")
+                x, y = year_square(p.get("x"), p.get("y"), "places")
+                o = {"x": x, "y": y, "minutes": year_minutes(p.get("minutes"), "places")}
+                if "first" in p:
+                    o["first"] = year_time(p["first"], "places", now)
+                if "last" in p:
+                    o["last"] = year_time(p["last"], "places", now)
+                if "first" in o and "last" in o and o["first"] > o["last"]:
+                    raise YearNo("places: first comes before last")
+                places.append(o)
+            out["places"] = places
+        if "moments" in body:
+            moments = []
+            for m in year_list(body["moments"], YEAR_LIST, "moments"):
+                if not isinstance(m, dict) or not isinstance(m.get("event"), dict):
+                    raise YearNo("moments: each {event, t?}")
+                year_only(m, ("event", "t"), "moments")
+                if "at" in m["event"]:
+                    raise YearNo("moments: an event has no at (t is its time)")
+                got, why = array_backfill({"events": [dict(m["event"], at=0)]}, now)
+                if why is not None:
+                    raise YearNo("moments: " + re.sub(r"^event 1: ", "", why))
+                event = {k: v for k, v in got[0].items() if k != "at"}
+                moments.append({"event": event, "t": year_time(m["t"], "moments", now)} if "t" in m else {"event": event})
+            out["moments"] = moments
+        if "replay" in body:
+            out["replay"] = [year_step(s, "replay", now) for s in year_list(body["replay"], YEAR_STEPS, "replay")]
+        return out, None
+    except YearNo as e:
+        return None, str(e)
+
+
+class Records:
+    """Each channel's record and summary, in a folder of its own under the relay's records folder (None: none kept)."""
+
+    def __init__(self, base, chunks_most=RECORD_CHUNKS):
+        self.base = base
+        self.chunks_most = chunks_most
+        self.changes = {}            # channel -> when its last uploads and deletes came (RECORD_AN_HOUR)
+
+    def folder(self, name):
+        if not self.base or not CHANNEL_NAME.fullmatch(name) or name in (".", ".."):
+            return None
+        return os.path.join(self.base, name)
+
+    @staticmethod
+    def read_json(path, default):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return default
+
+    @staticmethod
+    def write_json(path, value):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(value, f)
+        os.replace(tmp, path)
+
+    def token_ok(self, name, token, which):
+        if not RECORD_TOKEN.fullmatch(token or ""):
+            return False
+        h = hashlib.sha256(token.encode()).hexdigest()
+        pairs = self.read_json(os.path.join(self.folder(name), "tokens.json"), [])
+        return any(hmac.compare_digest(p.get(which, ""), h) for p in pairs if isinstance(p, dict))
+
+    def metas(self, name, now):
+        """The chunks' entries, without any not uploaded again in RECORD_DAYS (those taken away)."""
+        folder = self.folder(name)
+        metas = self.read_json(os.path.join(folder, "meta.json"), {})
+        old = [i for i, m in metas.items() if now - m.get("at", 0) > RECORD_DAYS * 86_400_000]
+        if old:
+            for i in old:
+                metas.pop(i, None)
+                try:
+                    os.remove(os.path.join(folder, "chunks", i))
+                except OSError:
+                    pass
+            self.write_json(os.path.join(folder, "meta.json"), metas)
+        return metas
+
+    def counted(self, name, now):
+        times = [t for t in self.changes.get(name, []) if now - t < 3_600_000]
+        if len(times) >= RECORD_AN_HOUR:
+            self.changes[name] = times
+            return False
+        self.changes[name] = times + [now]
+        return True
+
+    def register(self, name, body):
+        if not isinstance(body, dict) or not all(isinstance(body.get(k), str) and RECORD_TOKEN.fullmatch(body[k])
+                                                 for k in ("read", "write")):
+            return "400 Bad Request", {"error": "the tokens: read and write, 43 base64url characters each"}
+        pair = {k: hashlib.sha256(body[k].encode()).hexdigest() for k in ("read", "write")}
+        path = os.path.join(self.folder(name), "tokens.json")
+        pairs = self.read_json(path, [])
+        if pair in pairs:
+            return "204 No Content", None
+        if len(pairs) >= RECORD_KEYS:
+            return "409 Conflict", {"error": "%d record keys at most: delete the relay's copy to start again" % RECORD_KEYS}
+        self.write_json(path, pairs + [pair])
+        return "204 No Content", None
+
+    def put(self, name, cid, data, now):
+        if len(data) > RECORD_CHUNK:
+            return "413 Payload Too Large", {"error": "a chunk is %d KB at most" % (RECORD_CHUNK // 1024)}
+        if len(data) < RECORD_CHUNK_LEAST or data[0] != 1:
+            return "415 Unsupported Media Type", {"error": "not a sealed chunk: the relay keeps only what's encrypted"}
+        if not self.counted(name, now):
+            return "429 Too Many Requests", {"error": "%d uploads and deletes an hour at most: try again later" % RECORD_AN_HOUR}
+        folder = self.folder(name)
+        metas = self.metas(name, now)
+        if cid not in metas and len(metas) >= self.chunks_most:
+            return "507 Insufficient Storage", {"error": "the relay's copy is full (%d chunks)" % self.chunks_most}
+        if len(data) + sum(m["size"] for i, m in metas.items() if i != cid) > RECORD_BYTES:
+            return "507 Insufficient Storage", {"error": "the relay's copy is full (%d MB)" % (RECORD_BYTES // 1048576)}
+        os.makedirs(os.path.join(folder, "chunks"), exist_ok=True)
+        tmp = os.path.join(folder, "chunks", cid + ".tmp")
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, os.path.join(folder, "chunks", cid))
+        metas[cid] = {"at": now, "size": len(data)}
+        self.write_json(os.path.join(folder, "meta.json"), metas)
+        return "201 Created", {"id": cid, "at": now, "size": len(data)}
+
+    def delete(self, name, cid, now):
+        if not self.counted(name, now):
+            return "429 Too Many Requests", {"error": "%d uploads and deletes an hour at most: try again later" % RECORD_AN_HOUR}
+        folder = self.folder(name)
+        metas = self.metas(name, now)
+        if cid not in metas:
+            return "404 Not Found", {"error": "no such chunk"}
+        del metas[cid]
+        try:
+            os.remove(os.path.join(folder, "chunks", cid))
+        except OSError:
+            pass
+        self.write_json(os.path.join(folder, "meta.json"), metas)
+        return "204 No Content", None
+
+    def delete_all(self, name):
+        folder = self.folder(name)
+        if folder and os.path.isdir(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+        return "204 No Content", None
+
+    def listing(self, name, data, after, now):
+        folder = self.folder(name)
+        metas = sorted(self.metas(name, now).items())
+        total = sum(m["size"] for _, m in metas)
+        if not data:
+            return {"chunks": [{"id": i, "at": m["at"], "size": m["size"]} for i, m in metas], "bytes": total}
+        rows, taken, nxt = [], 0, None
+        for i, m in metas:
+            if after and i <= after:
+                continue
+            if rows and taken + m["size"] > RECORD_PAGE:
+                nxt = rows[-1]["id"]
+                break
+            try:
+                with open(os.path.join(folder, "chunks", i), "rb") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            taken += m["size"]
+            rows.append({"id": i, "at": m["at"], "size": m["size"], "data": base64.b64encode(raw).decode()})
+        return {"chunks": rows, "bytes": total, "next": nxt}
+
+    def year_get(self, name):
+        y = self.read_json(os.path.join(self.folder(name), "year.json"), None)
+        return None if y is None else '{"year": %s, "at": %d}' % (y["text"], y["at"])
+
+    def year_put(self, name, text, now):
+        self.write_json(os.path.join(self.folder(name), "year.json"), {"text": text, "at": now})
+        return '{"year": %s, "at": %d}' % (text, now)
+
+    def year_delete(self, name):
+        try:
+            os.remove(os.path.join(self.folder(name), "year.json"))
+        except OSError:
+            pass
+
+
 def version_numbers(v):
     """"0.10.2" as (0, 10, 2) for comparing; anything after a "-" or "+" (a pre-release) is left out, and a part
     that isn't a number counts as 0."""
@@ -1743,8 +2172,10 @@ def too_old(v, min_client):
 
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
-                 where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False):
+                 where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False, records_dir=None,
+                 record_chunks=RECORD_CHUNKS):
         self.delay = delay
+        self.records = Records(records_dir, record_chunks)  # your year (11/10/2026): None as the folder keeps none
         self.test_forget = test_forget  # POST /test/forget answered (tests only: the Worker's TEST_FORGET)
         # the almanac (11/09/2026; almanac.py): Jagex's news, the world list and the Wiki's prices, fetched on a
         # schedule (almanac_loop) and shared: "off" (nothing's fetched; GET /almanac answers its shape, empty), "on"
@@ -1817,6 +2248,9 @@ class Relay:
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             writer.close()
+            return
+        if path and ((path[0] == "record" and len(path) in (2, 3)) or (path[0] == "year" and len(path) == 2)) and not key:
+            await self.record(reader, writer, method, headers, path, q)
             return
         if path and path[0] == "clips" and 2 <= len(path) <= 3 and not key:
             await self.clips(reader, writer, method, headers, path, q)
@@ -2134,6 +2568,11 @@ class Relay:
             sock.send_nowait(ch.game_line())
         sock.send_nowait(ch.banned_line())
         sock.send_nowait(ch.viewer_list())
+        # (your year: what's held now, each with when it came)
+        if ch.where is not None:
+            sock.send_nowait(json.dumps({"mine": {"where": ch.where, "at": ch.where_ms}}))
+        if ch.activity is not None:
+            sock.send_nowait(json.dumps({"mine": {"activity": ch.activity, "at": ch.activity_ms}}))
         # (messages that came while the portal was closed)
         now = time.time()
         for d in [d for d in ch.dms if now - d["at"] / 1000 <= DMS_DAYS * 86400]:
@@ -2343,6 +2782,7 @@ class Relay:
                 ch.gamer = None
                 ch.drop_where()              # (following: only while the plugin's connected)
                 ch.drop_activity()           # (what they're doing, the same)
+                ch.drop_here()               # (the exact path, the same)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
 
@@ -2918,6 +3358,105 @@ class Relay:
         self.log("clip      %s  %s (%d KB)" % (name, meta["what"], len(clip) // 1024))
         return await answer("201 Created", {"id": meta["id"]})
 
+    async def record(self, reader, writer, method, headers, path, q):
+        """Your year (11/10/2026; docs/record.md; the Worker's index.ts record and record.ts, the same):
+            POST   /record/<channel>/token?key=<key>  {"read", "write"}   the record key's tokens, their SHA-256 kept
+            PUT    /record/<channel>/<id>?key=<key>   a sealed chunk;  DELETE /record/<channel>/<id>?key=  one gone
+            DELETE /record/<channel>?key=<key>        everything: chunks, tokens, the public summary
+            GET    /record/<channel>[?data=1&after=]  Authorization: Bearer <read token>
+            PUT, DELETE /year/<channel>  ?key= or Authorization: Bearer <write token>;   GET /year/<channel>  anyone's"""
+        cors = "Access-Control-Allow-Origin: *\r\n"
+
+        async def answer(status, body=None, extra=""):
+            data = (body if isinstance(body, str) else json.dumps(body)).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%s%sCache-Control: no-store\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, cors, kind, extra, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method == "OPTIONS":
+            return await answer("204 No Content", None, "Access-Control-Allow-Methods: GET, PUT, POST, DELETE\r\n"
+                                "Access-Control-Allow-Headers: authorization, content-type\r\nAccess-Control-Max-Age: 86400\r\n")
+        kind, name = path[0], path[1]
+        if not CHANNEL_NAME.fullmatch(name):
+            return await answer("400 Bad Request", {"error": "which outstation?"})
+        if self.records.folder(name) is None:
+            return await answer("404 Not Found", {"error": "this relay doesn't keep records"})
+        third = path[2] if len(path) == 3 else ""
+        if kind == "record" and third == "token" and method == "POST":
+            what, most = "token", 4096
+        elif kind == "record" and third and method in ("PUT", "DELETE"):
+            if not CHUNK_ID.fullmatch(third):
+                return await answer("400 Bad Request", {"error": "a chunk's id: 22 base64url characters"})
+            what, most = "chunk", RECORD_CHUNK
+        elif kind == "record" and not third and method in ("GET", "DELETE"):
+            what, most = ("list" if method == "GET" else "all"), 0
+        elif kind == "year" and method in ("GET", "PUT", "DELETE"):
+            what, most = "year", YEAR_MOST
+        else:
+            return await answer("405 Method Not Allowed", {"error": "no such thing here"})
+        body = b""
+        if method in ("PUT", "POST"):
+            try:
+                body = await read_body(reader, headers, most)
+            except (ValueError, asyncio.IncompleteReadError):
+                return await answer("400 Bad Request")
+            if body is None:
+                return await answer("413 Payload Too Large", {"error": "a chunk is %d KB at most" % (RECORD_CHUNK // 1024)
+                                                              if what == "chunk" else "a year is %d KB at most" % (YEAR_MOST // 1024)
+                                                              if what == "year" else "the tokens: read and write"})
+        station = False
+        if "key" in q:
+            ch = self.channels.get(name)
+            station = ch is not None and ch.key is not None and len(q["key"]) >= 8 and hmac.compare_digest(q["key"], ch.key)
+            if not station:
+                return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+            ch.key_used()
+        m = re.match(r"^Bearer (.+)$", headers.get("authorization", ""))
+        token = m.group(1).strip() if m else ""
+        now = int(time.time() * 1000)
+        rec = self.records
+        if what == "token":
+            if not station:
+                return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+            try:
+                b = json.loads(body)
+            except ValueError:
+                b = None
+            return await answer(*rec.register(name, b))
+        if what == "chunk":
+            if not station:
+                return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+            return await answer(*(rec.put(name, third, body, now) if method == "PUT" else rec.delete(name, third, now)))
+        if what == "all":
+            if not station:
+                return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+            return await answer(*rec.delete_all(name))
+        if what == "list":
+            if not rec.token_ok(name, token, "read"):
+                return await answer("403 Forbidden", {"error": "a read token: the record key's, registered by the app"})
+            # (a blank after= is none, as on the Worker)
+            return await answer("200 OK", rec.listing(name, q.get("data") == "1", q.get("after", ""), now))
+        if method == "GET":
+            got = rec.year_get(name)
+            return await answer("200 OK", got) if got is not None else \
+                await answer("404 Not Found", {"error": "no year posted for that outstation"})
+        if not station and not rec.token_ok(name, token, "write"):
+            return await answer("403 Forbidden", {"error": "the station key, or the record key's write token"})
+        if method == "DELETE":
+            rec.year_delete(name)
+            return await answer("204 No Content")
+        try:
+            y = json.loads(body, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return await answer("400 Bad Request", {"error": "a year is JSON"})
+        year, why = year_summary(y, now)
+        if why is not None:
+            return await answer("400 Bad Request", {"error": why})
+        return await answer("200 OK", rec.year_put(name, json.dumps(year), now))
+
     async def clip_file(self, writer, path, kind, rng, head_only):
         """A clip's file, whole or the range asked for (a video's player asks in ranges)."""
         try:
@@ -3333,13 +3872,14 @@ def dink_report(p):
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="",
-                where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False):
+                where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False, records_dir=None,
+                record_chunks=RECORD_CHUNKS):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
     almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
     everything under instead (tests)."""
     relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, where_fresh_s,
-                  almanac, test_forget)
+                  almanac, test_forget, records_dir, record_chunks)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -3385,6 +3925,10 @@ def main(argv=None):
     ap.add_argument("--no-forward", action="store_true", help="forward nothing to Discord")
     ap.add_argument("--clips", default=DEFAULT_CLIPS,
                     help="where clips on players' Outside pages are kept (\"\" takes none)")
+    ap.add_argument("--records", default=DEFAULT_RECORDS,
+                    help="where players' encrypted records and public years are kept (\"\" keeps none)")
+    ap.add_argument("--record-chunks", type=int, default=RECORD_CHUNKS,
+                    help="a channel's record chunks at most (%d; fewer for tests)" % RECORD_CHUNKS)
     ap.add_argument("--min-client", default="",
                     help="the oldest outstation client let in (e.g. 0.2.0); older ones are told to update")
     ap.add_argument("--admin-token", default="",
@@ -3408,7 +3952,8 @@ def main(argv=None):
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token,
-                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac, test_forget=a.test_forget))
+                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac, test_forget=a.test_forget,
+                          records_dir=a.records or None, record_chunks=a.record_chunks))
     except KeyboardInterrupt:
         pass
 

@@ -24,6 +24,8 @@ It keeps the Array's events too (11/08/2026, `src/array.ts`): the last 500 kills
 
 It keeps the almanac too (11/09/2026, `src/almanac.ts`): Jagex's news, the world list and the Wiki's prices, for outside.wiki's globe (`GET /almanac`), fetched by the relay on a schedule and shared by every visitor (below, "The almanac's sources"; `../docs/protocol.md`, "The almanac"). It's in the Directory's storage, so an eviction or a deploy doesn't fetch anything again.
 
+The Records (one object per channel, `src/record.ts`, since 11/10/2026) keep each player's year (`../docs/record.md`): the SHA-256 of the record key's tokens (`tokens`), each sealed chunk (`d:<id>`) with its time and size (`m:<id>`), and the public summary as checked (`year`). Only ciphertext: the app seals each chunk with a key the relay never sees, and a body that isn't sealed is refused. Apart from the channel, so a page reading a year never wakes or slows a live channel and a new key from the keeper leaves the record alone; the Worker checks the station key with the channel (`/_keyok`) and passes on only its verdict (`x-station`), the bearer token and the body. Taking a channel back deletes its object's storage. Its migration (`v3` in `wrangler.jsonc`) goes up with the next deploy; nothing to make by hand (unlike the clips' bucket). `RECORD_CHUNKS` (a var) lowers the 2,000 chunks a channel may hold, for the tests.
+
 While live, the frames keep the object awake. The last frame lives in memory only. SAFETY.md, "What the relay keeps", says all of it for the people it's about, and for how long.
 
 ## On this PC

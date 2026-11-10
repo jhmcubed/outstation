@@ -230,7 +230,9 @@ ADDRESSES = {
     "https://relay.ghillie.workers.dev": "the listening post's relay: where asking for a portal goes (ask.rs HOME_RELAY), and the "
                                          "friends list's open portals before you're attached",
     "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; and the Outside pages the "
-                            "friends list opens in your browser when you click a name (win.rs open_page: ghillie.wiki's only)",
+                            "friends list opens in your browser when you click a name, and your year's view on your own Outside page (record.rs "
+                            "YEAR_PAGE, \"open my year\": its record key in the address's fragment, which the browser never "
+                            "sends) (win.rs open_page: ghillie.wiki's only)",
     "https://github.com/jhmcubed/outstation/issues/new": "the repository's \"Something went wrong\" form, opened in your "
                                                        "browser from \"report an anomaly\" (report.rs, win.rs open_page)",
     "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md": "this page, opened in your browser from the attach "

@@ -542,13 +542,18 @@ class FollowingWords(unittest.TestCase):
         self.assertEqual(W({"where": {"x": 3264, "y": 3264}}), {"x": 3264, "y": 3264})
         self.assertEqual(W({"where": {"y": 2496, "x": 1088}}), {"x": 1088, "y": 2496})        # (the corners)
         self.assertEqual(W({"where": {"x": 4032, "y": 4160}}), {"x": 4032, "y": 4160})
+        # (Sailing's seas, 11/10/2026: the band round the old map, x 960-1023 and 3968-4031, y 2048-2495 and 4160-4223)
+        self.assertEqual(W({"where": {"x": 960, "y": 2112}}), {"x": 960, "y": 2112})          # (its corner)
+        self.assertEqual(W({"where": {"x": 3264, "y": 2496}}), {"x": 3264, "y": 2496})        # (the Great Conch)
+        self.assertEqual(W({"where": {"x": 960, "y": 3264}}), {"x": 960, "y": 3264})
         self.assertEqual(W({"where": {"x": 3264.0, "y": 3264}}), {"x": 3264, "y": 3264})    # (as JavaScript reads it)
         self.assertEqual(W({"where": {"y": 4416, "x": 2368}}), {"x": 2368, "y": 4416})        # (Zanaris, as one place)
         self.assertEqual(W({"where": {"x": 2368.0, "y": 4416.0}}), relay.WHERE_ZANARIS)
         self.assertIsNot(W({"where": {"x": 2368, "y": 4416}}), relay.WHERE_ZANARIS)          # (a copy: never the constant)
         self.assertIsNone(W({"where": None}))
-        for g in ({}, {"world": 302}, None, [], {"where": {"x": 1024, "y": 3264}}, {"where": {"x": 960, "y": 3264}},
-                  {"where": {"x": 4160, "y": 3264}}, {"where": {"x": 3264, "y": 2368}}, {"where": {"x": 3264, "y": 4224}},
+        for g in ({}, {"world": 302}, None, [], {"where": {"x": 1024, "y": 3264}}, {"where": {"x": 832, "y": 3264}},
+                  {"where": {"x": 4160, "y": 3264}}, {"where": {"x": 3264, "y": 1984}}, {"where": {"x": 3264, "y": 4224}},
+                  {"where": {"x": 3264, "y": 2048}}, {"where": {"x": 896, "y": 3264}},
                   {"where": {"x": 3264, "y": 4288}}, {"where": {"x": 3265, "y": 3264}}, {"where": {"x": 3264.5, "y": 3264}},
                   {"where": {"x": True, "y": 3264}}, {"where": {"x": "3264", "y": 3264}}, {"where": {"x": 3264}},
                   {"where": {"x": 3264, "y": 3264, "plane": 0}}, {"where": [3264, 3264]}, {"where": "lumbridge"},
@@ -648,9 +653,11 @@ class ActivityLists(unittest.TestCase):
         self.assertEqual(self.ts_list(game, "ACTIVITY_RAIDS"), list(relay.ACTIVITY_RAIDS))
         self.assertEqual(self.ts_list(game, "ACTIVITY_MINIGAMES"), list(relay.ACTIVITY_MINIGAMES))
         java = self.source("plugin", "src", "main", "java", "wiki", "outside", "Activity.java")
-        for name, kept in (("RAIDS", relay.ACTIVITY_RAIDS), ("MINIGAMES", relay.ACTIVITY_MINIGAMES)):
+        trials = re.search(r'static final String TRIALS = "([^"]+)";', java).group(1)      # (by the game's flag, 11/10/2026)
+        self.assertEqual(trials, "Barracuda Trials")
+        for name, kept, more in (("RAIDS", relay.ACTIVITY_RAIDS, []), ("MINIGAMES", relay.ACTIVITY_MINIGAMES, [trials])):
             body = re.search(r"static final Map<Integer, String> %s = regions\((.*?)\);" % name, java, re.S).group(1)
-            self.assertEqual(sorted(re.findall(r'"([^"]+)", new int', body)), sorted(kept))
+            self.assertEqual(sorted(re.findall(r'"([^"]+)", new int', body) + more), sorted(kept))
         self.assertEqual(sorted(relay.ACTIVITY_MINIGAMES), list(relay.ACTIVITY_MINIGAMES))
         for pvp in ("Last Man Standing", "Castle Wars", "Clan Wars", "Soul Wars", "the Fight Pits", "Emir's Arena",
                     "Tempoross", "Wintertodt", "Zalcano"):                               # (minigames, 11/10/2026)
@@ -676,6 +683,36 @@ class ActivityLists(unittest.TestCase):
         got = re.search(r"STAR_LIFE_MS = (.*?), STAR_GONE_MS = (.*?), STARS_AN_HOUR = (\d+), STARS_KEPT = (\d+);", stars).groups()
         self.assertEqual([eval(g.replace("_", "")) for g in got],
                          [relay.STAR_LIFE_S * 1000, relay.STAR_GONE_S * 1000, relay.STARS_AN_HOUR, relay.STARS_KEPT])
+
+
+class HereWords(unittest.TestCase):
+    """The exact path's "here" (11/10/2026; game_here): a tile of the main map or its seas, or Zanaris's place, with
+    its plane and world; null; or ignored. The Worker's gameHere, the same."""
+
+    def test_a_tile_is_taken_and_anything_else_is_not(self):
+        H = relay.game_here
+        self.assertEqual(H({"here": {"x": 3222, "y": 3218, "plane": 0, "world": 302}}),
+                         {"x": 3222, "y": 3218, "plane": 0, "world": 302})
+        self.assertEqual(H({"here": {"world": 1, "plane": 3, "y": 2048, "x": 960}}), {"x": 960, "y": 2048, "plane": 3, "world": 1})
+        self.assertEqual(H({"here": {"x": 4095.0, "y": 4223, "plane": 0, "world": 999}}),
+                         {"x": 4095, "y": 4223, "plane": 0, "world": 999})
+        self.assertEqual(H({"here": {"x": 2368, "y": 4416, "plane": 0, "world": 302}})["y"], 4416)      # (Zanaris)
+        self.assertIsNone(H({"here": None}))
+        for g in ({}, None, {"here": {"x": 959, "y": 3218, "plane": 0, "world": 302}},
+                  {"here": {"x": 4096, "y": 3218, "plane": 0, "world": 302}}, {"here": {"x": 3222, "y": 2047, "plane": 0, "world": 302}},
+                  {"here": {"x": 3222, "y": 4224, "plane": 0, "world": 302}}, {"here": {"x": 3222, "y": 9618, "plane": 0, "world": 302}},
+                  {"here": {"x": 3222, "y": 3218, "plane": 4, "world": 302}}, {"here": {"x": 3222, "y": 3218, "plane": -1, "world": 302}},
+                  {"here": {"x": 3222, "y": 3218, "plane": 0, "world": 0}}, {"here": {"x": 3222, "y": 3218, "plane": 0}},
+                  {"here": {"x": 3222, "y": 3218, "plane": 0, "world": 302, "z": 1}}, {"here": {"x": 3222.5, "y": 3218, "plane": 0, "world": 302}},
+                  {"here": {"x": True, "y": 3218, "plane": 0, "world": 302}}, {"here": {"x": "3222", "y": 3218, "plane": 0, "world": 302}},
+                  {"here": [3222, 3218, 0, 302]}, {"here": "lumbridge"}, {"here": {"x": 2369, "y": 4416, "plane": 0, "world": 302}}):
+            self.assertIs(H(g), relay._BAD, g)
+        self.assertNotIn("here", relay.game_fields({"world": 302, "here": {"x": 3222, "y": 3218, "plane": 0, "world": 302}}))
+
+    def test_the_numbers_match_the_workers(self):
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "relay", "src", "game.ts"), encoding="utf-8") as f:
+            game = f.read()
+        self.assertIn("export const HERE_EVERY_MS = %s, HERE_PLANES = [%d, %d];" % (("{:_}".format(int(relay.HERE_EVERY_S * 1000)),) + relay.HERE_PLANES), game)
 
 
 class StarWords(unittest.TestCase):

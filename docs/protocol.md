@@ -80,7 +80,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below); and, since 11/10/2026, the player's own `{"mine"}` lines, which no other socket ever gets (below, "Your year"). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -105,7 +105,7 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "raid", "raid"}`, `{"kind": "minigame", "minigame"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown; the shooting stars the plugins find have a list of their own (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "raid", "raid"}`, `{"kind": "minigame", "minigame"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown (the player's own desk also gets their own, as `{"mine"}`, for their record: below, "Your year"); the shooting stars the plugins find have a list of their own (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
 How each relay keeps it (11/10/2026). The Python relay builds it from its channels, in its own memory, at each read. The Worker's Directory keeps each channel's row as the channel last told it (a channel tells it whenever its row changes: on air or off, the picture, viewers, title, what it's doing, the plugin, `where`, `activity`), in its storage (`relay/src/listed.ts`), so a read after the Directory's slept (about 10 seconds after its last request) is answered without asking every channel handed out. What's stored of a row is everything above but `where` and `activity` (and when each came), which are only ever held in memory beside it: after the Directory sleeps they're gone until the channel tells it again, or until the first read after the wake asks the channel, which it does once a wake for each row that says live with the plugin connected (the only rows that can have either). Besides that, it asks a channel only when its row is missing (never told, or a new key), or older than 5 minutes for a row that says live, 30 for any other (`LISTING_CHECK_SECONDS` shortens the 5, and the 30 with it, for tests): in case a telling was lost, or a channel's sockets closed without it telling (a deploy). So a channel that went dark without telling shows live for 5 minutes and one read at most (at once, the next read, when the plugin was connected), and one that came on air without telling shows dark for 30 minutes at most. A channel taken back, or given a new key, has its row taken out at once. The readers see the same answer from either relay.
 
@@ -292,8 +292,25 @@ both Gauntlets and Zalcano's mine as Prifddinas's middle where the world map dra
 as Falador Park's `{"x": 3008, "y": 3392}` (11/10/2026). The rest off the map (the Leviathan, the Whisperer, Duke
 Sucellus, the Phantom Muspah, the Abyssal Sire, the Corporeal Beast, the Fractured Archive, the PvP minigames' arenas)
 send nothing, as anywhere else off the map. An instance whose template lies in the Wilderness is
-still dangerous. Nothing changes on the relays: an instance's square is a square like any other. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
+still dangerous. Nothing changes on the relays: an instance's square is a square like any other.
+Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
 `Channel.take_where`).
+
+**At sea** (11/10/2026, Jace: "do we support location tracking when people are out at sea?"): Sailing (11/19/2025) put
+a band of sea and islands round the old map (x 1024–3967, y 2496–4159): x 960–1023 to the west, 3968–4031 to the east,
+y 2048–2495 to the south (Sunbleak Island, Last Light, Charred Island, Wyrmscraig, the Great Conch) and 4160–4223 to the
+north, measured from the game's own map squares (the OSRS cache on archive.openrs2.org: the last before Sailing, 2341,
+against launch day's, 2363, and the newest, 2757 of 11/03/2026, which adds nothing past them; Shortest Path's collision
+map covers the same). The main map's bounds take it in, on the plugin (`Follow.X0`, `Y0`) and both relays (`WHERE_X`,
+`WHERE_Y`). Underground still goes as the square above it only under the old map (y 2496 up), and under the new sea
+only for the islands' caves the wiki places there (`Follow.SEA_CAVES`: Sunbleak Cave, Wyrmscraig Cavern, the Charred
+Dungeon, the Great Conch's), since older squares south of the old underground lie under no sea. A player on a boat
+stands in the boat's own world view; the plugin reads where the boat is on the main world (`OutsidePlugin.onMainWorld`,
+as RuneLite's `Perspective.localToMinimap` does it, with `WorldEntity.transformToMainWorld`), never the deck's own
+tiles (read as they were before, they gave the boat's own scene, not the sea, so nothing went). No sea is
+dangerous: the wiki's Sailing page names no PvP or Wilderness sea, and boat combat is against monsters; the game's own
+Wilderness and PvP-area flags are read at sea as anywhere.
+
 - **Which world** (11/08/2026): with the plugin's "and my world" on as well as following, `where` carries the world the
   player was on with the square, from the same moment two minutes before: `{"x", "y", "world"}`. Never on its own,
   never from a PvP, Deadman or other dangerous world (the plugin clears `where` there, as anywhere dangerous), and
@@ -301,7 +318,7 @@ still dangerous. Nothing changes on the relays: an instance's square is a square
   has reported 301 and up for years, and the range takes lower numbers too in case Jagex numbers worlds from 1. Anything
   else in it (0, 1000, `"302"`, `true`, another key) and the whole `where` is ignored.
 - A `where` that isn't `null` must be an object with exactly `x` and `y` (and `world`, above), each a whole number `k*128 + 64`, `x` from
-  1024 up to (not including) 4096 and `y` from 2496 up to 4224; or exactly `{"x": 2368, "y": 4416}`, Zanaris
+  960 up to (not including) 4096 and `y` from 2048 up to 4224 (so the middles `x` 960–4032 and `y` 2112–4160); or exactly `{"x": 2368, "y": 4416}`, Zanaris
   (`WHERE_ZANARIS`, 11/08/2026: the plugin sends any tile there, x 2368–2495 and y 4352–4479, as that one place, and
   the globe draws it on its moon). Anything else is ignored, Zanaris's neighbouring squares included, and the rest of
   the message is taken as ever.
@@ -359,12 +376,15 @@ Those fought in an instance keep their labels there (11/09/2026), and a boss fig
 Fight Caves is `TzTok-Jad`, Zuk in the Inferno `TzKal-Zuk`, Sol Heredit in the Colosseum `Sol Heredit`, then the
 minigame again a minute after the last hit; Olm in the Chambers is the raid: Olm isn't on the list).
 
-The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Blast Furnace, Brimhaven Agility Arena, Castle
+The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Barracuda Trials (11/10/2026), Blast Furnace, Brimhaven Agility Arena, Castle
 Wars, Clan Wars, Emir's Arena, Fishing Trawler, Giants' Foundry, Guardians of the Rift, Hallowed Sepulchre, Last Man
 Standing, Mage Training Arena, Nightmare Zone, Pest Control, Pyramid Plunder, Rogues' Den, Sorceress's Garden, Soul
 Wars, Temple Trekking, Tempoross, Tithe Farm, Trouble Brewing, Volcanic Mine, Wintertodt, Zalcano, the Colosseum, the
 Fight Caves, the Fight Pits, the Inferno. The plugin tells a raid or a minigame by RuneLite's own Discord plugin's
-region ids (`DiscordGameEventType`), less its rat pits and games room. Tempoross, Wintertodt and Zalcano, which it and the
+region ids (`DiscordGameEventType`), less its rat pits and games room, and Barracuda Trials, Sailing's obstacle courses
+at sea, which have no region there, by the game's own in-trial flag (`VarbitID.SAILING_BT_IN_TRIAL` not 0, as the
+Sailing plugin reads it; the plugin's `Activity.TRIALS`). Sailing's bosses, the Shellbane gryphon and the Mad Angel, are
+bosses like the rest; its other work (courier and bounty tasks, charting, salvaging, trawling) is skilling Sailing. Tempoross, Wintertodt and Zalcano, which it and the
 hiscores count as bosses, are minigames here (11/10/2026); their kills still pop on the Array as any boss's do (below,
 "The Array's events"). The PvP minigames (Last Man Standing, Castle Wars, Clan Wars, Soul Wars, the Fight Pits, Emir's
 Arena) are minigames like the rest since 11/10/2026 (Jace: "they are just minigames"). relay-py's tests check the
@@ -383,8 +403,28 @@ channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activi
 - Dropped when the game socket closes, when the plugin sends `"off": true` or a `paused` that's a string, and on
   Cloudflare when the keeper gives the channel a new key or takes it back.
 - Held in memory only, with when it came, never in storage (as `where`: the Directory's stored rows leave it out). Shown
-  only on `GET /channels` (above), while the channel's live and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers,
-  lookers or desks, `GET /game`, the Array's events, the aether or the keeper's list.
+  only on `GET /channels` (above), while the channel's live and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers or
+  lookers, `GET /game`, the Array's events, the aether or the keeper's list; the channel's own desks get it, and `where`, only
+  as `{"mine"}` (below, "Your year").
+
+**The exact path** (11/10/2026, Jace: "your year" records the exact tile, privately; `docs/record.md`, "The exact
+path"): with the plugin's "Record my exact path for my year" on (off to begin with, its own warning), the tile the
+player's on goes as `{"game": {"here": {"x", "y", "plane", "world"}}}`, at once (not two minutes behind), when it
+changes, at most one every 4 s while they move and once when they stop; placed as following places it (at sea, the
+boat's tile; underground, the tile above; an instance where its template lies or at its entrance; Prifddinas where the
+world map draws it; Zanaris as `{"x": 2368, "y": 4416}`); `{"here": null}` somewhere dangerous (following's rules), off
+the map, and when it's switched off. Both relays (`gameHere`, channel.ts's `takeHere`; relay-py's `game_here`,
+`Channel.take_here`):
+- take it only on the game socket, exactly `{"x", "y", "plane", "world"}`: `x` a whole number from 960 up to (not
+  including) 4096 and `y` from 2048 up to 4224 (a tile of the main map or its seas), or exactly Zanaris's; `plane` 0 to
+  3 (`HERE_PLANES`); `world` 1 to 999 (`WORLD_RANGE`). Anything else is ignored, and the rest of the message taken as ever.
+- take one every 2 s at most (`HERE_EVERY_MS` / `HERE_EVERY_S`; the rest ignored); `null` whenever it comes;
+- pass each one taken at once to the channel's desks only, as `{"mine": {"here", "at"}}` (below, "Your year"), and
+  `{"mine": {"here": null, "at"}}` when it's cleared, the plugin logs out (`"off": true`) or holds for the player's
+  safety (`paused`), the game socket closes, or the keeper gives a new key or takes the channel back (only if a tile was
+  passed on since);
+- never keep it, in memory or in storage: never on GET /channels, GET /game, a viewer's, looker's, transmitter's or the
+  game socket's lines, the Array or the aether; a desk that connects later gets none of it.
 
 **Shooting stars** (11/08/2026): with the plugin's "Shooting stars I find" on, a crashed star the player saw goes as
 `{"game": {"star": {...}}}`, for the relay's list of stars (below, "Shooting stars"). Never one of the game's fields: the
@@ -431,6 +471,54 @@ without waking the channel. At most 20 a channel and 30 days each, the oldest go
 or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
+
+## Your year (11/10/2026)
+
+A year of the player's own travels and activity, recorded by their app, kept on the relay **encrypted with a key only
+their own computers hold**, and a public summary they may choose to post. The design, with the exact format the page
+must match: `docs/record.md`. Both relays: the Worker in a Durable Object of its own per channel (`Records`,
+relay/src/record.ts; binding `RECORD`, migration `v3`), relay-py in a folder (`--records`, ~/Documents/ghillie
+portal/records; "" keeps none).
+
+**The owner's own feed, to the desk only.** The relay passes the channel's own following square, activity and Array
+events to its desk sockets (the app's chat window: only the station key opens one), live or dark, with or without a
+watch code, and to nothing else (no viewer, looker, transmitter, game socket, GET /game or the aether; GET /channels is
+as it was):
+
+    {"mine": {"where": {"x", "y"[, "world"]} | null, "at": <ms>}}      each one the relay takes (one every 50 s), null when dropped
+    {"mine": {"activity": <label> | null, "at": <ms>}}                  the same
+    {"mine": {"event": {"kind", …}, "at": <ms>}}                         each Array event of a field report (array.ts's arrayEvents)
+    {"mine": {"here": {"x", "y", "plane", "world"} | null, "at": <ms>}}   the exact path (below), each one taken (one every 2 s), never kept
+
+`at` is the relay's time of taking it, the same for every desk of the channel. A desk that connects gets the `where` and
+`activity` held now, with their own `at` (never a `here`: none is held). Live and dark are the status line's `live`, as ever.
+
+**The record** (ciphertext only: a body must start with the format byte, 1, and be at least 30 bytes; a plaintext one is
+refused):
+
+    POST   /record/<channel>/token?key=<key>   {"read": <token>, "write": <token>}   204; 400 not two 43-character
+                                               base64url tokens; 403 wrong key; 409 past 4 pairs. Only their SHA-256 kept.
+    PUT    /record/<channel>/<id>?key=<key>    a sealed chunk (application/octet-stream), <id> 22 base64url characters
+                                               201 {"id", "at", "size"}; 413 over 256 KB; 415 not sealed; 429 over 240 an
+                                               hour; 507 past 2,000 chunks or 32 MB
+    DELETE /record/<channel>/<id>?key=<key>    204; 404 no such chunk
+    DELETE /record/<channel>?key=<key>         204: every chunk, every token pair and the public summary
+    GET    /record/<channel>                   Authorization: Bearer <read token>
+                                               {"chunks": [{"id", "at", "size"}, …] in id order, "bytes"}; 403 otherwise
+    GET    /record/<channel>?data=1[&after=<id>]   the same, each chunk with "data" (base64), up to 4 MB of data, and
+                                               "next" (the id to go after, or null at the end)
+
+A chunk not uploaded again in 400 days goes. Any origin may read (CORS `*`, `OPTIONS` answered). The keeper taking a
+channel back (DELETE /admin/channels/<channel>, the Worker) deletes its record and summary too; a new key from the
+keeper leaves them as they are.
+
+**The public summary**, a fixed shape checked part by part (`docs/record.md`, "The public summary"), stored as checked
+(its parts in their order, numbers whole), at most 512 KB:
+
+    PUT    /year/<channel>?key=<key>, or Authorization: Bearer <write token>   200 {"year", "at"}; 400 {"error"} naming the
+                                               part; 403; 413
+    GET    /year/<channel>                     anyone: 200 {"year", "at"}; 404 none posted
+    DELETE /year/<channel>  (as PUT)           204
 
 ## Messages between outstations (11/06/2026)
 

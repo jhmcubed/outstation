@@ -23,6 +23,7 @@ import net.runelite.api.Client;
 import net.runelite.api.EnumComposition;
 import net.runelite.api.EnumID;
 import net.runelite.api.GameState;
+import net.runelite.api.IndexedObjectSet;
 import net.runelite.api.Item;
 import net.runelite.api.GameObject;
 import net.runelite.api.ItemContainer;
@@ -30,7 +31,10 @@ import net.runelite.api.NPC;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
 import net.runelite.api.Skill;
+import net.runelite.api.WorldEntity;
 import net.runelite.api.WorldType;
+import net.runelite.api.WorldView;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameObjectDespawned;
 import net.runelite.api.events.GameObjectSpawned;
@@ -62,7 +66,8 @@ import org.slf4j.LoggerFactory;
  * Outside (11/07/2026): what you wear and carry, your looting bag, rune pouch and quiver, your skills, hitpoints,
  * prayer, run and special, sent to your outstation's channel on the relay (docs/protocol.md, "The game"), where your
  * Outside page draws them live beside your transmission and its chat, and keeps the last of them while you're away.
- * Nothing else is read or sent: no screen, no chat, no tile, no bank, nothing of other players. Each game tick, only what changed goes
+ * Nothing else is read or sent: no screen, no chat, no bank, nothing of other players, and no tile but the player's own
+ * exact path for their own year's record, with its switch on (Track, 11/10/2026). Each game tick, only what changed goes
  * (vitals alone at most every few seconds), with each new item's name and price once.
  * For outside.wiki's globe, each off to begin with (11/08/2026): following (Follow), and the world with it; what
  * they're doing (Activity, through Behind); the shooting stars they find (Stars). Each only ever the player's own, or
@@ -110,6 +115,8 @@ public class OutsidePlugin extends Plugin
 	private final Kit kit = new Kit();
 	/** following, likewise only on the client's thread */
 	private final Follow follow = new Follow();
+	/** the exact path, for the player's own year (11/10/2026; Track) */
+	private final Track track = new Track();
 	/** "and my world" as it was last tick (switched off: what was sent with the world goes at once) */
 	private boolean followWorld;
 	/** what they're doing (11/08/2026), and it two minutes behind; likewise only on the client's thread */
@@ -182,6 +189,7 @@ public class OutsidePlugin extends Plugin
 			// again; the stars not reported yet are forgotten)
 			follow.forget();
 			follow.clear();
+			track.forget();
 			doing.forget();
 			doing.clear();
 			activity.forget();
@@ -219,6 +227,7 @@ public class OutsidePlugin extends Plugin
 			resend = false;
 			kit.forget();
 			follow.again();
+			track.again();
 			doing.again();
 		}
 		// (the globe's: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
@@ -232,6 +241,7 @@ public class OutsidePlugin extends Plugin
 		long ms = System.currentTimeMillis();
 		JsonObject where = follow(ms, safe);
 		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, config.wilderness()));
+		JsonObject path = track(ms, at, safe);
 		look(ms, safe);
 		if (!open)
 		{
@@ -244,6 +254,10 @@ public class OutsidePlugin extends Plugin
 		if (what != null)
 		{
 			send(what);
+		}
+		if (path != null)
+		{
+			send(path);
 		}
 		JsonObject star = config.stars() ? stars.due(ms, config.starsCredit()) : null;
 		if (star != null)
@@ -438,6 +452,23 @@ public class OutsidePlugin extends Plugin
 		return follow.tick(now, at.getX(), at.getY(), world ? client.getWorld() : 0, safe);
 	}
 
+	/** The exact path's tick (Track, 11/10/2026): what to send, or null. Off, what was sent is cleared once. No
+	 *  delay: it goes only to the player's own outstation, for their record. */
+	private JsonObject track(long now, WorldPoint at, boolean safe)
+	{
+		if (!config.recordPath())
+		{
+			JsonObject gone = track.clear();
+			track.forget();
+			return gone;
+		}
+		if (at == null)
+		{
+			return null;
+		}
+		return track.tick(now, at.getX(), at.getY(), at.getPlane(), client.getWorld(), safe);
+	}
+
 	/** The activity's tick (Activity, two minutes behind through Behind): what to send, or null. Off, what was sent
 	 *  goes once and nothing's kept. */
 	private JsonObject activity(long now, boolean safe)
@@ -451,6 +482,7 @@ public class OutsidePlugin extends Plugin
 		}
 		WorldPoint at = here();
 		activity.region(at == null ? -1 : at.getRegionID(), at == null ? 0 : at.getPlane());
+		activity.trial(client.getVarbitValue(VarbitID.SAILING_BT_IN_TRIAL) != 0);
 		return doing.tick(now, activity.now(now), safe);
 	}
 
@@ -502,8 +534,9 @@ public class OutsidePlugin extends Plugin
 		starsHere.remove(p);
 		// (gone while logged in, near enough to have seen it go: mined out, or a tier mined down, which spawns the
 		// next tier on the same tile this tick and so isn't gone)
-		Player me = client.getLocalPlayer();
-		if (client.getGameState() == GameState.LOGGED_IN && me != null && me.getWorldLocation().distanceTo(p) <= 32)
+		// (on a boat too, 11/10/2026: from where it is at sea, here())
+		WorldPoint me = client.getGameState() == GameState.LOGGED_IN ? here() : null;
+		if (me != null && me.distanceTo(p) <= 32)
 		{
 			starsWent.add(p);
 		}
@@ -568,17 +601,48 @@ public class OutsidePlugin extends Plugin
 
 	/**
 	 * Where the player is, an instance's as its template lies on the map (11/09/2026: instances are allowed, placed
-	 * where they're opened), as RuneLite's own Discord plugin reads it; outside one, where they are. Null before there's a
-	 * player.
+	 * where they're opened), as RuneLite's own Discord plugin reads it; outside one, where they are; on a boat, where the
+	 * boat is at sea (onMainWorld, 11/10/2026). Null before there's a player, or for a moment while a boat's being set up.
 	 */
 	private WorldPoint here()
 	{
-		Player me = client.getLocalPlayer();
-		if (me == null || me.getLocalLocation() == null)
+		return here(client, client.getLocalPlayer());
+	}
+
+	static WorldPoint here(Client client, Player me)
+	{
+		LocalPoint at = me == null ? null : onMainWorld(client.getTopLevelWorldView(), me.getLocalLocation());
+		return at == null ? null : WorldPoint.fromLocalInstance(client, at);
+	}
+
+	/**
+	 * A point on the main world (11/10/2026, Jace: "I notice there are no players on their boats at sea"). With Sailing,
+	 * a player on a boat stands in the boat's own world view (a WorldEntity's), and their local point is the deck's, so
+	 * read as it was it gave the boat's own template, off the map, and nothing went. Here the deck's point is carried
+	 * out to where the boat is on the main world, the way RuneLite's own code does it (runelite/runelite at e7098b7,
+	 * Perspective.localToMinimap: the top-level view's worldEntities().byIndex(the point's world view), then
+	 * transformToMainWorld) and the Sailing plugin's SailingUtil.getTopLevelLocalPoint (LlemonDuck/sailing at af987f3);
+	 * Group Ironmen Tracker and Shortest Path take the boat's own place (worldEntity.getLocalLocation()), here the fallback.
+	 * Null for a point in a world view with no boat on the main world (as while a world hop sets it up): never the deck's.
+	 */
+	static LocalPoint onMainWorld(WorldView top, LocalPoint p)
+	{
+		if (p == null || p.getWorldView() == WorldView.TOPLEVEL)
+		{
+			return p;
+		}
+		IndexedObjectSet<? extends WorldEntity> boats = top == null ? null : top.worldEntities();
+		WorldEntity boat = boats == null ? null : boats.byIndex(p.getWorldView());
+		if (boat == null)
 		{
 			return null;
 		}
-		return WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+		LocalPoint at = boat.transformToMainWorld(p);
+		if (at == null)
+		{
+			at = boat.getLocalLocation();
+		}
+		return at == null ? null : new LocalPoint(at.getX(), at.getY(), WorldView.TOPLEVEL);
 	}
 
 	/**

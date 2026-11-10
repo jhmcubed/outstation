@@ -17,7 +17,8 @@ import java.util.TreeSet;
  * <li>{"kind": "boss", "boss": "Vorkath"}: in a fight with a boss on BOSSES (the NPC they're attacking, or one
  * attacking them), or inside a boss's own place (BOSS_REGIONS: the Gauntlets);</li>
  * <li>{"kind": "raid", "raid": "Theatre of Blood"}: in a raid (RAIDS, by where they are), unless in a boss fight;</li>
- * <li>{"kind": "minigame", "minigame": "the Inferno"}: in a minigame (MINIGAMES, by where they are), the same;</li>
+ * <li>{"kind": "minigame", "minigame": "the Inferno"}: in a minigame (MINIGAMES, by where they are; Barracuda Trials,
+ * TRIALS, by the game's own flag), the same;</li>
  * <li>{"kind": "fighting"}: in a fight with anything else;</li>
  * <li>{"kind": "idle"}: none of those.</li>
  * </ul>
@@ -169,6 +170,16 @@ class Activity
 		"Wintertodt", new int[]{6462},
 		"Zalcano", new int[]{12126});
 
+	/**
+	 * Barracuda Trials (11/10/2026, Jace asked after Sailing): the wiki's list of minigames has them (Sailing's obstacle
+	 * courses at sea), and RuneLite's Discord plugin and hiscores have no region or label for them, so they're told by
+	 * the game's own flag, VarbitID.SAILING_BT_IN_TRIAL, not 0 while a trial's run (as the Sailing plugin reads it:
+	 * LlemonDuck/sailing at af987f3, barracudatrials/HidePortalTransitions.java line 42). One more minigame label for the
+	 * relays (game.ts's ACTIVITY_MINIGAMES, relay.py's). Sailing's bosses, the Shellbane gryphon and the Mad Angel, are on
+	 * BOSSES already; its other work (courier and bounty tasks, charting, salvaging, trawling) is skilling Sailing.
+	 */
+	static final String TRIALS = "Barracuda Trials";
+
 	/** The PvP minigames (11/10/2026, Jace: "there is no danger to someone tracking them there"): ordinary minigames on
 	 *  MINIGAMES, and in their regions the game's PvP-area flag doesn't hold the globe's features back (the Wilderness,
 	 *  PvP and Deadman worlds still do: OutsidePlugin.globeSafe). None of their regions lies in the Wilderness. */
@@ -215,6 +226,7 @@ class Activity
 	private long fightAt = -1;
 	private String boss = null;
 	private int region = -1;
+	private boolean trial = false;
 
 	/** Nightmare Zone shares its region with the King Black Dragon's lair: KBD's on plane 0, the Zone above it (as
 	 *  RuneLite's Discord plugin tells them apart, 11/09/2026) */
@@ -225,6 +237,12 @@ class Activity
 	void region(int r, int plane)
 	{
 		region = r == NMZ_OR_KBD && plane == 0 ? -1 : r;
+	}
+
+	/** Whether a Barracuda Trial's being run this tick (TRIALS). */
+	void trial(boolean in)
+	{
+		trial = in;
 	}
 
 	/** A skill's experience (StatChanged): a drop in it is skilling, unless it's a fighting skill's during a fight. */
@@ -273,7 +291,8 @@ class Activity
 		JsonObject a = new JsonObject();
 		// (a boss fight first, wherever it is: Jad in the Fight Caves is Jad; then a boss's own place (the Gauntlets, the
 		// preparation too), a raid or a minigame they're in)
-		String place = BOSS_REGIONS.get(region), raid = RAIDS.get(region), minigame = MINIGAMES.get(region);
+		String place = BOSS_REGIONS.get(region), raid = RAIDS.get(region);
+		String minigame = trial ? TRIALS : MINIGAMES.get(region);
 		if (boss != null && fightAt >= 0 && now - fightAt < BOSS_MS)
 		{
 			a.addProperty("kind", "boss");
@@ -319,6 +338,7 @@ class Activity
 		fightAt = -1;
 		boss = null;
 		region = -1;
+		trial = false;
 	}
 
 	/** The labels a raid and a minigame go as, sorted (for the relays' lists). */
@@ -329,7 +349,9 @@ class Activity
 
 	static Set<String> minigameLabels()
 	{
-		return new TreeSet<>(MINIGAMES.values());
+		Set<String> labels = new TreeSet<>(MINIGAMES.values());
+		labels.add(TRIALS);
+		return labels;
 	}
 
 	/** The labels a boss goes as, sorted (for the relays' list): by its NPC or by where it is. */

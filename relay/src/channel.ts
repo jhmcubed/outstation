@@ -21,18 +21,25 @@
 // The globe's from the plugin (11/08/2026; game.ts): following's square (and its world), and what they're doing, held
 // in memory for the channel's row of GET /channels; and the shooting stars they find, passed to the Directory's list
 // (stars.ts), which names the first listed outstation to find each (11/09/2026).
+//
+// Your year (11/10/2026; docs/record.md): the owner's own "where", "activity" and Array events go to this channel's
+// desks, and nowhere else, as {"mine": {...}} lines (tellMine), so the app can keep its record; and, with the plugin's
+// "Record my exact path for my year" on, "here", the exact tile, passed on at once and never kept (takeHere). The record
+// itself is kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
-import { type Activity, type Fields, GameState, gameActivity, gameFields, gameStar, gameWhere, GAME_A_SECOND, GAME_MESSAGE,
-         type StarReport, type Where, WHERE_EVERY_MS } from "./game";
+import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
+         GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
   DIRECTORY: DurableObjectNamespace;
   AETHER: DurableObjectNamespace; // the aether (aether.ts, 11/07/2026): one room for every outstation and visitor
+  RECORD?: DurableObjectNamespace; // your year (record.ts, 11/10/2026): each channel's encrypted record and public summary
+  RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
@@ -273,6 +280,10 @@ export class Channel extends DurableObject<Env> {
   where: Where | null = null;
   whereAt = 0;
   whereTook = 0;
+  // the exact path (11/10/2026; game.ts, gameHere): never kept, only when the last one was taken (for HERE_EVERY_MS) and
+  // whether one's out to the desks (so a drop can say null)
+  hereTook = 0;
+  hereOut = false;
   // what they're doing (11/08/2026; game.ts, gameActivity): kept, taken and dropped exactly as "where" is
   activity: Activity | null = null;
   activityAt = 0;
@@ -727,6 +738,18 @@ export class Channel extends DurableObject<Env> {
     if (game) this.send(ws, game);
     this.send(ws, this.bannedLine());
     this.send(ws, this.viewerList());
+    // (your year: what's held now, each with when it came)
+    if (this.where) this.send(ws, pyjson({ mine: { where: this.where, at: this.whereAt } }));
+    if (this.activity) this.send(ws, pyjson({ mine: { activity: this.activity, at: this.activityAt } }));
+  }
+
+  /** Your year (11/10/2026; docs/record.md): one of the owner's own things, {"mine": {...}}, to this channel's desks
+   *  only (the app's chat window, which only the station key opens): never a viewer, a looker or anything else. */
+  tellMine(m: Record<string, unknown>) {
+    const desks = this.sockets("desk");
+    if (!desks.length) return;
+    const line = pyjson({ mine: m });
+    for (const d of desks) this.send(d, line);
   }
 
   // messages between portals: this portal's to another channel's (through that channel's object), and another's held
@@ -835,6 +858,7 @@ export class Channel extends DurableObject<Env> {
     const fields = gameFields(m.game);
     this.takeWhere(gameWhere(m.game), fields, now);
     this.takeActivity(gameActivity(m.game), fields, now);
+    this.takeHere(gameHere(m.game), fields, now);
     this.takeStar(gameStar(m.game), fields);
     const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
     if (!got) return;
@@ -853,6 +877,7 @@ export class Channel extends DurableObject<Env> {
     this.where = w;
     this.whereAt = this.whereTook = now;
     this.tellListing();
+    this.tellMine({ where: w, at: now });
   }
 
   dropWhere() {
@@ -860,6 +885,24 @@ export class Channel extends DurableObject<Env> {
     this.where = null;
     this.whereAt = 0;
     this.tellListing();
+    this.tellMine({ where: null, at: Date.now() });
+  }
+
+  /** The exact path (game.ts, gameHere): passed at once to this channel's desks only ({"mine": {"here", "at"}}), one
+   *  every HERE_EVERY_MS at most (more are ignored), and never kept. null, logging out ({"off": true}) or holding for the
+   *  player's safety ({"paused"}) passes null, if one was out. */
+  takeHere(h: Here | null | undefined, fields: Fields, now: number) {
+    if (fields.off === true || typeof fields.paused === "string" || h === null) return this.dropHere();
+    if (!h || now - this.hereTook < HERE_EVERY_MS) return;
+    this.hereTook = now;
+    this.hereOut = true;
+    this.tellMine({ here: h, at: now });
+  }
+
+  dropHere() {
+    if (!this.hereOut) return;
+    this.hereOut = false;
+    this.tellMine({ here: null, at: Date.now() });
   }
 
   /** What they're doing (game.ts, gameActivity): taken and dropped exactly as takeWhere takes "where", one every
@@ -870,6 +913,7 @@ export class Channel extends DurableObject<Env> {
     this.activity = a;
     this.activityAt = this.activityTook = now;
     this.tellListing();
+    this.tellMine({ activity: a, at: now });
   }
 
   dropActivity() {
@@ -877,6 +921,7 @@ export class Channel extends DurableObject<Env> {
     this.activity = null;
     this.activityAt = 0;
     this.tellListing();
+    this.tellMine({ activity: null, at: Date.now() });
   }
 
   /** A shooting star the plugin found (game.ts, gameStar): to the Directory's list (stars.ts), which counts this
@@ -916,6 +961,8 @@ export class Channel extends DurableObject<Env> {
     this.whereTook = 0;
     this.dropActivity(); // (what they're doing, the same)
     this.activityTook = 0;
+    this.dropHere(); // (the exact path, the same)
+    this.hereTook = 0;
     if (this.gameTimer) clearTimeout(this.gameTimer);
     this.gameTimer = null;
     this.gameDirty = false;
@@ -994,6 +1041,7 @@ export class Channel extends DurableObject<Env> {
         this.saveGame(); // (the last of it, for a page while the player's away)
         this.dropWhere(); // (following: only while the plugin's connected)
         this.dropActivity(); // (what they're doing, the same)
+        this.dropHere(); // (the exact path, the same)
         this.tellViewers();
       }
     }
@@ -1074,6 +1122,13 @@ export class Channel extends DurableObject<Env> {
         if (summed) this.saveMeta();
       }
       this.tellArray(report);
+      // (your year: the owner's own events, live or dark, listed or not, to its desks only)
+      if (this.sockets("desk").length) {
+        let events: ReturnType<typeof arrayEvents> = [];
+        try { events = arrayEvents(report); } catch { /* not one it can read */ }
+        const at = Date.now();
+        for (const event of events) this.tellMine({ event, at });
+      }
     } else if (typeof msg === "string") {
       this.lastData = msg;
       if (msg.startsWith('{"state"')) {

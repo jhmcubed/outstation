@@ -309,6 +309,11 @@ pub struct App {
     clip_stills: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     pc_clips: Option<(Instant, Vec<crate::clip::Local>)>,
     clip_down: Option<(String, String)>,
+    /// your year (record.rs): "delete my record…" asked (Some: the question showing, with "and this PC's files" ticked
+    /// or not); this PC's record's size, read at most every half minute; a delete going on, and what it said
+    year_ask: Option<bool>,
+    year_size: Option<(Instant, (usize, u64))>,
+    year_done: Arc<Mutex<Option<Result<String, String>>>>,
     invites: crate::invites::Invites,
     /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
@@ -506,7 +511,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, year_ask: None, year_size: None, year_done: Arc::new(Mutex::new(None)), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -2563,6 +2568,117 @@ const PC_MOST: usize = 10;
 /// accessible"): the switches for the clips that save themselves (the dink drawer's own, shown here too), the recovered
 /// footage on the player's Outside page, each with its still, to watch, file for good, let go or take down, and the
 /// newest clips on this PC, to play.
+// ---- your year ----
+
+/// Your year (11/10/2026; record.rs, docs/record.md): the record on this PC, its encrypted copy on the relay, the record
+/// key (copied to another PC, or pasted from one), "open my year" and "delete my record…".
+fn year_ui(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let w = ui.available_width();
+    let mut s = app.settings.get();
+    let before = serde_json::to_string(&s).unwrap_or_default();
+    let dir = crate::record::folder(&app.settings);
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    ui.label(rich("your year", 16.0, LIME()));
+    ui.label(wrapped("a year of your own travels on your Outside page: where you spent your time, the paths between, what you did most, and a replay. Recorded on this PC while the outstation's open, from what the Outside plugin already tells the relay (following's square, what you're doing) and your field reports' kills, levels, pets, drops, log slots and clues.", 14.0, GREY(), w));
+    ui.add_space(4.0);
+    tick(ui, &mut s.record, rich("record my year on this PC", 16.0, GREY()))
+        .on_hover_text(tip(&format!("a line for each change (and one a minute while you stay put), in {}: plain JSON, yours, never sent anywhere unless the copy below is on. Off: nothing's recorded; what's there stays.", dir.display())));
+    tick(ui, &mut s.record_sync, rich("keep an encrypted copy on the relay", 16.0, GREY()))
+        .on_hover_text(tip("so your PCs' records merge and your year opens on your Outside page. Each day's lines are encrypted here with your record key (AES-256-GCM) before they go; the relay keeps only what it can't read, and so can't ⊂λ,ｍ⊙. Sent hourly, and when you go dark."));
+    if s.record_sync && crate::record::key_of(&s).is_none() {
+        s.record_key = crate::recordfmt::key_text(&crate::recordfmt::new_key());
+        app.note("your year: a new record key, made on this PC (copy it to your other PCs: settings ▸ your year)");
+    }
+    let key = crate::record::key_of(&s);
+    let year = crate::record::year();
+    ui.horizontal_wrapped(|ui| {
+        let can_open = s.record_sync && s.attached() && key.is_some();
+        if button(ui, "open my year ▸", true, None).on_hover_text(tip(if can_open {
+            "sends what's new first, then opens your year on your Outside page in your browser, your record key in the address's fragment (after #), which your browser never sends to any server"
+        } else { "the year view reads the relay's encrypted copy: switch it on (above) first" })).clicked() {
+            if can_open { if let Some(y) = &year { y.ask(true); } } else { app.note("your year: switch \"keep an encrypted copy on the relay\" on first"); }
+        }
+        if s.record_sync && key.is_some() && button(ui, "send it now", true, None).on_hover_text(tip("brings the relay's copy up to date now, rather than within the hour")).clicked() {
+            if let Some(y) = &year { y.ask(false); }
+        }
+        if key.is_some() && button(ui, "copy my record key", true, None)
+            .on_hover_text(tip("for your other PCs' outstations (\"paste a record key\" there), so their days join this one's. Keep it like a password: whoever has it can read your year. Lost on every PC, the relay's copy can never be read again (each PC's own record stays).")).clicked() {
+            win::copy_text(&s.record_key);
+            app.note("your year: the record key is on the clipboard (paste it into your other PC's outstation; keep it like a password)");
+        }
+        if button(ui, "paste a record key", true, None).on_hover_text(tip("your other PC's record key (\"copy my record key\" there), so this PC's days join the same year")).clicked() {
+            match win::paste_text().map(|t| crate::recordfmt::parse_key(&t)) {
+                Some(Ok(k)) => {
+                    let text = crate::recordfmt::key_text(&k);
+                    if text == s.record_key { app.note("your year: that's this PC's record key already"); } else {
+                        s.record_key = text;
+                        s.record_sync = true;
+                        if let Some(y) = &year { y.ask(false); }
+                        app.note("your year: the record key's in; this PC's days go up under it now");
+                    }
+                }
+                Some(Err(e)) => app.note(format!("your year: {}", e)),
+                None => app.note("your year: nothing on the clipboard"),
+            }
+        }
+    });
+    // what's here, and the copy's last word
+    if app.year_size.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(30)) {
+        app.year_size = Some((Instant::now(), crate::record::local_size(&dir)));
+    }
+    let (days, bytes) = app.year_size.as_ref().map(|x| x.1).unwrap_or((0, 0));
+    let mut said = format!("on this PC: {} day{} ({:.0} KB)", days, if days == 1 { "" } else { "s" }, bytes as f64 / 1024.0);
+    let mut colour = QUIET();
+    if let Some(y) = &year {
+        let st = y.status.lock().unwrap().clone();
+        if st.busy { said.push_str(" · sending…"); }
+        else if let Some((at, r)) = &st.last {
+            match r {
+                Ok(t) => said.push_str(&format!(" · {}, {} ago", t, ago(at.elapsed()))),
+                Err(e) => { said.push_str(&format!(" · {}", e)); colour = PINK(); }
+            }
+        }
+    }
+    ui.label(wrapped(&said, 14.0, colour, w));
+    // delete my record…: asked first
+    let done = app.year_done.lock().unwrap().take();
+    if let Some(done) = done {
+        match done { Ok(t) => app.note(format!("your year: {}", t)), Err(e) => app.note(format!("your year: {}", e)) }
+        app.year_size = None;
+    }
+    match app.year_ask {
+        None => {
+            if button(ui, "delete my record…", true, None).on_hover_text(tip("the relay's copy (and your public year, if you've posted one), and if you like this PC's record too: asked first")).clicked() {
+                app.year_ask = Some(false);
+            }
+        }
+        Some(mut files) => {
+            ui.label(wrapped("delete your year from the relay? Every day of it goes for good, with your public year if you've posted one, and the copy's switched off. Your other PCs' records stay on them.", 14.0, PINK(), w));
+            tick(ui, &mut files, rich("and this PC's record too", 14.0, GREY()));
+            app.year_ask = Some(files);
+            ui.horizontal(|ui| {
+                if button(ui, "delete it", true, None).clicked() {
+                    app.year_ask = None;
+                    s.record_sync = false;
+                    let (snap, done, c, dir) = (s.clone(), app.year_done.clone(), ctx.clone(), dir.clone());
+                    std::thread::spawn(move || {
+                        *done.lock().unwrap() = Some(crate::record::delete(&snap, &dir, files));
+                        c.request_repaint();
+                    });
+                }
+                if button(ui, "never mind", true, None).clicked() { app.year_ask = None; }
+            });
+        }
+    }
+    if serde_json::to_string(&s).unwrap_or_default() != before {
+        let keep = s.clone();
+        let _ = app.settings.update(|x| *x = keep);
+    }
+}
+
 fn clips_drawer(app: &mut App, ui: &mut egui::Ui) {
     let mut s = app.settings.get();
     let before = serde_json::to_string(&s).unwrap_or_default();
@@ -3365,6 +3481,7 @@ impl eframe::App for App {
                     egui::ScrollArea::vertical().id_salt("drawer_scroll").auto_shrink([false, false]).show(ui, |ui| {
                         if self.drawer == Drawer::Settings {
                             if let Some(p) = &mut self.panel { p.ui(ui, &self.settings); }
+                            year_ui(self, ui);
                         } else if self.drawer == Drawer::Friends {
                             #[cfg(feature = "station")]
                             friends_drawer(self, ui);

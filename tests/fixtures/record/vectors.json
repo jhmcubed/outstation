@@ -1,0 +1,19 @@
+{
+  "about": "docs/record.md's test vectors, made by tests/fixtures/record/make_vectors.mjs (WebCrypto and Node's zlib)",
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "key_text": "record1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "key_b64u": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "device": "0123456789abcdef",
+  "day": "2026-11-10",
+  "part": 0,
+  "nonce_hex": "a0a1a2a3a4a5a6a7a8a9aaab",
+  "plaintext": "{\"record\": 1, \"device\": \"0123456789abcdef\", \"day\": \"2026-11-10\", \"part\": 0}\n{\"t\": 1794268800000, \"live\": true}\n{\"t\": 1794268812345, \"where\": {\"x\": 3264, \"y\": 3264, \"world\": 302}}\n{\"t\": 1794268812345, \"activity\": {\"kind\": \"skilling\", \"skill\": \"Mining\"}}\n{\"t\": 1794268872400, \"where\": {\"x\": 3264, \"y\": 3264, \"world\": 302}, \"activity\": {\"kind\": \"skilling\", \"skill\": \"Mining\"}}\n{\"t\": 1794067301000, \"event\": {\"kind\": \"level\", \"skill\": \"Mining\", \"level\": 72}}\n{\"t\": 1794067500000, \"where\": null}\n",
+  "seal_key_hex": "0afaf6b83785ac9480083512e64a6fa3df1d2d3c19cb3186205b29fc1401f448",
+  "read_token": "kJYz3FXVdV-5JKuJJlHn39NPbMoAFeCtYFXO7kflX5k",
+  "write_token": "O5UnTkB6rQvv8nJvEVf06GtqLF6rE4IkJiG85tPwSCk",
+  "read_token_sha256": "139b1a72282771ccddb1a40bdbb1c4e6fb5bbcd627ecf838248a5662eccffad1",
+  "write_token_sha256": "57f80610e4eabf0f6848789c3bc0e72d94f9321265992b711a5663256fbc5d11",
+  "chunk_id": "Gzkegxw9dQilhK1vBkcdUg",
+  "compressed_hex": "a590416ec2301045f79c62346b23d94eb083efd04384644a2d2c838c318da2dc1d4daaa82a9405c2abaff95f6fbe67c444dd31f5e84009c09e8aef081da054baaa37c636db76d7f5f489ecb6035b5a6ab3566aad240f4f6dcae8404eab115928bbadb5691ac94f00065f1898d385ee23f30a0178fda2c49911bfd141a54d2d00875f793da6c00d2ba9a7678cb6cbbef83ccc98838f9cc7f3c187e0e39e7bce9a871f3ef2e88164753d177ea5cddb8ba5b195543f97a24231ffc1042a14fe6388c57360f53d70b39c7ef949bc8430ad6e",
+  "sealed_hex": "01a0a1a2a3a4a5a6a7a8a9aaab375a2f2b8458d94a5a08201aaf7ddfe91f5b7a48d485acb452ba80a28b75e9caa75e34f8b30ef612da168f9e94fbde645466c9c8ffb344306729a65c0625abba3312a10320ed3f25d30c2787cc3a9732e49e428a43210fca60fd7d0ab7c7a81e2c6f3c19324b6cbf7ba0650a92c27367d4cb96e65887e43e39102eee7bc102ae3c614c520256f8190d815943bf8ea99cbccf77ac1b06bc4c3b79522c09fbbfb15ce55868853a7f83c043e625e8bba70d53e6b96392aa3ebb9e9eb5a713d102086f5cfaf5e72e19a271aead9388dadd61cc6c16181b5255c468f12fc512bcc18e"
+}

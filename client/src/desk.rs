@@ -82,6 +82,9 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
         let _ = ws.text(&format!("{{\"chat_on\": {}}}", chat_on));
         let _ = ws.text(&format!("{{\"guess_min_value\": {}}}", guess_min));
         let mut checked = Instant::now();
+        // your year (record.rs): what the relay tells this desk of the player's own play, recorded on this PC
+        let rec = crate::record::recorder();
+        if let Some(r) = &rec { r.up(); r.tick(&s); }
         let ended = loop {
             let got = ws.recv();
             if !said_up && (matches!(got, Ok(Got::Text(_))) || (opened.elapsed() > Duration::from_millis(1500) && !matches!(got, Ok(Got::Closed(..)) | Err(_)))) {
@@ -93,8 +96,14 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
             match got {
                 Ok(Got::Text(t)) => {
                     if let Ok(v) = serde_json::from_str::<Value>(&t) {
-                        let _ = inbox.send(In::Msg(v));
-                        wake();
+                        if let Some(r) = &rec {
+                            if v.get("mine").is_some() || v.get("relay").is_some() { r.take(&v); }
+                        }
+                        // (the record's alone, {"mine"}: the window has no use for it)
+                        if v.get("mine").is_none() {
+                            let _ = inbox.send(In::Msg(v));
+                            wake();
+                        }
                     }
                 }
                 Ok(Got::Closed(code, why)) => break Some((code, why)),
@@ -107,6 +116,7 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
             if checked.elapsed() > Duration::from_millis(500) {
                 checked = Instant::now();
                 let s = settings.get();
+                if let Some(r) = &rec { r.tick(&s); }
                 if (s.relay.clone(), s.channel.clone(), s.key.clone(), s.host_name()) != who {
                     break None;
                 }
@@ -135,6 +145,7 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
             }
         };
         up.store(false, Ordering::Relaxed);
+        if let Some(r) = &rec { r.down(); }
         ws.close();
         if let Some((code, why)) = &ended {
             if *code == 4026 {

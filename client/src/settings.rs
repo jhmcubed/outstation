@@ -287,6 +287,17 @@ pub struct Settings {
     /// a request for a portal waiting for the keeper (the attach screen's "ask for one"; ask.rs)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<Asked>,
+    /// your year (11/10/2026; record.rs, docs/record.md): the record on this PC of your own play, from what the relay
+    /// tells this outstation's desk (following's square, what you're doing, your field reports' events, live or dark)
+    #[serde(default = "d_true")]
+    pub record: bool,
+    /// and its copy on the relay, encrypted with the record key (off to begin with)
+    #[serde(default)]
+    pub record_sync: bool,
+    /// the record key ("record1:…"): made here when the copy's first switched on, or pasted from another PC. Never
+    /// sent anywhere; the year view gets it in its address's fragment, which the browser keeps to itself.
+    #[serde(default)]
+    pub record_key: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
