@@ -5,7 +5,7 @@ sources with the JDK's javac against the RuneLite installed on this PC (~/.runel
 plus the RuneLite API jar with the game's named constants, fetched once from RuneLite's own Maven repository into
 build/lib (the installed copy has them compiled out). As ghillie's tools/portal/build.py does for the portal's.
 
-    py plugin/run.py            compile (main and test)
+    py plugin/run.py            compile (the main sources, and the tests when JUnit's on the classpath)
     py plugin/run.py client     RuneLite with Outside loaded (developer mode)
 
 A Jagex account needs the launcher's --insecure-write-credentials step once before `client` can log in (RuneLite's
@@ -67,6 +67,17 @@ def compile_all():
     # (the full API, with the gameval constants, ahead of the installed runtime copy)
     cp = [api_jar(version)] + jars
     sources = glob.glob(os.path.join(HERE, "src", "**", "*.java"), recursive=True)
+    # (the unit tests need JUnit, which the installed RuneLite doesn't carry: Gradle runs them (`gradle test`); here only
+    # the main sources and the test folder's OutsidePluginTest, which opens RuneLite with the plugin, are compiled.
+    # 11/10/2026: the tests added 11/08 broke `run.py client` on a PC without JUnit)
+    if not any("junit" in os.path.basename(j).lower() for j in cp):
+        def needs_junit(path):
+            with open(path, encoding="utf-8") as f:
+                return "org.junit" in f.read()
+        left = [s for s in sources if needs_junit(s)]
+        sources = [s for s in sources if s not in left]
+        if left:
+            print("left out %d unit test file(s) (they need JUnit: run them with `gradle test`)" % len(left))
     if os.path.isdir(BUILD):
         shutil.rmtree(BUILD)
     os.makedirs(BUILD)
