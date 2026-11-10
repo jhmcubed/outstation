@@ -34,6 +34,9 @@ class Activity
 {
 	/** skilling: the latest experience drop within this long; fighting: a hit, theirs or on them, within this long */
 	static final long SKILL_MS = 60_000, FIGHT_MS = 15_000;
+	/** A boss fight holds this long after its last hit (11/10/2026: the Giant Mole digs away and is chased, and its
+	 *  fight read as idle every other minute); any other fight, FIGHT_MS */
+	static final long BOSS_MS = 60_000;
 
 	/** the skills (RuneLite's Skill names, all but the total) */
 	static final Set<String> SKILLS = Collections.unmodifiableSet(new TreeSet<>(Arrays.asList(
@@ -189,7 +192,7 @@ class Activity
 		{
 			boss = BOSSES.get(npc);
 		}
-		else if (!fighting(now))
+		else if (!(boss != null && now - fightAt < BOSS_MS))
 		{
 			boss = null;
 		}
@@ -207,7 +210,7 @@ class Activity
 		JsonObject a = new JsonObject();
 		// (a boss fight first, wherever it is: Jad in the Fight Caves is Jad; then a raid or minigame they're in)
 		String raid = RAIDS.get(region), minigame = MINIGAMES.get(region);
-		if (fighting(now) && boss != null)
+		if (boss != null && fightAt >= 0 && now - fightAt < BOSS_MS)
 		{
 			a.addProperty("kind", "boss");
 			a.addProperty("boss", boss);

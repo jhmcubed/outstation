@@ -68,6 +68,9 @@ class Follow
 		// (Prifddinas's own, 11/10/2026: the Gauntlet's lobby and the Gauntlet, Corrupted too, and Zalcano's mine, in the city's
 		// middle where the world map draws it)
 		put(e, square(PRIFDDINAS[0], PRIFDDINAS[1]), 12127, 7512, 7768, 12126);
+		// (the Giant Mole's lair, 11/10/2026, Jace: "it's under falador park": its tiles lie off the map, around 1752,5237,
+		// where Falador Park's mole hills lead (Shortest Path's transports); Falador Park's square)
+		put(e, new int[]{3008, 3392}, 6992, 6993);
 		// (the God Wars Dungeon, each general's room: its way in, in Trollheim)
 		put(e, new int[]{2880, 3776}, 11346, 11347, 11601, 11602, 11603);
 		ENTRANCES = Collections.unmodifiableMap(e);

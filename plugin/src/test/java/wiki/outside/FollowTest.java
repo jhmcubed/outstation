@@ -338,6 +338,8 @@ public class FollowTest
 		assertArrayEquals(new int[]{2880, 3776}, place(11347));                 // (General Graardor's room)
 		assertArrayEquals(Follow.square(2240, 3328), place(7512));              // (the Gauntlet: Prifddinas, 11/10/2026)
 		assertArrayEquals(Follow.square(2240, 3328), place(7768));              // (the Corrupted Gauntlet)
+		assertArrayEquals(new int[]{3008, 3392}, Follow.place(1752, 5237));      // (the Giant Mole's lair: Falador Park)
+		assertArrayEquals(new int[]{3008, 3392}, Follow.place(1770, 5150));
 		// (off the map with no entrance on it: nothing)
 		assertNull(place(8291));                                                // (the Leviathan)
 		assertNull(place(10595));                                               // (the Whisperer)

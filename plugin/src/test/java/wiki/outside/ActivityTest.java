@@ -74,10 +74,34 @@ public class ActivityTest
 		assertEquals("boss Barrows", label(a.now(60_000)));
 		a.hit(61_000, "Eldric the Ice King");
 		assertEquals("boss Royal Titans", label(a.now(61_000)));
-		// (alching after the fight: Magic is skilling once it's over)
+		// (a boss fight holds a minute after its last hit, 11/10/2026: the Giant Mole digs away and is chased)
 		a.xp(62_000, "Magic", 500);
 		a.xp(80_000, "Magic", 565);
-		assertEquals("skilling Magic", label(a.now(80_000)));
+		assertEquals("boss Royal Titans", label(a.now(80_000)));
+		assertEquals("boss Royal Titans", label(a.now(120_999)));
+		// (alching after the fight: Magic is skilling once it's over)
+		a.xp(121_000, "Magic", 630);
+		assertEquals("skilling Magic", label(a.now(121_000)));
+	}
+
+	@Test
+	public void theMolesDiggingDoesntEndItsFight()
+	{
+		// (11/10/2026, at the Giant Mole: hits, then 40 s of it dug in and chased, then hits again)
+		Activity a = new Activity();
+		a.hit(0, "Giant Mole");
+		a.hit(5_000, "Giant Mole");
+		for (long t = 5_000; t <= 45_000; t += 5_000)
+		{
+			assertEquals("boss Giant Mole", label(a.now(t)));
+		}
+		a.hit(45_000, "Giant Mole");
+		assertEquals("boss Giant Mole", label(a.now(104_999)));
+		assertEquals("idle", label(a.now(105_000)));
+		// (any other fight still ends fifteen seconds after its last hit)
+		a.hit(200_000, "Goblin");
+		assertEquals("fighting", label(a.now(214_999)));
+		assertEquals("idle", label(a.now(215_000)));
 	}
 
 	@Test
@@ -159,13 +183,15 @@ public class ActivityTest
 		assertEquals("minigame the Fight Caves", label2(a.now(1000)));
 		a.hit(2000, "TzTok-Jad");
 		assertEquals("boss TzTok-Jad", label2(a.now(2000)));
-		assertEquals("minigame the Fight Caves", label2(a.now(17_000)));
+		// (the boss holds a minute after its last hit, 11/10/2026; then the minigame it's in)
+		assertEquals("boss TzTok-Jad", label2(a.now(17_000)));
+		assertEquals("minigame the Fight Caves", label2(a.now(62_000)));
 		a.region(6462, 0);                                               // (Wintertodt, with its Firemaking)
-		a.xp(18_000, "Firemaking", 100);
-		a.xp(19_000, "Firemaking", 200);
-		assertEquals("minigame Wintertodt", label2(a.now(19_000)));
+		a.xp(78_000, "Firemaking", 100);
+		a.xp(79_000, "Firemaking", 200);
+		assertEquals("minigame Wintertodt", label2(a.now(79_000)));
 		a.region(12850, 0);                                              // (Lumbridge: no minigame)
-		assertEquals("skilling Firemaking", label2(a.now(19_000)));
+		assertEquals("skilling Firemaking", label2(a.now(79_000)));
 		// (the PvP minigames are none of them: nothing goes from them at all)
 		for (int r : new int[]{13658, 14432, 9520, 9620, 8493, 9005, 9552, 13362, 12621})
 		{
@@ -175,9 +201,9 @@ public class ActivityTest
 		}
 		// (Nightmare Zone above plane 0; the King Black Dragon's lair, the same region, on it)
 		a.region(9033, 1);
-		assertEquals("minigame Nightmare Zone", label2(a.now(100_000)));
+		assertEquals("minigame Nightmare Zone", label2(a.now(160_000)));
 		a.region(9033, 0);
-		assertEquals("idle", label2(a.now(100_000)));
+		assertEquals("idle", label2(a.now(160_000)));
 		assertEquals(4, Activity.raidLabels().size());
 		assertEquals(24, Activity.minigameLabels().size());
 	}
