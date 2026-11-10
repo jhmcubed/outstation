@@ -23,14 +23,15 @@
 // (stars.ts), which names the first listed outstation to find each (11/09/2026).
 //
 // Your year (11/10/2026; docs/record.md): the owner's own "where", "activity" and Array events go to this channel's
-// desks, and nowhere else, as {"mine": {...}} lines (tellMine), so the app can keep its record. The record itself is
-// kept by record.ts's Records, never here.
+// desks, and nowhere else, as {"mine": {...}} lines (tellMine), so the app can keep its record; and, with the plugin's
+// "Record my exact path for my year" on, "here", the exact tile, passed on at once and never kept (takeHere). The record
+// itself is kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
-import { type Activity, type Fields, GameState, gameActivity, gameFields, gameStar, gameWhere, GAME_A_SECOND, GAME_MESSAGE,
-         type StarReport, type Where, WHERE_EVERY_MS } from "./game";
+import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
+         GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
 
 export interface Env {
@@ -279,6 +280,10 @@ export class Channel extends DurableObject<Env> {
   where: Where | null = null;
   whereAt = 0;
   whereTook = 0;
+  // the exact path (11/10/2026; game.ts, gameHere): never kept, only when the last one was taken (for HERE_EVERY_MS) and
+  // whether one's out to the desks (so a drop can say null)
+  hereTook = 0;
+  hereOut = false;
   // what they're doing (11/08/2026; game.ts, gameActivity): kept, taken and dropped exactly as "where" is
   activity: Activity | null = null;
   activityAt = 0;
@@ -853,6 +858,7 @@ export class Channel extends DurableObject<Env> {
     const fields = gameFields(m.game);
     this.takeWhere(gameWhere(m.game), fields, now);
     this.takeActivity(gameActivity(m.game), fields, now);
+    this.takeHere(gameHere(m.game), fields, now);
     this.takeStar(gameStar(m.game), fields);
     const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
     if (!got) return;
@@ -880,6 +886,23 @@ export class Channel extends DurableObject<Env> {
     this.whereAt = 0;
     this.tellListing();
     this.tellMine({ where: null, at: Date.now() });
+  }
+
+  /** The exact path (game.ts, gameHere): passed at once to this channel's desks only ({"mine": {"here", "at"}}), one
+   *  every HERE_EVERY_MS at most (more are ignored), and never kept. null, logging out ({"off": true}) or holding for the
+   *  player's safety ({"paused"}) passes null, if one was out. */
+  takeHere(h: Here | null | undefined, fields: Fields, now: number) {
+    if (fields.off === true || typeof fields.paused === "string" || h === null) return this.dropHere();
+    if (!h || now - this.hereTook < HERE_EVERY_MS) return;
+    this.hereTook = now;
+    this.hereOut = true;
+    this.tellMine({ here: h, at: now });
+  }
+
+  dropHere() {
+    if (!this.hereOut) return;
+    this.hereOut = false;
+    this.tellMine({ here: null, at: Date.now() });
   }
 
   /** What they're doing (game.ts, gameActivity): taken and dropped exactly as takeWhere takes "where", one every
@@ -938,6 +961,8 @@ export class Channel extends DurableObject<Env> {
     this.whereTook = 0;
     this.dropActivity(); // (what they're doing, the same)
     this.activityTook = 0;
+    this.dropHere(); // (the exact path, the same)
+    this.hereTook = 0;
     if (this.gameTimer) clearTimeout(this.gameTimer);
     this.gameTimer = null;
     this.gameDirty = false;
@@ -1016,6 +1041,7 @@ export class Channel extends DurableObject<Env> {
         this.saveGame(); // (the last of it, for a page while the player's away)
         this.dropWhere(); // (following: only while the plugin's connected)
         this.dropActivity(); // (what they're doing, the same)
+        this.dropHere(); // (the exact path, the same)
         this.tellViewers();
       }
     }

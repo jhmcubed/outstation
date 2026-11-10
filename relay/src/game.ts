@@ -141,6 +141,32 @@ export function gameWhere(g: unknown): Where | null | undefined {
   return isSquare(w.x, WHERE_X) && isSquare(w.y, WHERE_Y) ? { x: w.x as number, y: w.y as number, ...world } : undefined;
 }
 
+// The exact path (11/10/2026, Jace: "your year" records the exact tile, privately; docs/record.md, "The exact path"):
+// with the plugin's "Record my exact path for my year" on, "here" is the tile the player's on, {"x", "y", "plane",
+// "world"}, as following places it (on the main map or its seas, underground as the tile above, an instance at its
+// entrance, Zanaris as WHERE_ZANARIS), or null to clear it. It's never one of the game's fields: the channel passes it
+// at once to its own desks only, as {"mine": {"here", "at"}} (channel.ts, takeHere), at most one every HERE_EVERY_MS,
+// and never keeps it, not even in memory: never to viewers, lookers, GET /game, GET /channels, the Array or the aether.
+// relay.py's game_here, the same.
+export const HERE_EVERY_MS = 2_000, HERE_PLANES = [0, 3];
+export type Here = { x: number; y: number; plane: number; world: number };
+
+/** A message's "here": exactly {x, y, plane, world}, x a whole number from WHERE_X[0] up to WHERE_X[1] and y the same
+ *  with WHERE_Y (a tile, not a square's middle), or exactly Zanaris's (WHERE_ZANARIS), plane 0 to 3 and world as
+ *  WORLD_RANGE; null to clear it; undefined for anything else (none, or not its shape: ignored, and the rest of the
+ *  message taken as ever). */
+export function gameHere(g: unknown): Here | null | undefined {
+  if (!isObj(g) || !("here" in g)) return undefined;
+  const h = g.here;
+  if (h === null) return null;
+  if (!isObj(h) || Object.keys(h).sort().join(",") !== "plane,world,x,y") return undefined;
+  const ok = (v: unknown, [lo, hi]: number[]) => typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi;
+  const zanaris = h.x === WHERE_ZANARIS.x && h.y === WHERE_ZANARIS.y;
+  if (!zanaris && !(ok(h.x, WHERE_X) && ok(h.y, WHERE_Y))) return undefined;
+  if (!ok(h.plane, [HERE_PLANES[0], HERE_PLANES[1] + 1]) || !isWorld(h.world)) return undefined;
+  return { x: h.x as number, y: h.y as number, plane: h.plane as number, world: h.world as number };
+}
+
 /** A square's middle along one side of the main map: a whole number k*128 + 64 from lo up to hi. */
 function isSquare(v: unknown, [lo, hi]: number[]): boolean {
   return typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi && v % WHERE_SQUARE === WHERE_SQUARE / 2;

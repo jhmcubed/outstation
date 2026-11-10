@@ -104,6 +104,9 @@ transmission and the chat, live, and as last known while dark.
   What they're doing (11/08/2026): "activity", one coarse label ({"kind": "skilling", "skill"}, {"kind": "boss",
   "boss"}, {"kind": "fighting"}, {"kind": "idle"}: game_activity's closed lists), or null; held, dropped and shown on
   GET /channels exactly as "where" is.
+  The exact path (11/10/2026): "here", the tile the player's on ({"x", "y", "plane", "world"}), or null (game_here),
+  with the plugin's "Record my exact path for my year" on: passed at once to the channel's own desks only, as
+  {"mine": {"here", "at"}}, one every HERE_EVERY_S at most, and never kept (Channel.take_here).
   Shooting stars (11/08/2026): "star", a crashed star the player found two minutes before ({"world", "x", "y", "tier"},
   or "gone": true; "site" with either), into the relay's StarList: GET /stars (below).
   The public side allows the read (it's what viewers see anyway) and refuses the game socket.
@@ -696,7 +699,7 @@ def game_fields(g):
 
 def game_where(g):
     """A {"game"} message's "where" (following, 11/08/2026): {"x", "y"} for a square's middle (each a whole number
-    k*128 + 64, x from 1024 up to 4096, y from 2496 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS,
+    k*128 + 64, x from 960 up to 4096, y from 2048 up to 4224, and nothing else in it) or for Zanaris (WHERE_ZANARIS,
     exactly), None to clear it (null), or _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). Never one of
     the game's fields (game_fields leaves it out). The Worker's gameWhere, the same."""
     if not isinstance(g, dict) or "where" not in g:
@@ -722,6 +725,36 @@ def game_where(g):
     if not (is_square(out["x"], WHERE_X) and is_square(out["y"], WHERE_Y)):
         return _BAD
     return dict(out, **world)
+
+
+# the exact path (11/10/2026, Jace: "your year" records the exact tile, privately; docs/record.md, "The exact path"; the
+# Worker's gameHere, the same): "here", {"x", "y", "plane", "world"}, a tile of the main map or its seas (WHERE_X, WHERE_Y)
+# or Zanaris's one place, plane 0 to 3, a world; passed at once to the channel's own desks only, as {"mine": {"here",
+# "at"}}, one every HERE_EVERY_S at most, and never kept (Channel.take_here)
+HERE_EVERY_S, HERE_PLANES = 2.0, (0, 3)
+
+
+def game_here(g):
+    """A {"game"} message's "here" (the exact path, 11/10/2026): exactly {"x", "y", "plane", "world"}, x a whole number
+    from WHERE_X[0] up to WHERE_X[1] and y the same with WHERE_Y (a tile), or Zanaris's (WHERE_ZANARIS), plane 0 to 3
+    and a world (WORLD_RANGE); None to clear it (null), or _BAD for anything else (ignored, and the rest of the message
+    taken as ever). Never one of the game's fields. The Worker's gameHere, the same."""
+    if not isinstance(g, dict) or "here" not in g:
+        return _BAD
+    h = g["here"]
+    if h is None:
+        return None
+    if not isinstance(h, dict) or sorted(h) != ["plane", "world", "x", "y"]:
+        return _BAD
+    out = {k: game_int(h[k]) for k in ("x", "y", "plane", "world")}
+    if any(v is None for v in out.values()):
+        return _BAD
+    zanaris = out["x"] == WHERE_ZANARIS["x"] and out["y"] == WHERE_ZANARIS["y"]
+    if not zanaris and not (WHERE_X[0] <= out["x"] < WHERE_X[1] and WHERE_Y[0] <= out["y"] < WHERE_Y[1]):
+        return _BAD
+    if not (HERE_PLANES[0] <= out["plane"] <= HERE_PLANES[1]) or not is_world(out["world"]):
+        return _BAD
+    return out
 
 
 def game_int(v):
@@ -1358,6 +1391,10 @@ class Channel:
         self.where_at = None
         self.where_took = None
         self.where_ms = 0            # (your year: when it came, ms since 1970, for the desks' {"mine"})
+        # the exact path (11/10/2026; game_here): never kept, only when the last one was taken (for HERE_EVERY_S) and
+        # whether one's out to the desks (so a drop can say null)
+        self.here_took = None
+        self.here_out = False
         # what they're doing (11/08/2026; game_activity): kept, taken and dropped exactly as "where" is
         self.activity = None
         self.activity_at = None
@@ -1387,6 +1424,7 @@ class Channel:
         fields = game_fields(m["game"])
         self.take_where(game_where(m["game"]), fields)
         self.take_activity(game_activity(m["game"]), fields)
+        self.take_here(game_here(m["game"]), fields)
         self.take_star(game_star(m["game"]), fields)
         got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
         if got is None:
@@ -1425,6 +1463,24 @@ class Channel:
         line = json.dumps({"mine": m})
         for d in list(self.desks):
             d.send_nowait(line)
+
+    def take_here(self, h, fields):
+        """The exact path (game_here): passed at once to this channel's desks only ({"mine": {"here", "at"}}), one every
+        HERE_EVERY_S at most (more are ignored), never kept; nothing while no plugin's connected. null, logging out or
+        holding for the player's safety passes null, if one was out. The Worker's takeHere, the same."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or h is None:
+            self.drop_here()
+            return
+        now = time.monotonic()
+        if h is _BAD or self.gamer is None or (self.here_took is not None and now - self.here_took < HERE_EVERY_S):
+            return
+        self.here_took, self.here_out = now, True
+        self.tell_mine({"here": h, "at": int(time.time() * 1000)})
+
+    def drop_here(self):
+        if self.here_out:
+            self.here_out = False
+            self.tell_mine({"here": None, "at": int(time.time() * 1000)})
 
     def take_activity(self, a, fields):
         """What they're doing (game_activity): taken and dropped exactly as take_where takes "where", one every
@@ -2726,6 +2782,7 @@ class Relay:
                 ch.gamer = None
                 ch.drop_where()              # (following: only while the plugin's connected)
                 ch.drop_activity()           # (what they're doing, the same)
+                ch.drop_here()               # (the exact path, the same)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
 

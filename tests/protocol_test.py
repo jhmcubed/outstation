@@ -3172,6 +3172,65 @@ class YourYear(Base):
             cleared.update({k: v for k, v in m.items() if k != "at"})
         self.assertEqual(cleared, {"where": None, "activity": None})
 
+    # ---- the exact path (11/10/2026: "here", the owner's own desk only, never kept) ----
+
+    HERE = {"x": 3222, "y": 3218, "plane": 0, "world": 302}
+
+    async def test_the_exact_path_reaches_its_own_desk_only_and_is_never_kept(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        desk, v = await self.desk(), await self.watch()
+        look = await self.connect("watch", "look=1")
+        g = await self.game()
+        await self.pause()
+        await g.send(json.dumps({"game": {"world": 302, "here": self.HERE}}))
+        h = await next_of(desk, "mine")
+        self.assertEqual(sorted(h), ["at", "here"])
+        self.assertEqual(h["here"], self.HERE)
+        # (another within 2 s: ignored; one at sea, past the old map, and Zanaris, after it: taken)
+        await g.send(json.dumps({"game": {"here": dict(self.HERE, x=3223)}}))
+        await asyncio.sleep(2.2)
+        sea = {"x": 3180, "y": 2420, "plane": 0, "world": 302}
+        await g.send(json.dumps({"game": {"here": sea}}))
+        self.assertEqual((await next_of(desk, "mine"))["here"], sea)
+        # (never on a viewer's, a looker's, the transmitter's or the plugin's own socket)
+        for c in (v, look, tx, g):
+            for line in await self.lines(c, 0.5):
+                for word in ('"mine"', '"plane"'):
+                    self.assertNotIn(word, line)
+        # (never kept: not in GET /game, not on GET /channels, and a desk that comes later gets none of it)
+        self.assertNotIn("3180", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+        await self.pause(2)
+        self.assertNotIn("3180", json.dumps(http("GET", "/channels")[1]))
+        late = await self.desk()
+        for line in await self.lines(late, 1.0):
+            self.assertNotIn('"here"', line)
+        # (null clears it, once; logging out clears it)
+        await asyncio.sleep(2.2)
+        await g.send(json.dumps({"game": {"here": None}}))
+        self.assertIsNone((await next_of(desk, "mine"))["here"])
+
+    async def test_a_bad_here_is_ignored_and_logging_out_clears_it(self):
+        await self.claim()
+        desk = await self.desk()
+        g = await self.game()
+        await self.pause()
+        for i, bad in enumerate([{"x": 3222, "y": 3218, "plane": 4, "world": 302}, {"x": 3222, "y": 3218, "world": 302},
+                                 {"x": 3222, "y": 3218, "plane": 0, "world": 0}, {"x": 959, "y": 3218, "plane": 0, "world": 302},
+                                 {"x": 3222, "y": 9618, "plane": 0, "world": 302}, {"x": 3222.5, "y": 3218, "plane": 0, "world": 302},
+                                 {"x": "3222", "y": 3218, "plane": 0, "world": 302}, [3222, 3218, 0, 302],
+                                 dict(self.HERE, tile=1)]):
+            if i and i % 4 == 0:
+                await asyncio.sleep(1.0)                           # (5 a second at most)
+            await g.send(json.dumps({"game": {"here": bad}}))
+        await asyncio.sleep(1.0)
+        await g.send(json.dumps({"game": {"here": {"x": 2368, "y": 4416, "plane": 0, "world": 302}}}))   # (Zanaris)
+        got = await next_of(desk, "mine")
+        self.assertEqual(got["here"], {"x": 2368, "y": 4416, "plane": 0, "world": 302})
+        await asyncio.sleep(0.3)
+        await g.send(json.dumps({"game": {"off": True}}))
+        self.assertIsNone((await next_of(desk, "mine"))["here"])
+
     async def test_its_own_events_reach_its_desk_live_or_dark(self):
         desk = await self.desk()                               # (dark: no transmitter)
         await self.pause()

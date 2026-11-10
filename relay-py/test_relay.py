@@ -685,6 +685,36 @@ class ActivityLists(unittest.TestCase):
                          [relay.STAR_LIFE_S * 1000, relay.STAR_GONE_S * 1000, relay.STARS_AN_HOUR, relay.STARS_KEPT])
 
 
+class HereWords(unittest.TestCase):
+    """The exact path's "here" (11/10/2026; game_here): a tile of the main map or its seas, or Zanaris's place, with
+    its plane and world; null; or ignored. The Worker's gameHere, the same."""
+
+    def test_a_tile_is_taken_and_anything_else_is_not(self):
+        H = relay.game_here
+        self.assertEqual(H({"here": {"x": 3222, "y": 3218, "plane": 0, "world": 302}}),
+                         {"x": 3222, "y": 3218, "plane": 0, "world": 302})
+        self.assertEqual(H({"here": {"world": 1, "plane": 3, "y": 2048, "x": 960}}), {"x": 960, "y": 2048, "plane": 3, "world": 1})
+        self.assertEqual(H({"here": {"x": 4095.0, "y": 4223, "plane": 0, "world": 999}}),
+                         {"x": 4095, "y": 4223, "plane": 0, "world": 999})
+        self.assertEqual(H({"here": {"x": 2368, "y": 4416, "plane": 0, "world": 302}})["y"], 4416)      # (Zanaris)
+        self.assertIsNone(H({"here": None}))
+        for g in ({}, None, {"here": {"x": 959, "y": 3218, "plane": 0, "world": 302}},
+                  {"here": {"x": 4096, "y": 3218, "plane": 0, "world": 302}}, {"here": {"x": 3222, "y": 2047, "plane": 0, "world": 302}},
+                  {"here": {"x": 3222, "y": 4224, "plane": 0, "world": 302}}, {"here": {"x": 3222, "y": 9618, "plane": 0, "world": 302}},
+                  {"here": {"x": 3222, "y": 3218, "plane": 4, "world": 302}}, {"here": {"x": 3222, "y": 3218, "plane": -1, "world": 302}},
+                  {"here": {"x": 3222, "y": 3218, "plane": 0, "world": 0}}, {"here": {"x": 3222, "y": 3218, "plane": 0}},
+                  {"here": {"x": 3222, "y": 3218, "plane": 0, "world": 302, "z": 1}}, {"here": {"x": 3222.5, "y": 3218, "plane": 0, "world": 302}},
+                  {"here": {"x": True, "y": 3218, "plane": 0, "world": 302}}, {"here": {"x": "3222", "y": 3218, "plane": 0, "world": 302}},
+                  {"here": [3222, 3218, 0, 302]}, {"here": "lumbridge"}, {"here": {"x": 2369, "y": 4416, "plane": 0, "world": 302}}):
+            self.assertIs(H(g), relay._BAD, g)
+        self.assertNotIn("here", relay.game_fields({"world": 302, "here": {"x": 3222, "y": 3218, "plane": 0, "world": 302}}))
+
+    def test_the_numbers_match_the_workers(self):
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "relay", "src", "game.ts"), encoding="utf-8") as f:
+            game = f.read()
+        self.assertIn("export const HERE_EVERY_MS = %s, HERE_PLANES = [%d, %d];" % (("{:_}".format(int(relay.HERE_EVERY_S * 1000)),) + relay.HERE_PLANES), game)
+
+
 class StarWords(unittest.TestCase):
     """A shooting star's report (11/08/2026; game_star): its world, square and tier, or gone; anything else ignored."""
 
