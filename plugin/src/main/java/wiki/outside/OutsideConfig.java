@@ -63,7 +63,9 @@ public interface OutsideConfig extends Config
 		keyName = "wilderness",
 		name = "In the Wilderness too",
 		description = "Off (to begin with): in the Wilderness, a PvP area or on a PvP or Deadman world, nothing more is"
-			+ " sent till you're out, so nobody watching your page can see what you risk. On, with \"What I'm doing, on"
+			+ " sent till you're out, so nobody watching your page can see what you risk (Ferox Enclave and the PvP"
+			+ " minigames, Last Man Standing, Castle Wars, Clan Wars, Soul Wars, the Fight Pits and Emir's Arena, are"
+			+ " safe: it keeps going there). On, with \"What I'm doing, on"
 			+ " the globe\" on too, what you were doing in the Wilderness (a Wilderness boss, say) shows on the globe two"
 			+ " minutes late; never where you are, your world or a star there.",
 		warning = "On, anyone who opens your Outside page can see what you carry while you're in the Wilderness or on a"
@@ -93,8 +95,8 @@ public interface OutsideConfig extends Config
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe travels to the rough area"
 			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
 			+ " your outstation's transmitting. In an instance (a raid, a boss room), the area it's opened from. Never in"
-			+ " the Wilderness (whatever \"In the Wilderness too\" says), a PvP area (the PvP minigames aside), or on a"
-			+ " PvP or Deadman world: there, what was sent is cleared at once.",
+			+ " the Wilderness (whatever \"In the Wilderness too\" says), a PvP area, or on a PvP or Deadman world: there,"
+			+ " what was sent is cleared at once. Ferox Enclave and the PvP minigames are safe.",
 		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
 			+ " your outstation's relay, a server not controlled or verified by the RuneLite developers, at most once a"
 			+ " minute, and anyone who opens outside.wiki's globe can see it while your outstation's transmitting.",
@@ -126,9 +128,9 @@ public interface OutsideConfig extends Config
 		name = "What I'm doing, on the globe",
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe shows what you were doing"
 			+ " two minutes ago, only as one word: skilling (and which skill), a boss, a raid or a minigame (and which),"
-			+ " fighting, or idle. At most once a minute, while your outstation's transmitting. Never in a PvP area (the"
-			+ " PvP minigames aside), or on a PvP or Deadman world, nor in the Wilderness unless \"In the Wilderness too\""
-			+ " is on: there, what was sent is cleared at once. It doesn't need following on.",
+			+ " fighting, or idle. At most once a minute, while your outstation's transmitting. Never in a PvP area or on"
+			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe), nor in the Wilderness unless"
+			+ " \"In the Wilderness too\" is on: there, what was sent is cleared at once. It doesn't need following on.",
 		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss, raid or minigame and"
 			+ " which, fighting, or idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
 			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while your outstation's"
@@ -146,7 +148,7 @@ public interface OutsideConfig extends Config
 		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
 			+ " its size, its world, its landing site and the rough area it's in (a square about 128 tiles a side), two"
 			+ " minutes late (with your outstation's name as its finder only if you say so, below). Never one in the Wilderness, or"
-			+ " seen from it, a PvP area (the PvP minigames aside) or world, or Deadman.",
+			+ " seen from it, a PvP area or world, or Deadman (Ferox Enclave and the PvP minigames are safe).",
 		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
 			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it"
 			+ " to anyone on outside.wiki's list of stars (your outstation's name with it only with \"Name me as a star's"
