@@ -93,6 +93,7 @@ import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, pyjson, relayOf } from "./text";
 import { SETTLE_BODY, settleAnswer, settlePreflight } from "./settle";
 import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
+import { LISTING_CHECK_MS, ListedRows, keptRow } from "./listed";
 
 export { Channel, Aether };
 
@@ -105,9 +106,6 @@ const WAITING_MOST = 50; // requests waiting at once, everyone's
 const WAIT_DAYS = 14, PICKUP_DAYS = 7; // a request not answered in this long goes; an answer not collected, too
 const DAY = 86_400_000;
 const REPORTS_KEPT = 50, REPORT_DAYS = 30, REPORTS_AN_HOUR = 5, REPORT_LOG = 64 * 1024, REPORT_NOTE = 1000;
-// a channel's row in the open portals' list is asked for again when it's older than this, though each channel tells
-// its own as it changes (in case a telling was lost, or a channel went without saying)
-const LISTING_CHECK = 5 * 60_000;
 
 interface Report {
   id: string;
@@ -141,14 +139,18 @@ async function sha256(text: string): Promise<string> {
 export class Directory extends DurableObject<Env> {
   asks = new Map<string, number[]>(); // an address -> when it asked (in memory: a sleep forgets, which only loosens it)
   reportsFrom = new Map<string, number[]>(); // an address -> when it sent a report (the same)
-  // the open portals (GET /channels, 11/07/2026): each channel's row as it last told it (Channel.tellListing), or as it
-  // answered when asked; in memory, so a sleep only means asking each channel once more. A read used to ask every
-  // channel handed out for its status, waking each: a request to every channel each time the outstations page (every
-  // 20 s while open) or any friend's client (every minute) read the list.
   // the channels handed out (their "c:" rows), each with whose invite it came from (null: the keeper's own), till one's
   // handed out or taken back
   given: Map<string, string | null> | null = null;
-  listed = new Map<string, { row: Listing; seen: number }>();
+  // the open portals (GET /channels, 11/07/2026): each channel's row as it last told it (Channel.tellListing), or as it
+  // answered when asked. A read used to ask every channel handed out for its status, waking each: a request to every
+  // channel each time the outstations page (every 20 s while open) or any friend's client (every minute) read the list.
+  // In storage ("listed") since 11/10/2026, read once a wake (listedRows; listed.ts): in memory only, the first read
+  // after each sleep asked every channel again, and the Directory sleeps about 10 s after its last request. Following's
+  // "where" and the "activity" are never written there, only held in memory with the row (SAFETY.md).
+  listed: Promise<ListedRows> | null = null;
+  // how many times each channel's been asked for its row since this wake (for the tests' GET /test/listed only)
+  asked = new Map<string, number>();
   // the Array's events (11/08/2026; array.ts): each told by its channel (Channel.tellArray) while it's live and listed.
   // In storage ("array") since 11/10/2026, read once a wake (arrayFeed): the Directory holds no sockets or timers, so
   // Cloudflare puts it to sleep about 10 seconds after its last request, and in memory only the feed lasted that long.
@@ -159,6 +161,24 @@ export class Directory extends DurableObject<Env> {
   // the almanac (11/09/2026; almanac.ts): what's kept is in storage ("alm:kept", the two days' prices "alm:latest" and
   // "alm:before", the names "alm:names"), read once a wake; refreshed by the Cron Trigger (POST /almanac/tick)
   alm: Promise<Almanac> | null = null;
+
+  /** The open portals' rows, read from storage once a wake (a failed read is tried again by the next request). */
+  listedRows(): Promise<ListedRows> {
+    this.listed ??= this.ctx.storage.get("listed").then((saved) => ListedRows.from(saved), (e) => { this.listed = null; throw e; });
+    return this.listed;
+  }
+
+  /** The rows written to storage if they've changed (ListedRows.changed): one row. Nothing's waited on between the
+   *  change and this, so each write is the whole list as it stands; saved() leaves "where" and "activity" out. */
+  saveListed(rows: ListedRows): Promise<void> | undefined {
+    if (!rows.changed(this.listingCheck())) return;
+    return this.ctx.storage.put("listed", rows.saved());
+  }
+
+  /** How old a live row may be before it's asked for again (LISTING_CHECK_MS; the tests' LISTING_CHECK_SECONDS). */
+  listingCheck(): number {
+    return (parseFloat(this.env.LISTING_CHECK_SECONDS || "") * 1000) || LISTING_CHECK_MS;
+  }
 
   /** The Array's feed, read from storage once a wake (a failed read is tried again by the next request). */
   arrayFeed(): Promise<ArrayFeed> {
@@ -259,10 +279,24 @@ export class Directory extends DurableObject<Env> {
       return new Response(null, { status: 204 }); // (not reached: abort throws)
     }
     if (url.pathname === "/listed" && request.method === "PUT") {
-      const row = (await request.json()) as Listing;
-      const had = this.listed.get(row.channel);
-      if (!had || had.row.at <= row.at) this.listed.set(row.channel, { row, seen: Date.now() });
+      const row = (await request.json()) as Listing, rows = await this.listedRows();
+      rows.heard(row);
+      await this.saveListed(rows); // (only if what's stored of it changed: a new "where" alone writes nothing)
       return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/test-listed" && this.env.TEST_FORGET === "1") {
+      // (tests only, with TEST_FORGET: what storage holds of a channel's row and how often it's been asked since this
+      // wake; a POST's fields put into its row as if the channel had told them (a telling lost, for the staleness
+      // test), its "seen" left as it was. Never set on Cloudflare)
+      const rows = await this.listedRows();
+      if (request.method === "POST") {
+        const e = rows.rows.get(name);
+        if (!e) return new Response(null, { status: 404 });
+        e.row = { ...e.row, ...keptRow({ ...((await request.json()) as Listing), channel: name }) };
+        await this.ctx.storage.put("listed", rows.saved());
+      }
+      const saved = (await this.ctx.storage.get<{ rows: { row: Listing; seen: number }[] }>("listed"))?.rows ?? [];
+      return Response.json({ stored: saved.find((r) => r.row.channel === name) ?? null, asked: this.asked.get(name) ?? 0 });
     }
     if (url.pathname === "/requests") return this.requests(request, url);
     if (url.pathname === "/reports") return this.reports(request, url);
@@ -295,7 +329,8 @@ export class Directory extends DurableObject<Env> {
     } else if (request.method === "DELETE") await this.ctx.storage.delete(k);
     if (request.method === "PUT" || request.method === "DELETE") {
       this.given = null;
-      this.listed.delete(name); // (a new key: whatever it said before, it's asked again)
+      const rows = await this.listedRows(); // (a new key: whatever it said before, it's asked again; taken back: gone)
+      if (rows.drop(name)) await this.saveListed(rows);
       if (request.method === "PUT" && by !== null) return new Response(null, { status: 204 }); // (an invite's: no list)
     }
     const all = await this.ctx.storage.list({ prefix: "c:" });
@@ -313,7 +348,7 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
-   *  missing (or LISTING_CHECK old) is asked.
+   *  missing or old, or that's live with the plugin and not heard since this wake, is asked (listed.ts's due).
    *  "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
    *  counted under each inviter, [{"by", "n"}] sorted by "by". Never the invited names (the inviter typed them; the
    *  friends haven't agreed to anything), and only under an inviter that's on the list itself (no watch code), so
@@ -323,19 +358,20 @@ export class Directory extends DurableObject<Env> {
    *  "activity" (11/08/2026; game.ts): what they were doing, the same way. Nowhere else. */
   async openPortals(): Promise<Response> {
     const given = await this.givenNames(), names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
-    const ask = names.filter((n) => { const l = this.listed.get(n); return !l || now - l.seen > LISTING_CHECK; });
-    await Promise.all(ask.map(async (n) => {
+    const listed = await this.listedRows();
+    for (const n of [...listed.rows.keys()]) if (!given.has(n)) listed.drop(n); // (no longer handed out)
+    await Promise.all(listed.due(names, now, this.listingCheck()).map(async (n) => {
+      this.asked.set(n, (this.asked.get(n) ?? 0) + 1);
       try {
         const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(n))
           .fetch(new Request("https://channel/_listing", { headers: { "x-channel": n } }));
-        const row = (await r.json()) as Listing;
-        const had = this.listed.get(n);
-        if (!had || had.row.at <= row.at) this.listed.set(n, { row, seen: Date.now() });
-      } catch { /* (left out this time) */ }
+        listed.heard((await r.json()) as Listing);
+      } catch { /* (left out this time, and asked again at the next read) */ }
     }));
+    await this.saveListed(listed); // (what the asks changed, all of it in one write)
     // (an invite not taken up: only an invite's channel, which has an inviter, is ever pending)
     const waits = (r: Listing) => !!r.pending && (given.get(r.channel) ?? null) !== null;
-    const rows = names.map((n) => this.listed.get(n)?.row).filter((r): r is Listing => !!r && r.set);
+    const rows = names.map((n) => listed.rows.get(n)?.row).filter((r): r is Listing => !!r && r.set);
     // (a home beside an invite not taken up yet reads as the default till it's taken up, so its name's never said)
     const waiting = new Set(rows.filter(waits).map((r) => r.channel));
     const homeOf = (h: Listing["home"]) => (h && "near" in h && waiting.has(h.near) ? null : h ?? null);
@@ -734,6 +770,12 @@ export default {
     if (url.pathname === "/test/forget" && request.method === "POST" && env.TEST_FORGET === "1") {
       await env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/forget", { method: "POST" }).catch(() => null);
       return new Response(null, { status: 204 });
+    }
+    // (tests only, with TEST_FORGET: what the Directory's storage holds of a channel's row on the open list, and how
+    // often it's asked that channel since it woke; a POST's fields put into the row, as a telling that was lost)
+    if (parts[0] === "test" && parts[1] === "listed" && parts.length === 3 && env.TEST_FORGET === "1") {
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch(new Request(
+        "https://dir/test-listed?name=" + encodeURIComponent(parts[2]), { method: request.method, body: request.method === "POST" ? await request.text() : null }));
     }
 
     // the almanac (11/09/2026; almanac.ts): the news, the worlds and the market, as the relay last fetched them; any page

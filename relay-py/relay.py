@@ -145,6 +145,9 @@ plugins have found, and who found each, for outside.wiki's globe.
     tests:     POST http://HOST:PORT/test/forget   (only with --test-forget) 204, and nothing forgotten: the Worker's
                puts its Directory to sleep, to show its storage keeps the Array's events and the stars; this relay's
                memory is its keeping, so there's nothing to show. tests/protocol_test.py's Kept, against either.
+               (The Worker's GET/POST /test/listed/<channel>, what its Directory stores of a row on the open list and
+               how often it's asked that channel since it woke (11/10/2026), is 404 here: this relay builds GET /channels
+               from its channels at each read, in memory, and stores and asks nothing; Kept skips those parts.)
 
 The almanac (11/09/2026; docs/protocol.md "The almanac"; almanac.py, and the Worker's almanac.ts, the same): Jagex's
 news, the world list (its seasons) and the Wiki's prices (the day's movers), for outside.wiki's globe, each fetched by

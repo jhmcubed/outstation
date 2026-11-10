@@ -51,6 +51,9 @@ SETTLE_CODE_S = float(os.environ.get("SETTLE_CODE_SECONDS") or (600 if MODE.star
 # how long a player's square (following, 11/08/2026) shows on GET /channels after it came: 240 s as the relays are run,
 # shortened here so it can be seen to go stale (a relay already running: whatever it was started with, given here)
 WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.startswith("ws") else 4))
+# how old a live row on the Worker's open list (GET /channels) may be before its Directory asks the channel again: 300 s
+# as it's run, shortened here so the check can be seen to catch a telling that was lost (relay.py asks nothing)
+LISTING_CHECK_S = 5
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
@@ -155,7 +158,8 @@ def setUpModule():
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
-             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled"],
+             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
+             "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
@@ -2506,6 +2510,130 @@ class Kept(Base):
         await self.forget()
         await self.say(g, self.star(tier=1))                                   # (a late report after the sleep: still gone)
         self.assertIsNone(await self.star_now())
+
+    # The open outstations' list (GET /channels; 11/10/2026, Jace's decision): in the Directory's storage too, so a read
+    # after a sleep doesn't ask every channel handed out (waking each). Following's "where" and the "activity" are never
+    # stored (SAFETY.md): in memory only, so a sleep loses them, and the Directory asks a live channel with the plugin
+    # once a wake to have them back. On the Worker, GET /test/listed/<channel> shows what's stored of a row and how often
+    # the Directory's asked that channel since it woke (relay.py keeps nothing and asks nothing: 404, and those parts
+    # are skipped).
+
+    def rows(self):
+        return {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+
+    async def store(self, channel=None, body=None):
+        """What the Worker's Directory stores of a channel's row and how often it's asked it since it woke ({"stored",
+        "asked"}); with a body, those fields put into the row first, as a telling that was lost. None on relay.py."""
+        status, got = await asyncio.to_thread(http, "POST" if body is not None else "GET", "/test/listed/" + (channel or self.ch), body)
+        if status == 404 and not WORKER:
+            return None
+        self.assertEqual(status, 200)
+        return got
+
+    def never_stored(self, got):
+        if got is not None:
+            self.assertIsNotNone(got["stored"])
+            for k in ("where", "whereAt", "activity", "activityAt"):
+                self.assertNotIn(k, got["stored"]["row"])
+                self.assertNotIn('"%s"' % k, json.dumps(got["stored"]))
+
+    async def test_the_open_list_comes_back_from_storage_without_asking_a_channel(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        desk = await self.desk()
+        await desk.send(json.dumps({"title": "barrows"}))
+        dark, key = await self.other()
+        d = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, dark, key))   # (on air once, then dark)
+        await next_of(d, "relay")
+        d.close()
+        await self.pause(3)
+        before = await asyncio.to_thread(self.rows)
+        self.assertEqual((before[self.ch]["live"], before[self.ch]["title"], before[dark]["live"]), (True, "barrows", False))
+        await self.forget()
+        got = await asyncio.to_thread(self.rows)
+        self.assertEqual((got[self.ch], got[dark]), (before[self.ch], before[dark]))
+        for ch in (self.ch, dark):
+            s = await self.store(ch)
+            if s is not None:
+                self.assertEqual(s["asked"], 0)                                # (answered from storage alone)
+                self.assertEqual(s["stored"]["row"]["live"], ch == self.ch)
+                self.never_stored(s)
+        # (and what changes after the sleep is told, and kept through the next)
+        await desk.send(json.dumps({"title": "the mole"}))
+        await self.pause(2)
+        await self.forget()
+        self.assertEqual((await asyncio.to_thread(self.rows))[self.ch]["title"], "the mole")
+
+    async def test_where_and_activity_are_never_stored_and_come_back_after_a_sleep(self):
+        LUMBRIDGE, MINING = Following.LUMBRIDGE, Activity.MINING
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        await g.send(json.dumps({"game": {"where": LUMBRIDGE, "activity": MINING}}))
+        await self.pause(2)
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["where"], got["activity"], got["game"]), (LUMBRIDGE, MINING, True))
+        s = await self.store()
+        self.never_stored(s)
+        if s is not None:
+            self.assertEqual((s["stored"]["row"]["live"], s["stored"]["row"]["game"]), (True, True))
+        await self.forget()
+        s = await self.store()
+        self.never_stored(s)                                                   # (none to bring back from storage)
+        if s is not None:
+            self.assertEqual(s["asked"], 0)
+        got = (await asyncio.to_thread(self.rows))[self.ch]                     # (back on the very first read: asked once)
+        self.assertEqual((got["where"], got["activity"]), (LUMBRIDGE, MINING))
+        await asyncio.to_thread(self.rows)
+        s = await self.store()
+        if s is not None:
+            self.assertEqual(s["asked"], 1)                                    # (once a wake, not once a read)
+        self.never_stored(s)
+        # (dropped: gone from the list, and still nothing stored of it, through another sleep)
+        await g.send(json.dumps({"game": {"where": None, "activity": None}}))
+        await self.pause(2)
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["where"], got["activity"]), (None, None))
+        await self.forget()
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["live"], got["where"], got["activity"]), (True, None, None))
+        self.never_stored(await self.store())
+
+    async def test_a_channel_gone_dark_while_the_list_slept(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        await self.pause(2)
+        self.assertTrue((await asyncio.to_thread(self.rows))[self.ch]["live"])
+        await self.forget()
+        tx.close()                                                             # (told to the Directory, which wakes for it)
+        await self.pause(2)
+        await self.forget()
+        self.assertFalse((await asyncio.to_thread(self.rows))[self.ch]["live"])
+        s = await self.store()
+        if s is None:
+            return                                                             # (relay.py: nothing to lose)
+        self.assertEqual(s["asked"], 0)
+        # a telling lost (or a channel reset without telling): the row says live, and nothing tells it otherwise. It's
+        # asked when it's LISTING_CHECK_S old, and shows dark from then on
+        s = await self.store(body={"live": True, "open": True, "where": {"x": 3264, "y": 3264}})
+        self.assertTrue(s["stored"]["row"]["live"])
+        self.never_stored(s)                                                   # (not even the test's own hook stores it)
+        await self.forget()
+        self.assertTrue((await asyncio.to_thread(self.rows))[self.ch]["live"])  # (stale, for now)
+        await asyncio.sleep(LISTING_CHECK_S + 0.5)
+        await self.forget()
+        self.assertFalse((await asyncio.to_thread(self.rows))[self.ch]["live"])
+        self.assertEqual((await self.store())["asked"], 1)
+        # with the plugin connected, a row that says live is asked once a wake: dark again at the first read
+        g = await self.game()
+        await self.pause(2)
+        self.assertTrue((await asyncio.to_thread(self.rows))[self.ch]["game"])
+        await self.store(body={"live": True, "open": True})
+        await self.forget()
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["live"], got["game"]), (False, True))
+        self.assertEqual((await self.store())["asked"], 1)
+        g.close()
 
     async def test_thirty_stars_an_hour_holds_through_a_sleep(self):
         g = await self.game()

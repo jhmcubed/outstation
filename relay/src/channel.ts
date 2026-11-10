@@ -49,7 +49,9 @@ export interface Env {
   SETTLE_CODE_SECONDS?: string; // (tests) how long a settling code lasts (settle.ts's SETTLE_CODE_MS: 600)
   WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" or an "activity" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
   ALMANAC_UPSTREAM?: string; // (tests) the almanac's sources all fetched under this address instead of the real hosts (almanac.ts's urls)
-  TEST_FORGET?: string; // (tests) "1": POST /test/forget puts the Directory to sleep (index.ts), to see what its storage brings back
+  TEST_FORGET?: string; // (tests) "1": POST /test/forget puts the Directory to sleep (index.ts), to see what its storage brings back;
+                        // GET/POST /test/listed/<channel> shows what it stores of a row on the open list, and how often it's asked
+  LISTING_CHECK_SECONDS?: string; // (tests) how old a live row on the open list may be before it's asked for again (listed.ts's LISTING_CHECK_MS: 300)
 }
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
