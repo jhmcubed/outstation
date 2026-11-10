@@ -101,8 +101,9 @@ import { attachCode, oneLine, pyjson, relayOf } from "./text";
 import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
 import { LISTING_CHECK_MS, ListedRows, keptRow } from "./listed";
 import { Records, CHUNK_ID, RECORD_CHUNK, YEAR_MOST, answer as recordAnswer, CORS as RECORD_CORS } from "./record";
+import { Lookups } from "./lookups";
 
-export { Channel, Aether, Records };
+export { Channel, Aether, Records, Lookups };
 
 const ROLES = new Set(["transmit", "watch", "desk", "sound", "game"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
@@ -835,6 +836,13 @@ export default {
     if (parts[0] === "almanac" && parts.length === 1) {
       if (request.method !== "GET") return almanacAnswer(null, 405);
       return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/almanac");
+    }
+
+    // the lookups (11/10/2026; lookup.ts): Wise Old Man's and RuneProfile's records of a player and the item and metric
+    // icons, fetched by the relay and shared by every visitor (one object for the relay, lookups.ts); any page may read them
+    if ((parts[0] === "lookup" || parts[0] === "icon") && !upgrade && env.LOOKUPS) {
+      if (request.method !== "GET") return new Response(null, { status: 405, headers: { "access-control-allow-origin": "*" } });
+      return env.LOOKUPS.get(env.LOOKUPS.idFromName("lookups")).fetch(new Request(url.origin + url.pathname));
     }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)

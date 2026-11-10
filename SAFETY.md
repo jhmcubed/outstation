@@ -280,6 +280,8 @@ A request nobody answers goes after 14 days, and an answer nobody collects goes 
 
 **The almanac** (outside.wiki's globe; 11/09/2026): the newest of Jagex's news posts, the world list (each world's players, region, activity and flags) and the day's prices of the items most traded, as last fetched (below, "What the relay fetches"), and when each was. Nothing in it is about you or any visitor.
 
+**The lookups** (outside.wiki and ghillie.wiki's Outside page; 11/10/2026): a player's public records as Wise Old Man and RuneProfile show them (stats, gains, achievements, groups, recent collection log items), and item and boss icons, each as it was last fetched for a page that asked (below, "What the relay fetches"). A record is kept 14 days after it was fetched (an icon 90). They're the same public pages anyone can open on those sites; nothing about who asked is kept with them.
+
 All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops, except clips and your year's encrypted copy and public year, which it keeps in folders.
 
 ## What the relay fetches
@@ -297,6 +299,8 @@ So the Wiki gets about two requests a day from the relay, and Jagex about 360, h
 Each request says what it is and where to find us (the relay's User-Agent, `outstation-relay/1.0 (the almanac for outside.wiki's globe: fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)`, which is what the Wiki's rules ask). Nothing about you or any visitor goes with it: no address, no name, nothing a page sent. These are public pages anyone's browser can open; the relay reads them as they are and passes on only the parts the globe shows.
 
 A relay of your own (`relay-py`) does the same while it runs, unless it's started with `--almanac off`.
+
+Since 11/10/2026 it also looks players up for the pages, so a visitor's browser never asks those sites itself: Wise Old Man (api.wiseoldman.net) and RuneProfile (api.runeprofile.com), for the player whose page or station menu is open, and the item and boss icons from RuneLite's own icon server (static.runelite.net) and Wise Old Man's GitHub (through cdn.jsdelivr.net). These are asked only when a page wants them, then kept and shared: a player's record is asked at most about once an hour however many people look, an icon about once a month. The relay keeps under each site's allowance (Wise Old Man 15 requests a minute, RuneProfile 20) and waits when told to. The same User-Agent rule: it says what it is (`outstation-relay/1.0 (lookups for outside.wiki and ghillie.wiki's Outside page: …)`), and nothing about the visitor goes with it: only the player's name the page is about. On a relay of your own, `--lookup off` turns it off.
 
 ## Jagex's rules
 

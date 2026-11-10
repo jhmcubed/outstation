@@ -6,7 +6,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "check": "tsc --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/almanac_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/listed_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/record_test.mts"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/almanac_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/listed_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/record_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/lookup_test.mts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261021.1",

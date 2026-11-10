@@ -1,0 +1,10 @@
+[
+ {
+  "playerId": 1,
+  "name": "99 Slayer",
+  "metric": "slayer",
+  "measure": "experience",
+  "threshold": 13034431,
+  "createdAt": "2026-11-01T10:00:00.000Z"
+ }
+]
