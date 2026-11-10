@@ -21,6 +21,10 @@
 // The globe's from the plugin (11/08/2026; game.ts): following's square (and its world), and what they're doing, held
 // in memory for the channel's row of GET /channels; and the shooting stars they find, passed to the Directory's list
 // (stars.ts), which names the first listed outstation to find each (11/09/2026).
+//
+// Your year (11/10/2026; docs/record.md): the owner's own "where", "activity" and Array events go to this channel's
+// desks, and nowhere else, as {"mine": {...}} lines (tellMine), so the app can keep its record. The record itself is
+// kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
@@ -33,6 +37,8 @@ export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
   DIRECTORY: DurableObjectNamespace;
   AETHER: DurableObjectNamespace; // the aether (aether.ts, 11/07/2026): one room for every outstation and visitor
+  RECORD?: DurableObjectNamespace; // your year (record.ts, 11/10/2026): each channel's encrypted record and public summary
+  RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
   MAX_VIEWERS?: string; // a ceiling on any channel's viewers ("0" or unset: none beyond the channel's own cap)
@@ -727,6 +733,18 @@ export class Channel extends DurableObject<Env> {
     if (game) this.send(ws, game);
     this.send(ws, this.bannedLine());
     this.send(ws, this.viewerList());
+    // (your year: what's held now, each with when it came)
+    if (this.where) this.send(ws, pyjson({ mine: { where: this.where, at: this.whereAt } }));
+    if (this.activity) this.send(ws, pyjson({ mine: { activity: this.activity, at: this.activityAt } }));
+  }
+
+  /** Your year (11/10/2026; docs/record.md): one of the owner's own things, {"mine": {...}}, to this channel's desks
+   *  only (the app's chat window, which only the station key opens): never a viewer, a looker or anything else. */
+  tellMine(m: Record<string, unknown>) {
+    const desks = this.sockets("desk");
+    if (!desks.length) return;
+    const line = pyjson({ mine: m });
+    for (const d of desks) this.send(d, line);
   }
 
   // messages between portals: this portal's to another channel's (through that channel's object), and another's held
@@ -853,6 +871,7 @@ export class Channel extends DurableObject<Env> {
     this.where = w;
     this.whereAt = this.whereTook = now;
     this.tellListing();
+    this.tellMine({ where: w, at: now });
   }
 
   dropWhere() {
@@ -860,6 +879,7 @@ export class Channel extends DurableObject<Env> {
     this.where = null;
     this.whereAt = 0;
     this.tellListing();
+    this.tellMine({ where: null, at: Date.now() });
   }
 
   /** What they're doing (game.ts, gameActivity): taken and dropped exactly as takeWhere takes "where", one every
@@ -870,6 +890,7 @@ export class Channel extends DurableObject<Env> {
     this.activity = a;
     this.activityAt = this.activityTook = now;
     this.tellListing();
+    this.tellMine({ activity: a, at: now });
   }
 
   dropActivity() {
@@ -877,6 +898,7 @@ export class Channel extends DurableObject<Env> {
     this.activity = null;
     this.activityAt = 0;
     this.tellListing();
+    this.tellMine({ activity: null, at: Date.now() });
   }
 
   /** A shooting star the plugin found (game.ts, gameStar): to the Directory's list (stars.ts), which counts this
@@ -1074,6 +1096,13 @@ export class Channel extends DurableObject<Env> {
         if (summed) this.saveMeta();
       }
       this.tellArray(report);
+      // (your year: the owner's own events, live or dark, listed or not, to its desks only)
+      if (this.sockets("desk").length) {
+        let events: ReturnType<typeof arrayEvents> = [];
+        try { events = arrayEvents(report); } catch { /* not one it can read */ }
+        const at = Date.now();
+        for (const event of events) this.tellMine({ event, at });
+      }
     } else if (typeof msg === "string") {
       this.lastData = msg;
       if (msg.startsWith('{"state"')) {

@@ -11,7 +11,9 @@
       { "name": "CHANNEL", "class_name": "Channel" },
       { "name": "DIRECTORY", "class_name": "Directory" },
       // the aether (11/07/2026, src/aether.ts): one room for every outstation and visitor, one object for the relay
-      { "name": "AETHER", "class_name": "Aether" }
+      { "name": "AETHER", "class_name": "Aether" },
+      // your year (11/10/2026, src/record.ts): each channel's encrypted record and public summary, apart from its channel
+      { "name": "RECORD", "class_name": "Records" }
     ]
   },
   // the clips on players' Outside pages (src/clips.ts): made once with `npx wrangler r2 bucket create outside-clips`
@@ -20,7 +22,8 @@
   ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Channel", "Directory"] },
-    { "tag": "v2", "new_sqlite_classes": ["Aether"] }
+    { "tag": "v2", "new_sqlite_classes": ["Aether"] },
+    { "tag": "v3", "new_sqlite_classes": ["Records"] }
   ],
   // the almanac (11/09/2026, src/almanac.ts): every 5 minutes the Directory asks whichever of its sources is due (the
   // world list each time, Jagex's news every 20 minutes, the Wiki's prices about once a day, its names once a day)

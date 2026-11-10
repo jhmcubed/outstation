@@ -80,6 +80,15 @@
 // Cron Trigger (wrangler.jsonc, every 5 minutes: scheduled, below) asks it to refresh whatever's due:
 //   GET    /almanac          {"at", "updates", "worlds", "market", "sources"}
 //   GET    /admin/almanac    each source's schedule and last error; POST: every source asked now
+//
+// Your year (11/10/2026; record.ts, docs/record.md): each player's record of their own travels, sealed by their app
+// with a key only their own computers hold (the relay stores ciphertext only), and the public summary they may post:
+//   POST   /record/<channel>/token?key=<key>   {"read", "write"}   the record key's tokens, their SHA-256 kept
+//   PUT    /record/<channel>/<id>?key=<key>    a sealed chunk;   DELETE /record/<channel>/<id>?key=   one gone
+//   DELETE /record/<channel>?key=<key>         everything: the chunks, the tokens, the public summary
+//   GET    /record/<channel>[?data=1&after=]   Authorization: Bearer <read token>
+//   PUT, DELETE /year/<channel>   ?key=<key> or Authorization: Bearer <write token>;   GET /year/<channel>   anyone's
+// Taking a channel back (DELETE /admin/channels/<channel>) deletes its record and summary too: nobody could manage them.
 
 import { DurableObject } from "cloudflare:workers";
 import { Channel, PLAYER, type Env, type Listing } from "./channel";
@@ -91,8 +100,9 @@ import { fileKey, serveFile, ID } from "./clips";
 import { attachCode, oneLine, pyjson, relayOf } from "./text";
 import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
 import { LISTING_CHECK_MS, ListedRows, keptRow } from "./listed";
+import { Records, CHUNK_ID, RECORD_CHUNK, YEAR_MOST, answer as recordAnswer, CORS as RECORD_CORS } from "./record";
 
-export { Channel, Aether };
+export { Channel, Aether, Records };
 
 const ROLES = new Set(["transmit", "watch", "desk", "sound", "game"]);
 const NAME = /^[A-Za-z0-9_.~-]{1,64}$/;
@@ -517,6 +527,58 @@ async function mint(request: Request, env: Env, name: string): Promise<{ channel
   return { channel: name, key, code: attachCode(relayOf(request.url), name, key) };
 }
 
+/** Your year's routes (record.ts): the station key checked here with the channel (/_keyok), the tokens in the record's
+ *  own object. Only what each needs is passed on: the key's verdict (x-station), the bearer token, the body. */
+async function record(request: Request, env: Env, parts: string[], url: URL): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: { ...RECORD_CORS, "access-control-allow-methods": "GET, PUT, POST, DELETE",
+                                                         "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "86400" } });
+  }
+  if (!env.RECORD) return recordAnswer({ error: "this relay doesn't keep records" }, 404);
+  const [kind, name] = parts, m = request.method, third = parts[2] ?? "";
+  let what: string, body: BodyInit | null = null;
+  if (kind === "record" && parts.length === 3 && third === "token" && m === "POST") {
+    const raw = await request.text();
+    if (raw.length > 4096) return recordAnswer({ error: "the tokens: read and write" }, 413);
+    what = "token";
+    body = raw;
+  } else if (kind === "record" && parts.length === 3 && (m === "PUT" || m === "DELETE")) {
+    if (!CHUNK_ID.test(third)) return recordAnswer({ error: "a chunk's id: 22 base64url characters" }, 400);
+    what = "chunk?id=" + third;
+    if (m === "PUT") {
+      if ((parseInt(request.headers.get("content-length") || "0") || 0) > RECORD_CHUNK) return recordAnswer({ error: `a chunk is ${RECORD_CHUNK / 1024} KB at most` }, 413);
+      const b = await request.arrayBuffer();
+      if (b.byteLength > RECORD_CHUNK) return recordAnswer({ error: `a chunk is ${RECORD_CHUNK / 1024} KB at most` }, 413);
+      body = b;
+    }
+  } else if (kind === "record" && parts.length === 2 && (m === "GET" || m === "DELETE")) {
+    what = m === "GET" ? "list" + url.search : "all";
+  } else if (kind === "year" && parts.length === 2 && (m === "GET" || m === "PUT" || m === "DELETE")) {
+    what = "year";
+    if (m === "PUT") {
+      if ((parseInt(request.headers.get("content-length") || "0") || 0) > YEAR_MOST) return recordAnswer({ error: `a year is ${YEAR_MOST / 1024} KB at most` }, 413);
+      const raw = await request.text();
+      if (raw.length > YEAR_MOST) return recordAnswer({ error: `a year is ${YEAR_MOST / 1024} KB at most` }, 413);
+      body = raw;
+    }
+  } else {
+    return recordAnswer({ error: "no such thing here" }, parts.length > 3 ? 404 : 405);
+  }
+  // the station key: needed for everything but reading (the read token) and the summary (or its write token)
+  let station = false;
+  const key = url.searchParams.get("key");
+  if (key !== null) {
+    const r = await channelStub(env, name).fetch(toChannel(new Request(url.origin + "/?key=" + encodeURIComponent(key), { headers: request.headers }), name, "/_keyok"));
+    station = ((await r.json()) as { ok: boolean }).ok;
+    if (!station) return recordAnswer({ error: "wrong key for this channel" }, 403);
+  }
+  const headers: Record<string, string> = { "x-station": station ? "1" : "0" };
+  const auth = request.headers.get("authorization");
+  if (auth) headers.authorization = auth;
+  const stub = env.RECORD.get(env.RECORD.idFromName(name));
+  return stub.fetch(new Request("https://record/" + what, { method: m, headers, body }));
+}
+
 function dirRequests(env: Env, what: string, name: string, extra = ""): Request {
   return new Request("https://dir/requests?what=" + encodeURIComponent(what) + "&name=" + encodeURIComponent(name) + extra);
 }
@@ -636,6 +698,8 @@ async function admin(request: Request, env: Env, parts: string[]): Promise<Respo
   if (request.method === "DELETE") {
     await stub.fetch(toChannel(new Request(request.url, { method: "POST" }), name, "/_revoke"));
     await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "DELETE" });
+    // (its year too, the record and the summary: nobody holds the key to manage them now)
+    if (env.RECORD) await env.RECORD.get(env.RECORD.idFromName(name)).fetch(new Request("https://record/all", { method: "DELETE", headers: { "x-station": "1" } }));
     return new Response(null, { status: 204 });
   }
   return new Response(null, { status: 405 });
@@ -697,6 +761,12 @@ export default {
       }
       if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_clips"));
       return new Response(null, { status: 405 });
+    }
+
+    // your year (11/10/2026; record.ts): the encrypted record and the public summary
+    if ((parts[0] === "record" && (parts.length === 2 || parts.length === 3)) || (parts[0] === "year" && parts.length === 2)) {
+      if (!NAME.test(parts[1])) return recordAnswer({ error: "which outstation?" }, 400);
+      return record(request, env, parts, url);
     }
 
     // asking for a portal: a friend's client, with a secret of its own (the pickup) that collects the answer
