@@ -3399,6 +3399,84 @@ class YourYear(Base):
         self.assertEqual(self.year("GET")[0], 404)
         self.assertEqual(self.year("PUT", {"v": 1})[0], 403)
 
+    async def test_days_acts_and_the_time_zone(self):
+        # (11/10/2026: the calendar strip's days, an activity on heat cells and paths, the poster's time zone; all
+        # optional, so a year without them is as it was)
+        await self.claim()
+        now = int(time.time() * 1000)
+        today = time.strftime("%Y-%m-%d", time.gmtime(now / 1000))
+        y = {"v": 1, "tz": "America/Argentina/Buenos_Aires",
+             "days": [{"date": "2026-01-31", "minutes": 95, "act": "boss:Vorkath"}, {"minutes": 0, "date": today}],
+             "heat": [[3264, 3264, 600, "skilling:Mining"], [2368, 4416, 30]],
+             "paths": [{"act": "minigame:the Inferno", "steps": [[3264, 3264], [3264, 3392, now]]}, {"steps": [[3264, 3264], [3264, 3392]]},
+                       [[3264, 3264], [3264, 3392]]],
+             "hours": [0] * 24}
+        st, _, got = self.year("PUT", y, key=self.key)
+        self.assertEqual(st, 200, got)
+        self.assertEqual(list(got["year"]), ["v", "tz", "days", "heat", "paths", "hours"])
+        self.assertEqual(got["year"]["days"], [{"date": "2026-01-31", "minutes": 95, "act": "boss:Vorkath"},
+                                               {"date": today, "minutes": 0}])
+        self.assertEqual(got["year"]["paths"][0], {"steps": [[3264, 3264], [3264, 3392, now]], "act": "minigame:the Inferno"})
+        self.assertEqual(self.year("GET")[2], got)
+        for tz in ("UTC", "Europe/London", "Etc/GMT+5", "America/Indiana/Knox", -300, 0, 840, -840, 330.0):
+            st, _, got = self.year("PUT", {"v": 1, "tz": tz}, key=self.key)
+            self.assertEqual((st, got["year"]["tz"]), (200, int(tz) if isinstance(tz, float) else tz), tz)
+        bad = [
+            ({"v": 1, "tz": "London"}, "tz"), ({"v": 1, "tz": "Europe/Lon don"}, "tz"), ({"v": 1, "tz": "../etc/passwd"}, "tz"),
+            ({"v": 1, "tz": "A/" + "b" * 70}, "tz"), ({"v": 1, "tz": 841}, "tz"), ({"v": 1, "tz": 1.5}, "tz"), ({"v": 1, "tz": True}, "tz"),
+            ({"v": 1, "tz": "a/b/c/d"}, "tz"), ({"v": 1, "tz": ""}, "tz"),
+            ({"v": 1, "days": [{"date": "2026-02-30", "minutes": 5}]}, "days"), ({"v": 1, "days": [{"date": "2019-12-31", "minutes": 5}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-1-5", "minutes": 5}]}, "days"), ({"v": 1, "days": [{"date": "2099-01-01", "minutes": 5}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 1441}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5}, {"date": "2026-01-05", "minutes": 6}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5, "act": "boss:Mum"}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5, "note": "x"}]}, "days"),
+            ({"v": 1, "days": [{"date": "2026-01-05", "minutes": 5}] * 401}, "days"),
+            ({"v": 1, "heat": [[3264, 3264, 5, "skilling:Cheese"]]}, "heat"), ({"v": 1, "heat": [[3264, 3264, 5, {"kind": "idle"}]]}, "heat"),
+            ({"v": 1, "heat": [[3264, 3264, 5, "idle", 1]]}, "heat"),
+            ({"v": 1, "paths": [{"steps": [[3264, 3264], [3264, 3392]], "act": "dancing"}]}, "paths"),
+            ({"v": 1, "paths": [{"steps": [[3264, 3264], [3264, 3392]], "colour": "red"}]}, "paths"),
+            ({"v": 1, "paths": [{"act": "idle"}]}, "paths"),
+        ]
+        for body, part in bad:
+            st, _, got = self.year("PUT", body, key=self.key)
+            self.assertEqual(st, 400, body if len(json.dumps(body)) < 200 else part)
+            self.assertTrue(got["error"].startswith(part), (part, got["error"]))
+
+    async def test_fine_heat_cells_and_paths_in_exact_tiles(self):
+        # (11/10/2026, for the exact path: heat as {"cell", "cells"} in cells of 8 to 128 tiles, each cell's middle; steps
+        # at any tile of the main map and its seas; a plain heat list is 128-tile squares, as before)
+        await self.claim()
+        now = int(time.time() * 1000)
+        y = {"v": 1, "heat": {"cells": [[3260, 3268, 0, "skilling:Mining"], [3268, 3268, 12], [2368, 4416, 3]], "cell": 8},
+             "paths": [{"steps": [[3265, 3263], [3266, 3263, now], [960, 2048]], "act": "idle"}, [[4095, 4223], [2368, 4416]]],
+             "replay": [[3201, 3423, now], [3202, 3423]]}
+        st, _, got = self.year("PUT", y, key=self.key)
+        self.assertEqual(st, 200, got)
+        self.assertEqual(got["year"]["heat"], {"cell": 8, "cells": [[3260, 3268, 0, "skilling:Mining"], [3268, 3268, 12], [2368, 4416, 3]]})
+        self.assertEqual(got["year"]["paths"][0]["steps"][0], [3265, 3263])
+        for cell, xy in ((16, [3256, 3272]), (32, [3248, 3280]), (64, [3232, 3296]), (128, [3264, 3264])):
+            st, _, got = self.year("PUT", {"v": 1, "heat": {"cell": cell, "cells": [xy + [5]]}}, key=self.key)
+            self.assertEqual((st, got["year"]["heat"]["cell"]), (200, cell), cell)
+        self.assertEqual(self.year("PUT", {"v": 1, "heat": [[3264, 3264, 5]]}, key=self.key)[2]["year"]["heat"], [[3264, 3264, 5]])
+        many = [[x, y_, 1] for x in range(1028, 4096, 8) for y_ in range(2052, 4224, 8)][:32769]
+        bad = [
+            ({"v": 1, "heat": {"cell": 12, "cells": [[3264, 3264, 5]]}}, "heat"), ({"v": 1, "heat": {"cell": 8}}, "heat"),
+            ({"v": 1, "heat": {"cell": 8, "cells": [[3264, 3264, 5]]}}, "heat"),            # (not an 8-tile cell's middle)
+            ({"v": 1, "heat": {"cell": 8, "cells": [[956, 2052, 5]]}}, "heat"),              # (off the map)
+            ({"v": 1, "heat": {"cell": 8, "cells": [[3260, 3268, 5], [3260, 3268, 6]]}}, "heat"),
+            ({"v": 1, "heat": {"cell": True, "cells": []}}, "heat"), ({"v": 1, "heat": {"cell": 8, "cells": [], "x": 1}}, "heat"),
+            ({"v": 1, "heat": {"cell": 8, "cells": many}}, "heat"),
+            ({"v": 1, "paths": [[[959, 2048], [960, 2048]]]}, "paths"), ({"v": 1, "paths": [[[3264, 4224], [3264, 4223]]]}, "paths"),
+            ({"v": 1, "paths": [[[3264.5, 3264], [3264, 3264]]]}, "paths"),
+            ({"v": 1, "paths": [[[3264, 3264]] * 5001]}, "paths"),
+            ({"v": 1, "replay": [[3264, 3264]] * 20001}, "replay"),
+        ]
+        for body, part in bad:
+            st, _, got = self.year("PUT", body, key=self.key)
+            self.assertEqual(st, 400, body if len(json.dumps(body)) < 300 else part)
+            self.assertTrue(got["error"].startswith(part), (part, got["error"]))
+
     async def test_a_year_that_isnt_its_shape_is_refused_by_its_part(self):
         await self.claim()
         now = int(time.time() * 1000)
@@ -3427,7 +3505,7 @@ class YourYear(Base):
             self.assertEqual(st, 400, body if len(json.dumps(body)) < 200 else part)
             self.assertTrue(got["error"].startswith(part), (part, got["error"]))
         self.assertEqual(self.year("PUT", b"{not json", key=self.key)[0], 400)
-        self.assertEqual(self.year("PUT", b'{"v": 1, "replay": [' + b", ".join([b"[3264, 3264]"] * 60000) + b"]}", key=self.key)[0], 413)
+        self.assertEqual(self.year("PUT", b'{"v": 1, "replay": [' + b", ".join([b"[3264, 3264]"] * 450000) + b"]}", key=self.key)[0], 413)
         self.assertEqual(self.year("GET")[0], 404)                         # (nothing refused was kept)
 
 

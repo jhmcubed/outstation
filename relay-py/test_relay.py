@@ -23,11 +23,21 @@ from wsmini import Client  # noqa: E402
 
 
 def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    return free_ports(1)[0]
+
+
+def free_ports(n):
+    """n different free ports: the sockets held open together, so the system can't hand the same one out twice."""
+    socks = []
+    try:
+        for _ in range(n):
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            socks.append(s)
+        return [s.getsockname()[1] for s in socks]
+    finally:
+        for s in socks:
+            s.close()
 
 
 class RelayTest(unittest.IsolatedAsyncioTestCase):
@@ -35,18 +45,27 @@ class RelayTest(unittest.IsolatedAsyncioTestCase):
     forward = None
 
     async def asyncSetUp(self):
-        self.port = free_port()
-        self.public_port = free_port()
-        started = asyncio.Event()
-        self.relay = None
+        # (11/10/2026: two free_port() calls could give the same port, or one taken again before the relay bound it,
+        # and the relay never started (CI, PR #12): two ports at once, and a fresh pair if binding still fails)
         self.clients = []
+        for attempt in range(5):
+            self.port, self.public_port = free_ports(2)
+            started = asyncio.Event()
+            self.relay = None
 
-        def ready(server, r):
-            self.relay = r
-            started.set()
-        self.task = asyncio.ensure_future(relay.serve("127.0.0.1", self.port, self.delay, ready, log=lambda *_: None,
-                                                      forward=self.make_forward(), public_port=self.public_port))
-        await asyncio.wait_for(started.wait(), 5)
+            def ready(server, r):
+                self.relay = r
+                started.set()
+            self.task = asyncio.ensure_future(relay.serve("127.0.0.1", self.port, self.delay, ready, log=lambda *_: None,
+                                                          forward=self.make_forward(), public_port=self.public_port))
+            waiter = asyncio.ensure_future(started.wait())
+            await asyncio.wait({self.task, waiter}, timeout=5, return_when=asyncio.FIRST_COMPLETED)
+            waiter.cancel()
+            if started.is_set():
+                return
+            if self.task.done() and isinstance(self.task.exception(), OSError) and attempt < 4:
+                continue
+            raise RuntimeError("the relay didn't start: %r" % (self.task.exception() if self.task.done() else "timed out"))
 
     def make_forward(self):
         return None
