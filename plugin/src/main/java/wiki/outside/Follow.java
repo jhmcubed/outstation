@@ -1,9 +1,12 @@
 package wiki.outside;
 
 import com.google.gson.JsonObject;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Following (11/08/2026, Jace: "add plugin following with those safeguards"): while it's on, the rough area the player
@@ -14,7 +17,8 @@ import java.util.Map;
  * <li>never somewhere dangerous: in the Wilderness (whatever "In the Wilderness too" says), a PvP area, on a PvP or
  * Deadman world, nothing's recorded, and the moment they're there the area already sent is cleared (the PvP minigames
  * and Ferox Enclave aren't dangerous, 11/10/2026: OutsidePlugin.globeSafe);</li>
- * <li>never anywhere off the main map (an underground area is counted where it lies under; Zanaris as one place, the
+ * <li>never anywhere off the main map (Sailing's seas round it are the map's, X0 and Y0, and a boat's where it is at sea:
+ * OutsidePlugin.onMainWorld; an underground area is counted where it lies under; Zanaris as one place, the
  * globe's moon; an instance where its template lies, or off the map its entrance, ENTRANCES; anything else,
  * nothing).</li>
  * </ul>
@@ -27,8 +31,28 @@ class Follow
 {
 	static final int SQUARE = 128;
 	static final long BEHIND_MS = Behind.BEHIND_MS, EVERY_MS = Behind.EVERY_MS, AGAIN_MS = Behind.AGAIN_MS;
-	/** the main map's bounds (the surface; an underground area is 6400 tiles north of what's above it) */
-	static final int X0 = 1024, X1 = 4096, Y0 = 2496, Y1 = 4224, UNDER = 6400;
+	/**
+	 * The main map's bounds (the surface; an underground area is 6400 tiles north of what's above it). Sailing (11/19/2025)
+	 * put a band of sea round the old map, which ran x 1024-3967, y 2496-4159: x 960-1023 to the west, 3968-4031 to the
+	 * east, y 2048-2495 to the south (the new islands: Sunbleak Island, Last Light, Charred Island, the Great Conch,
+	 * Wyrmscraig and its Mad Angel) and 4160-4223 to the north (11/10/2026, Jace: "do we support location tracking when
+	 * people are out at sea?"). Measured from the game's own map squares (the OSRS cache, archive.openrs2.org: 2341 of
+	 * 10/29/2025 against 2363 of launch day and 2757 of 11/03/2026, the newest, which adds nothing past them), and the same
+	 * as Shortest Path's collision map (regions x 15-62, y 32-65). X1 and Y1 stay on a square's edge.
+	 */
+	static final int X0 = 960, X1 = 4096, Y0 = 2048, Y1 = 4224, UNDER = 6400;
+	/** Underground goes as the square above it under the map as it was before Sailing (y 2496 up): the older squares
+	 *  just south of that band (x 3072-3775, y 8576-8831) lie under no sea, so they stay off the map... */
+	static final int UNDER_Y0 = 2496;
+	/** ...but the caves of Sailing's southern islands lie in it, 6400 tiles north of their islands, so those regions go as
+	 *  the square above them, as any other underground: Sunbleak Cave (8840; the wiki's map, 2227, 8738, under the island
+	 *  at 2209, 2330), Wyrmscraig Cavern (10374, 10375; 2590, 8615, under Wyrmscraig at 2532, 2215), the Charred Dungeon
+	 *  (10634, 10890; its music's area, 2624-2751, 8832-8895, under Charred Island at 2648, 2406) and the Great Conch's
+	 *  caves (12426, 12682, 12938, 13194; its gryphons at 3084-3219, 8841-8878 and its coral at 3285, 8859, under the
+	 *  Conch at 3200, 2435). Each is a region the cache first holds with Sailing. Its other new regions there, whose places
+	 *  aren't known, and everything else south of UNDER_Y0, go as nothing. */
+	static final Set<Integer> SEA_CAVES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(8840, 10374, 10375,
+		10634, 10890, 12426, 12682, 12938, 13194)));
 	/** Zanaris (Jace, 11/08/2026: shown on the globe's moon), as one place whatever its tile: the fairy rings and the
 	 *  shed both land in this box, and all of it goes as the one square ZANARIS, never more exactly */
 	static final int ZX0 = 2368, ZX1 = 2496, ZY0 = 4352, ZY1 = 4480;
@@ -164,14 +188,15 @@ class Follow
 		behind.forget();
 	}
 
-	/** The middle of the square a point's in, on the main map, or Zanaris as one place; null anywhere else. */
+	/** The middle of the square a point's in, on the main map (the sea round it too, 11/10/2026), or Zanaris as one
+	 *  place; null anywhere else. */
 	static int[] square(int x, int y)
 	{
 		if (x >= ZX0 && x < ZX1 && y >= ZY0 && y < ZY1)
 		{
 			return ZANARIS.clone();
 		}
-		if (y >= Y0 + UNDER && y < Y1 + UNDER)
+		if ((y >= UNDER_Y0 + UNDER && y < Y1 + UNDER) || (y >= Y0 + UNDER && y < Y1 + UNDER && SEA_CAVES.contains(region(x, y))))
 		{
 			y -= UNDER;
 		}

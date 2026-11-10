@@ -23,6 +23,7 @@ import net.runelite.api.Client;
 import net.runelite.api.EnumComposition;
 import net.runelite.api.EnumID;
 import net.runelite.api.GameState;
+import net.runelite.api.IndexedObjectSet;
 import net.runelite.api.Item;
 import net.runelite.api.GameObject;
 import net.runelite.api.ItemContainer;
@@ -30,7 +31,10 @@ import net.runelite.api.NPC;
 import net.runelite.api.Player;
 import net.runelite.api.Prayer;
 import net.runelite.api.Skill;
+import net.runelite.api.WorldEntity;
 import net.runelite.api.WorldType;
+import net.runelite.api.WorldView;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameObjectDespawned;
 import net.runelite.api.events.GameObjectSpawned;
@@ -451,6 +455,7 @@ public class OutsidePlugin extends Plugin
 		}
 		WorldPoint at = here();
 		activity.region(at == null ? -1 : at.getRegionID(), at == null ? 0 : at.getPlane());
+		activity.trial(client.getVarbitValue(VarbitID.SAILING_BT_IN_TRIAL) != 0);
 		return doing.tick(now, activity.now(now), safe);
 	}
 
@@ -502,8 +507,9 @@ public class OutsidePlugin extends Plugin
 		starsHere.remove(p);
 		// (gone while logged in, near enough to have seen it go: mined out, or a tier mined down, which spawns the
 		// next tier on the same tile this tick and so isn't gone)
-		Player me = client.getLocalPlayer();
-		if (client.getGameState() == GameState.LOGGED_IN && me != null && me.getWorldLocation().distanceTo(p) <= 32)
+		// (on a boat too, 11/10/2026: from where it is at sea, here())
+		WorldPoint me = client.getGameState() == GameState.LOGGED_IN ? here() : null;
+		if (me != null && me.distanceTo(p) <= 32)
 		{
 			starsWent.add(p);
 		}
@@ -568,17 +574,48 @@ public class OutsidePlugin extends Plugin
 
 	/**
 	 * Where the player is, an instance's as its template lies on the map (11/09/2026: instances are allowed, placed
-	 * where they're opened), as RuneLite's own Discord plugin reads it; outside one, where they are. Null before there's a
-	 * player.
+	 * where they're opened), as RuneLite's own Discord plugin reads it; outside one, where they are; on a boat, where the
+	 * boat is at sea (onMainWorld, 11/10/2026). Null before there's a player, or for a moment while a boat's being set up.
 	 */
 	private WorldPoint here()
 	{
-		Player me = client.getLocalPlayer();
-		if (me == null || me.getLocalLocation() == null)
+		return here(client, client.getLocalPlayer());
+	}
+
+	static WorldPoint here(Client client, Player me)
+	{
+		LocalPoint at = me == null ? null : onMainWorld(client.getTopLevelWorldView(), me.getLocalLocation());
+		return at == null ? null : WorldPoint.fromLocalInstance(client, at);
+	}
+
+	/**
+	 * A point on the main world (11/10/2026, Jace: "I notice there are no players on their boats at sea"). With Sailing,
+	 * a player on a boat stands in the boat's own world view (a WorldEntity's), and their local point is the deck's, so
+	 * read as it was it gave the boat's own template, off the map, and nothing went. Here the deck's point is carried
+	 * out to where the boat is on the main world, the way RuneLite's own code does it (runelite/runelite at e7098b7,
+	 * Perspective.localToMinimap: the top-level view's worldEntities().byIndex(the point's world view), then
+	 * transformToMainWorld) and the Sailing plugin's SailingUtil.getTopLevelLocalPoint (LlemonDuck/sailing at af987f3);
+	 * Group Ironmen Tracker and Shortest Path take the boat's own place (worldEntity.getLocalLocation()), here the fallback.
+	 * Null for a point in a world view with no boat on the main world (as while a world hop sets it up): never the deck's.
+	 */
+	static LocalPoint onMainWorld(WorldView top, LocalPoint p)
+	{
+		if (p == null || p.getWorldView() == WorldView.TOPLEVEL)
+		{
+			return p;
+		}
+		IndexedObjectSet<? extends WorldEntity> boats = top == null ? null : top.worldEntities();
+		WorldEntity boat = boats == null ? null : boats.byIndex(p.getWorldView());
+		if (boat == null)
 		{
 			return null;
 		}
-		return WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+		LocalPoint at = boat.transformToMainWorld(p);
+		if (at == null)
+		{
+			at = boat.getLocalLocation();
+		}
+		return at == null ? null : new LocalPoint(at.getX(), at.getY(), WorldView.TOPLEVEL);
 	}
 
 	/**
