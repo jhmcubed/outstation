@@ -39,6 +39,8 @@ export interface Env {
   DIRECTORY: DurableObjectNamespace;
   AETHER: DurableObjectNamespace; // the aether (aether.ts, 11/07/2026): one room for every outstation and visitor
   RECORD?: DurableObjectNamespace; // your year (record.ts, 11/10/2026): each channel's encrypted record and public summary
+  LOOKUPS?: DurableObjectNamespace; // the lookups (lookup.ts, lookups.ts, 11/10/2026): Wise Old Man, RuneProfile and the icons, kept and shared
+  LOOKUP_UPSTREAM?: string; // (tests) the lookups' sources all fetched under this address instead of the real hosts (lookup.ts's want)
   RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)

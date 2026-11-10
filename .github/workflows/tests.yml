@@ -28,6 +28,8 @@ jobs:
         run: python relay-py/test_relay.py
       - name: the almanac's parsing and schedule (Python)
         run: python relay-py/test_almanac.py
+      - name: the Python relay's lookups
+        run: python relay-py/test_lookup.py
       - name: the almanac's parsing and schedule (the Worker's)
         working-directory: relay
         run: npm test

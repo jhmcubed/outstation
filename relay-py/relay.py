@@ -161,6 +161,14 @@ the relay alone on its own schedule (almanac_loop; --almanac on, the default, of
   A read never asks a source, except the first when nothing's been tried (shared by every read meanwhile). A source
   that fails keeps its last good data, with its age, and backs off. The public side allows the read.
 
+The lookups (11/10/2026; docs/protocol.md "The lookups"; lookup.py, and the Worker's lookup.ts, the same): Wise Old
+Man's and RuneProfile's records of a player and the item and metric icons, asked by the relay when a page reads them and
+kept, so a page never asks those hosts and many visitors make one request (--lookup on, the default, off, or an address
+for tests).
+    read:      GET http://HOST:PORT/lookup/wom/<name>[/achievements|/gained|/groups], /lookup/rp/<name>[/activities],
+               /icon/item/<id>.png, /icon/metric/<metric>.png
+  Kept in memory: a restart asks again. The public side allows the read.
+
 Settling (11/08/2026) went on 11/10/2026 (docs/protocol.md "Settling"; Jace's decision: the globe shows real positions
 on the land and every other outstation at the receiver, so homes have no use). Anything on /settle/<channel> or
 /home/<channel> is answered 410 {"error": SETTLING_GONE}, so an app built while it was here says why (the Worker, the
@@ -189,6 +197,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from forward import DEFAULT as DEFAULT_FORWARD, Forward  # noqa: E402
 import almanac as almanac_sources  # noqa: E402
+import lookup as lookups  # noqa: E402
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 512 * 1024          # a frame is ~10-30 KB; anything bigger is refused
@@ -2298,8 +2307,12 @@ def too_old(v, min_client):
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
                  where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False, records_dir=None,
-                 record_chunks=RECORD_CHUNKS):
+                 record_chunks=RECORD_CHUNKS, lookup="off"):
         self.delay = delay
+        # the lookups (11/10/2026; lookup.py): Wise Old Man, RuneProfile and the icons, asked by the relay and kept:
+        # "off" (nothing's asked: 503), "on" (the real hosts) or an address everything's fetched under instead (tests)
+        self.lookup = None if lookup == "off" else lookup
+        self.shelf = lookups.Shelf()
         self.records = Records(records_dir, record_chunks)  # your year (11/10/2026): None as the folder keeps none
         self.test_forget = test_forget  # POST /test/forget answered (tests only: the Worker's TEST_FORGET)
         # the almanac (11/09/2026; almanac.py): Jagex's news, the world list and the Wiki's prices, fetched on a
@@ -2415,6 +2428,9 @@ class Relay:
             return
         if path == ["almanac"] and not key:
             await self.almanac_read(writer, method)
+            return
+        if path and path[0] in ("lookup", "icon") and not key:
+            await self.lookup_read(writer, method, path)
             return
         if path == ["admin", "almanac"] and not key:
             await self.almanac_keeper(writer, method, headers)
@@ -3076,6 +3092,28 @@ class Relay:
         cache = "public, max-age=60" if body is not None else "no-cache"
         writer.write(("HTTP/1.1 %s\r\n%sAccess-Control-Allow-Origin: *\r\nCache-Control: %s\r\n"
                       "Content-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, cache, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def lookup_read(self, writer, method, path):
+        """GET /lookup/... and /icon/... (11/10/2026; lookup.py, docs/protocol.md "The lookups"): Wise Old Man's and
+        RuneProfile's records of a player and the item and metric icons, asked by the relay and shared. Anyone may read
+        them (any origin, the public side too)."""
+        w = lookups.want(path, None if self.lookup in (None, "on") else self.lookup)
+        if method != "GET":
+            status, headers, body = 405, dict(lookups.CORS), b""
+        elif not w:
+            status, headers, body = 404, dict(lookups.CORS), b""
+        elif self.lookup is None:
+            status, headers, body = lookups.answer_of(w, None, False, 3600)
+        else:
+            status, headers, body = await self.shelf.read(w)
+        words = {200: "OK", 404: "Not Found", 405: "Method Not Allowed", 503: "Service Unavailable"}.get(status, "")
+        head = "".join("%s: %s\r\n" % kv for kv in headers.items())
+        writer.write(("HTTP/1.1 %d %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                      % (status, words, head, len(body))).encode() + body)
         try:
             await writer.drain()
         finally:
@@ -3998,13 +4036,13 @@ def dink_report(p):
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="",
                 where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False, records_dir=None,
-                record_chunks=RECORD_CHUNKS):
+                record_chunks=RECORD_CHUNKS, lookup="off"):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
     almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
-    everything under instead (tests)."""
+    everything under instead (tests). lookup: the same, for the lookups (Wise Old Man, RuneProfile, the icons)."""
     relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, where_fresh_s,
-                  almanac, test_forget, records_dir, record_chunks)
+                  almanac, test_forget, records_dir, record_chunks, lookup)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -4064,6 +4102,9 @@ def main(argv=None):
     ap.add_argument("--almanac", default="on",
                     help="the almanac's sources (GET /almanac): on (Jagex's news and world list and the Wiki's prices, "
                          "each on its own schedule), off, or an address to fetch them all under instead (tests)")
+    ap.add_argument("--lookup", default="on",
+                    help="the lookups (GET /lookup/..., /icon/...): on (Wise Old Man, RuneProfile and the icons' hosts, "
+                         "asked as pages read them and kept), off, or an address to fetch them all under instead (tests)")
     ap.add_argument("--test-forget", action="store_true",
                     help="answer POST /test/forget, as the Worker does for its tests (nothing is forgotten here)")
     a = ap.parse_args(argv)
@@ -4078,7 +4119,7 @@ def main(argv=None):
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token,
                           where_fresh_s=a.where_fresh_seconds, almanac=a.almanac, test_forget=a.test_forget,
-                          records_dir=a.records or None, record_chunks=a.record_chunks))
+                          records_dir=a.records or None, record_chunks=a.record_chunks, lookup=a.lookup))
     except KeyboardInterrupt:
         pass
 

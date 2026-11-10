@@ -920,6 +920,52 @@ is the one it was written for, with more beside it (`id`, `category`, `list`, `a
 7. When a source's `ok` is `false` its part is older than usual; `age_s` says by how much, if the page wants to say so.
 8. almanac.js's header still gives the old shape (`"worlds": {"players","worlds","at"}`): this section is the shape now.
 
+## The lookups (11/10/2026)
+
+Wise Old Man's and RuneProfile's records of a player, and the item and metric icons, asked by the relay when a page
+reads them and kept, so a page never asks those hosts itself and many visitors looking at one player make one request
+upstream (Jace, 11/10/2026: every per-visitor third-party call behind the relay, cached and shared, before asking Wise
+Old Man and RuneProfile for keys). Both relays: the Worker's `relay/src/lookup.ts` (the rules) and `lookups.ts` (one
+Durable Object for the relay, keeping what came in its storage); relay-py's `lookup.py` (in memory). The pages' side is
+ghillie's `tools/release-kit/prototypes/outside-splash/` (almanac.js, station-menu.js, icons.js).
+
+    GET <relay>/lookup/wom/<name>                 Wise Old Man's player      (api.wiseoldman.net/v2/players/<name>)
+    GET <relay>/lookup/wom/<name>/achievements    its achievements           (…/achievements)
+    GET <relay>/lookup/wom/<name>/gained          the week's gains           (…/gained?period=week)
+    GET <relay>/lookup/wom/<name>/groups          its groups                 (…/groups)
+    GET <relay>/lookup/rp/<name>                  RuneProfile's account      (api.runeprofile.com/v1/accounts/<name>)
+    GET <relay>/lookup/rp/<name>/activities       its newest 20 activities   (…/activities?limit=20)
+    GET <relay>/icon/item/<id>.png                RuneLite's item icon       (static.runelite.net/cache/item/icon/<id>.png)
+    GET <relay>/icon/metric/<metric>.png          Wise Old Man's metric icon (its GitHub's metrics_small, through jsDelivr)
+
+Only these shapes are passed on (anything else: 404; anything but GET: 405), and a page's own query string never goes
+upstream. `<name>` is one the game allows (1–12 of letters, digits, space, `_` and `-`), asked and kept as Wise Old Man
+reads it: lower case, a run of spaces, `_` and `-` as one space (`Iron_Man` and `iron man` are one record). `<id>` is 1–6
+digits (a leading 0 dropped), `<metric>` 1–40 of `a-z`, `0-9` and `_`. Every answer has `Access-Control-Allow-Origin: *`.
+
+- **200**: the source's own body, as it sent it (a JSON source's checked to be JSON, an icon's to be a PNG), with
+  `x-lookup-at` (when the relay fetched it, ms). Fresh for an hour (Wise Old Man's groups six, RuneProfile's activities
+  half an hour, an icon 30 days); the first read after that asks again. `Cache-Control: public, max-age=300` (an icon's
+  `max-age=604800`). When it's past fresh and the source fails or is paused, the last good one is answered with
+  `x-lookup-stale: 1` (`max-age=60`), for as long as it's kept.
+- **404** `{"error": "not found"}`: the source hasn't the player (Wise Old Man's 404, RuneProfile's 400) or the icon;
+  kept six hours (an icon's a day), `max-age=3600`.
+- **503** `{"error": …}` with `Retry-After` (seconds) and `no-store`: not asked just now, with nothing kept: the
+  source's minute is used up, it said to wait (its 429), or this record failed lately.
+
+How it asks: each source has an allowance a minute across every visitor (Wise Old Man 15, RuneProfile 20, each icon host
+60); a 429 pauses that source for its `Retry-After` (a minute when it gives none; 10 minutes at most); reads of one
+record while it's being asked wait for that one request; a record that fails waits a minute before it's asked again,
+doubling with each failure in a row, to an hour. Every request carries the relay's User-Agent
+(`outstation-relay/1.0 (lookups for outside.wiki and ghillie.wiki's Outside page: each player asked once and shared by
+every visitor; https://github.com/jhmcubed/outstation)`) and nothing from the visitor.
+
+Kept: the Worker in its object's storage (so a deploy or an eviction asks nothing again), a record dropped 14 days after
+it was fetched (an icon 90), and 5,000 at most (the oldest fetched go first), by an alarm once a day; relay-py in memory
+(a restart asks again; `--lookup off` answers every lookup 503). The tests: `relay/test/lookup_test.mts` and
+`relay-py/test_lookup.py` (the rules, on a clock of their own), `tests/protocol_test.py`'s `Lookups` (both relays, the
+sources served from `tests/fixtures/lookup`).
+
 ## Settling (11/08/2026; gone 11/10/2026)
 
 From 11/08/2026 an outstation's owner could choose where it stood on outside.wiki's globe (its home: a place, beside

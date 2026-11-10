@@ -93,6 +93,20 @@ def fixture(name):
         return f.read()
 
 
+LOOKUP_FIXTURES = os.path.join(HERE, "fixtures", "lookup")
+# the lookups' sources (11/10/2026), at the real hosts' paths: a file, or a status
+LOOKUP_FILES = {"/v2/players/sburb": "wom-sburb.json", "/v2/players/sburb/achievements": "wom-sburb-achievements.json",
+                "/v2/players/sburb/gained?period=week": 500, "/v2/players/nobody": 404,
+                "/v1/accounts/sburb": "rp-sburb.json", "/v1/accounts/sburb/activities?limit=20": "rp-sburb-activities.json",
+                "/v1/accounts/nobody": 400, "/cache/item/icon/4151.png": "item-4151.png",
+                "/gh/wise-old-man/wise-old-man@master/app/public/img/metrics_small/zulrah.png": "metric-zulrah.png"}
+
+
+def lookup_fixture(name):
+    with open(os.path.join(LOOKUP_FIXTURES, name), "rb") as f:
+        return f.read()
+
+
 class Upstream(http.server.ThreadingHTTPServer):
     """The almanac's sources (11/09/2026), on this computer, from tests/fixtures/almanac: Jagex's news and world list
     and the Wiki's /24h (today's, or the next day's once `day` says so; the day before with ?timestamp=) and /mapping,
@@ -129,6 +143,18 @@ class UpstreamHandler(http.server.BaseHTTPRequestHandler):
                      "/api/v2/osrs/24h?timestamp=%d" % (DAY_S - 86400): "24h-before.json",
                      "/api/v2/osrs/24h?timestamp=%d" % DAY_S: "24h-latest.json"}
         name = files.get(self.path)
+        if not name and self.path in LOOKUP_FILES:
+            # (the lookups' sources, 11/10/2026: RuneProfile's "no such account" is its 400)
+            name = LOOKUP_FILES[self.path]
+            if isinstance(name, int):
+                broken = name
+            else:
+                body = broken if isinstance(broken, bytes) else lookup_fixture(name)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
         if isinstance(broken, int) or not name:
             self.send_response(broken if isinstance(broken, int) else 404)
             self.send_header("Content-Length", "0")
@@ -158,6 +184,7 @@ def setUpModule():
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
              "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
+             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base,
              "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
@@ -167,7 +194,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base, "--test-forget",
+                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base,
                                  "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
@@ -4083,6 +4110,89 @@ class Reports(unittest.IsolatedAsyncioTestCase):
             admin("DELETE", "/admin/reports/" + r["id"])
 
 
+def lookup_read(path, method="GET"):
+    """(status, headers, body bytes) of a lookup."""
+    req = urllib.request.Request(http_url() + path, method=method, data=b"" if method == "POST" else None)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read()
+
+
+@unittest.skipIf(MODE.startswith("ws"), "the lookups' sources are served by these tests (not for a relay already running)")
+class Lookups(unittest.TestCase):
+    """The lookups (11/10/2026; docs/protocol.md "The lookups"): Wise Old Man's and RuneProfile's records and the item
+    and metric icons, asked by the relay (here, from Upstream: tests/fixtures/lookup) and shared by every reader. On
+    both relays: the source's own body, kept while fresh (one request upstream for many reads), a name read as Wise Old
+    Man reads it, not-there as 404, a failing source as 503 with Retry-After, only the shapes passed on, and the relay's
+    own User-Agent. (The schedule of asking, on a clock of its own: relay-py/test_lookup.py, relay/test/lookup_test.mts.)"""
+
+    def asked(self, path):
+        return UPSTREAM.paths().count(path)
+
+    def test_a_record_kept_and_shared(self):
+        status, h, body = lookup_read("/lookup/wom/Sburb")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), json.loads(lookup_fixture("wom-sburb.json")))
+        self.assertEqual(h.get("access-control-allow-origin"), "*")
+        self.assertTrue(h.get("content-type", "").startswith("application/json"))
+        self.assertEqual(h.get("cache-control"), "public, max-age=300")
+        self.assertAlmostEqual(int(h["x-lookup-at"]) / 1000, time.time(), delta=60)
+        for p in ("/lookup/wom/sburb", "/lookup/wom/SBURB", "/lookup/wom/sburb"):
+            self.assertEqual(lookup_read(p)[0], 200)
+        self.assertEqual(self.asked("/v2/players/sburb"), 1)
+
+    def test_every_part(self):
+        for path, fixture_name in (("/lookup/wom/sburb/achievements", "wom-sburb-achievements.json"),
+                                   ("/lookup/rp/sburb", "rp-sburb.json"),
+                                   ("/lookup/rp/Sburb/activities", "rp-sburb-activities.json")):
+            status, _, body = lookup_read(path)
+            self.assertEqual((status, json.loads(body)), (200, json.loads(lookup_fixture(fixture_name))), path)
+        self.assertEqual(self.asked("/v1/accounts/sburb/activities?limit=20"), 1)
+
+    def test_icons(self):
+        for path, fixture_name in (("/icon/item/4151.png", "item-4151.png"), ("/icon/metric/zulrah.png", "metric-zulrah.png")):
+            status, h, body = lookup_read(path)
+            self.assertEqual((status, body), (200, lookup_fixture(fixture_name)), path)
+            self.assertEqual(h.get("content-type"), "image/png")
+            self.assertEqual(h.get("cache-control"), "public, max-age=604800")
+            self.assertEqual(h.get("access-control-allow-origin"), "*")
+
+    def test_not_there(self):
+        for path in ("/lookup/wom/nobody", "/lookup/rp/nobody"):
+            status, h, body = lookup_read(path)
+            self.assertEqual((status, json.loads(body)), (404, {"error": "not found"}), path)
+            self.assertEqual(h.get("cache-control"), "public, max-age=3600")
+            lookup_read(path)
+        self.assertEqual(self.asked("/v1/accounts/nobody"), 1)
+
+    def test_a_failing_source(self):
+        status, h, _ = lookup_read("/lookup/wom/sburb/gained")
+        self.assertEqual(status, 503)
+        self.assertGreaterEqual(int(h.get("retry-after", "0")), 1)
+        self.assertEqual(h.get("cache-control"), "no-store")
+        n = self.asked("/v2/players/sburb/gained?period=week")
+        lookup_read("/lookup/wom/sburb/gained")
+        self.assertEqual(self.asked("/v2/players/sburb/gained?period=week"), n)  # (it waits before asking again)
+
+    def test_only_the_shapes(self):
+        n = len(UPSTREAM.paths())
+        for path in ("/lookup/wom/sburb/snapshots", "/lookup/wom/far-too-long-name", "/lookup/hiscores/sburb",
+                     "/icon/item/x.png", "/icon/metric/Zulrah.png", "/lookup/wom/a.b", "/icon/item/4151.gif"):
+            self.assertEqual(lookup_read(path)[0], 404, path)
+        self.assertEqual(lookup_read("/lookup/wom/sburb?x=1")[0], 200)
+        self.assertEqual(lookup_read("/lookup/wom/sburb", "POST")[0], 405)
+        self.assertEqual([p for p in UPSTREAM.paths()[n:] if "x=1" in p or "snapshots" in p], [])
+
+    def test_the_relays_own_user_agent(self):
+        lookup_read("/icon/item/4151.png")
+        with UPSTREAM.lock:
+            agents = {ua for p, ua in UPSTREAM.seen if p.startswith(("/v2/players", "/v1/accounts", "/cache/item", "/gh/"))}
+        self.assertEqual(len(agents), 1)
+        self.assertTrue(next(iter(agents)).startswith("outstation-relay/1.0 (lookups"))
+
+
 def almanac_read():
     """(status, headers, JSON) of GET /almanac."""
     try:
@@ -4172,7 +4282,8 @@ class Almanac(unittest.TestCase):
 
     def test_each_request_says_who_it_is(self):
         with UPSTREAM.lock:
-            agents = {ua for _, ua in UPSTREAM.seen}
+            # (the almanac's own: the lookups, 11/10/2026, say who they are in their own words, Lookups)
+            agents = {ua for p, ua in UPSTREAM.seen if p not in LOOKUP_FILES}
         self.assertEqual(len(agents), 1, agents)
         ua = agents.pop()
         self.assertIn("https://github.com/jhmcubed/outstation", ua)

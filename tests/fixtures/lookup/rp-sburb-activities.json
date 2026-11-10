@@ -1,0 +1,14 @@
+{
+ "activities": [
+  {
+   "type": "new_item_obtained",
+   "data": {
+    "itemId": 12646
+   },
+   "enriched": {
+    "itemName": "Baby Mole"
+   },
+   "createdAt": "2026-11-10 04:50:36.850659"
+  }
+ ]
+}
