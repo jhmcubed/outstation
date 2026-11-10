@@ -288,6 +288,7 @@ without times").
       "hours":      [24 whole numbers],                                      minutes in each hour of the day
       "places":     [{"x", "y", "minutes", "first"?, "last"?}, …],          ≤ 64
       "moments":    [{"event": {"kind", …}, "t"?}, …],                      ≤ 64, arrayEvents' shapes
+      "log":        [{"name"?, "t"?, "x"?, "y"?, "act"?, "clip"?}, …],      ≤ 2,000: the log diary (11/10/2026)
       "replay":     [[x, y] or [x, y, t], …]                                 ≤ 20,000 steps, any tiles
     }
 
@@ -329,10 +330,20 @@ cells, a busy year's every 8-tile cell with room to spare (about 0.95 MB of JSON
 a minute or more); the paths take 50,000 steps in up to 4,096 journeys (a busy year made 4,099), which an ordinary
 year's exact path fits as it is and a busy one's after the page thins it (every second or fourth step, or dropping
 steps along a straight line); the replay stays at 20,000. Every part at its most, with the longest names and labels
-and times on every step, measured 4.02 MB, inside the 5 MB. (The page's own demo year, in the ghillie repo's
+and times on every step, measured 4.02 MB, and with the log diary's 2,000 slots at their longest (names of 60
+escaped characters, every field), 5,214,086 bytes: inside the 5 MB (5,242,880 bytes), just. (The page's own demo year, in the ghillie repo's
 `year.js`, has no exact path, so it can't measure this; its 128-tile year uses a few hundred squares.)
 
-Every part is optional, so a summary from before `tz`, `days`, `act` and fine cells is still valid as it was.
+- **The log diary** (`log`, 11/10/2026, Jace's approval): the collection log slots of the year, each with any of:
+  `name`, the item, one line of 60 characters at most (as moments' log slots and arrayEvents carry it); `t`, when (ms;
+  only in a summary "with times", as everywhere); `x` and `y` together, where, as a cell's middle **at the heat's own
+  cell size** (its `cell`, or 128 for a plain heat list or with no heat at all), so a slot's place is never finer than
+  the heat the player chose; `act`, what they were doing, an `act` label; `clip`, the id of a clip on that channel's
+  Outside page (16 to 32 base64url characters, as /clips names them; the relay checks the form, not that the clip is
+  still there, since clips go after 30 days). An empty `{}` is allowed. Its fields are stored in that order. The heat
+  is checked first, so the log can be checked against it.
+
+Every part is optional, so a summary from before `tz`, `days`, `act`, fine cells and `log` is still valid as it was.
 
 The relay stores it as checked (re-written in the order above, so both relays store and answer the same bytes):
 

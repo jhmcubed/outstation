@@ -3477,6 +3477,41 @@ class YourYear(Base):
             self.assertEqual(st, 400, body if len(json.dumps(body)) < 300 else part)
             self.assertTrue(got["error"].startswith(part), (part, got["error"]))
 
+    async def test_the_log_diary(self):
+        # (11/10/2026: collection log slots, every field optional; a place at the heat's own cells, or 128-tile squares)
+        await self.claim()
+        now = int(time.time() * 1000)
+        clip = "AbCdEfGhIjKlMnOp_-12"
+        y = {"v": 1, "heat": {"cell": 16, "cells": [[3256, 3272, 5]]},
+             "log": [{"clip": clip, "act": "boss:Vorkath", "y": 3272, "x": 3256, "t": now, "name": "Vorki"}, {}, {"name": "Dragoné pickaxe"},
+                     {"x": 2368, "y": 4416}]}
+        st, _, got = self.year("PUT", y, key=self.key)
+        self.assertEqual(st, 200, got)
+        self.assertEqual(got["year"]["log"][0], {"name": "Vorki", "t": now, "x": 3256, "y": 3272, "act": "boss:Vorkath", "clip": clip})
+        self.assertEqual(list(got["year"])[-1], "log")
+        self.assertEqual(self.year("GET")[2], got)
+        # (no heat: 128-tile squares; a plain heat list: 128 too)
+        for heat in (None, [[3264, 3264, 5]]):
+            body = {"v": 1, "log": [{"x": 3264, "y": 3264}]}
+            if heat:
+                body["heat"] = heat
+            self.assertEqual(self.year("PUT", body, key=self.key)[0], 200, heat)
+        bad = [
+            ({"v": 1, "heat": {"cell": 16, "cells": []}, "log": [{"x": 3260, "y": 3268}]}, "log"),    # (finer than the heat's 16)
+            ({"v": 1, "log": [{"x": 3256, "y": 3272}]}, "log"),                                          # (no heat: 128 only)
+            ({"v": 1, "heat": {"cell": 8, "cells": []}, "log": [{"x": 3260}]}, "log"),
+            ({"v": 1, "log": [{"name": "x" * 61}]}, "log"), ({"v": 1, "log": [{"name": "two\nlines"}]}, "log"),
+            ({"v": 1, "log": [{"name": ""}]}, "log"), ({"v": 1, "log": [{"name": 5}]}, "log"),
+            ({"v": 1, "log": [{"t": 5}]}, "log"), ({"v": 1, "log": [{"act": "boss:Mum"}]}, "log"),
+            ({"v": 1, "log": [{"clip": "short"}]}, "log"), ({"v": 1, "log": [{"clip": clip + "\n"}]}, "log"),
+            ({"v": 1, "log": [{"clip": "a/b" * 8}]}, "log"), ({"v": 1, "log": [{"where": 1}]}, "log"),
+            ({"v": 1, "log": ["Vorki"]}, "log"), ({"v": 1, "log": [{}] * 2001}, "log"), ({"v": 1, "log": {}}, "log"),
+        ]
+        for body, part in bad:
+            st, _, got = self.year("PUT", body, key=self.key)
+            self.assertEqual(st, 400, body if len(json.dumps(body)) < 300 else part)
+            self.assertTrue(got["error"].startswith(part), (part, got["error"]))
+
     async def test_a_year_that_isnt_its_shape_is_refused_by_its_part(self):
         await self.claim()
         now = int(time.time() * 1000)

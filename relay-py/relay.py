@@ -1827,7 +1827,7 @@ RECORD_PAGE = 4 * 1024 * 1024               # a ?data=1 answer's chunks, in byte
 CHUNK_ID = re.compile(r"[A-Za-z0-9_-]{22}")  # (fullmatch)
 RECORD_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
 YEAR_MOST = 5 * 1024 * 1024               # (every part at its most fits: docs/record.md)
-YEAR_PARTS = ("v", "tz", "range", "totals", "days", "heat", "paths", "activities", "hours", "places", "moments",
+YEAR_PARTS = ("v", "tz", "range", "totals", "days", "heat", "paths", "activities", "hours", "places", "moments", "log",
               "replay")
 YEAR_DAYS, YEAR_TZ_MOST = 400, 64
 YEAR_TZ = re.compile(r"UTC|[A-Za-z][A-Za-z0-9_+-]{0,29}(?:/[A-Za-z0-9][A-Za-z0-9_+-]{0,29}){1,2}")   # (fullmatch)
@@ -1836,6 +1836,7 @@ YEAR_TOTALS = ("minutes", "live_minutes", "days", "squares", "kills", "levels", 
 # (11/10/2026, for the exact path: heat in cells as fine as 8 tiles, paths in exact tiles; the Worker's, the same)
 YEAR_HEAT, YEAR_PATHS, YEAR_PATH_STEPS, YEAR_STEPS, YEAR_REPLAY, YEAR_LIST = 32768, 4096, 5000, 50000, 20000, 64
 YEAR_CELLS = (8, 16, 32, 64, 128)
+YEAR_LOG = 2000                   # the log diary's slots at most (11/10/2026)
 YEAR_TOTAL_MOST, YEAR_MINUTES_MOST, YEAR_T_LEAST = 1_000_000_000, 10_000_000, 1_577_836_800_000
 
 
@@ -2086,6 +2087,35 @@ def year_summary(body, now=None):
                 event = {k: v for k, v in got[0].items() if k != "at"}
                 moments.append({"event": event, "t": year_time(m["t"], "moments", now)} if "t" in m else {"event": event})
             out["moments"] = moments
+        if "log" in body:
+            # the log diary (11/10/2026): collection log slots, each field optional; a place no finer than the heat's cells
+            h = out.get("heat")
+            size = h["cell"] if isinstance(h, dict) else 128
+            log = []
+            for e in year_list(body["log"], YEAR_LOG, "log"):
+                if not isinstance(e, dict):
+                    raise YearNo("log: each {name?, t?, x?, y?, act?, clip?}")
+                year_only(e, ("name", "t", "x", "y", "act", "clip"), "log")
+                o = {}
+                if "name" in e:
+                    _, why = array_backfill({"events": [{"kind": "clog", "name": e["name"], "at": 0}]}, now)
+                    if why is not None:
+                        raise YearNo("log: name one line of 60 characters at most")
+                    o["name"] = e["name"]
+                if "t" in e:
+                    o["t"] = year_time(e["t"], "log", now)
+                if "x" in e or "y" in e:
+                    if not ("x" in e and "y" in e):
+                        raise YearNo("log: x and y together")
+                    o["x"], o["y"] = year_cell(e["x"], e["y"], size, "log")   # (the heat's own cell size, or 128)
+                if "act" in e:
+                    o["act"] = year_act(e["act"], "log")
+                if "clip" in e:
+                    if not isinstance(e["clip"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,32}", e["clip"]):
+                        raise YearNo("log: clip a clip's id, 16 to 32 base64url characters")
+                    o["clip"] = e["clip"]
+                log.append(o)
+            out["log"] = log
         if "replay" in body:
             out["replay"] = [year_step(s, "replay", now) for s in year_list(body["replay"], YEAR_REPLAY, "replay")]
         return out, None

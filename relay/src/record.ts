@@ -36,7 +36,9 @@ const whole = (v: unknown, lo: number, hi: number): v is number => typeof v === 
 
 // ---- the public summary ----
 
-export const YEAR_PARTS = ["v", "tz", "range", "totals", "days", "heat", "paths", "activities", "hours", "places", "moments", "replay"];
+export const YEAR_PARTS = ["v", "tz", "range", "totals", "days", "heat", "paths", "activities", "hours", "places", "moments", "log", "replay"];
+export const YEAR_LOG = 2000; // the log diary's slots at most (11/10/2026)
+const CLIP = /^[A-Za-z0-9_-]{16,32}$/; // a clip's id on the channel's page (clips.ts's ID)
 export const YEAR_DAYS = 400, YEAR_TZ = /^(?:UTC|[A-Za-z][A-Za-z0-9_+-]{0,29}(?:\/[A-Za-z0-9][A-Za-z0-9_+-]{0,29}){1,2})$/, YEAR_TZ_MOST = 64;
 const DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
 export const YEAR_TOTALS = ["minutes", "live_minutes", "days", "squares", "kills", "levels", "pets", "drops", "clogs", "clues"];
@@ -228,6 +230,31 @@ export function yearSummary(body: unknown, now = Date.now()): { year: Record<str
         if ("error" in got) throw new No("moments: " + got.error.replace(/^event 1: /, ""));
         const { at: _at, ...event } = got.events[0];
         return "t" in m ? { event, t: time(m.t, "moments", now) } : { event };
+      });
+    }
+    if ("log" in body) {
+      // the log diary (11/10/2026): collection log slots, each field optional; a place no finer than the heat's cells
+      const h = out.heat, size = isObj(h) ? (h.cell as number) : 128;
+      out.log = list(body.log, YEAR_LOG, "log").map((e) => {
+        if (!isObj(e)) throw new No("log: each {name?, t?, x?, y?, act?, clip?}");
+        only(e, ["name", "t", "x", "y", "act", "clip"], "log");
+        const o: Record<string, unknown> = {};
+        if ("name" in e) {
+          const got = arrayBackfill({ events: [{ kind: "clog", name: e.name, at: 0 }] }, now);
+          if ("error" in got) throw new No("log: name one line of 60 characters at most");
+          o.name = e.name;
+        }
+        if ("t" in e) o.t = time(e.t, "log", now);
+        if ("x" in e || "y" in e) {
+          if (!("x" in e && "y" in e)) throw new No("log: x and y together");
+          [o.x, o.y] = cellMid(e.x, e.y, size, "log"); // (the heat's own cell size, or 128 without a heat: never finer)
+        }
+        if ("act" in e) o.act = act(e.act, "log");
+        if ("clip" in e) {
+          if (typeof e.clip !== "string" || !CLIP.test(e.clip)) throw new No("log: clip a clip's id, 16 to 32 base64url characters");
+          o.clip = e.clip;
+        }
+        return o;
       });
     }
     if ("replay" in body) out.replay = list(body.replay, YEAR_REPLAY, "replay").map((s) => step(s, "replay", now));
