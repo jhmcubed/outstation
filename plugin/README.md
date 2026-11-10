@@ -65,8 +65,10 @@ The region ids that tell the raids, the minigames and the PvP minigames (`Activi
 On a PC with RuneLite installed and Java 11 or newer:
 
 ```
-py plugin/run.py client
+py run.py client
 ```
+
+(from the plugin's own folder: the root of jhmcubed/outside-plugin, or `plugin/` in jhmcubed/outstation)
 
 It compiles the plugin against your installed RuneLite and opens RuneLite in developer mode with Outside loaded. A Jagex account needs the launcher's `--insecure-write-credentials` step once before that RuneLite can log in.
 
@@ -86,7 +88,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
 
 ## For the Hub's review
 
-Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py plugin/hub_check.py` checks the source for every forbidden feature and API before each submission or update.
+Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update.
 
 **Precedents** (11/09/2026): [`docs/hub-precedents.md`](../docs/hub-precedents.md) goes through every piece of information this plugin reads or sends and names the Plugin Hub plugins (and RuneLite's own) that already read or send the same, with links to the exact lines, where this plugin is stricter, the Hub's written rules as they stand, and what the Hub requires of the licence and the repository (its own repository, with `runelite-plugin.properties` and a `LICENSE` at the root).
 
@@ -105,7 +107,18 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
   - It's free, with nothing behind a paid service.
   - In the Wilderness, a PvP area, or on a PvP or Deadman world, it stops sending (unless the player turns "In the Wilderness too" on, behind its own warning), so nobody watching can see what a player risks.
 
-The manifest, `plugins/outside` in runelite/plugin-hub, once the plugin has a repository of its own (the Hub builds a repository's root):
+## Where it lives (11/10/2026)
+
+The plugin is written here, in `plugin/` of jhmcubed/outstation, beside the relays it talks to (their tests check its lists against theirs: the skills, bosses, raids, minigames and landing sites). jhmcubed/outside-plugin is its published copy, the repository the Hub builds: `plugin/`'s own history split out with git's subtree, so its root holds `runelite-plugin.properties` and the BSD 2-Clause `LICENSE`, as the Hub asks. To publish a change once it's merged here:
+
+```
+git subtree split --prefix=plugin origin/main -b plugin-only
+git push https://github.com/jhmcubed/outside-plugin plugin-only:main
+```
+
+Change the plugin here, never in outside-plugin, or the next split won't carry it.
+
+The manifest, `plugins/outside` in runelite/plugin-hub (the Hub builds outside-plugin's root):
 
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
