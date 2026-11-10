@@ -238,7 +238,7 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `world`: the world they're on
 - `type`: the account type (one line, 40 at most)
 - `off`: `true` when the player logs out. Kept like the others: a later message without it leaves it as it was, and `"off": false` clears it.
-- `paused`: why the plugin has stopped sending what the player wears and carries, for their safety (one line, 32 characters at most, e.g. `"wilderness"`: the Wilderness, a PvP world), or `false` when it carries on. Kept like the others (`true` isn't its shape: left out). What was kept before it paused stays as it was, unless the plugin clears it (`"worn": []`, `"inv": []`).
+- `paused`: why the plugin has stopped sending what the player wears and carries, for their safety (one line, 32 characters at most, e.g. `"wilderness"`: the Wilderness, a PvP area or world; never in Ferox Enclave or a PvP minigame since 11/10/2026), or `false` when it carries on. Kept like the others (`true` isn't its shape: left out). What was kept before it paused stays as it was, unless the plugin clears it (`"worn": []`, `"inv": []`).
 - `vitals`: `{"hp": [now, most], "prayer": [now, most], "run": 0–100, "spec": 0–100}`
 - `skills`: `{"<Skill name>": [real level, boosted level, xp]}`; a name is a letter, then letters, spaces, `_` or `-`, 24 at most
 - `worn`: 14 slots, each `[item id, how many]` or `null` (the place in the list is RuneLite's `EquipmentInventorySlot` index)
@@ -275,7 +275,10 @@ player was two minutes before, as `{"game": {"where": {"x", "y"}}}`: the middle 
 it: sent at once on going into the Wilderness (whatever the plugin's "In the Wilderness too" says), a PvP area or world,
 or Deadman, and when following's switched off. The PvP minigames (Last Man Standing, Castle Wars, Clan Wars, Soul Wars,
 the Fight Pits, Emir's Arena) aren't dangerous (11/10/2026, Jace: "there is no danger to someone tracking them there"):
-in their regions the game's PvP-area flag doesn't clear it. **Instances** (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened") go as
+in their regions the game's PvP-area flag doesn't clear it. Nor is Ferox Enclave (11/10/2026, Jace: "a safe area/haven
+in the wilderness"), the town inside its barriers (the plugin's `OutsidePlugin.FEROX`, five rectangles from the Shortest
+Path plugin's `WildernessChecker`): it goes as its own square, `{"x": 3136, "y": 3648}`, and stepping out into the
+Wilderness clears it at once. **Instances** (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened") go as
 the square where their template lies on the map (the plugin reads it with RuneLite's `WorldPoint.fromLocalInstance`, as
 RuneLite's Discord plugin does): Vorkath's as Ungael's, Zulrah's, the Colosseum's in Varlamore, the Nightmare's under
 Slepe. One off the main map goes as its entrance's square (the plugin's `Follow.ENTRANCES`, by the template's region):
@@ -632,7 +635,7 @@ relays: the Worker's `relay/src/stars.ts` (kept by the Directory, the object tha
   it's in, and only in that square; a star elsewhere goes without one.
 - At most one report of a star every 3 minutes (the newest of what's two minutes old), and only of a star seen from
   somewhere safe: never one lying in the Wilderness (Jace's decision, 11/09/2026: never reported), nor seen from it
-  (whatever "In the Wilderness too" says), a PvP area (the PvP minigames aside, 11/10/2026) or world, or Deadman. A star seen and gone within the two minutes is never told of.
+  (whatever "In the Wilderness too" says), a PvP area or world, or Deadman (Ferox Enclave and the PvP minigames are safe, 11/10/2026). A star seen and gone within the two minutes is never told of.
 
 **The relay** takes exactly those shapes (anything else in `star` is ignored, and the rest of the message taken as
 ever), not from a message with `"off": true` or a `paused` that's a string, and keeps:
