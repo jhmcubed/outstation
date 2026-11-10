@@ -105,13 +105,15 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 ## The open outstations
 
-`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "raid", "raid"}`, `{"kind": "minigame", "minigame"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown; the shooting stars the plugins find have a list of their own (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
+`GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "raid", "raid"}`, `{"kind": "minigame", "minigame"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown; the shooting stars the plugins find have a list of their own (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
-How each relay keeps it (11/10/2026). The Python relay builds it from its channels, in its own memory, at each read. The Worker's Directory keeps each channel's row as the channel last told it (a channel tells it whenever its row changes: on air or off, the picture, viewers, title, what it's doing, the plugin, its home, `where`, `activity`), in its storage (`relay/src/listed.ts`), so a read after the Directory's slept (about 10 seconds after its last request) is answered without asking every channel handed out. What's stored of a row is everything above but `where` and `activity` (and when each came), which are only ever held in memory beside it: after the Directory sleeps they're gone until the channel tells it again, or until the first read after the wake asks the channel, which it does once a wake for each row that says live with the plugin connected (the only rows that can have either). Besides that, it asks a channel only when its row is missing (never told, or a new key), or older than 5 minutes for a row that says live, 30 for any other (`LISTING_CHECK_SECONDS` shortens the 5, and the 30 with it, for tests): in case a telling was lost, or a channel's sockets closed without it telling (a deploy). So a channel that went dark without telling shows live for 5 minutes and one read at most (at once, the next read, when the plugin was connected), and one that came on air without telling shows dark for 30 minutes at most. A channel taken back, or given a new key, has its row taken out at once. The readers see the same answer from either relay.
+How each relay keeps it (11/10/2026). The Python relay builds it from its channels, in its own memory, at each read. The Worker's Directory keeps each channel's row as the channel last told it (a channel tells it whenever its row changes: on air or off, the picture, viewers, title, what it's doing, the plugin, `where`, `activity`), in its storage (`relay/src/listed.ts`), so a read after the Directory's slept (about 10 seconds after its last request) is answered without asking every channel handed out. What's stored of a row is everything above but `where` and `activity` (and when each came), which are only ever held in memory beside it: after the Directory sleeps they're gone until the channel tells it again, or until the first read after the wake asks the channel, which it does once a wake for each row that says live with the plugin connected (the only rows that can have either). Besides that, it asks a channel only when its row is missing (never told, or a new key), or older than 5 minutes for a row that says live, 30 for any other (`LISTING_CHECK_SECONDS` shortens the 5, and the 30 with it, for tests): in case a telling was lost, or a channel's sockets closed without it telling (a deploy). So a channel that went dark without telling shows live for 5 minutes and one read at most (at once, the next read, when the plugin was connected), and one that came on air without telling shows dark for 30 minutes at most. A channel taken back, or given a new key, has its row taken out at once. The readers see the same answer from either relay.
+
+Rows had a `home` from 11/08/2026 to 11/10/2026 (below, "Settling", gone). A row the Worker's Directory stored then may still hold one: it's left out as the list is read (`keptRow`), so no answer has it, and it's gone from storage at the list's next write.
 
 `pending` (11/08/2026, for outside.wiki's globe: a key beside an inviter for each invite still waiting) counts the invites not taken up yet: one entry per inviter with any, `n` how many, sorted by `by`; `[]` for none. Readers from before it ignore it.
-- An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips, invites or settling. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
-- Never the invited channel's name: the inviter typed it, and the friend hasn't agreed to anything. So an outstation settled beside one (`home` `{"near"}`, below, "Settling") shows `home` `null` here till it's taken up, then `{"near"}` again (the keeper's list and the owner's own `GET /settle` and `POST /home` still say the outstation chosen).
+- An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips or invites. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
+- Never the invited channel's name: the inviter typed it, and the friend hasn't agreed to anything.
 - Only under an inviter that's in `channels` itself: an inviter with a watch code (or, on Cloudflare, one taken back) has its invites counted nowhere, so nothing's said of a hidden outstation.
 - Only an invite's channel is ever pending. The keeper's own (`by` `null`) are listed from the moment they're handed out, as before, and a new key from the keeper leaves a channel as it was. On Cloudflare, channels invited before 11/08/2026 count as taken up.
 
@@ -156,8 +158,8 @@ The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts o
 
 `Authorization: Bearer <ADMIN_TOKEN>`:
 - `POST /admin/channels/<channel>`: a new key, `{"channel", "key", "code"}`. Any old key stops working, and whatever was connected with it is cut off. Its game state is forgotten (below, "The game").
-- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound, desks and game socket are cut off, and its game state, its home and any settling code forgotten (below, "Settling"). Viewers stay, off air.
-- `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none), `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows), and `home` and `homeAt` (where it's settled and when that last changed, in ms; `null` for none; below, "Settling").
+- `DELETE /admin/channels/<channel>`: taken back. Its key is refused, and its transmitter, sound, desks and game socket are cut off, and its game state forgotten. Viewers stay, off air.
+- `GET /admin/channels`: the list, each with `channel`, `since`, `by` (the channel whose invite it came from, `null` for the keeper's own; below, "Invites"), `live`, `viewers`, `title`, `client` (the version the last transmitter said, `""` for none), `live_s` (seconds on air since the 1st of this month, UTC, the stretch going on now included: what Cloudflare's bill follows).
 
 The attach code (the station key, in the client's words) is `outstation1:` followed by base64url JSON `{"relay": "wss://…", "channel", "key"}`. A friend pastes it into the client, and that's all their set-up. Keys made before 11/06/2026 start `portal1:`, with the same inside; the client still reads them.
 
@@ -826,85 +828,28 @@ is the one it was written for, with more beside it (`id`, `category`, `list`, `a
 7. When a source's `ok` is `false` its part is older than usual; `age_s` says by how much, if the page wants to say so.
 8. almanac.js's header still gives the old shape (`"worlds": {"players","worlds","at"}`): this section is the shape now.
 
-## Settling (11/08/2026)
+## Settling (11/08/2026; gone 11/10/2026)
 
-outside.wiki's front page shows every outstation as a light on a globe of Gielinor. By default an outstation stands near
-whoever invited it, and since every invite starts with one person, everything clusters round him. Settling lets an
-outstation's owner choose where it stands: a place on the globe, beside an outstation of their choosing, or back to the
-default. Both relays: the Worker's `relay/src/settle.ts` (and channel.ts's `settle` and `home`); relay-py's
-`settle_wanted` and `Relay.settle`.
+From 11/08/2026 an outstation's owner could choose where it stood on outside.wiki's globe (its home: a place, beside
+another outstation, or by default beside its inviter): the app traded its key for a one-time code (`POST /settle`), and
+the globe page checked it (`GET /settle`) and settled with it (`POST /home`), once a week after the first. It went on
+11/10/2026 (Jace's decision): the globe now shows on its land only real positions (the squares following gives, or a known
+place for a boss, raid or minigame), and every other outstation gathers as a constellation at the receiver on the far
+side, so a home has no use.
 
-The owner proves it's theirs with the station key, which never goes to a web page: the outstation app trades its key for
-a short-lived one-time code, opens the globe page with only that code, and the page settles with the code.
-
-    POST  /settle/<channel>?key=<key>&v=<version>   the app          200 {"code", "expires"}
-    GET   /settle/<channel>?code=<code>             the globe page   200 {"channel", "home", "next"}
-    POST  /home/<channel>  {"code", ...}            the globe page   200 {"home", "next"}
-
-**A home** is `{"lon", "lat"}` (a place, two decimals each), `{"near": "<channel>"}` (beside that outstation), or `null`
-(the default: beside its inviter). It shows in each row of `GET /channels`
-(above, "The open outstations"), and in the keeper's `GET /admin/channels` with `homeAt`, when it last changed (ms).
-
-**The code.** `POST /settle` with the channel's key answers `{"code", "expires"}`: `code` is 12 random characters from
-`[a-z0-9]`, `expires` when it stops working (ms), 10 minutes on. Asking again replaces any earlier code (the old one is
-refused from then on). One code at a time a channel, and one settle uses it up.
-- The key's checked as the invites' is (above, "Invites"): 404 `no outstation called that here` for a channel that isn't
-  handed out (on the Python relay: nobody's claimed it); 403 `wrong key for this channel`, or `a transmit key needs at
-  least 8 characters`; on Cloudflare a wrong key counts towards the wrong-key limit (10 a minute from one address), and
-  past it the reason is `too many wrong keys: try again in a minute`, still 403. Each with `{"error": "…"}`.
-- `v=` is the app's version. Like the other HTTP routes (`/invites`, `/dink`, `/clips`), nothing turns a version away
-  here: `MIN_CLIENT` (`--min-client`) is for sockets.
-- Only the code's SHA-256 is kept on Cloudflare (with when it expires and whether it's been used); on the Python relay
-  the code itself, in memory.
-
-**The check.** `GET /settle/<channel>?code=<code>`, for the page before it shows anything: 200 `{"channel", "home",
-"next"}`, where `next` is when a move is allowed again (ms), or `null` if one is now. It doesn't use the code up. A code
-that won't do is 403, `{"error"}` saying which: `wrong code: …` (not this channel's code now, or not one at all),
-`that code has expired: …`, or `that code's been used: …`, each ending `open settling again from your outstation`.
-
-**The settle.** `POST /home/<channel>` with a JSON body, one of:
-- `{"code", "lon", "lat"}`: a place. `lon` a number from -180 to 180, `lat` from -85 to 85; each kept rounded to 2
-  decimals (half towards +infinity, as JavaScript's `Math.round`: 0.125 is 0.13).
-- `{"code", "near": "<channel>"}`: beside an outstation. It must be a channel handed out (on Cloudflare, the Directory's
-  list; on the Python relay, a claimed channel), and not this one.
-- `{"code", "clear": true}`: back to the default. The home becomes `null`.
-
-Anything else in the body is left alone. Answers:
-- 200 `{"home", "next"}`, and the code is used up. `next` is when the home may change again (ms).
-- 403 `{"error"}` for a wrong, expired or used code, as the check's (a body that isn't JSON, or has no `code`, is a wrong
-  code). The code's checked before the values: nothing about them is said without one that works.
-- 400 `{"error"}` for values that won't do: `lon is a number from -180 to 180`, `lat is a number from -85 to 85`,
-  `no outstation called that here` (a `near` that isn't handed out, or isn't a channel's name), `that's your own
-  outstation`, `clear is true`, or `one of a place (lon and lat), an outstation (near) or clear` (none of them, or more
-  than one).
-- 429 `{"error": "one move every 7 days: try again later", "next"}` when it's too soon (below).
-- 503 `{"error"}` (Cloudflare) when the relay couldn't look the `near` up just then: try again.
-- 413 `{"error": "a settle is 2 KB at most"}` for a body over 2,048 bytes (`POST /settle`'s too, though it needs none);
-  405 for any other method on `/settle` or `/home`; 400 `{"error": "which outstation?"}` for a channel in the address
-  that can't be one.
-
-None but the 200 uses the code up, so the page can say what's wrong and let them try again with the same one.
-
-**How often.** The first change is free, whenever it comes. After it, one change every 7 days (`next` is the last change
-and 7 days), and a clear counts as one. A settle that changes nothing (the same place once rounded, the same outstation,
-or a clear with no home) isn't a change: it's let through whenever it comes, uses the code up, and leaves `next` as it
-was (`null` if nothing's ever changed). So clearing first, before ever settling, doesn't start the 7 days.
-
-**CORS.** The page is on another origin and sends JSON, so `GET /settle` and `POST /home` answer its preflight
-(`OPTIONS`, 204) and every answer of theirs (errors too) carries `Access-Control-Allow-Origin: *`,
-`Access-Control-Allow-Methods: GET, POST, OPTIONS` and `Access-Control-Allow-Headers: content-type`. `POST /settle` is
-the app's and carries none, so no page can read a code. `POST /home` only ever takes a code, never a key. Nothing here
-may be cached (`Cache-Control: no-store`).
-
-**What's kept:** the home and when it changed, with the channel (on Cloudflare in its meta, so it outlives a sleep; on
-the Python relay in memory while it runs), and the code until it's replaced. A new key from the keeper keeps the home
-(as it keeps `by`) and drops the code the old key got; taking the channel back (`DELETE /admin/channels/<channel>`)
-forgets the home, when it changed, and the code. A `near` names the outstation as it was when chosen: if that one's
-later taken back, the home still names it, and the page decides where that leaves it.
-
-The Python relay's public side (the Funnel's port) allows `GET /settle`, `POST /home` and their preflights, and refuses
-`POST /settle` whatever key comes with it, as it refuses invites. It has no keeper's routes, so nothing there takes a
-channel back.
+What's left, on both relays:
+- `/settle/<channel>` and `/home/<channel>`, any method, answer 410 `{"error": "settling has gone: the globe now shows
+  each outstation where it really is, or at the receiver"}`, with `Access-Control-Allow-Origin: *` and
+  `Cache-Control: no-store`, and read nothing (relay.py reads and drops a body of 2 KB at most). An app built from the
+  repository between 11/08/2026 and 11/10/2026 has the button (no release has: v0.1.2, the last, is from 11/06/2026),
+  and shows the `error` as it is; without it, it would have read a 404 as "an older relay". relay.py answers it on its
+  public side too.
+- `GET /channels` has no `home`, and the keeper's `GET /admin/channels` no `home` or `homeAt`.
+- Nothing about a home is kept. On the Worker, a channel's meta saved while settling was here may hold `home`,
+  `homeAt` and `settle` (the code's SHA-256): they're dropped as the meta's read, and gone from storage at its next
+  save. A row the Directory stored with a `home`: above, "The open outstations". relay.py kept it all in memory, so a
+  restart cleared it.
+- `SETTLE_CODE_SECONDS` (the Worker's) and `--settle-code-seconds` (relay.py's) are gone with it.
 
 ## Anomalies and requisitions (Cloudflare)
 
