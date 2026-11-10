@@ -514,7 +514,8 @@ keeper leaves them as they are.
 
 **The public summary**, a fixed shape checked part by part (`docs/record.md`, "The public summary"), stored as checked
 (its parts in their order, numbers whole), at most 5 MB. Its parts: `v`, `tz`, `range`, `totals`, `days`, `heat`, `paths`,
-`activities`, `hours`, `places`, `moments`, `replay` (`tz`, `days` and the heat cells' and paths' `act` since 11/10/2026;
+`activities`, `hours`, `places`, `moments`, `log`, `replay` (`log`, the log diary: up to 2,000
+`{"name"?, "t"?, "x"?, "y"?, "act"?, "clip"?}`, its place at the heat's own cell size or 128; `tz`, `days` and the heat cells' and paths' `act` since 11/10/2026;
 and, for the exact path, `heat` as `{"cell": 8|16|32|64|128, "cells"}` with each cell's middle, and steps in paths and
 the replay at any tile):
 
