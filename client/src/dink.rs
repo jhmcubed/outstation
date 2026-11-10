@@ -126,7 +126,19 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     // (while transmitting, or dark with the tape rolling: dark but recording, 11/07/2026)
     let rolling = (s.on_air && s.attached()) || s.taping_dark();
     if s.dink.auto_clip && rolling && s.replay_seconds > 0 {
-        if let Some(what) = big_moment(&payload, s.dink.clip_gp) {
+        // (one moment, one clip, 11/10/2026: a pet comes with its new collection log slot, and Dink posts both at once;
+        // each had made its own copy, so Jace's Baby mole went to his page and to Discord twice. A big moment within
+        // MERGE of one still waiting to be written joins it, and its words join the clip's name)
+        let mut joined = false;
+        let big = big_moment(&payload, s.dink.clip_gp).filter(|w| {
+            let starts = moment_starts(w);
+            joined = !starts;
+            starts
+        });
+        if joined {
+            went.push("the clip already being made");
+        }
+        if let Some(what) = big {
             // (to the Outside page only while transmitting: a clip from while dark goes to this PC and Discord only)
             let up = s.dink.clips_up && s.on_air && s.attached();
             let to_discord = s.dink.clips_discord && !discord_urls.is_empty();
@@ -143,6 +155,7 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
             let (folder, wait, moment, settings) = (s.clip_folder.clone(), Duration::from_secs(secs), Instant::now(), settings.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(wait);
+                let what = moment_ends().unwrap_or(what);
                 crate::clip::save_as(&folder, Some(what.clone()));
                 if !copy {
                     return;
@@ -180,6 +193,42 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
         }
     }
     st.lock().unwrap().last = Some((kind, Instant::now(), if went.is_empty() { "nowhere".into() } else { went.join(" and ") }));
+}
+
+/// How close two big moments must be to be one clip (Dink posts a pet and its log slot within a second or two).
+const MERGE: Duration = Duration::from_secs(15);
+
+/// The moment whose clip is waiting to be written: when it began and its words so far.
+static PENDING: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+
+/// A big moment: true when it starts a clip of its own; false when it joins the one already waiting (its words added).
+fn moment_starts(what: &str) -> bool {
+    let mut p = PENDING.lock().unwrap();
+    match p.as_mut() {
+        Some((at, words)) if at.elapsed() < MERGE => {
+            *words = join_words(words, what);
+            false
+        }
+        _ => {
+            *p = Some((Instant::now(), what.to_string()));
+            true
+        }
+    }
+}
+
+/// The waiting moment's words, as the clip's name, and no moment waiting any more.
+fn moment_ends() -> Option<String> {
+    PENDING.lock().unwrap().take().map(|(_, w)| w)
+}
+
+/// Two moments' words as one name: a pet first (the clip's kind follows its first words); a log slot for the same thing
+/// as the pet (the pet's own slot) says nothing more.
+fn join_words(a: &str, b: &str) -> String {
+    let (first, second) = if b.starts_with("pet ") && !a.starts_with("pet ") { (b, a) } else { (a, b) };
+    let same = |x: &str, y: &str| x.splitn(2, ' ').nth(1) == y.splitn(2, ' ').nth(1);
+    if second.starts_with("log ") && same(first, second) { return first.to_string(); }
+    if first.split(" · ").any(|w| w == second) { return first.to_string(); }
+    format!("{} · {}", first, second)
 }
 
 /// Is this post something big enough to clip by itself: a pet (a duplicate too: kept, 11/06/2026, Jace), a new
@@ -478,6 +527,16 @@ mod tests {
         assert!(text.contains("Content-Type: video/mp4\r\n\r\nMP4BYTES\r\n--outstationclipfordiscord--"));
         // (the same parser that reads Dink's own multipart posts finds its line)
         assert!(payload(&ct, &body).unwrap()["content"].as_str().unwrap().contains("pet vorki"));
+    }
+
+    #[test]
+    fn a_pet_and_its_log_slot_are_one_clip() {
+        // (11/10/2026: Baby mole came as a pet and a log slot together, and went twice)
+        assert_eq!(join_words("pet baby mole", "log baby mole"), "pet baby mole");
+        assert_eq!(join_words("log baby mole", "pet baby mole"), "pet baby mole");
+        assert_eq!(join_words("pet baby mole", "drop 4.2m dragon pickaxe"), "pet baby mole · drop 4.2m dragon pickaxe");
+        assert_eq!(join_words("pet baby mole · drop 4.2m dragon pickaxe", "drop 4.2m dragon pickaxe"), "pet baby mole · drop 4.2m dragon pickaxe");
+        assert_eq!(kind_of(&join_words("log mole claw", "pet baby mole")), "PET");
     }
 
     #[test]

@@ -125,10 +125,13 @@ outstation and every visitor on the relay.
 The Array's events (11/08/2026; docs/protocol.md "The Array's events"; the Worker's array.ts, the same): what's
 happening across the open outstations, for outside.wiki's front page (each outstation's icon pops "+1").
     read:      GET http://HOST:PORT/array/events?since=<cursor>      {"events": [...], "next": <cursor>}
+    keeper:    POST /admin/array {"channel", "events": [{"kind", ..., "at": ms}]}   (--admin-token) a real event the feed
+               lost, put back in its place by when it happened (array_backfill, ArrayFeed.backfill; 11/10/2026)
   Each event is {"id", "at", "channel", "kind", ...}: a kill, a level (one a skill), a pet, a drop worth 1,000,000 or
   more, a collection log slot, a clue (array_events), made from a field report only while its channel is live and on
-  GET /channels (no watch code). The last ARRAY_KEPT in memory; one channel adds ARRAY_A_MINUTE a minute at most. The
-  public side allows the read.
+  GET /channels (no watch code). The last ARRAY_KEPT in memory, for as long as the relay runs (the Worker keeps them in
+  its Directory's storage, 11/10/2026); one channel adds ARRAY_A_MINUTE a minute at most. The public side allows the
+  read.
 
 Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"; the Worker's stars.ts, the same): the crashed stars the
 plugins have found, and who found each, for outside.wiki's globe.
@@ -136,8 +139,15 @@ plugins have found, and who found each, for outside.wiki's globe.
                {"stars": [{"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}, ...]}
   One for each world and square, however many told of it, with the first listed outstation to tell of it with "credit":
   true as its finder ("by", 11/09/2026: opt-in; null for none, or a hidden one) and how many did; kept STAR_LIFE_S after it was first told of, or till it's told
-  gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory
-  only. The public side allows the read.
+  gone (and then not brought back for STAR_GONE_S); one outstation tells of STARS_AN_HOUR in an hour at most. In memory,
+  for as long as the relay runs (the Worker keeps them in its Directory's storage, 11/10/2026). The public side allows
+  the read.
+    tests:     POST http://HOST:PORT/test/forget   (only with --test-forget) 204, and nothing forgotten: the Worker's
+               puts its Directory to sleep, to show its storage keeps the Array's events and the stars; this relay's
+               memory is its keeping, so there's nothing to show. tests/protocol_test.py's Kept, against either.
+               (The Worker's GET/POST /test/listed/<channel>, what its Directory stores of a row on the open list and
+               how often it's asked that channel since it woke (11/10/2026), is 404 here: this relay builds GET /channels
+               from its channels at each read, in memory, and stores and asks nothing; Kept skips those parts.)
 
 The almanac (11/09/2026; docs/protocol.md "The almanac"; almanac.py, and the Worker's almanac.ts, the same): Jagex's
 news, the world list (its seasons) and the Wiki's prices (the day's movers), for outside.wiki's globe, each fetched by
@@ -839,8 +849,9 @@ def game_star(g):
 class StarList:
     """Shooting stars (11/08/2026; docs/protocol.md "Shooting stars"): one for each world and square, however many told
     of it, with the first outstation on the open outstations' list whose report asked for the credit as its finder
-    ("by", 11/09/2026: opt-in, "credit": true; a hidden outstation is never named) and how many did; in memory only. One outstation tells of STARS_AN_HOUR in an
-    hour at most. The Worker's StarList (stars.ts), the same. Times in ms."""
+    ("by", 11/09/2026: opt-in, "credit": true; a hidden outstation is never named) and how many did; in memory, while the
+    relay runs. One outstation tells of STARS_AN_HOUR in an hour at most. The Worker's StarList (stars.ts), the same,
+    kept in its Directory's storage (11/10/2026). Times in ms."""
 
     def __init__(self):
         self.stars = {}              # "world:x:y" -> {"world", "x", "y", "site", "tier", "found", "seen", "by", "reports"}
@@ -1030,9 +1041,72 @@ def array_events(report):
     return []
 
 
+# the keeper's backfill (POST /admin/array, 11/10/2026): a real event the feed lost, put back in its place. Each kind's
+# fields as array_events makes them: (field, what it is, needed). ARRAY_BACKFILL at most at once. The Worker's
+# arrayBackfill and ArrayFeed.backfill (array.ts), the same.
+ARRAY_BACKFILL = 50
+ARRAY_KINDS = {"kill": [("boss", "word", True), ("kc", "whole", True)],
+               "level": [("skill", "skill", True), ("level", "whole", True)],
+               "pet": [("name", "word", False)],
+               "loot": [("name", "word", False), ("value", "loot", True)],
+               "clog": [("name", "word", False)],
+               "clue": [("tier", "word", False), ("count", "whole", False)]}
+
+
+def array_backfill(body, now=None):
+    """The keeper's events ({"channel", "events": [{"kind", ...its fields, "at": ms}]}), each exactly as array_events
+    would have made it (the same kinds and fields, a name one line of ARRAY_WORD at most, a number whole; a kill's boss
+    and count, a level's skill and level, a drop's value of ARRAY_LOOT or more needed; nothing else), with when it
+    happened, not after now: (events, None), or (None, why not)."""
+    now = int(time.time() * 1000) if now is None else now
+    lst = body.get("events") if isinstance(body, dict) else None
+    if not isinstance(lst, list) or not lst:
+        return None, "events: a list of one event or more"
+    if len(lst) > ARRAY_BACKFILL:
+        return None, "%d events at most at once" % ARRAY_BACKFILL
+    out = []
+    for n, e in enumerate(lst):
+        def no(why):
+            return None, "event %d: %s" % (n + 1, why)
+        if not isinstance(e, dict):
+            return no("not an event")
+        fields = ARRAY_KINDS.get(e.get("kind")) if isinstance(e.get("kind"), str) else None
+        if fields is None:
+            return no("kind is one of " + ", ".join(ARRAY_KINDS))
+        at = array_whole(e.get("at")) if "at" in e else None
+        if at is None:
+            return no("at: when it happened, in ms")
+        if at > now:
+            return no("at is after now")
+        for k in e:
+            if k not in ("kind", "at") and not any(f == k for f, _, _ in fields):
+                return no("a %s has no %s" % (e["kind"], k))
+        ev = {"kind": e["kind"]}
+        for f, what, needed in fields:
+            if f not in e:
+                if needed:
+                    return no("a %s needs its %s" % (e["kind"], f))
+                continue
+            v = e[f]
+            if what == "whole":
+                ok = array_whole(v) is not None
+            elif what == "loot":
+                ok = array_whole(v) is not None and v >= ARRAY_LOOT
+            else:
+                ok = isinstance(v, str) and array_word(v) == v and (what != "skill" or bool(GAME_SKILL.fullmatch(v)))
+            if not ok:
+                return no("value: a whole number, %d or more" % ARRAY_LOOT if what == "loot" else
+                          "%s: a whole number" % f if what == "whole" else
+                          "%s: one line of %d characters at most%s" % (f, ARRAY_WORD, ", a skill's name" if what == "skill" else ""))
+            ev[f] = array_whole(v) if what in ("whole", "loot") else v
+        ev["at"] = at
+        out.append(ev)
+    return out, None
+
+
 class ArrayFeed:
-    """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory only.
-    An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
+    """The Array's events: the last ARRAY_KEPT, oldest first, each {"id", "at", "channel", "kind", ...}, in memory while
+    the relay runs (the Worker's ArrayFeed keeps them in its Directory's storage, 11/10/2026). An id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids
     keep going up after a restart and a page's cursor (since) still works."""
 
     def __init__(self, now=None):
@@ -1057,6 +1131,35 @@ class ArrayFeed:
         if times:
             self.recent[channel] = times
         return added
+
+    def backfill(self, channel, lost, now=None):
+        """The keeper's backfill (array_backfill's events, for a channel claimed and listed): each put in its place by
+        when it happened, with an id between its neighbours' (its own ms when that fits), so the feed stays in id order
+        and every cursor still works. One with no room there (its neighbours' ids one apart) gets a new id at the end,
+        as a new event would, and keeps its own time. Counted against nothing. None older than the oldest kept when the
+        feed is full (it would go at once): (the events kept, None), or (None, why not) and nothing added."""
+        now = int(time.time() * 1000) if now is None else now
+        events = list(self.events)
+        if len(events) >= ARRAY_KEPT and any(e["at"] < events[0]["at"] for e in lost):
+            return None, "older than the feed holds now (its oldest is from %d)" % events[0]["at"]
+        kept = []
+        for e in sorted(lost, key=lambda e: e["at"]):
+            at = e["at"]
+            i = len(events)
+            while i > 0 and events[i - 1]["at"] > at:
+                i -= 1
+            lo = events[i - 1]["id"] if i > 0 else 0
+            hi = events[i]["id"] if i < len(events) else None
+            ident = max(at, lo + 1) if hi is None else min(max(at, lo + 1), hi - 1)
+            if ident <= lo:             # (no room between its neighbours: a new id, at the end)
+                ident = self.last = max(now, self.last + 1)
+                i = len(events)
+            self.last = max(self.last, ident)
+            k = dict({"id": ident, "at": at, "channel": channel}, **{f: v for f, v in e.items() if f != "at"})
+            events.insert(i, k)
+            kept.append(k)
+        self.events = deque(events[-ARRAY_KEPT:], maxlen=ARRAY_KEPT)
+        return kept, None
 
     def read(self, since=None):
         """GET /array/events: without since the last ARRAY_LATEST, with it the first ARRAY_PAGE after it; next, the
@@ -1716,8 +1819,9 @@ def too_old(v, min_client):
 
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
-                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S, almanac="off"):
+                 settle_code_s=SETTLE_CODE_S, where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False):
         self.delay = delay
+        self.test_forget = test_forget  # POST /test/forget answered (tests only: the Worker's TEST_FORGET)
         # the almanac (11/09/2026; almanac.py): Jagex's news, the world list and the Wiki's prices, fetched on a
         # schedule (almanac_loop) and shared: "off" (nothing's fetched; GET /almanac answers its shape, empty), "on"
         # (the real hosts) or an address everything's fetched under instead (tests)
@@ -1817,6 +1921,15 @@ class Relay:
         if path == ["array", "events"] and not key:
             await self.array_read(writer, method, q)
             return
+        if path == ["test", "forget"] and method == "POST" and self.test_forget:
+            # (the Worker's: its Directory put to sleep, to show what its storage keeps; here the process's memory is
+            # the keeping, so there's nothing to forget while it runs)
+            writer.write(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+            return
         if path == ["stars"] and not key:
             await self.stars_read(writer, method)
             return
@@ -1825,6 +1938,9 @@ class Relay:
             return
         if path == ["admin", "almanac"] and not key:
             await self.almanac_keeper(writer, method, headers)
+            return
+        if path == ["admin", "array"] and not key:
+            await self.array_keeper(reader, writer, method, headers)
             return
         if path[:2] == ["admin", "aether"] and not key:
             await self.aether_keeper(reader, writer, method, headers, path)
@@ -2514,6 +2630,58 @@ class Relay:
             except Exception as e:  # noqa: BLE001 (never the loop's end)
                 self.log("the almanac: %s" % e)
             await asyncio.sleep(60)
+
+    async def array_keeper(self, reader, writer, method, headers):
+        """POST /admin/array {"channel", "events": [{"kind", ..., "at"}]} (11/10/2026; the Worker's, the same), with
+        --admin-token: the keeper puts a real event the Array's feed lost back in its place (array_backfill,
+        ArrayFeed.backfill), for a channel claimed and on the open outstations' list (only such a channel's reports ever
+        make events): 200 {"events": [as kept]}; 400 {"error"}; 404 for a channel nobody's claimed; 409 for a hidden one."""
+        async def answer(status, body=None, plain=None):
+            data = json.dumps(body).encode() if body is not None else (plain or b"")
+            kind = "Content-Type: application/json\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, kind, len(data))).encode()
+                         + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        auth = headers.get("authorization", "").encode("latin-1")
+        if len(self.admin_token) < 16 or not hmac.compare_digest(auth, ("Bearer " + self.admin_token).encode("utf-8")):
+            return await answer("403 Forbidden", plain=b"no")
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        try:
+            if headers.get("transfer-encoding", "").lower() == "chunked":
+                raw = await read_chunked(reader)
+            else:
+                n = int(headers.get("content-length", "0") or 0)
+                if n > 16 * 1024:
+                    return await answer("413 Payload Too Large", {"error": "16 KB at most"})
+                raw = await reader.readexactly(n)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request")
+        if len(raw) > 16 * 1024:
+            return await answer("413 Payload Too Large", {"error": "16 KB at most"})
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        channel = body.get("channel") if isinstance(body, dict) else None
+        if not isinstance(channel, str) or not CHANNEL_NAME.fullmatch(channel):
+            return await answer("400 Bad Request", {"error": "channel: which outstation"})
+        events, why = array_backfill(body)
+        if why:
+            return await answer("400 Bad Request", {"error": why})
+        ch = self.channels.get(channel)
+        if ch is None or ch.key is None:
+            return await answer("404 Not Found", {"error": "no outstation called that here"})
+        if not ch.listed():
+            return await answer("409 Conflict", {"error": "that outstation isn't on the open list: its events never go on the feed"})
+        kept, why = self.array.backfill(channel, events)
+        if why:
+            return await answer("400 Bad Request", {"error": why})
+        self.log("array     the keeper put back %d on %s" % (len(kept), channel))
+        return await answer("200 OK", {"events": kept})
 
     async def aether_keeper(self, reader, writer, method, headers, path):
         """The aether's keeper (11/07/2026; the Worker's, the same), with --admin-token (Authorization: Bearer <it>):
@@ -3316,13 +3484,13 @@ def dink_report(p):
 
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="", settle_code_s=SETTLE_CODE_S,
-                where_fresh_s=WHERE_FRESH_S, almanac="off"):
+                where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
     almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
     everything under instead (tests)."""
     relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, settle_code_s, where_fresh_s,
-                  almanac)
+                  almanac, test_forget)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -3380,6 +3548,8 @@ def main(argv=None):
     ap.add_argument("--almanac", default="on",
                     help="the almanac's sources (GET /almanac): on (Jagex's news and world list and the Wiki's prices, "
                          "each on its own schedule), off, or an address to fetch them all under instead (tests)")
+    ap.add_argument("--test-forget", action="store_true",
+                    help="answer POST /test/forget, as the Worker does for its tests (nothing is forgotten here)")
     a = ap.parse_args(argv)
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
@@ -3391,7 +3561,7 @@ def main(argv=None):
         asyncio.run(serve(a.host, a.port, a.delay, forward=forward, public_port=a.public_port,
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token, settle_code_s=a.settle_code_seconds,
-                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac))
+                          where_fresh_s=a.where_fresh_seconds, almanac=a.almanac, test_forget=a.test_forget))
     except KeyboardInterrupt:
         pass
 

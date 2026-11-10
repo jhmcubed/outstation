@@ -2,7 +2,8 @@
 //!
 //! One window in the abyss's black: the live light and go live / end stream, the upload line, the sound row, the
 //! chat (answer in it; right-click a line to take it back or block its viewer), polls, and pings over RuneLite.
-//! settings ▸ and dink ▸ pop drawers out on the right. Until it's attached to a relay it shows the attach screen.
+//! settings ▸, dink ▸, clips ▸ (11/10/2026) and friends ▸ pop drawers out on the right. Until it's attached to a relay
+//! it shows the attach screen.
 
 use crate::capture::{self, Image};
 use crate::desk::{Desk, In};
@@ -140,7 +141,7 @@ fn tip(text: &str) -> egui::WidgetText {
 
 #[derive(PartialEq, Clone, Copy)]
 #[cfg_attr(not(feature = "station"), allow(dead_code))]
-enum Drawer { None, Settings, Dink, Friends, FriendList, Report }
+enum Drawer { None, Settings, Dink, Friends, FriendList, Report, Clips }
 
 /// A conversation with another portal (11/06/2026, Jace: "allow for messaging friends directly ... at the top of the
 /// chat box, make a tab for stream chat, and then whenever you get a message from a friend directly it opens a new tab
@@ -301,8 +302,13 @@ pub struct App {
     /// a peek at a friend's portal under the hand (feed.rs, Peek), and its picture as it last came: (it, whose, when)
     peek: crate::feed::Peek,
     peek_tex: Option<(egui::TextureHandle, String, Instant)>,
-    /// the clips on the player's Outside page, as the dink drawer last read them (clipsup.rs)
+    /// the clips on the player's Outside page, as the clips drawer last read them (clipsup.rs)
     page_clips: crate::clipsup::PageClips,
+    /// the clips drawer (11/10/2026): each clip's still as a texture, by its id (None: it wouldn't decode), the clips
+    /// folder as last looked at (when, and its newest), and the clip asked about before it's taken down (id, name)
+    clip_stills: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    pc_clips: Option<(Instant, Vec<crate::clip::Local>)>,
+    clip_down: Option<(String, String)>,
     invites: crate::invites::Invites,
     /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
     dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
@@ -500,7 +506,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -1878,9 +1884,35 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
                 }
             });
         }
-        let detach = button(ui, "attach another station key…", true, None).clicked();
-        if detach {
-            s.key.clear();
+        // (11/10/2026, Jace: "fix the attach another station key button so it asks before throwing the key away". One
+        // click had forgotten his key with no copy anywhere: now it asks, and offers the key to copy before it goes)
+        let ask_id = egui::Id::unique("detach: asking");
+        let asking = ui.ctx().data(|d| d.get_temp::<bool>(ask_id)).unwrap_or(false);
+        if !asking {
+            if button(ui, "attach another station key…", true, None).clicked() {
+                ui.ctx().data_mut(|d| d.insert_temp(ask_id, true));
+            }
+        } else {
+            ui.label(wrapped("going on forgets this outstation's key on this PC. copy it first and keep it somewhere private: without it, the listening post has to re-key the channel, and the old key stops working.",
+                14.0, PINK(), ui.available_width()));
+            ui.horizontal_wrapped(|ui| {
+                if s.attached() && button(ui, "copy the key", true, None).clicked() {
+                    win::copy_text(&crate::settings::make_attach(&s.relay, &s.channel, &s.key));
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("detach: copied"), Instant::now()));
+                }
+                if button(ui, "forget it and attach another", true, None).clicked() {
+                    s.key.clear();
+                    ui.ctx().data_mut(|d| d.remove::<bool>(ask_id));
+                }
+                if button(ui, "keep this one", true, None).clicked() {
+                    ui.ctx().data_mut(|d| d.remove::<bool>(ask_id));
+                }
+            });
+            let copied = ui.ctx().data(|d| d.get_temp::<Instant>(egui::Id::unique("detach: copied"))).is_some_and(|t| t.elapsed() < Duration::from_secs(4));
+            if copied {
+                ui.label(rich("the key is on the clipboard: keep it somewhere private", 14.0, LIME()));
+                ui.ctx().request_repaint_after(Duration::from_millis(500));
+            }
         }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
@@ -2187,6 +2219,16 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.label(rich("never, whatever's ticked: anything naming another player (trades, chat, player kills, a PvP killer), and screenshots", 14.0, QUIET()));
     ui.add_space(10.0);
+    auto_clips_ui(app, ui, &mut s, false);
+    if serde_json::to_string(&s).unwrap_or_default() != before {
+        let _ = app.settings.update(|x| *x = s);
+    }
+}
+
+/// The clips that save themselves (11/10/2026: one set of switches, shown in two places, the dink drawer's "clips by
+/// themselves" and the top of the clips drawer, the same settings both times, never copies). `in_clips`: drawn in the
+/// clips drawer (no way to it from itself).
+fn auto_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, in_clips: bool) {
     ui.label(rich("clips by themselves", 16.0, LIME()));
     ui.horizontal_wrapped(|ui| {
         let colour = if s.dink.auto_clip { TEXT() } else { GREY() };
@@ -2206,21 +2248,31 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
         ui.label(rich("(0 gp: drops never clip themselves; pets, new log slots and 99s still do)", 14.0, QUIET()));
     }
     if s.dink.auto_clip {
-        let colour = if s.dink.clips_up { TEXT() } else { GREY() };
-        tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
-            .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them. The newest 20 stay, each for 30 days, and up to 3 can be filed for good (never pushed out, never too old); file them or take any down below."));
-        if s.dink.clips_up {
-            page_clips_ui(app, ui, &s);
+        // (no channel, no Outside page: clips only keeps them to this PC and Discord, as the setup has it)
+        if !s.clips_mode() {
+            let colour = if s.dink.clips_up { TEXT() } else { GREY() };
+            tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, colour))
+                .on_hover_text(tip("a copy of each goes to the relay too: up to 17 s round the moment (as much as the tape holds), at most 768 px wide, with its sound, a still and up to 20 small frames for the hover. Anyone who opens your Outside page can watch them, under \"recovered footage\". The newest 20 stay, each for 30 days, and up to 3 can be filed for good (never pushed out, never too old): the clips drawer (clips ▸) files them or takes any down."));
         }
         let colour = if s.tape_dark { TEXT() } else { GREY() };
         tick(ui, &mut s.tape_dark, rich("and while dark too (the tape keeps rolling, nothing's sent)", 16.0, colour))
             .on_hover_text(tip("dark but recording: while you're not transmitting, the outstation still keeps the tape (the same capture, sent nowhere), so a pet or a big drop still saves its clip, to this PC and Discord (never to your Outside page while dark). It uses a little of the PC while RuneLite's open, as transmitting does."));
         let colour = if s.dink.clips_discord { TEXT() } else { GREY() };
         tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
-            .on_hover_text(tip("wherever Dink's post goes in Discord (step 1 above), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
+            .on_hover_text(tip("wherever Dink's post goes in Discord (dink ▸, step 1), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
     }
-    if serde_json::to_string(&s).unwrap_or_default() != before {
-        let _ = app.settings.update(|x| *x = s);
+    // (11/10/2026, Jace: the list of what's on the page was here, "kind of hidden away and not very accessible": it's
+    // the clips drawer's now, and this one line goes there)
+    if !in_clips {
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let on_page = s.dink.auto_clip && s.dink.clips_up && !s.clips_mode();
+            ui.label(rich(if on_page { "the clips on your page:" } else { "your clips:" }, 14.0, GREY()));
+            if button(ui, "open the clips drawer ▸", true, None).on_hover_text(tip(CLIPS_TIP)).clicked() {
+                let ctx = ui.ctx().clone();
+                app.open_drawer(&ctx, Drawer::Clips);
+            }
+        });
     }
 }
 
@@ -2303,8 +2355,8 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
             }
             ui.add_space(8.0);
-            ui.label(wrapped(if s.clips_mode() { "clips only: Dink and Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸)." }
-                             else { "a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸ and settings ▸)." }, 16.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "clips only: Dink and Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }
+                             else { "a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }, 16.0, GREY(), w));
         }
         1 => {
             ui.label(rich("Dink and Discord", 18.0, LIME()));
@@ -2350,6 +2402,10 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                     ui.label(wrapped("clips still save and post to Discord when you're not live; nothing is sent anywhere else.", 14.0, QUIET(), w));
                 }
             }
+            // (11/10/2026: where they are afterwards, so nobody has to go looking in the Dink settings)
+            ui.add_space(6.0);
+            ui.label(wrapped(if s.clips_mode() { "afterwards, clips ▸ at the top of the window has them: the newest on this PC, to play, and these same switches." }
+                             else { "afterwards, clips ▸ at the top of the window has them: the newest on this PC, and the recovered footage on your Outside page, to watch, file for good or take down. These same switches are there too." }, 14.0, QUIET(), w));
         }
         _ => {
             ui.label(rich("done", 18.0, LIME()));
@@ -2385,7 +2441,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
         if step > 0 && button(ui, "◂ back", false, None).clicked() { next = Some(Some(step - 1)); }
         if step + 1 < STEPS {
             if button(ui, if step == 0 { "start" } else { "next ▸" }, false, None).clicked() { next = Some(Some(step + 1)); }
-            if button(ui, "skip the setup", true, None).on_hover_text(tip("straight to the outstation: everything here is in dink ▸ and settings ▸, and settings ▸ more runs this again")).clicked() {
+            if button(ui, "skip the setup", true, None).on_hover_text(tip("straight to the outstation: everything here is in dink ▸, clips ▸ and settings ▸, and settings ▸ more runs this again")).clicked() {
                 next = Some(None);
             }
         } else if button(ui, "finish", false, None).clicked() {
@@ -2508,47 +2564,237 @@ fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Setti
     }
 }
 
-/// What's on the player's Outside page now: each clip, how old, and "take it down".
-fn page_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings) {
+// ---- the clips drawer ----
+
+/// The words under the hand on every way into the clips drawer.
+const CLIPS_TIP: &str = "the clips drawer: the recovered footage on your Outside page (watch it, file it for good, take it down), the newest clips on this PC, and the switches for the clips that save themselves";
+/// how wide a still is in the list, and under the hand
+const STILL_W: f32 = 96.0;
+const STILL_BIG: f32 = 240.0;
+/// how many of this PC's newest clips the drawer lists
+const PC_MOST: usize = 10;
+
+/// The clips drawer (11/10/2026, Jace: "make a dedicated clips section or something of the sort because the place in
+/// the dink settings where you go to file a clip to your outside page is kind of hidden away and not very
+/// accessible"): the switches for the clips that save themselves (the dink drawer's own, shown here too), the recovered
+/// footage on the player's Outside page, each with its still, to watch, file for good, let go or take down, and the
+/// newest clips on this PC, to play.
+fn clips_drawer(app: &mut App, ui: &mut egui::Ui) {
+    let mut s = app.settings.get();
+    let before = serde_json::to_string(&s).unwrap_or_default();
+    let w = ui.available_width();
+    ui.label(rich("clips: recovered footage", 16.0, LIME()));
+    ui.label(wrapped("what the tape has caught: the clips on your Outside page (\"recovered footage\" there), and the newest on this PC.", 14.0, GREY(), w));
+    ui.add_space(8.0);
+    auto_clips_ui(app, ui, &mut s, true);
+    if serde_json::to_string(&s).unwrap_or_default() != before {
+        let keep = s.clone();
+        let _ = app.settings.update(|x| *x = keep);
+    }
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    page_footage_ui(app, ui, &s);
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    pc_clips_ui(app, ui, &s);
+}
+
+/// How long ago, in days past the second day (the page's clips stay 30 days, and those filed for good longer).
+fn ago_long(d: Duration) -> String {
+    let s = d.as_secs();
+    if s >= 2 * 86400 { format!("{} days", s / 86400) } else { ago(d) }
+}
+
+/// A clip's still as a texture, decoded once and kept by its id (None: the list carried none, or it wouldn't decode).
+fn still_tex(app: &mut App, ctx: &egui::Context, r: &crate::clipsup::Row) -> Option<egui::TextureHandle> {
+    if let Some(t) = app.clip_stills.get(&r.id) { return t.clone(); }
+    let t = crate::clipsup::still_jpeg(r).and_then(|j| decode(&j))
+        .filter(|(px, w, h)| *w > 0 && *h > 0 && px.len() == (*w as usize) * (*h as usize) * 3)
+        .map(|(px, w, h)| ctx.load_texture(format!("still {}", r.id), egui::ColorImage::from_rgb([w as usize, h as usize], &px), egui::TextureOptions::LINEAR));
+    app.clip_stills.insert(r.id.clone(), t.clone());
+    t
+}
+
+/// What's on the player's Outside page now (the relay's list, read every minute while the drawer's open): each clip
+/// with its still, its name, length and age, and whether it's filed for good; "watch it", "file it" / "let it go", and
+/// "take it down" (asked first).
+fn page_footage_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings) {
     let ctx = ui.ctx().clone();
-    if app.page_clips.read_at.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+    let w = ui.available_width();
+    let page = crate::friendlist::page(&s.channel);
+    let (mut open_page, mut read_again) = (false, false);
+    ui.horizontal(|ui| {
+        ui.label(rich("on your Outside page", 16.0, LIME()));
+        if s.attached() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if button(ui, "your page ▸", true, None)
+                    .on_hover_text(tip(&format!("opens your Outside page in your browser: {}", page.trim_start_matches("https://")))).clicked() {
+                    open_page = true;
+                }
+                if button(ui, "read again", true, None)
+                    .on_hover_text(tip("asks the relay what's on your page now (it asks every minute while this drawer's open)")).clicked() {
+                    read_again = true;
+                }
+            });
+        }
+    });
+    // (dark, or clips only: no channel, no page; the clips on this PC, below, are there all the same)
+    if !s.attached() {
+        let why = if s.clips_mode() {
+            "no Outside page while it's clips only: there's no channel to put them on. They stay on this PC (below), and go to Discord if you've set that up; \"a channel too ▸\" at the top adds one."
+        } else {
+            "no Outside page while the outstation isn't attached to a channel: the clips on this PC are below."
+        };
+        ui.label(wrapped(why, 14.0, QUIET(), w));
+        return;
+    }
+    if !(s.dink.auto_clip && s.dink.clips_up) {
+        ui.label(wrapped("nothing new goes up: \"and put them on my Outside page\" (above) is off. What's there already stays till it's old.", 14.0, QUIET(), w));
+    } else if !s.on_air {
+        ui.label(wrapped("dark: new clips go to this PC (and Discord) only, until you transmit again.", 14.0, QUIET(), w));
+    }
+    if open_page && !win::open_page(&page) { app.note(format!("couldn't open {}", page)); }
+    if read_again || app.page_clips.read_at.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
         let c = ctx.clone();
         app.page_clips.read(s, move || c.request_repaint());
     }
     let rows = app.page_clips.rows.lock().unwrap().clone();
     let mut down: Option<String> = None;
     let mut keep: Option<(String, bool)> = None;
+    let (mut watch, mut ask, mut never_mind) = (false, None::<(String, String)>, false);
     match rows {
         None => { ui.label(rich("reading what's on your page…", 14.0, QUIET())); }
-        Some(Err(e)) => { ui.label(rich(&e, 14.0, PINK())); }
-        Some(Ok(list)) if list.is_empty() => { ui.label(rich("nothing on your page yet: the next big moment goes there", 14.0, QUIET())); }
+        Some(Err(e)) => { ui.label(wrapped(&e, 14.0, PINK(), w)); }
+        Some(Ok(list)) if list.is_empty() => {
+            ui.label(wrapped(if s.dink.auto_clip && s.dink.clips_up { "nothing on your page yet: the next big moment goes there" } else { "nothing on your page" }, 14.0, QUIET(), w));
+        }
         Some(Ok(list)) => {
+            app.clip_stills.retain(|id, _| list.iter().any(|r| r.id == *id));
             let kept = list.iter().filter(|r| r.kept).count();
             let max = crate::clipsup::KEPT_MOST;
-            ui.label(rich(&format!("on your page ({} of 20, and {} of {} filed for good):", list.len() - kept, kept, max), 14.0, GREY()))
+            let full = if kept >= max { " (let one go to file another)" } else { "" };
+            ui.label(rich(&format!("{} of 20, {} of {} filed for good{}", list.len() - kept, kept, max, full), 14.0, GREY()))
                 .on_hover_text(tip("the newest 20 stay 30 days, the oldest making room as new ones come. Up to 3 can be filed for good: never pushed out, never too old."));
+            ui.add_space(4.0);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             for r in &list {
+                let tex = still_tex(app, &ctx, r);
                 ui.horizontal(|ui| {
-                    let mark = if r.kept { "filed · " } else { "" };
-                    ui.label(rich(&format!("{}{} · {:.0} s · {} ago", mark, r.what, r.dur, ago(Duration::from_secs(now.saturating_sub(r.at)))), 14.0, if r.kept { LIME() } else { TEXT() }));
-                    if r.kept {
-                        if button(ui, "let it go", true, None).on_hover_text(tip("back with the rest: it goes when it's the oldest of the 20, or after 30 days")).clicked() { keep = Some((r.id.clone(), false)); }
-                    } else if kept < max {
-                        if button(ui, "file it", true, None).on_hover_text(tip("filed for good on your page: never pushed out, never too old (3 at most)")).clicked() { keep = Some((r.id.clone(), true)); }
-                    }
-                    if button(ui, "take it down", true, None).clicked() { down = Some(r.id.clone()); }
+                    // its still, small; bigger under the hand, and a click watches it
+                    let size = match &tex {
+                        Some(t) => { let sz = t.size_vec2(); Vec2::new(STILL_W, (STILL_W * sz.y / sz.x.max(1.0)).round()) }
+                        None => Vec2::new(STILL_W, (STILL_W * 9.0 / 16.0).round()),
+                    };
+                    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+                    match &tex {
+                        Some(t) => ui.painter().image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE),
+                        None => ui.painter().rect_filled(rect, 0.0, FIELD()),
+                    };
+                    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, if r.kept { LIME() } else { DIM() }), egui::StrokeKind::Outside);
+                    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_ui(|ui| {
+                        if let Some(t) = &tex {
+                            let sz = t.size_vec2();
+                            let big = Vec2::new(STILL_BIG, (STILL_BIG * sz.y / sz.x.max(1.0)).round());
+                            let (r2, _) = ui.allocate_exact_size(big, Sense::hover());
+                            ui.painter().image(t.id(), r2, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                        }
+                        ui.label(tip("the moment it caught: a click watches it on your Outside page"));
+                    });
+                    if resp.clicked() { watch = true; }
+                    ui.vertical(|ui| {
+                        ui.label(rich(&r.what, 16.0, if r.kept { LIME() } else { TEXT() }));
+                        let filed = if r.kept { " · filed for good" } else { "" };
+                        ui.label(rich(&format!("{:.0} s · {} ago{}", r.dur, ago_long(Duration::from_secs(now.saturating_sub(r.at))), filed), 14.0, if r.kept { LIME() } else { GREY() }));
+                        ui.horizontal_wrapped(|ui| {
+                            if button(ui, "watch it", true, None)
+                                .on_hover_text(tip("opens your Outside page in your browser, where it plays under \"recovered footage\" (as anyone who opens your page sees it)")).clicked() {
+                                watch = true;
+                            }
+                            if r.kept {
+                                if button(ui, "let it go", true, None).on_hover_text(tip("back with the rest: it goes when it's the oldest of the 20, or after 30 days")).clicked() { keep = Some((r.id.clone(), false)); }
+                            } else if kept < max {
+                                if button(ui, "file it", true, None).on_hover_text(tip("filed for good on your page: never pushed out, never too old (3 at most)")).clicked() { keep = Some((r.id.clone(), true)); }
+                            }
+                            if button(ui, "take it down", true, None).on_hover_text(tip("off your Outside page and the relay for good (asked first); the clip on this PC stays")).clicked() {
+                                ask = Some((r.id.clone(), r.what.clone()));
+                            }
+                        });
+                    });
                 });
+                // asked first, under its own row (as the settings drawer's are)
+                if app.clip_down.as_ref().is_some_and(|(id, _)| *id == r.id) {
+                    let filed = if r.kept { ", filed for good or not" } else { "" };
+                    ui.label(wrapped(&format!("take \"{}\" down from your Outside page? it's gone from the relay for good{} (the clip in your clips folder on this PC, if it's there, stays)", r.what, filed), 14.0, PINK(), w));
+                    ui.horizontal(|ui| {
+                        if button(ui, "take it down", true, None).clicked() { down = Some(r.id.clone()); }
+                        if button(ui, "never mind", true, None).clicked() { never_mind = true; }
+                    });
+                }
+                ui.add_space(6.0);
             }
         }
     }
+    if watch && !win::open_page(&page) { app.note(format!("couldn't open {}", page)); }
+    if let Some(a) = ask { app.clip_down = Some(a); }
+    if never_mind { app.clip_down = None; }
     if let Some(id) = down {
+        app.clip_down = None;
         let c = ctx.clone();
         app.page_clips.delete(s, &id, move || c.request_repaint());
     }
     if let Some((id, k)) = keep {
         let c = ctx.clone();
         app.page_clips.keep(s, &id, k, move || c.request_repaint());
+    }
+}
+
+/// The newest clips in the clips folder (looked at every few seconds while the drawer's open), each to play, and the
+/// folder itself. Whatever the channel: clips only too.
+fn pc_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings) {
+    let w = ui.available_width();
+    let folder = crate::clip::folder_of(&s.clip_folder);
+    if app.pc_clips.as_ref().is_none_or(|(t, _)| t.elapsed() > Duration::from_secs(3)) {
+        app.pc_clips = Some((Instant::now(), crate::clip::recent(&folder, PC_MOST + 1)));
+    }
+    ui.ctx().request_repaint_after(Duration::from_secs(3));
+    let list = app.pc_clips.as_ref().map(|(_, l)| l.clone()).unwrap_or_default();
+    let (mut open_folder, mut clip_now) = (false, false);
+    ui.horizontal(|ui| {
+        ui.label(rich("on this PC", 16.0, LIME()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if button(ui, "open the folder", true, None).on_hover_text(tip("the clips folder in Explorer")).clicked() { open_folder = true; }
+            if button(ui, "clip now", true, None).on_hover_text(tip("the tape saved as a clip (the clip key, Insert, does the same)")).clicked() { clip_now = true; }
+        });
+    });
+    ui.label(wrapped(&folder.display().to_string(), 14.0, QUIET(), w))
+        .on_hover_text(tip("the clips folder: settings ▸ more, \"clips go to\", changes it"));
+    if open_folder { crate::clip::open_folder(&folder); }
+    if clip_now { crate::clip::save(&s.clip_folder); }
+    if list.is_empty() {
+        ui.label(wrapped("no clips here yet: the clip key (Insert) or \"clip\" saves the last seconds of the tape, and with Dink a big moment saves one by itself.", 14.0, QUIET(), w));
+        return;
+    }
+    let now = std::time::SystemTime::now();
+    let mut play: Option<std::path::PathBuf> = None;
+    for c in list.iter().take(PC_MOST) {
+        ui.horizontal(|ui| {
+            let meta = format!("{:.1} MB · {} ago", c.size as f64 / 1048576.0, ago_long(now.duration_since(c.when).unwrap_or_default()));
+            let name_w = (ui.available_width() - button_w(ui, "play") - text_w(ui, &meta, 14.0) - 2.0 * ui.spacing().item_spacing.x).max(80.0);
+            ui.allocate_ui_with_layout(Vec2::new(name_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(name_w);
+                ui.add(egui::Label::new(rich(&c.name, 14.0, TEXT())).truncate()).on_hover_text(tip(&c.path.display().to_string()));
+            });
+            ui.label(rich(&meta, 14.0, GREY()));
+            if button(ui, "play", true, None).on_hover_text(tip("plays it in whatever plays videos on this PC")).clicked() { play = Some(c.path.clone()); }
+        });
+    }
+    if list.len() > PC_MOST {
+        ui.label(rich(&format!("the newest {}: the rest are in the folder", PC_MOST), 14.0, QUIET()));
+    }
+    if let Some(p) = play {
+        if !crate::clip::play(&p) { app.note(format!("couldn't play {} (it may have been moved)", p.display())); }
     }
 }
 
@@ -3142,6 +3388,8 @@ impl eframe::App for App {
                             friendlist_drawer(self, ui);
                         } else if self.drawer == Drawer::Report {
                             anomaly_ui(self, ui);
+                        } else if self.drawer == Drawer::Clips {
+                            clips_drawer(self, ui);
                         } else {
                             dink_drawer(self, ui);
                         }
@@ -3319,7 +3567,7 @@ impl App {
         let friends_words = match (live, self.drawer == Drawer::FriendList) { (0, true) => "friends ◂".to_string(), (0, false) => "friends ▸".to_string(),
                                                                                 (n, true) => format!("friends · {} transmitting ◂", n), (n, false) => format!("friends · {} transmitting ▸", n) };
         let gap = ui.spacing().item_spacing.x;
-        let mut need = button_w(ui, &watching) + button_w(ui, "settings ▸") + button_w(ui, "dink ▸") + button_w(ui, &friends_words) + gap * 5.0;
+        let mut need = button_w(ui, &watching) + button_w(ui, "settings ▸") + button_w(ui, "dink ▸") + button_w(ui, "clips ▸") + button_w(ui, &friends_words) + gap * 6.0;
         #[cfg(feature = "station")]
         let portals_words = { let (a, q) = self.keeper.reports_now(); crate::keeper::portals_words(self.keeper.asking_now(), a, q, self.drawer == Drawer::Friends) };
         #[cfg(not(feature = "station"))]
@@ -3342,7 +3590,11 @@ impl App {
             let mut order: Vec<u8> = Vec::new();
             if this.signals > 0 { order.push(0); }
             if cfg!(feature = "station") { order.push(1); }
-            order.extend([2, 3, 4]);
+            // (the clips' own drawer between friends and dink: 11/10/2026, Jace: "make a dedicated clips section or
+            // something of the sort because the place in the dink settings where you go to file a clip to your outside
+            // page is kind of hidden away and not very accessible". With the other drawers, as it's a place to go and
+            // not a thing to do: "clip" on the chat row saves one, "clips ▸" up here is where they all are)
+            order.extend([2, 5, 3, 4]);
             if right_to_left { order.reverse(); }
             for which in order {
                 match which {
@@ -3359,6 +3611,10 @@ impl App {
                             .on_hover_text(tip("your friends list: who's transmitting, and a click on a name opens their Outside page")).clicked() {
                             this.open_drawer(&ctx, Drawer::FriendList);
                         }
+                    }
+                    5 => {
+                        let c_open = this.drawer == Drawer::Clips;
+                        if button(ui, if c_open { "clips ◂" } else { "clips ▸" }, true, None).on_hover_text(tip(CLIPS_TIP)).clicked() { this.open_drawer(&ctx, Drawer::Clips); }
                     }
                     3 => {
                         let d_open = this.drawer == Drawer::Dink;
@@ -3503,6 +3759,8 @@ impl App {
                 if button(ui, if s_open { "settings ◂" } else { "settings ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Settings); }
                 let d_open = self.drawer == Drawer::Dink;
                 if button(ui, if d_open { "dink ◂" } else { "dink ▸" }, true, None).clicked() { self.open_drawer(&ctx, Drawer::Dink); }
+                let c_open = self.drawer == Drawer::Clips;
+                if button(ui, if c_open { "clips ◂" } else { "clips ▸" }, true, None).on_hover_text(tip(CLIPS_TIP)).clicked() { self.open_drawer(&ctx, Drawer::Clips); }
                 if button(ui, "a channel too ▸", true, None)
                     .on_hover_text(tip("transmit as well: a station key from the listening post (the first screen again; your clips and Dink stay as they are)")).clicked() {
                     let _ = self.settings.update(|x| x.clips_only = false);
@@ -3551,9 +3809,7 @@ impl App {
                 crate::clip::save(&s.clip_folder);
             }
             if button(ui, "the clips folder", true, None).clicked() {
-                let folder = if s.clip_folder.trim().is_empty() { crate::clip::default_folder() } else { s.clip_folder.clone().into() };
-                let _ = std::fs::create_dir_all(&folder);
-                let _ = std::process::Command::new("explorer").arg(&folder).spawn();
+                crate::clip::open_folder(&crate::clip::folder_of(&s.clip_folder));
             }
         });
     }

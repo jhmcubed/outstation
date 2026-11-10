@@ -65,8 +65,10 @@ The region ids that tell the raids, the minigames and the PvP minigames (`Activi
 On a PC with RuneLite installed and Java 11 or newer:
 
 ```
-py plugin/run.py client
+py run.py client
 ```
+
+(from the plugin's own folder: the root of jhmcubed/outside-plugin, or `plugin/` in jhmcubed/outstation)
 
 It compiles the plugin against your installed RuneLite and opens RuneLite in developer mode with Outside loaded. A Jagex account needs the launcher's `--insecure-write-credentials` step once before that RuneLite can log in.
 
@@ -86,7 +88,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
 
 ## For the Hub's review
 
-Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py plugin/hub_check.py` checks the source for every forbidden feature and API before each submission or update.
+Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update.
 
 **Precedents** (11/09/2026): [`docs/hub-precedents.md`](../docs/hub-precedents.md) goes through every piece of information this plugin reads or sends and names the Plugin Hub plugins (and RuneLite's own) that already read or send the same, with links to the exact lines, where this plugin is stricter, the Hub's written rules as they stand, and what the Hub requires of the licence and the repository (its own repository, with `runelite-plugin.properties` and a `LICENSE` at the root).
 
@@ -97,7 +99,7 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
 - **Jagex's rules and the rejected list:**
   - It changes nothing in the game or RuneLite: no overlays, no menu entries, no input, no chat typed.
   - It reads only the player's own character: nothing about other players ("crowdsourcing" is on the rejected list).
-  - Location: none, unless the player switches on "Follow me on the globe" (off to begin with, behind its own warning). Then only a 128-tile square of the main map, two minutes late, at most once a minute, cleared at once and held for two minutes in the Wilderness, PvP areas, worlds and minigames and Deadman worlds. An instance goes as where it's opened (its template's square, or its entrance's), which everyone knows anyway. RuneLite's own Party plugin shares more (exact tiles, live, with the party's members); this is coarser and later, but public, so it may still be a question for the reviewers: `Follow.java` holds every rule, and `FollowTest` checks them.
+  - Location: none, unless the player switches on "Follow me on the globe" (off to begin with, behind its own warning). Then only a 128-tile square of the main map, two minutes late, at most once a minute, cleared at once and held for two minutes in the Wilderness, PvP areas, worlds and minigames and Deadman worlds. An instance goes as where it's opened (its template's square, or its entrance's), which everyone knows anyway. Prifddinas goes where the world map draws it, inside its gates in Tirannwn, with the Gauntlet and Zalcano at the city's middle (11/10/2026). Somewhere else safe but off the map (a player-owned house, the Abyss) sends nothing and only pauses the two minutes (11/10/2026): the places either side of it still go, two minutes behind, and the last one isn't said again while there. RuneLite's own Party plugin shares more (exact tiles, live, with the party's members); this is coarser and later, but public, so it may still be a question for the reviewers: `Follow.java` holds every rule, and `FollowTest` checks them.
   - The world (11/08/2026, "and my world", only with following): the player's own world, which the plugin already sends for their page and which the Hub's Star Calling Assist plugin submits too ("your current world number", behind its warning). It adds nothing about anyone else, and goes under following's rules.
   - What they're doing (11/08/2026, "What I'm doing, on the globe"): only the player's own state, as one coarse word. Skilling comes from their own experience (`StatChanged`), the boss or fighting from their own fight (a hitsplat on them, or theirs on an NPC), a raid or minigame from the region they're in (as RuneLite's Discord plugin shows it in Discord); the only names it ever sends are a boss's, a raid's or a minigame's, from fixed lists, never a player's. Under following's rules (two minutes late, never anywhere dangerous). `Activity.java` and `ActivityTest`.
   - Shooting stars (11/08/2026, "Shooting stars I find"): a world object, not a player, the same thing the Hub's Shooting Stars plugin already submits ("the location and time of shooting stars", behind its warning). Coarser than that: the tier, the world, a 128-tile square and its landing site's name, two minutes late, never one in the Wilderness or seen from anywhere dangerous. The relay's list names the outstation that told of it first only if the player switched "Name me as a star's finder" on (off to begin with), as Star Miners' "Send in-game name" is opt-in; and it's their outstation's name, never their in-game name. Nothing about other players: not who's mining it, not how many. `Stars.java` and `StarsTest`.
@@ -105,7 +107,18 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
   - It's free, with nothing behind a paid service.
   - In the Wilderness, a PvP area, or on a PvP or Deadman world, it stops sending (unless the player turns "In the Wilderness too" on, behind its own warning), so nobody watching can see what a player risks.
 
-The manifest, `plugins/outside` in runelite/plugin-hub, once the plugin has a repository of its own (the Hub builds a repository's root):
+## Where it lives (11/10/2026)
+
+The plugin is written here, in `plugin/` of jhmcubed/outstation, beside the relays it talks to (their tests check its lists against theirs: the skills, bosses, raids, minigames and landing sites). jhmcubed/outside-plugin is its published copy, the repository the Hub builds: `plugin/`'s own history split out with git's subtree, so its root holds `runelite-plugin.properties` and the BSD 2-Clause `LICENSE`, as the Hub asks. To publish a change once it's merged here:
+
+```
+git subtree split --prefix=plugin origin/main -b plugin-only
+git push https://github.com/jhmcubed/outside-plugin plugin-only:main
+```
+
+Change the plugin here, never in outside-plugin, or the next split won't carry it.
+
+The manifest, `plugins/outside` in runelite/plugin-hub (the Hub builds outside-plugin's root):
 
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git

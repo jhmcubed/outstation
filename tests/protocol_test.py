@@ -51,6 +51,9 @@ SETTLE_CODE_S = float(os.environ.get("SETTLE_CODE_SECONDS") or (600 if MODE.star
 # how long a player's square (following, 11/08/2026) shows on GET /channels after it came: 240 s as the relays are run,
 # shortened here so it can be seen to go stale (a relay already running: whatever it was started with, given here)
 WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.startswith("ws") else 4))
+# how old a live row on the Worker's open list (GET /channels) may be before its Directory asks the channel again: 300 s
+# as it's run, shortened here so the check can be seen to catch a telling that was lost (relay.py asks nothing)
+LISTING_CHECK_S = 5
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
@@ -155,7 +158,8 @@ def setUpModule():
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "SETTLE_CODE_SECONDS:%g" % SETTLE_CODE_S, "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
-             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--test-scheduled"],
+             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
+             "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
         up = wait_up(90)
@@ -164,7 +168,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--settle-code-seconds", "%g" % SETTLE_CODE_S, "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base],
+                                 "--almanac", UPSTREAM.base, "--test-forget"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
         up = wait_up(15)
@@ -2423,6 +2427,379 @@ class Stars(Base):
         with self.assertRaises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(e.exception.code, 405)
+
+class Kept(Base):
+    """What the Array's feed and the stars list keep through a sleep (11/10/2026, Jace: "make the feed keep its events").
+    The Worker's Directory holds no sockets, so Cloudflare puts it to sleep about 10 seconds after its last request; both
+    had lived only in its memory, so a kill showed for those seconds and was gone. POST /test/forget (the Worker's
+    TEST_FORGET; relay.py's --test-forget, where the process's memory is the keeping and nothing's forgotten) puts it to
+    sleep as Cloudflare does, and everything here must come back from its storage."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual(status, 200)
+        self.since = body["next"]                                              # (what came before this test: left out)
+        self.world = 1 + secrets.randbelow(999)                                # (a star of its own, as Stars's)
+        self.x = 1088 + 128 * secrets.randbelow(24)
+        self.y = 2496 + 128 * secrets.randbelow(14)
+
+    # (the feed's helpers, ArrayEvents's; the stars', Stars's)
+    dink, mine, other, what = ArrayEvents.dink, ArrayEvents.mine, ArrayEvents.other, staticmethod(ArrayEvents.what)
+    game, say, star, star_now = Stars.game, Stars.say, Stars.star, Stars.mine
+
+    async def forget(self):
+        status = (await asyncio.to_thread(http, "POST", "/test/forget"))[0]
+        if status == 404:
+            self.skipTest("this relay wasn't started with the test hook (TEST_FORGET, --test-forget)")
+        self.assertEqual(status, 204)
+
+    async def test_the_feed_keeps_its_events_their_ids_and_the_cursor(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2503}})
+        await self.dink({"type": "PET", "content": "", "extra": {"petName": "Baby mole"}})
+        before = await self.mine(2)
+        self.assertEqual(self.what(before), [{"kind": "kill", "boss": "Giant Mole", "kc": 2503},
+                                             {"kind": "pet", "name": "Baby mole"}])
+        await self.forget()
+        self.assertEqual(await self.mine(wait=0), before)                      # (the same events, the same ids)
+        status, _, body = await asyncio.to_thread(array_read)
+        self.assertEqual((status, body["events"][-2:], body["next"]), (200, before, before[-1]["id"]))
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % before[0]["id"])
+        self.assertEqual(body, {"events": before[1:], "next": before[1]["id"]})
+        # (a kill after the sleep, from the same live outstation: its id goes on up, and since finds only it)
+        await self.dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2504}})
+        after = (await self.mine(3))[2:]
+        self.assertEqual(self.what(after), [{"kind": "kill", "boss": "Giant Mole", "kc": 2504}])
+        self.assertGreater(after[0]["id"], before[-1]["id"])
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % before[-1]["id"])
+        self.assertEqual(body, {"events": after, "next": after[0]["id"]})
+        await self.forget()
+        self.assertEqual(await self.mine(wait=0), before + after)
+
+    async def test_ten_a_minute_holds_through_a_sleep(self):
+        await self.tx()
+        await self.pause()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 70 for s in SKILLS[:8]}}})
+        await self.mine(8)
+        await self.forget()
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 71 for s in SKILLS[8:12]}}})
+        await self.mine(10)
+        got = await self.mine(wait=self.settle * 5)
+        self.assertEqual([e["skill"] for e in got], SKILLS[:10])               # (the last two dropped, as without a sleep)
+
+    async def test_the_stars_keep_their_finder_count_and_gone(self):
+        g = await self.game()
+        await self.say(g, self.star(tier=7))
+        first = await self.star_now()
+        self.assertEqual((first["tier"], first["by"], first["reports"]), (7, self.ch, 1))
+        await self.forget()
+        self.assertEqual(await self.star_now(), first)                         # (as it was: when found and seen, its finder)
+        other, key = await self.other()
+        h = await self.game(key=key, channel=other)
+        await self.say(h, self.star(tier=6))
+        s = await self.star_now()
+        self.assertEqual((s["tier"], s["found"], s["by"], s["reports"]), (6, first["found"], self.ch, 2))
+        await self.forget()
+        await self.say(g, self.star(tier=5))                                   # (this one told of it already: still two)
+        s = await self.star_now()
+        self.assertEqual((s["tier"], s["by"], s["reports"]), (5, self.ch, 2))
+        await self.say(h, self.star(gone=True))
+        self.assertIsNone(await self.star_now())
+        await self.forget()
+        await self.say(g, self.star(tier=1))                                   # (a late report after the sleep: still gone)
+        self.assertIsNone(await self.star_now())
+
+    # The open outstations' list (GET /channels; 11/10/2026, Jace's decision): in the Directory's storage too, so a read
+    # after a sleep doesn't ask every channel handed out (waking each). Following's "where" and the "activity" are never
+    # stored (SAFETY.md): in memory only, so a sleep loses them, and the Directory asks a live channel with the plugin
+    # once a wake to have them back. On the Worker, GET /test/listed/<channel> shows what's stored of a row and how often
+    # the Directory's asked that channel since it woke (relay.py keeps nothing and asks nothing: 404, and those parts
+    # are skipped).
+
+    def rows(self):
+        return {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+
+    async def store(self, channel=None, body=None):
+        """What the Worker's Directory stores of a channel's row and how often it's asked it since it woke ({"stored",
+        "asked"}); with a body, those fields put into the row first, as a telling that was lost. None on relay.py."""
+        status, got = await asyncio.to_thread(http, "POST" if body is not None else "GET", "/test/listed/" + (channel or self.ch), body)
+        if status == 404 and not WORKER:
+            return None
+        self.assertEqual(status, 200)
+        return got
+
+    def never_stored(self, got):
+        if got is not None:
+            self.assertIsNotNone(got["stored"])
+            for k in ("where", "whereAt", "activity", "activityAt"):
+                self.assertNotIn(k, got["stored"]["row"])
+                self.assertNotIn('"%s"' % k, json.dumps(got["stored"]))
+
+    async def test_the_open_list_comes_back_from_storage_without_asking_a_channel(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        desk = await self.desk()
+        await desk.send(json.dumps({"title": "barrows"}))
+        dark, key = await self.other()
+        d = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, dark, key))   # (on air once, then dark)
+        await next_of(d, "relay")
+        d.close()
+        await self.pause(3)
+        before = await asyncio.to_thread(self.rows)
+        self.assertEqual((before[self.ch]["live"], before[self.ch]["title"], before[dark]["live"]), (True, "barrows", False))
+        await self.forget()
+        got = await asyncio.to_thread(self.rows)
+        self.assertEqual((got[self.ch], got[dark]), (before[self.ch], before[dark]))
+        for ch in (self.ch, dark):
+            s = await self.store(ch)
+            if s is not None:
+                self.assertEqual(s["asked"], 0)                                # (answered from storage alone)
+                self.assertEqual(s["stored"]["row"]["live"], ch == self.ch)
+                self.never_stored(s)
+        # (and what changes after the sleep is told, and kept through the next)
+        await desk.send(json.dumps({"title": "the mole"}))
+        await self.pause(2)
+        await self.forget()
+        self.assertEqual((await asyncio.to_thread(self.rows))[self.ch]["title"], "the mole")
+
+    async def test_where_and_activity_are_never_stored_and_come_back_after_a_sleep(self):
+        LUMBRIDGE, MINING = Following.LUMBRIDGE, Activity.MINING
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        g = await self.game()
+        await g.send(json.dumps({"game": {"where": LUMBRIDGE, "activity": MINING}}))
+        await self.pause(2)
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["where"], got["activity"], got["game"]), (LUMBRIDGE, MINING, True))
+        s = await self.store()
+        self.never_stored(s)
+        if s is not None:
+            self.assertEqual((s["stored"]["row"]["live"], s["stored"]["row"]["game"]), (True, True))
+        await self.forget()
+        s = await self.store()
+        self.never_stored(s)                                                   # (none to bring back from storage)
+        if s is not None:
+            self.assertEqual(s["asked"], 0)
+        got = (await asyncio.to_thread(self.rows))[self.ch]                     # (back on the very first read: asked once)
+        self.assertEqual((got["where"], got["activity"]), (LUMBRIDGE, MINING))
+        await asyncio.to_thread(self.rows)
+        s = await self.store()
+        if s is not None:
+            self.assertEqual(s["asked"], 1)                                    # (once a wake, not once a read)
+        self.never_stored(s)
+        # (dropped: gone from the list, and still nothing stored of it, through another sleep)
+        await g.send(json.dumps({"game": {"where": None, "activity": None}}))
+        await self.pause(2)
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["where"], got["activity"]), (None, None))
+        await self.forget()
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["live"], got["where"], got["activity"]), (True, None, None))
+        self.never_stored(await self.store())
+
+    async def test_a_channel_gone_dark_while_the_list_slept(self):
+        tx = await self.tx()
+        await next_of(tx, "relay")
+        await self.pause(2)
+        self.assertTrue((await asyncio.to_thread(self.rows))[self.ch]["live"])
+        await self.forget()
+        tx.close()                                                             # (told to the Directory, which wakes for it)
+        await self.pause(2)
+        await self.forget()
+        self.assertFalse((await asyncio.to_thread(self.rows))[self.ch]["live"])
+        s = await self.store()
+        if s is None:
+            return                                                             # (relay.py: nothing to lose)
+        self.assertEqual(s["asked"], 0)
+        # a telling lost (or a channel reset without telling): the row says live, and nothing tells it otherwise. It's
+        # asked when it's LISTING_CHECK_S old, and shows dark from then on
+        s = await self.store(body={"live": True, "open": True, "where": {"x": 3264, "y": 3264}})
+        self.assertTrue(s["stored"]["row"]["live"])
+        self.never_stored(s)                                                   # (not even the test's own hook stores it)
+        await self.forget()
+        self.assertTrue((await asyncio.to_thread(self.rows))[self.ch]["live"])  # (stale, for now)
+        await asyncio.sleep(LISTING_CHECK_S + 0.5)
+        await self.forget()
+        self.assertFalse((await asyncio.to_thread(self.rows))[self.ch]["live"])
+        self.assertEqual((await self.store())["asked"], 1)
+        # with the plugin connected, a row that says live is asked once a wake: dark again at the first read
+        g = await self.game()
+        await self.pause(2)
+        self.assertTrue((await asyncio.to_thread(self.rows))[self.ch]["game"])
+        await self.store(body={"live": True, "open": True})
+        await self.forget()
+        got = (await asyncio.to_thread(self.rows))[self.ch]
+        self.assertEqual((got["live"], got["game"]), (False, True))
+        self.assertEqual((await self.store())["asked"], 1)
+        g.close()
+
+    async def test_thirty_stars_an_hour_holds_through_a_sleep(self):
+        g = await self.game()
+        other = self.world % 999 + 1                                           # (thirty stars on a world of their own)
+        for i in range(30):
+            if i and i % 5 == 0:
+                await asyncio.sleep(1.05)                                      # (5 a second at most)
+            if i == 20:
+                await self.pause(2)
+                await self.forget()
+            await self.say(g, dict(self.star(tier=9), world=other, y=2496 + 128 * (i % 13), x=1088 + 128 * (i // 13)))
+        await asyncio.sleep(1.05)
+        await self.say(g, self.star(tier=9))                                   # (the 31st: ignored, as without a sleep)
+        self.assertIsNone(await self.star_now())
+
+
+class Backfill(Base):
+    """The keeper's backfill (11/10/2026, Jace: his pet, lost to the Directory's sleeps, back on the record): POST
+    /admin/array {"channel", "events": [{"kind", ..., "at"}]} puts a real event the feed lost back in its place by when
+    it happened, with an id between its neighbours' (or, with no room there, a new one at the end, its time kept), for a
+    channel handed out and on the open list. Each event exactly as a report would have made it; counted against nothing."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        if not WORKER:
+            tx = await self.tx()                                               # (relay.py: the channel's claimed by it)
+            await next_of(tx, "relay")
+            tx.close()
+            await self.pause()
+
+    @staticmethod
+    def keeper(body, auth=True):
+        """(status, JSON or None) of POST /admin/array, an error's JSON too."""
+        req = urllib.request.Request(http_url() + "/admin/array", method="POST", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json",
+                                              **({"Authorization": "Bearer " + ADMIN} if auth else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read() or b"null")
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            try:
+                return e.code, json.loads(raw) if raw else None
+            except ValueError:
+                return e.code, None
+
+    async def put_back(self, events, channel=None, auth=True):
+        return await asyncio.to_thread(self.keeper, {"channel": channel or self.ch, "events": events}, auth)
+
+    @staticmethod
+    def feed():
+        return array_since(0)
+
+    def in_order(self, feed):
+        ids = [e["id"] for e in feed]
+        self.assertEqual(ids, sorted(set(ids)))
+
+    async def test_a_lost_pet_goes_back_in_its_place_and_stays(self):
+        await self.tx()
+        await self.pause()
+        since = (await asyncio.to_thread(array_read))[2]["next"]
+        await ArrayEvents.dink(self, {"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2500}})
+        await ArrayEvents.dink(self, {"type": "KILL_COUNT", "content": "", "extra": {"boss": "Giant Mole", "count": 2501}})
+        self.since = since
+        a, b = await ArrayEvents.mine(self, 2)
+        at = a["at"] - 60_000                                                  # (a minute before the first kill)
+        status, got = await self.put_back([{"kind": "pet", "name": "Baby mole", "at": at}])
+        self.assertEqual(status, 200)
+        pet = got["events"][0]
+        self.assertEqual(list(pet), ["id", "at", "channel", "kind", "name"])
+        self.assertEqual({k: pet[k] for k in ("at", "channel", "kind", "name")},
+                         {"at": at, "channel": self.ch, "kind": "pet", "name": "Baby mole"})
+        self.assertLess(pet["id"], a["id"])
+        feed = await asyncio.to_thread(self.feed)
+        self.in_order(feed)
+        self.assertIn(pet, feed)
+        mine = [e for e in feed if e["channel"] == self.ch]
+        self.assertEqual(mine, [pet, a, b])                                    # (in its place by when it happened)
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % b["id"])
+        self.assertEqual(body, {"events": [], "next": b["id"]})                # (a page past it isn't sent it again)
+        status, _, body = await asyncio.to_thread(array_read, "?since=%d" % (pet["id"] - 1))
+        self.assertEqual(body["events"][0], pet)
+        if (await asyncio.to_thread(http, "POST", "/test/forget"))[0] == 204:
+            self.assertIn(pet, await asyncio.to_thread(self.feed))             # (kept, as the rest)
+
+    async def test_with_no_room_between_its_neighbours_it_gets_a_new_id_and_keeps_its_time(self):
+        t = int(time.time() * 1000) - 2000
+        status, got = await self.put_back([{"kind": "clog", "name": "Tanzanite fang", "at": t},
+                                           {"kind": "clog", "name": "Magic fang", "at": t},
+                                           {"kind": "clog", "name": "Serpentine visage", "at": t + 1}])
+        self.assertEqual(status, 200)
+        self.assertEqual([e["id"] for e in got["events"]][1:], [got["events"][0]["id"] + 1, got["events"][0]["id"] + 2])
+        before = max(e["id"] for e in await asyncio.to_thread(self.feed))
+        status, got = await self.put_back([{"kind": "clue", "tier": "Elite", "count": 12, "at": t}])
+        self.assertEqual(status, 200)
+        late = got["events"][0]
+        self.assertEqual((late["at"], late["tier"], late["count"]), (t, "Elite", 12))
+        self.assertGreater(late["id"], before)                                 # (at the end, as a new event would be)
+        feed = await asyncio.to_thread(self.feed)
+        self.in_order(feed)
+        self.assertEqual(feed[-1], late)
+
+    async def test_every_kind_exactly_as_a_report_makes_it_and_counted_against_nothing(self):
+        t = int(time.time() * 1000) - 5000
+        lost = [{"kind": "kill", "boss": "Vorkath", "kc": 412, "at": t}, {"kind": "loot", "name": "Skeletal visage", "value": 1206000, "at": t},
+                {"kind": "loot", "value": 1000000, "at": t}, {"kind": "clog", "at": t}, {"kind": "clue", "at": t}, {"kind": "pet", "at": t}]
+        lost += [{"kind": "level", "skill": s, "level": 80, "at": t + 1} for s in SKILLS]   # (twelve: past ten a minute)
+        status, got = await self.put_back(lost)
+        self.assertEqual(status, 200)
+        self.assertEqual([{k: v for k, v in e.items() if k not in ("id", "channel")} for e in got["events"]], lost)
+        await self.tx()
+        await self.pause()
+        self.since = (await asyncio.to_thread(array_read))[2]["next"]
+        await ArrayEvents.dink(self, {"type": "LEVEL", "content": "", "extra": {"levelledSkills": {s: 81 for s in SKILLS}}})
+        await ArrayEvents.mine(self, 10)
+        self.assertEqual(len(await ArrayEvents.mine(self, wait=self.settle * 5)), 10)   # (its own ten still there)
+
+    async def test_only_the_keeper_only_post_only_an_open_outstation(self):
+        pet = [{"kind": "pet", "name": "Baby mole", "at": int(time.time() * 1000) - 1000}]
+        self.assertEqual((await self.put_back(pet, auth=False))[0], 403)
+        self.assertEqual((await asyncio.to_thread(admin, "GET", "/admin/array"))[0], 405)
+        status, got = await self.put_back(pet, channel="t" + secrets.token_hex(5))
+        self.assertEqual((status, sorted(got)), (404, ["error"]))
+        hidden = "t" + secrets.token_hex(5)
+        if WORKER:
+            key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + hidden))[1]["key"]
+        else:
+            key = "secret-key-" + secrets.token_hex(4)
+        c = await Client().open("%s/transmit/%s?key=%s&code=moss" % (RELAY, hidden, key))
+        self.clients.append(c)
+        await next_of(c, "relay")
+        status, got = await self.put_back(pet, channel=hidden)
+        self.assertEqual((status, sorted(got)), (409, ["error"]))
+        self.assertNotIn(hidden, json.dumps(await asyncio.to_thread(self.feed)))
+
+    async def test_anything_not_an_events_shape_is_refused_and_nothing_added(self):
+        now = int(time.time() * 1000)
+        before = await asyncio.to_thread(self.feed)
+        for bad in ([], [{"kind": "quest", "at": now}], [{"kind": "kill", "boss": "Vorkath", "at": now}],
+                    [{"kind": "kill", "boss": "Vorkath", "kc": 1.5, "at": now}], [{"kind": "level", "skill": "9", "level": 5, "at": now}],
+                    [{"kind": "loot", "value": 999999, "at": now}], [{"kind": "pet", "name": "Baby\nmole", "at": now}],
+                    [{"kind": "pet", "name": "x" * 61, "at": now}], [{"kind": "pet", "name": "", "at": now}],
+                    [{"kind": "pet", "boss": "Giant Mole", "at": now}], [{"kind": "pet", "at": now + 600_000}],
+                    [{"kind": "pet"}], [{"kind": "pet", "at": "1794286233000"}], [{"kind": "pet", "at": -1}],
+                    [{"kind": "pet", "name": "Baby mole", "at": now}, "pet"],
+                    [{"kind": "pet", "at": now - 1000}] * 51):
+            status, got = await self.put_back(bad)
+            self.assertEqual((status, sorted(got)), (400, ["error"]), bad)
+        status, got = await asyncio.to_thread(self.keeper, {"events": [{"kind": "pet", "at": now}]})
+        self.assertEqual(status, 400)
+        self.assertEqual(await asyncio.to_thread(self.feed), before)
+
+    async def test_none_older_than_a_full_feed_holds(self):
+        t = int(time.time() * 1000) - 600_000
+        for n in range(10):                                                    # (the feed filled: 500 of this channel's)
+            status, _ = await self.put_back([{"kind": "level", "skill": "Mining", "level": 50, "at": t + 50 * n + i} for i in range(50)])
+            self.assertEqual(status, 200)
+        feed = await asyncio.to_thread(self.feed)
+        self.assertEqual(len(feed), 500)
+        oldest = feed[0]["at"]
+        status, got = await self.put_back([{"kind": "pet", "at": oldest - 1}])
+        self.assertEqual((status, sorted(got)), (400, ["error"]))
+        status, got = await self.put_back([{"kind": "pet", "at": oldest}])
+        self.assertEqual(status, 200)
+        self.assertEqual(len(await asyncio.to_thread(self.feed)), 500)
+
 
 async def nothing_game(c, wait=0.5):
     """The game line someone just come is sent, or None if none comes in `wait` seconds."""

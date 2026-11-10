@@ -1,9 +1,10 @@
 //! Clips on the player's Outside page (11/06/2026, Jace: "build the clip uploads that way"): with "put them on my
-//! Outside page" on (dink ▸, off to begin with), a clip that saved itself (a pet, a new log slot, a 99, a big drop) goes to
+//! Outside page" on (dink ▸ or clips ▸, off to begin with), a clip that saved itself (a pet, a new log slot, a 99, a big drop) goes to
 //! the relay too, as a standard copy (clip.rs, page_copy: 17 s round the moment, at most 768 px wide), its still and
 //! its flipbook (a dozen or so small frames, the hover on the page). The relay keeps 20 a channel for 30 days
-//! (relay/src/clips.ts); anyone who opens the player's Outside page can watch them. The window lists them and takes
-//! any one down. Nothing is sent with the switch off. docs/protocol.md, "Clips".
+//! (relay/src/clips.ts); anyone who opens the player's Outside page can watch them. The window's clips drawer (clips ▸,
+//! 11/10/2026) lists them with their stills, files any for good and takes any down. Nothing is sent with the switch
+//! off. docs/protocol.md, "Clips".
 
 use crate::settings::{enc, Settings};
 use base64::Engine;
@@ -51,11 +52,19 @@ pub fn multipart(meta: &str, strip: &[u8], mp4: &[u8]) -> (Vec<u8>, String) {
     (out, format!("multipart/form-data; boundary={}", b))
 }
 
+/// One clip on the page, as the list gives it: `still` is its small JPEG, base64, as the relay keeps it ("" without one),
+/// shown small in the clips drawer (11/10/2026)
 #[derive(Clone, Debug, PartialEq)]
-pub struct Row { pub id: String, pub what: String, pub at: u64, pub dur: f64, pub size: u64, pub kept: bool }
+pub struct Row { pub id: String, pub what: String, pub at: u64, pub dur: f64, pub size: u64, pub kept: bool, pub still: String }
 
 /// how many a channel may keep for good (the relay's KEPT_MOST)
 pub const KEPT_MOST: usize = 3;
+
+/// A clip's still as JPEG bytes (None: the list carried none, or it isn't base64).
+pub fn still_jpeg(r: &Row) -> Option<Vec<u8>> {
+    if r.still.is_empty() { return None; }
+    base64::engine::general_purpose::STANDARD.decode(r.still.as_bytes()).ok()
+}
 
 /// The window's list of what's on the page (read when the drawer asks, off its thread), and taking one down.
 pub struct PageClips {
@@ -91,6 +100,7 @@ impl PageClips {
                     dur: c.get("dur").and_then(|x| x.as_f64()).unwrap_or(0.0),
                     size: c.get("size").and_then(|x| x.as_u64()).unwrap_or(0),
                     kept: c.get("kept").and_then(|x| x.as_bool()).unwrap_or(false),
+                    still: c.get("still").and_then(|x| x.as_str()).unwrap_or("").to_string(),
                 }).filter(|r| !r.id.is_empty()).collect())
             })();
             *rows.lock().unwrap() = Some(got);
@@ -155,5 +165,15 @@ mod tests {
         assert!(t.contains("name=\"strip\"; filename=\"strip\"\r\nContent-Type: image/jpeg"));
         assert!(t.contains("name=\"clip\"; filename=\"clip\"\r\nContent-Type: video/mp4"));
         assert!(t.ends_with("ftypmp42\r\n--outsideportalclip--\r\n"));
+    }
+
+    #[test]
+    fn a_still_comes_back_as_its_jpeg() {
+        let mut r = Row { id: "a".into(), what: "pet vorki".into(), at: 0, dur: 17.0, size: 1, kept: false, still: String::new() };
+        assert_eq!(still_jpeg(&r), None);
+        r.still = base64::engine::general_purpose::STANDARD.encode(b"\xff\xd8jpeg");
+        assert_eq!(still_jpeg(&r), Some(b"\xff\xd8jpeg".to_vec()));
+        r.still = "not base64!".into();
+        assert_eq!(still_jpeg(&r), None);
     }
 }

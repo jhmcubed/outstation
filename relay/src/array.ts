@@ -5,14 +5,17 @@
 //   GET <relay>/array/events?since=<cursor>      {"events": [{"id", "at", "channel", "kind", ...}, ...], "next": <cursor>}
 //
 // A channel works out what each field report adds (arrayEvents) while it's live and listed (handed out, no watch code:
-// on GET /channels), and tells the Directory (Channel.tellArray), which keeps the last ARRAY_KEPT in memory (ArrayFeed)
-// and answers the read. So a dark or coded outstation's reports never show. relay-py/relay.py's array_events and
-// ArrayFeed, the same.
+// on GET /channels), and tells the Directory (Channel.tellArray), which keeps the last ARRAY_KEPT (ArrayFeed) and answers
+// the read. So a dark or coded outstation's reports never show. relay-py/relay.py's array_events and ArrayFeed, the same.
+// (11/10/2026, Jace: "make the feed keep its events": the Directory holds no sockets, so Cloudflare puts it to sleep
+// about 10 seconds after its last request, and the feed had lived only in its memory: a kill showed for those seconds
+// and was gone. Now the Directory writes the feed to its storage with each report that adds to it (saved, from), and
+// reads it back once a wake.)
 
 import { SKILL } from "./game";
 import { oneLine, pyjson } from "./text";
 
-// the last ARRAY_KEPT kept, in memory; one channel adds ARRAY_A_MINUTE a minute at most (the rest are dropped); a read
+// the last ARRAY_KEPT kept; one channel adds ARRAY_A_MINUTE a minute at most (the rest are dropped); a read
 // without since has the last ARRAY_LATEST, one with since at most ARRAY_PAGE after it; a drop goes in only when it's
 // worth ARRAY_LOOT or more; a name in an event is ARRAY_WORD characters at most (Dink's are cut to 60 already)
 export const ARRAY_KEPT = 500, ARRAY_A_MINUTE = 10, ARRAY_LATEST = 50, ARRAY_PAGE = 100, ARRAY_LOOT = 1_000_000;
@@ -84,9 +87,13 @@ export function arrayEvents(report: unknown): ArrayEvent[] {
   return [];
 }
 
-/** The Array's events: the last ARRAY_KEPT, oldest first, in memory only (an eviction of the Directory forgets them). An
- *  id goes up with each event, and is about the moment's ms (one more than the last, when that's later), so ids keep
- *  going up after the Directory starts again and a page's cursor (since) still works. */
+/** The feed as the Directory keeps it in storage ("array"): the events, the newest id given, and each channel's times of
+ *  the last minute (so ARRAY_A_MINUTE holds across a sleep). One value, so a report that adds to it is one row written. */
+export type SavedFeed = { last: number; events: Kept[]; recent: [string, number[]][] };
+
+/** The Array's events: the last ARRAY_KEPT, oldest first. An id goes up with each event, and is about the moment's ms
+ *  (one more than the last, when that's later), so ids keep going up after the Directory starts again (the newest is
+ *  kept with them) and a page's cursor (since) still works. */
 export class ArrayFeed {
   events: Kept[] = [];
   last: number; // the newest id given, or when the feed began
@@ -94,6 +101,24 @@ export class ArrayFeed {
 
   constructor(now = Date.now()) {
     this.last = now;
+  }
+
+  /** The feed from what was saved (none: a new one, beginning now). A saved one that isn't its shape starts afresh,
+   *  its newest id kept if it has one. */
+  static from(saved: unknown, now = Date.now()): ArrayFeed {
+    const s = isObj(saved) ? saved : {}, f = new ArrayFeed(now);
+    if (typeof s.last === "number" && Number.isSafeInteger(s.last)) f.last = Math.max(f.last, s.last);
+    if (Array.isArray(s.events)) f.events = (s.events as Kept[]).filter((e) => isObj(e) && Number.isSafeInteger(e.id)).slice(-ARRAY_KEPT);
+    if (f.events.length) f.last = Math.max(f.last, f.events[f.events.length - 1].id);
+    if (Array.isArray(s.recent)) {
+      for (const r of s.recent) if (Array.isArray(r) && typeof r[0] === "string" && Array.isArray(r[1])) f.recent.set(r[0], r[1]);
+    }
+    return f;
+  }
+
+  /** What the Directory writes to storage: the whole feed, as one value. */
+  saved(): SavedFeed {
+    return { last: this.last, events: this.events, recent: [...this.recent] };
   }
 
   /** A channel's events into the feed, as many as ARRAY_A_MINUTE leaves room for (the rest dropped); those kept. */
@@ -113,6 +138,35 @@ export class ArrayFeed {
     return added;
   }
 
+  /** The keeper's backfill (arrayBackfill's events, for a channel handed out and listed): each put in its place by
+   *  when it happened, with an id between its neighbours' (its own ms when that fits), so the feed stays in id order
+   *  and every cursor still works. One with no room there (its neighbours' ids one apart) gets a new id at the end, as
+   *  a new event would, and keeps its own time. Counted against nothing. None older than the oldest kept when the feed
+   *  is full (it would go at once): the events kept, or why not (and nothing added). */
+  backfill(channel: string, lost: Lost[], now = Date.now()): { events: Kept[] } | { error: string } {
+    if (this.events.length >= ARRAY_KEPT && lost.some((e) => e.at < this.events[0].at)) {
+      return { error: `older than the feed holds now (its oldest is from ${this.events[0].at})` };
+    }
+    const kept: Kept[] = [];
+    for (const e of [...lost].sort((a, b) => a.at - b.at)) {
+      const { at, ...rest } = e;
+      let i = this.events.length;
+      while (i > 0 && this.events[i - 1].at > at) i--;
+      const lo = i > 0 ? this.events[i - 1].id : 0, hi = i < this.events.length ? this.events[i].id : Infinity;
+      let id = Math.min(Math.max(at, lo + 1), hi - 1);
+      if (id <= lo) { // (no room between its neighbours: a new id, at the end)
+        id = this.last = Math.max(now, this.last + 1);
+        i = this.events.length;
+      }
+      this.last = Math.max(this.last, id);
+      const k = { id, at, channel, ...rest } as Kept;
+      this.events.splice(i, 0, k);
+      kept.push(k);
+    }
+    if (this.events.length > ARRAY_KEPT) this.events.splice(0, this.events.length - ARRAY_KEPT);
+    return { events: kept };
+  }
+
   /** GET /array/events: without since the last ARRAY_LATEST, with it the first ARRAY_PAGE after it; next, the cursor for
    *  the next read (the last event's id, or with none, since, or the newest id when since is past it). */
   read(since?: number): { events: Kept[]; next: number } {
@@ -128,6 +182,54 @@ export function arraySince(raw: string | null): number | undefined | null {
   if (!raw) return undefined;
   const n = Number(raw);
   return CURSOR.test(raw) && n <= Number.MAX_SAFE_INTEGER ? n : null;
+}
+
+/** The keeper's backfill (POST /admin/array, 11/10/2026, Jace: a pet lost to the Directory's sleeps, put back on the
+ *  record): {"channel", "events": [{"kind", ...its fields, "at": <ms>}]}. Each event exactly as arrayEvents would have
+ *  made it (the same kinds, the same fields, each field as it would have been: a name one line of ARRAY_WORD at most, a
+ *  number whole; a kill's boss and count, a level's skill and level, and a drop's value of ARRAY_LOOT or more, needed;
+ *  nothing else), with when it happened, not after now. ARRAY_BACKFILL at most at once. The events, or why not. */
+export const ARRAY_BACKFILL = 50;
+const KINDS: Record<string, [string, "word" | "whole" | "skill" | "loot", boolean][]> = {
+  kill: [["boss", "word", true], ["kc", "whole", true]],
+  level: [["skill", "skill", true], ["level", "whole", true]],
+  pet: [["name", "word", false]],
+  loot: [["name", "word", false], ["value", "loot", true]],
+  clog: [["name", "word", false]],
+  clue: [["tier", "word", false], ["count", "whole", false]],
+};
+export type Lost = ArrayEvent & { at: number };
+
+export function arrayBackfill(body: unknown, now = Date.now()): { events: Lost[] } | { error: string } {
+  const list = isObj(body) ? body.events : undefined;
+  if (!Array.isArray(list) || !list.length) return { error: "events: a list of one event or more" };
+  if (list.length > ARRAY_BACKFILL) return { error: `${ARRAY_BACKFILL} events at most at once` };
+  const out: Lost[] = [];
+  for (const [n, e] of list.entries()) {
+    const no = (why: string) => ({ error: `event ${n + 1}: ${why}` });
+    if (!isObj(e)) return no("not an event");
+    const fields = typeof e.kind === "string" && Object.hasOwn(KINDS, e.kind) ? KINDS[e.kind] : undefined;
+    if (!fields) return no("kind is one of " + Object.keys(KINDS).join(", "));
+    const at = whole(e.at);
+    if (at === undefined) return no("at: when it happened, in ms");
+    if (at > now) return no("at is after now");
+    for (const k of Object.keys(e)) if (k !== "kind" && k !== "at" && !fields.some(([f]) => f === k)) return no(`a ${e.kind} has no ${k}`);
+    const ev: Record<string, string | number> = { kind: e.kind as string };
+    for (const [f, what, needed] of fields) {
+      const v = e[f];
+      if (v === undefined) { if (needed) return no(`a ${e.kind} needs its ${f}`); continue; }
+      const ok = what === "whole" ? whole(v) !== undefined
+        : what === "loot" ? whole(v) !== undefined && (v as number) >= ARRAY_LOOT
+        : typeof v === "string" && word(v) === v && (what !== "skill" || SKILL.test(v));
+      if (!ok) {
+        return no(what === "loot" ? `value: a whole number, ${ARRAY_LOOT} or more` : what === "whole" ? `${f}: a whole number`
+                  : `${f}: one line of ${ARRAY_WORD} characters at most${what === "skill" ? ", a skill's name" : ""}`);
+      }
+      ev[f] = v as string | number;
+    }
+    out.push({ ...(ev as ArrayEvent), at });
+  }
+  return { events: out };
 }
 
 /** The read's answers: any page may read them (any origin), and they're never cached. */

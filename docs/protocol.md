@@ -107,6 +107,8 @@ A looker (`/watch/<channel>?look=1`) has no seat and isn't counted as watching: 
 
 `GET /channels` (both relays; anyone may read it): `{"channels": [{"channel", "live", "open", "static", "viewers", "title", "doing", "by", "game", "home", "where", "activity"}], "pending": [{"by", "n"}]}`, live ones first. Only channels handed out and with no watch code are on it, less the invites not taken up yet (below). `doing` is `{"boss", "kc"}` while live with a kill count in this stream's summary, else `null`. `by` is the channel whose invite it came from, or `null` (below, "Invites"). `game`: whether the Outside plugin is connected now (below, "The game"). `home`: where it's settled on outside.wiki's globe, `{"lon", "lat"}` or `{"near"}`, or `null` for beside its inviter (below, "Settling"). `where` (11/08/2026, following): the square of the map the Outside plugin last said the player was in, `{"x", "y"}`, only while the channel's live and only if it came within the last 240 seconds, else `null` (below, "The game"); with the plugin's "and my world" on it's `{"x", "y", "world"}`. `activity` (11/08/2026): what the player was doing two minutes before, `{"kind": "skilling", "skill"}`, `{"kind": "boss", "boss"}`, `{"kind": "raid", "raid"}`, `{"kind": "minigame", "minigame"}`, `{"kind": "fighting"}` or `{"kind": "idle"}`, the same way as `where` (live, within 240 seconds), else `null` (below, "What they're doing"). This list is the only place either is ever shown; the shooting stars the plugins find have a list of their own (below, "Shooting stars"). The outstations page on ghillie.wiki (`portals.html`) and the client's friends list read it. What's happening across them, as it happens: below, "The Array's events".
 
+How each relay keeps it (11/10/2026). The Python relay builds it from its channels, in its own memory, at each read. The Worker's Directory keeps each channel's row as the channel last told it (a channel tells it whenever its row changes: on air or off, the picture, viewers, title, what it's doing, the plugin, its home, `where`, `activity`), in its storage (`relay/src/listed.ts`), so a read after the Directory's slept (about 10 seconds after its last request) is answered without asking every channel handed out. What's stored of a row is everything above but `where` and `activity` (and when each came), which are only ever held in memory beside it: after the Directory sleeps they're gone until the channel tells it again, or until the first read after the wake asks the channel, which it does once a wake for each row that says live with the plugin connected (the only rows that can have either). Besides that, it asks a channel only when its row is missing (never told, or a new key), or older than 5 minutes for a row that says live, 30 for any other (`LISTING_CHECK_SECONDS` shortens the 5, and the 30 with it, for tests): in case a telling was lost, or a channel's sockets closed without it telling (a deploy). So a channel that went dark without telling shows live for 5 minutes and one read at most (at once, the next read, when the plugin was connected), and one that came on air without telling shows dark for 30 minutes at most. A channel taken back, or given a new key, has its row taken out at once. The readers see the same answer from either relay.
+
 `pending` (11/08/2026, for outside.wiki's globe: a key beside an inviter for each invite still waiting) counts the invites not taken up yet: one entry per inviter with any, `n` how many, sorted by `by`; `[]` for none. Readers from before it ignore it.
 - An invite is taken up the first time its key is used rightly, for anything: a socket (transmitting, the desk, the sound, the game, the aether), Dink, clips, invites or settling. A wrong key takes nothing up. Till then the channel isn't in `channels`, only counted under its inviter.
 - Never the invited channel's name: the inviter typed it, and the friend hasn't agreed to anything. So an outstation settled beside one (`home` `{"near"}`, below, "Settling") shows `home` `null` here till it's taken up, then `{"near"}` again (the keeper's list and the owner's own `GET /settle` and `POST /home` still say the outstation chosen).
@@ -300,8 +302,12 @@ still dangerous. Nothing changes on the relays: an instance's square is a square
   out) or a `paused` that's a string (held for the player's safety: the plugin's `Kit.held`), whatever `where` that
   message holds; and on Cloudflare when the keeper gives the channel a new key or takes it back. On the Python relay a
   `where` that `--delay` held back isn't taken once the plugin's gone.
-- It's held in memory only, with when it came, never in storage: a channel's object that sleeps (Cloudflare), or a
-  restart, forgets it, and the plugin says it again within 3 minutes.
+- It's held in memory only, with when it came, never in storage (the Worker's Directory stores each channel's row on
+  the open list, 11/10/2026, but never this: above, "The open outstations"): a channel's object that sleeps (Cloudflare), or a
+  restart, forgets it, and the plugin says it again within 3 minutes (the same square again every 3 minutes, a new one
+  a minute after the last at most, and at once on a new connection). On Cloudflare a channel doesn't sleep while it's
+  live (the transmitter's frames, and the desk's upload line each second, keep it awake), which is the only time it's
+  shown; one that slept while dark shows `where` `null` from going live till the plugin's next, 3 minutes at worst.
 - It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live and on that list (no
   watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
   Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
@@ -348,8 +354,8 @@ channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activi
 - One every 50 seconds at most; one sooner is ignored (one ignored for its shape doesn't count).
 - Dropped when the game socket closes, when the plugin sends `"off": true` or a `paused` that's a string, and on
   Cloudflare when the keeper gives the channel a new key or takes it back.
-- Held in memory only, with when it came. Shown only on `GET /channels` (above), while the channel's live and on that
-  list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers,
+- Held in memory only, with when it came, never in storage (as `where`: the Directory's stored rows leave it out). Shown
+  only on `GET /channels` (above), while the channel's live and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers,
   lookers or desks, `GET /game`, the Array's events, the aether or the keeper's list.
 
 **Shooting stars** (11/08/2026): with the plugin's "Shooting stars I find" on, a crashed star the player saw goes as
@@ -543,9 +549,40 @@ Worker's object) starts again, and a cursor from before still works. Treat it as
 **The read:** anyone may read it (any origin: `Access-Control-Allow-Origin: *`), and it's never cached
 (`Cache-Control: no-cache`). 405 for anything but `GET`. The Python relay's public side (the Funnel's port) allows it.
 
-**What's kept:** the events, and each outstation's last minute of them, in memory only: it's short-lived. On Cloudflare in
-the Directory's memory, so when Cloudflare evicts that object (after a while unused, or a deploy) the feed starts empty
-again; on the Python relay while it runs. Nothing of it is written to storage.
+**What's kept:** the last 500 events, the newest `id` given, and when each outstation's events of the last minute came
+(for the limit). On Cloudflare in the Directory's storage (since 11/10/2026: the key `array`, one value, written with
+each report that adds an event and read back once each time the object wakes), so the feed, its ids and the limit
+outlive the Directory's sleeps and deploys. (Before, it was kept in the Directory's memory only. That object holds no
+sockets, so Cloudflare puts it to sleep about 10 seconds after its last request, and an event showed for those seconds
+and was gone: seen live on 11/10/2026, a Giant Mole kill and a pet, with `GET /array/events` empty minutes later.) On
+the Python relay in memory, while it runs: a restart starts it empty, and ids still go up.
+
+**The keeper's backfill** (11/10/2026, Jace: his pet, lost to the Directory's sleeps that morning, put back on the
+record): `POST /admin/array` with the keeper's token (`Authorization: Bearer <ADMIN_TOKEN>` on the Worker,
+`--admin-token` on the Python relay; 403 without it, 405 for anything but `POST`), for a real event the feed lost:
+
+    {"channel": "<channel>", "events": [{"kind": "pet", "name": "Baby mole", "at": 1794286233000}, ...]}
+
+- Each event exactly as a report would have made it (the table above): one of the six kinds, only its own fields, each
+  as the relay would have written it (a name one line of 60 characters at most, as it stands; a number whole, 0 to
+  2⁵³ − 1; a kill's `boss` and `kc`, a level's `skill` and `level`, and a drop's `value` of 1,000,000 or more, needed),
+  and `at`, when it happened (ms), not after now. 50 at most at once. Anything else is 400 `{"error"}`, naming the
+  event and why, and nothing's added.
+- Only for a channel handed out (404 otherwise) and on the open outstations' list, no watch code and not an invite
+  waiting (409 otherwise): only such a channel's reports ever make events.
+- Each goes in its place by `at`, after any event with the same time or earlier, with an `id` between its neighbours'
+  (its own `at` when that fits), so the feed stays in `id` order and every cursor still works. One with no room there
+  (its neighbours' ids one apart) gets a new `id` at the end, as an event that came now would, and keeps its own `at`:
+  so the feed's `at`s aren't always in order, its `id`s always are. A page already past its place doesn't get it (it's
+  history, not news); a read without `since`, or from a cursor before it, does.
+- Not counted against the outstation's 10 a minute, and it doesn't use any of them. When the feed's full (500), none
+  older than its oldest (it would go at once): 400.
+- 200 `{"events": [...]}`: each as kept, with its `id` and `channel`. It's kept as the rest are (above).
+
+**For tests:** `POST /test/forget` (204) puts the Worker's Directory to sleep as Cloudflare does, everything in its
+memory gone, so a test can see what its storage brings back. Only with the Worker's `TEST_FORGET` var at `"1"` (never on
+Cloudflare: without it the route is 404) and relay.py's `--test-forget` (where it forgets nothing: the process's memory
+is the keeping). `tests/protocol_test.py`'s `Kept`, against either.
 
 ## Shooting stars (11/08/2026)
 
@@ -596,9 +633,13 @@ of), `by` (its finder's channel, or `null`) and `reports`. Anyone may read
 it (any origin: `Access-Control-Allow-Origin: *`), it's never cached, and it's 405 for anything but `GET`. The Python
 relay's public side (the Funnel's port) allows it.
 
-**What's kept:** the stars, and for each the channels that told of it (for `reports`), in memory only. On Cloudflare in
-the Directory's memory, so an eviction (after a while unused, or a
-deploy) starts the list empty again; on the Python relay while it runs. Nothing of it is written to storage.
+**What's kept:** the stars, and for each the channels that told of it (for `reports`, and so one telling again isn't
+counted twice), the gone ones for their 10 minutes, and when each outstation told of one in the last hour (for the
+30). On Cloudflare in the Directory's storage (since 11/10/2026: the key `stars`, one value, written when a report
+changes it or a star passes its two hours, and read back once each time the object wakes; the Cron Trigger's look every
+5 minutes takes a star past its two hours out of storage, though nobody's read or told of one since). Before, it was in
+the Directory's memory only, and that object sleeps about 10 seconds after its last request (above, "The Array's
+events"). On the Python relay in memory, while it runs. `POST /test/forget` (above) shows it.
 
 ## The almanac (11/09/2026)
 

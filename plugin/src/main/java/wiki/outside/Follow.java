@@ -32,13 +32,21 @@ class Follow
 	 *  shed both land in this box, and all of it goes as the one square ZANARIS, never more exactly */
 	static final int ZX0 = 2368, ZX1 = 2496, ZY0 = 4352, ZY1 = 4480;
 	static final int[] ZANARIS = {2368, 4416};
+	/** Prifddinas (11/10/2026, Jace: "place prifddinas where the world map shows it"): the city's tiles lie off the main
+	 *  map (x 3136-3391, y 5952-6207), but the world map draws it inside its gates in Tirannwn. The gates (Shortest Path's
+	 *  transports: north 3264,6135 to 2240,3386; south 3264,6024 to 2240,3269; west 3208,6080 to 2181,3328; east
+	 *  3319,6080 to 2298,3328) put the city 1024 tiles west and 2752 south of its tiles, give or take three, so a tile in
+	 *  the city goes as the square it lies over there */
+	static final int PX0 = 3136, PX1 = 3392, PY0 = 5952, PY1 = 6208, PDX = 1024, PDY = 2752;
+	/** the city's middle there, for what lies in Prifddinas but outside the city's own tiles */
+	static final int[] PRIFDDINAS = {2240, 3328};
 
 	/**
 	 * Instances (11/09/2026, Jace: "allow instances, everyone knows where those instances get opened"): an instance goes
 	 * as where its template lies on the map (the plugin reads it with WorldPoint.fromLocalInstance, as RuneLite's Discord
 	 * plugin does). Most lie on the main map and need nothing more. These lie off it, so they go as the square of their
 	 * entrance, by the template's region (RuneLite's DiscordGameEventType's region ids). Any other place off the map
-	 * (the Gauntlet's and Zalcano's Prifddinas, the Leviathan, the Whisperer, Duke Sucellus, the Phantom Muspah, the
+	 * (the Leviathan, the Whisperer, Duke Sucellus, the Phantom Muspah, the
 	 * Abyssal Sire, the Corporeal Beast, the Fractured Archive...) goes as nothing, as before.
 	 */
 	static final Map<Integer, int[]> ENTRANCES;
@@ -57,6 +65,9 @@ class Follow
 		put(e, new int[]{3392, 2752}, 14160, 14162, 14164, 14672, 14674, 14676, 15184, 15186, 15188, 15696, 15698, 15700);
 		// (the Grotesque Guardians: the Slayer Tower's roof)
 		put(e, new int[]{3392, 3520}, 6727);
+		// (Prifddinas's own, 11/10/2026: the Gauntlet's lobby and the Gauntlet, Corrupted too, and Zalcano's mine, in the city's
+		// middle where the world map draws it)
+		put(e, square(PRIFDDINAS[0], PRIFDDINAS[1]), 12127, 7512, 7768, 12126);
 		// (the God Wars Dungeon, each general's room: its way in, in Trollheim)
 		put(e, new int[]{2880, 3776}, 11346, 11347, 11601, 11602, 11603);
 		ENTRANCES = Collections.unmodifiableMap(e);
@@ -79,6 +90,11 @@ class Follow
 	/** Where a point goes: its square (square()), or off the map, its entrance's (ENTRANCES); null for neither. */
 	static int[] place(int x, int y)
 	{
+		// (Prifddinas: where the world map draws it, in Tirannwn)
+		if (x >= PX0 && x < PX1 && y >= PY0 && y < PY1)
+		{
+			return square(x - PDX, y - PDY);
+		}
 		int[] sq = square(x, y);
 		if (sq != null)
 		{
@@ -107,6 +123,11 @@ class Follow
 	JsonObject tick(long now, int x, int y, int world, boolean safe)
 	{
 		int[] sq = safe ? place(x, y) : null;
+		// (safe but nowhere on the map, as in a player-owned house: the clock pauses, 11/10/2026)
+		if (safe && sq == null)
+		{
+			return behind.paused(now);
+		}
 		JsonObject w = null;
 		if (sq != null)
 		{

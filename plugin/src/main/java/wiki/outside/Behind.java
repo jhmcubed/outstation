@@ -53,6 +53,29 @@ class Behind
 		{
 			return clear();
 		}
+		return due(now);
+	}
+
+	/**
+	 * A tick somewhere safe that has nothing to say and mustn't count against what's due (11/10/2026, Jace: "make the
+	 * house only pause the clock"): a player-owned house, or anywhere else off the main map. Nothing's looked at, so the
+	 * two minutes before it stand and the two after it start from where it left off, rather than starting again; what's
+	 * already due still goes.
+	 */
+	JsonObject paused(long now)
+	{
+		return due(now, false);
+	}
+
+	/** What's due now from what's been looked at, or null. Paused, the same value isn't said again: the last place on
+	 *  the map stands only as long as the relay keeps it fresh. */
+	private JsonObject due(long now)
+	{
+		return due(now, true);
+	}
+
+	private JsonObject due(long now, boolean again)
+	{
 		if (sentAt >= 0 && now - sentAt < EVERY_MS)
 		{
 			return null;
@@ -79,7 +102,7 @@ class Behind
 			}
 		}
 		JsonElement at = (JsonElement) then[1];
-		if (sent != null && sent.equals(at) && now - sentAt < AGAIN_MS)
+		if (sent != null && sent.equals(at) && (!again || now - sentAt < AGAIN_MS))
 		{
 			return null;
 		}
