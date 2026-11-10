@@ -407,6 +407,25 @@ channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activi
   lookers, `GET /game`, the Array's events, the aether or the keeper's list; the channel's own desks get it, and `where`, only
   as `{"mine"}` (below, "Your year").
 
+**The exact path** (11/10/2026, Jace: "your year" records the exact tile, privately; `docs/record.md`, "The exact
+path"): with the plugin's "Record my exact path for my year" on (off to begin with, its own warning), the tile the
+player's on goes as `{"game": {"here": {"x", "y", "plane", "world"}}}`, at once (not two minutes behind), when it
+changes, at most one every 4 s while they move and once when they stop; placed as following places it (at sea, the
+boat's tile; underground, the tile above; an instance where its template lies or at its entrance; Prifddinas where the
+world map draws it; Zanaris as `{"x": 2368, "y": 4416}`); `{"here": null}` somewhere dangerous (following's rules), off
+the map, and when it's switched off. Both relays (`gameHere`, channel.ts's `takeHere`; relay-py's `game_here`,
+`Channel.take_here`):
+- take it only on the game socket, exactly `{"x", "y", "plane", "world"}`: `x` a whole number from 960 up to (not
+  including) 4096 and `y` from 2048 up to 4224 (a tile of the main map or its seas), or exactly Zanaris's; `plane` 0 to
+  3 (`HERE_PLANES`); `world` 1 to 999 (`WORLD_RANGE`). Anything else is ignored, and the rest of the message taken as ever.
+- take one every 2 s at most (`HERE_EVERY_MS` / `HERE_EVERY_S`; the rest ignored); `null` whenever it comes;
+- pass each one taken at once to the channel's desks only, as `{"mine": {"here", "at"}}` (below, "Your year"), and
+  `{"mine": {"here": null, "at"}}` when it's cleared, the plugin logs out (`"off": true`) or holds for the player's
+  safety (`paused`), the game socket closes, or the keeper gives a new key or takes the channel back (only if a tile was
+  passed on since);
+- never keep it, in memory or in storage: never on GET /channels, GET /game, a viewer's, looker's, transmitter's or the
+  game socket's lines, the Array or the aether; a desk that connects later gets none of it.
+
 **Shooting stars** (11/08/2026): with the plugin's "Shooting stars I find" on, a crashed star the player saw goes as
 `{"game": {"star": {...}}}`, for the relay's list of stars (below, "Shooting stars"). Never one of the game's fields: the
 list of stars shows it, with the outstation that found it first.
@@ -469,9 +488,10 @@ as it was):
     {"mine": {"where": {"x", "y"[, "world"]} | null, "at": <ms>}}      each one the relay takes (one every 50 s), null when dropped
     {"mine": {"activity": <label> | null, "at": <ms>}}                  the same
     {"mine": {"event": {"kind", …}, "at": <ms>}}                         each Array event of a field report (array.ts's arrayEvents)
+    {"mine": {"here": {"x", "y", "plane", "world"} | null, "at": <ms>}}   the exact path (below), each one taken (one every 2 s), never kept
 
 `at` is the relay's time of taking it, the same for every desk of the channel. A desk that connects gets the `where` and
-`activity` held now, with their own `at`. Live and dark are the status line's `live`, as ever.
+`activity` held now, with their own `at` (never a `here`: none is held). Live and dark are the status line's `live`, as ever.
 
 **The record** (ciphertext only: a body must start with the format byte, 1, and be at least 30 bytes; a plaintext one is
 refused):

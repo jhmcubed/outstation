@@ -15,17 +15,21 @@ has the routes in its own words; SAFETY.md says what's kept and by whom.
 
 ## What the record holds
 
-Exactly what the relay already sees from the Outside plugin, nothing finer:
+What the relay already sees from the Outside plugin, and, only with the plugin's "Record my exact path for my year" on
+(11/10/2026, Jace: the record keeps the exact tile, privately), the exact path (below, "The exact path"):
 
 - following's `where`: the middle of the 128-tile square the player was in two minutes before, and the world with "and
   my world" on (game.ts, gameWhere), at most one every 50 s; or null when it's cleared;
 - `activity`: one coarse label (game.ts, gameActivity), the same way;
 - the player's own Array events: a kill with its kill count, a level, a pet, a drop worth 1,000,000 or more, a collection
   log slot, a clue (array.ts, arrayEvents), from the field reports their outstation sends (and Dink's posts);
-- when they were live (transmitting) or dark.
+- when they were live (transmitting) or dark;
+- with "Record my exact path for my year" on: `here`, the exact tile they're on, at once, at most one every few seconds
+  while they move and once when they stop, which the relay passes to their own desk and never keeps.
 
-Nothing from viewers, the chat, the picture or the sound; no tile finer than the square; nothing from the Wilderness or
-anywhere else the plugin holds back (the plugin never sends it, so the relay never has it).
+Nothing from viewers, the chat, the picture or the sound; no tile finer than the square unless the player switched the
+exact path on; nothing from the Wilderness or anywhere else the plugin holds back (the plugin never sends it, so the
+relay never has it).
 
 The record is made **only while the app is open**: it's the app that writes it, from what the relay tells it. The relay
 never keeps a plain copy for the app to collect later.
@@ -45,6 +49,8 @@ dark). Each is one text line:
     {"mine": {"activity": {"kind": "skilling", "skill": "Mining"}, "at": 1794268812345}}
     {"mine": {"activity": null, "at": 1794067512345}}
     {"mine": {"event": {"kind": "kill", "boss": "Vorkath", "kc": 412}, "at": 1794067301000}}
+    {"mine": {"here": {"x": 3222, "y": 3218, "plane": 0, "world": 302}, "at": 1794268814012}}
+    {"mine": {"here": null, "at": 1794268990012}}
 
 - `at` is when the relay took it (ms since 1970, the relay's clock): the same number to every desk of the channel, so
   two PCs open at once record identical lines (merging drops the copy).
@@ -53,6 +59,9 @@ dark). Each is one text line:
 - `event`: one line per event of a field report (array.ts's arrayEvents: its kinds and fields exactly), from the
   transmit socket's `{"report"}` or a Dink post, live or dark. (The Array's public feed still takes them only while
   live and listed; this is the owner's own.)
+- `here` (11/10/2026, the exact path): passed on at once each time the relay takes one (game.ts's HERE_EVERY_MS, one
+  every 2 s at most), and `null` when the plugin clears it, logs out, holds for the player's safety or disconnects (only
+  if a tile was passed on). The relay never keeps it, not even in memory: a desk that connects later gets none.
 - A desk that connects gets the `where` and the `activity` held now, if any, each with the `at` it came with.
 - Sent whatever the channel's state: live or dark, with a watch code or not, an invite or not. Never to a viewer
   (watch), a looker, the transmitter, the sound, the game socket, GET /game or the aether. GET /channels is unchanged.
@@ -76,16 +85,17 @@ the relay" is switched on, which makes the record key. Each line is one JSON obj
 | `activity` | an activity label (gameActivity's), or null                   | when it changes; `t` is the relay's `at`          |
 | `event`    | `{"kind", …}` (arrayEvents')                                  | each one; `t` is the relay's `at`                 |
 | `live`     | true or false                                                 | when the relay's status says it changed; `t` local |
+| `here`     | `{"x", "y", "plane", "world"}` (gameHere's), or null          | as it comes, at most one a 3 s; `t` the relay's `at` |
 
-**The heartbeat:** while the desk is up and a `where` or an `activity` is held (not null), a line restating whichever
-are held, `{"t", "where", "activity"}`, is written whenever a minute has passed with no `where`/`activity` line: at
+**The heartbeat:** while the desk is up and a `where`, an `activity` or a `here` is held (not null), a line restating
+whichever are held, `{"t", "where", "activity", "here"}`, is written whenever a minute has passed with no `where`/`activity` line: at
 most one a minute, so a long stay in one place counts as long. `t` is this PC's clock.
 
-**Reading it:** a `where` (or `activity`) holds from its line until the next line that states it, but never more than
+**Reading it:** a `where` (or `activity`, or `here`) holds from its line until the next line that states it, but never more than
 **3 minutes** past its last statement (`HOLD_MS` = 180,000): a gap longer than that (the app closed, the PC asleep, the
 relay out of reach) is a gap, not a stay. A field missing from a line says nothing about it. Places and labels are what
 they were about **two minutes before `t`** (the plugin sends them two minutes behind); a page may shift them back by
-120 s, or not.
+120 s, or not. A `here` is the tile at `t` itself, never behind.
 
 Example:
 
@@ -96,6 +106,33 @@ Example:
     {"t": 1794067301000, "event": {"kind": "level", "skill": "Mining", "level": 72}}
 
 The local files are **plain JSON, not encrypted**: they're the player's own, on their own PC, readable without the key.
+
+## The exact path
+
+With the Outside plugin's "Record my exact path for my year" on (off to begin with, behind its own warning; the plugin's
+`Track`), the plugin sends `{"game": {"here": {"x", "y", "plane", "world"}}}`:
+
+- the tile the player's on, **at once** (it's for the player alone): when it changes, at most one every 4 s while they
+  move, and the tile they stop on 3 s after the last; nothing while they stand still;
+- placed as following places it (`Follow.tile`): on a boat, where the boat is at sea; underground, the tile above; an
+  instance where its template lies, or one off the map at its entrance's square's middle; Prifddinas where the world map
+  draws it; Zanaris as its one place (2368, 4416); anywhere else off the map, `null`;
+- never from somewhere dangerous (following's rules: the Wilderness whatever "In the Wilderness too" says, a PvP area,
+  a PvP, Deadman or other risky world; Ferox Enclave and the PvP minigames are safe): going there sends `null` at once;
+  logging out (`"off": true`), switching it off and the plugin going clear it too.
+
+The relays (game.ts's `gameHere`, channel.ts's `takeHere`; relay.py's `game_here`, `Channel.take_here`) take it only from
+the game socket, exactly `{"x", "y", "plane", "world"}`: `x` a whole number from 960 up to 4096 and `y` from 2048 up to
+4224 (the main map and its seas, `WHERE_X` and `WHERE_Y`, as tiles), or exactly Zanaris's; `plane` 0 to 3; `world`
+1 to 999. One every 2 s at most (`HERE_EVERY_MS`), the rest ignored. Each one taken goes at once to the channel's desks
+as `{"mine": {"here", "at"}}`, and nowhere else: never kept (not in memory, not in storage), never on GET /channels,
+GET /game, a viewer's, a looker's or the transmitter's socket, the Array or the aether.
+
+The app writes each into the local record as it comes, at most one line every 3 s (`record::HERE_MS`; one that comes
+sooner waits, the latest of them with its own `t`, and is written once the 3 s are up, so the tile they stopped on is
+kept), and `null` at once. Into the relay's copy it goes as every other line does, sealed with the record key. The page
+draws the tiles: a path through them in order, a gap at a `null` or past `HOLD_MS`. The public summary never takes a
+tile: its places are squares (below).
 
 ## Encryption
 
@@ -118,8 +155,7 @@ bytes, over the UTF-8 of `s`; `b64u` is base64url without padding.
 
 `day` is `YYYY-MM-DD` (UTC), `part` a decimal number from 0. The tokens and ids are one-way: none of them gives back k.
 
-**A chunk** is one device's lines of one UTC day (split into parts of at most 4,000 lines, which never happens in
-practice). Its plaintext, before compressing, is UTF-8 newline JSON: a header line, then the day's lines exactly as the
+**A chunk** is one device's lines of one UTC day (split into parts of at most 4,000 lines, which happens only on a long day with the exact path on). Its plaintext, before compressing, is UTF-8 newline JSON: a header line, then the day's lines exactly as the
 local file has them, each ending in `\n`:
 
     {"record": 1, "device": "0123456789abcdef", "day": "2026-11-10", "part": 0}
@@ -277,7 +313,7 @@ files on this PC" ticked, the month files and sent.json go too (the device id st
 ## Sizes and costs
 
 Measured on a made-up day of two hours' play (a heartbeat a minute, a move every dozen minutes, a few events):
-149 lines, 15.9 KB of JSON, **850 bytes** deflated (+29 sealed). So:
+149 lines, 15.9 KB of JSON, **850 bytes** deflated (+29 sealed). So, without the exact path:
 
 - per player per year at two hours a day: about **330 KB** on the relay (~1 MB at six hours a day), and as much again
   for each further PC played on the same days; 4 to 15 MB of plain JSON on each PC;
@@ -295,6 +331,16 @@ $0.15 a million past 1 million; R2 for comparison $0.015 a GB-month, writes $4.5
 | 1,000   | ~350 MB       | ~180,000                   | nothing past the plan            |
 | 10,000  | ~3.5 GB       | ~1,800,000                 | about $0.12 (requests)           |
 | 100,000 | ~35 GB        | ~18,000,000                | about $6 storage + $2.60 requests |
+
+**With the exact path** (re-measured 11/10/2026 the same way, raw DEFLATE: a `here` every 4 s while moving, one on
+each stop, the heartbeat carrying it): a two-hour day with about 26 minutes of walking between long stays, 474 lines,
+47.5 KB of JSON, **3.5 KB** deflated (against 0.65 KB for the same day without it); a travel-heavy day, about half of it
+moving, 801 lines, 70.6 KB, **5.7 KB**. So, for a player with it on, at two hours a day: about **1.3 to 2.1 MB** a year
+on the relay (4 to 6 MB at six hours a day) and 17 to 26 MB of plain JSON on each PC. If every player switched it on,
+1,000 players would store about 1.3 to 2 GB after a year (nothing past the plan), 10,000 about 13 to 21 GB (about $2 to
+$3 a month past the 5 GB included), 100,000 about 130 to 210 GB (about $25 to $41 a month). It's off to begin with. The
+uploads (requests, rows) barely change: a day is still one part of at most 4,000 lines unless it holds more than about
+four hours of moving (then two or three), and a year of it stays far under a channel's `RECORD_BYTES` (32 MB).
 
 On the free plan the same fits under its daily limits (100,000 requests and 100,000 rows written a day, 5 GB in all)
 up to a few thousand players.
