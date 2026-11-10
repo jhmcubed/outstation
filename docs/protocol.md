@@ -80,7 +80,7 @@ The first transmitter sets the channel's watch code. Viewers whose code no longe
 
 ## The desk
 
-**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
+**It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below); and, since 11/10/2026, the player's own `{"mine"}` lines, which no other socket ever gets (below, "Your year"). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
 **It sends:**
 - `{"say": text}`: as the host (`"host": true`), under its `name`.
@@ -431,6 +431,53 @@ without waking the channel. At most 20 a channel and 30 days each, the oldest go
 or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
+
+## Your year (11/10/2026)
+
+A year of the player's own travels and activity, recorded by their app, kept on the relay **encrypted with a key only
+their own computers hold**, and a public summary they may choose to post. The design, with the exact format the page
+must match: `docs/record.md`. Both relays: the Worker in a Durable Object of its own per channel (`Records`,
+relay/src/record.ts; binding `RECORD`, migration `v3`), relay-py in a folder (`--records`, ~/Documents/ghillie
+portal/records; "" keeps none).
+
+**The owner's own feed, to the desk only.** The relay passes the channel's own following square, activity and Array
+events to its desk sockets (the app's chat window: only the station key opens one), live or dark, with or without a
+watch code, and to nothing else (no viewer, looker, transmitter, game socket, GET /game or the aether; GET /channels is
+as it was):
+
+    {"mine": {"where": {"x", "y"[, "world"]} | null, "at": <ms>}}      each one the relay takes (one every 50 s), null when dropped
+    {"mine": {"activity": <label> | null, "at": <ms>}}                  the same
+    {"mine": {"event": {"kind", …}, "at": <ms>}}                         each Array event of a field report (array.ts's arrayEvents)
+
+`at` is the relay's time of taking it, the same for every desk of the channel. A desk that connects gets the `where` and
+`activity` held now, with their own `at`. Live and dark are the status line's `live`, as ever.
+
+**The record** (ciphertext only: a body must start with the format byte, 1, and be at least 30 bytes; a plaintext one is
+refused):
+
+    POST   /record/<channel>/token?key=<key>   {"read": <token>, "write": <token>}   204; 400 not two 43-character
+                                               base64url tokens; 403 wrong key; 409 past 4 pairs. Only their SHA-256 kept.
+    PUT    /record/<channel>/<id>?key=<key>    a sealed chunk (application/octet-stream), <id> 22 base64url characters
+                                               201 {"id", "at", "size"}; 413 over 256 KB; 415 not sealed; 429 over 240 an
+                                               hour; 507 past 2,000 chunks or 32 MB
+    DELETE /record/<channel>/<id>?key=<key>    204; 404 no such chunk
+    DELETE /record/<channel>?key=<key>         204: every chunk, every token pair and the public summary
+    GET    /record/<channel>                   Authorization: Bearer <read token>
+                                               {"chunks": [{"id", "at", "size"}, …] in id order, "bytes"}; 403 otherwise
+    GET    /record/<channel>?data=1[&after=<id>]   the same, each chunk with "data" (base64), up to 4 MB of data, and
+                                               "next" (the id to go after, or null at the end)
+
+A chunk not uploaded again in 400 days goes. Any origin may read (CORS `*`, `OPTIONS` answered). The keeper taking a
+channel back (DELETE /admin/channels/<channel>, the Worker) deletes its record and summary too; a new key from the
+keeper leaves them as they are.
+
+**The public summary**, a fixed shape checked part by part (`docs/record.md`, "The public summary"), stored as checked
+(its parts in their order, numbers whole), at most 512 KB:
+
+    PUT    /year/<channel>?key=<key>, or Authorization: Bearer <write token>   200 {"year", "at"}; 400 {"error"} naming the
+                                               part; 403; 413
+    GET    /year/<channel>                     anyone: 200 {"year", "at"}; 404 none posted
+    DELETE /year/<channel>  (as PUT)           204
 
 ## Messages between outstations (11/06/2026)
 

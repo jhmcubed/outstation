@@ -29,6 +29,7 @@ The window's own words, where this page quotes them: your **station key** is the
 | let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. Nothing they send can press a key, click, open a page, change a setting or reach RuneLite. The ring, the ✼ and the chat over the game are drawn in see-through windows of the outstation's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off ("pings: the site" keeps the ring off your screen, "✼ on my screen" and "chat over the game" the others), and "pings: off" and "observers may chat" switch pings and the chat off altogether. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. If you say yes on its first screen, it puts one shortcut in your own Start menu (settings ▸ more takes it out). |
 | need anything else installed? | **No.** Everything it needs comes with Windows 10 and 11: the safety check below fails a release that would need anything more. |
+| keep a record of where I play? | **Only on your PC, and only if you leave it on** ("record my year on this PC", settings ▸ your year): what the relay already hears from the Outside plugin (the 128-tile square you were in two minutes before, what you were doing) and your field reports' kills, levels, pets, big drops, log slots and clues, while the outstation's open. A copy goes to the relay only if you switch that on, and then **encrypted on your PC with a key only your PCs hold: the relay can't read it, and neither can ⊂λ,ｍ⊙** ([What the relay keeps](#what-the-relay-keeps), "Your year"). |
 | update itself, or download anything? | **No.** Once on opening it asks GitHub whether there's a newer version, and says so if there is. Getting it is up to you. Settings ▸ more turns the asking off. |
 
 ## What's in the picture
@@ -56,6 +57,8 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - "game + desktop" adds everything else your PC plays: music, videos, a Discord call's voices, Windows' own sounds. It goes as a second track, which viewers can turn down.
   - Never a microphone: the outstation only hears what your PC plays.
   - The sound carries on through static (Pause). It stops when the picture stops for anything else.
+
+**Your year, to the relay,** only with "keep an encrypted copy on the relay" on (off to begin with; 11/10/2026): each day of your record, hourly, when you go dark and when you press "open my year" or "send it now", **encrypted on your PC** before it goes, under a name that says nothing (not the day, not which PC). Once, the two tokens made from your record key that let a page read it and post your public year (never the key). Below, [What the relay keeps](#what-the-relay-keeps), "Your year".
 
 **To the relay, whenever the outstation's open and attached,** live or not:
 - **The chat window's side:**
@@ -179,6 +182,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
   - `portal.log`, the station log: what it did (started again past 2 MB). "copy the station log" (settings ▸ more) copies its last lines with the key, codes and webhook addresses taken out.
   - `crash.txt` after a crash (and `crash.txt.seen` once it's been mentioned), `portal.log.old` (the log before it started again), and `outstation.ico`, its icon.
   - `dink-before.json`, only when you press "read my Dink settings": Dink's own export as it was, so "undo" can put it back. **Like the settings, it holds your Discord webhook addresses:** keep it to yourself.
+- `%APPDATA%\outstation\record` (your year, 11/10/2026; with "record my year on this PC" on, as it is to begin with): a file a month of plain JSON lines, each a time and one of: the square the relay says you were in, what you were doing, a kill, level, pet, big drop, log slot or clue, or whether you went live or dark; `device`, a random id for this PC; `sent.json`, what's been sent. Not encrypted: it's yours, on your PC. Your record key is in `settings.json`, so keep that to yourself as ever.
 - `Videos\outstation` (or the folder you pick): your clips. A clip's copy for your Outside page passes through a file in your temporary folder, deleted once read.
 - The Start menu: one shortcut, only if you say yes.
 - The clipboard: only when you copy (Ctrl+C, or a copy button), and Dink's import when you press "read my Dink settings" ("undo" puts your old Dink settings back on it).
@@ -250,6 +254,17 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 
 **The Array's events** (11/08/2026): the feed above, the last 500 from every outstation together (each one's channel, what it was and when), and when each outstation's last few came (10 a minute at most from one). On Cloudflare in the relay's storage there (since 11/10/2026, Jace: "make the feed keep its events"; before, in memory, and that part of the relay sleeps seconds after it's last used, so an event was gone almost as soon as it came), still only the last 500: each new one pushes the oldest out. On a relay of your own, in memory, gone when it stops. The relay's keeper (Jace, with the relay's admin token) can put back a real event the feed lost (11/10/2026: his own pet, lost that morning when that part of the relay slept), with when it happened, and nothing else: only the kinds and fields above, only for an outstation on the open list (never one with a watch code or an invite not taken up), never after now.
 
+**Your year** (only with "keep an encrypted copy on the relay" on; 11/10/2026; `docs/record.md`):
+- each day of your record from each of your PCs, **encrypted on your PC** with AES-256-GCM under a key made from your record key, which is made on your PC, kept in its settings, and never sent: not to the relay, not to ⊂λ,ｍ⊙, not to anyone. Without it nobody can read your year, Jace and Cloudflare included.
+- the SHA-256 of the two tokens your outstation makes from the key: one lets your page read the encrypted copy (it proves it holds the key without sending it), the other lets your page post or take down your public year.
+- what it can see: how many days there are, how big each is, and when each was sent, so roughly which days you played and how much; never where, what, or which day each one is.
+- At most 2,000 days, each kept 400 days after it was last sent. **delete my record…** (settings ▸ your year) takes all of it at once, tokens and public year included; so does Jace taking your channel back. A new station key from Jace leaves it as it is.
+- If you lose the record key on every PC, the copy can never be read again, by you or anyone; each PC's own record stays on it, and a new key starts the copy again from them.
+
+**Your public year**, only if you post one (from your year's page): the parts you chose (where you spent your time, paths, what you did most, your hours, places, moments, a replay, with or without their times), kept as they are, **unencrypted, because you chose to make them public**, and shown on your Outside page to anyone who opens it, even with a watch code. Take it down whenever you like (your year's page, or delete my record…). It holds no words but your field reports' own (a boss's, a pet's or an item's name).
+
+When "open my year" opens your year in your browser, the record key goes in the address after `#`, which a browser never sends to any server (docs/record.md asks the page to take it out of the address bar once it's read it). It does stay in that browser's history.
+
 **The aether** (everyone's room; 11/07/2026): its last 100 lines (each one's name, words and when, and for a visitor the random number their browser made, which a ban holds on to), and who's banned from it. A visitor's address isn't written down.
 
 **Asking for an outstation:**
@@ -260,7 +275,7 @@ A request nobody answers goes after 14 days, and an answer nobody collects goes 
 
 **The almanac** (outside.wiki's globe; 11/09/2026): the newest of Jagex's news posts, the world list (each world's players, region, activity and flags) and the day's prices of the items most traded, as last fetched (below, "What the relay fetches"), and when each was. Nothing in it is about you or any visitor.
 
-All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops, except clips, which it keeps in a folder.
+All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops, except clips and your year's encrypted copy and public year, which it keeps in folders.
 
 ## What the relay fetches
 

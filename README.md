@@ -68,6 +68,7 @@ A real transmission, as observers see it on Outside (sburb at the Giant Mole, 11
 - **Transmitting by itself:** settings ▸ more ▸ **transmit by itself whenever RuneLite opens**, and with it **go dark when RuneLite closes** (after 30 s, so an update's restart doesn't end it). If you press go dark while RuneLite's open, the outstation stays dark until RuneLite next opens.
 - **Dink and your Discord, as Jace has them:** dink ▸, "do you use Dink with Discord too?", **yes, i do**. Type `::dinkexport all` in RuneLite's chat, press **read my Dink settings**, type `::dinkimport`, then delete your Discord address from Dink's webhook list (the outstation names the boxes). The outstation then hears everything Dink can tell it, and your Discord keeps getting just what it got before, passed on by the outstation while it's open. **undo** puts your old Dink settings back on the clipboard.
 - **The aether:** the tab beside "transmission chat": one room for every outstation and everyone on Outside, the Array's own chat. Your lines go under your channel's name, lit as an outstation's. A line can be several rows (Shift+Enter) and keeps its shape, so ASCII art works. Nothing there reaches your transmission's chat, or comes from it.
+- **Your year** (settings ▸ your year, 11/10/2026): the outstation records your own play while it's open, from what the Outside plugin already tells the relay (following's square, what you're doing) and your field reports' kills, levels, pets, big drops, log slots and clues, in `%APPDATA%\outstation\record` ("record my year on this PC", on to begin with). Switch on "keep an encrypted copy on the relay" and each day goes up encrypted with your **record key**, which only your PCs hold: the relay, and ⊂λ,ｍ⊙, can't read it. **copy my record key** and **paste a record key** join your PCs' records into one year. **open my year ▸** opens it on your Outside page: where you spent your time, the paths between, what you did most, and a replay; from there you can post a summary of it on your page, choosing each part, and take it down whenever you like. **delete my record…** takes the relay's copy away (and this PC's, if you tick it). Lose the key on every PC and the relay's copy can never be read again; each PC's own record stays. `docs/record.md` has the design.
 - **Your friends list** (**friends ▸**), as the game's own: **add friend**, type their name, and see whether their outstation is transmitting (lime), dark (pink) or not there (grey, or friends-only). Click a name for their Outside page; right-click to delete, or "message" to write to their outstation. Hover over a transmitting one for a small live view of it. The chat says "Moss Fern's outstation is transmitting." when one starts, and so does a Windows notification if the outstation's in your Start menu.
 
 ## If something goes wrong
@@ -97,12 +98,12 @@ Windows 10 or 11, 64-bit. It uses Windows Graphics Capture, as OBS does, and fal
 
 Close it (from the ✼ by the clock, if it's in the tray), then delete:
 - `outstation.exe`, wherever you put it
-- `%APPDATA%\outstation`: its settings, its log, its icon, and the crash notes and Dink export it may keep (the settings and `dink-before.json` hold your channel's key and your Discord webhook addresses: don't send that folder to anyone)
+- `%APPDATA%\outstation`: its settings, its log, its icon, your year's record (`record\`), and the crash notes and Dink export it may keep (the settings and `dink-before.json` hold your channel's key, your record key and your Discord webhook addresses: don't send that folder to anyone)
 - `Videos\outstation`, if you saved clips
 - (a copy from before 11/06/2026, when it was called outside-portal: its settings folder moves to the new name the first time the new one opens, and its clips folder the first time it saves a clip)
 - the Start menu's shortcut, if you added one (settings ▸ more takes it out)
 
-Your channel stays yours until Jace takes it back: ask him if you want it gone.
+Your channel stays yours until Jace takes it back: ask him if you want it gone. Your year's copy on the relay goes with **delete my record…** (settings ▸ your year) before you uninstall, or with the channel.
 
 ## For developers
 
@@ -115,7 +116,8 @@ Your channel stays yours until Jace takes it back: ask him if you want it gone.
 
 - `relay/`: the relay on Cloudflare: a Worker, with a Durable Object for each channel (TypeScript). Its README says how to run it and deploy it.
 - `relay-py/`: the same relay in Python, standard library only, for running on your own PC (`py relay-py/relay.py`). It's also the reference.
-- `docs/protocol.md`: what the client, the relay and the page say to each other.
+- `docs/protocol.md`: what the client, the relay and the page say to each other. `docs/record.md`: your year's design and format (the record, its encryption, sync, the public summary).
+- `tests/fixtures/record/`: your year's known-key vectors (`vectors.json`, made with WebCrypto by `make_vectors.mjs`), which the client's unit tests, both relays' tests and the page check against.
 - `tests/protocol_test.py`: the same tests run against either relay.
 - `tests/fixtures/almanac/`: what the almanac's sources answer (made up, in their formats: an RSS feed, a world list built by `make_slr.py`, the Wiki's `/24h` and `/mapping`; and Jagex's real feed and world list of 11/09/2026, cut down by `trim_real.py`), and `expected.json`, what both relays make of them.
 - `tests/fanout_bench.py`, `tests/fanout_local.py`: how one channel holds up with many viewers and some stalled ones.
@@ -147,6 +149,8 @@ py relay-py/test_almanac.py
 ```bash
 cd relay && npm test
 ```
+
+(that also opens your year's known-key vectors with WebCrypto, as the page will; the client's `recordfmt.rs` tests match them byte for byte)
 
 ## Licence
 

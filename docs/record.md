@@ -65,7 +65,9 @@ Live and dark come from what the desk already gets: the status line's `live` (`{
     %APPDATA%\outstation\record\device            this PC's device id (16 hex characters, random, made once)
     %APPDATA%\outstation\record\sent.json         what's been uploaded (the sync's own bookkeeping)
 
-(With `--settings <file>`, the folder is `record` beside that file.) Each line is one JSON object with `t` (ms since
+(With `--settings <file>`, the folder is `record` beside that file.) Recording is on to begin with (settings ▸ your year,
+"record my year on this PC"): nothing leaves the PC for it. The relay's copy is off until "keep an encrypted copy on
+the relay" is switched on, which makes the record key. Each line is one JSON object with `t` (ms since
 1970) and one or more of:
 
 | field      | value                                                         | written                                           |
@@ -98,7 +100,8 @@ The local files are **plain JSON, not encrypted**: they're the player's own, on 
 ## Encryption
 
 **The record key:** 32 random bytes, made by the app the first time the relay copy is switched on (ring's system
-random), kept in the app's settings (`record_key`, as below). It's never made from the station key, so a new station
+random; the app uses ring for the HMACs and AES-256-GCM too, rather than the `aes-gcm` crate: ring is in the build
+already for TLS, so nothing new is linked, and its AES is constant-time and hardware-accelerated), kept in the app's settings (`record_key`, as below). It's never made from the station key, so a new station
 key from the keeper loses nothing, and the relay never gets it.
 
 As text (copy and paste, the settings file): `record1:` and the 32 bytes as base64url without padding (43 characters).
