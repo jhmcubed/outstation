@@ -159,6 +159,51 @@ public class FollowTest
 	}
 
 	@Test
+	public void aHouseTripOnlyPausesTheClock()
+	{
+		// (11/10/2026, Jace: "i go through my player owned house a TON". The house is off the main map but safe: it
+		// pauses the two minutes rather than starting them again)
+		Follow f = new Follow();
+		long[] clock = {0};
+		java.util.List<int[]> went = new java.util.ArrayList<>();
+		// (Lumbridge for 90 s, the house for 20, Varrock for 70, the house for 20, Falador for 3 minutes: never two
+		// whole minutes clear of the house till the end)
+		int[][] trip = {{3222, 3218, 90}, {1900, 5700, 20}, {3212, 3424, 70}, {1900, 5700, 20}, {2965, 3380, 180}};
+		for (int[] leg : trip)
+		{
+			for (long end = clock[0] + leg[2] * 1000L; clock[0] < end; clock[0] += TICK)
+			{
+				JsonObject o = f.tick(clock[0], leg[0], leg[1], true);
+				if (o != null)
+				{
+					went.add(where(o));
+				}
+			}
+		}
+		// (each place on the map goes in turn, two minutes behind; with the house starting the clock again, nothing
+		// would have gone before Falador)
+		assertEquals(3, went.size());
+		assertArrayEquals(new int[]{3264, 3264}, went.get(0));
+		assertArrayEquals(new int[]{3264, 3392}, went.get(1));
+		assertArrayEquals(new int[]{3008, 3392}, went.get(2));
+	}
+
+	@Test
+	public void theHouseNeverSendsAndNeverClears()
+	{
+		Follow f = new Follow();
+		long[] clock = {0};
+		int[] sends = {0};
+		walk(f, clock, 121_000, 3222, 3218, true, sends);
+		assertEquals(1, sends[0]);
+		// (a long stay in the house: nothing new, nothing cleared; the last square on the map is what stands)
+		for (long end = clock[0] + 600_000; clock[0] < end; clock[0] += TICK)
+		{
+			assertNull(f.tick(clock[0], 1900, 5700, true));
+		}
+	}
+
+	@Test
 	public void switchedOffItClearsOnceAndForgets()
 	{
 		Follow f = new Follow();

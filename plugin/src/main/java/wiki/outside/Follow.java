@@ -107,6 +107,11 @@ class Follow
 	JsonObject tick(long now, int x, int y, int world, boolean safe)
 	{
 		int[] sq = safe ? place(x, y) : null;
+		// (safe but nowhere on the map, as in a player-owned house: the clock pauses, 11/10/2026)
+		if (safe && sq == null)
+		{
+			return behind.paused(now);
+		}
 		JsonObject w = null;
 		if (sq != null)
 		{
