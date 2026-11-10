@@ -40,9 +40,9 @@ also passes the owner's own `where`, `activity` and events to **the channel's de
 the chat window's socket, which only the station key opens and which the app keeps open whenever it runs (live or
 dark). Each is one text line:
 
-    {"mine": {"where": {"x": 3264, "y": 3264, "world": 302}, "at": 1794067212345}}
+    {"mine": {"where": {"x": 3264, "y": 3264, "world": 302}, "at": 1794268812345}}
     {"mine": {"where": null, "at": 1794067512345}}
-    {"mine": {"activity": {"kind": "skilling", "skill": "Mining"}, "at": 1794067212345}}
+    {"mine": {"activity": {"kind": "skilling", "skill": "Mining"}, "at": 1794268812345}}
     {"mine": {"activity": null, "at": 1794067512345}}
     {"mine": {"event": {"kind": "kill", "boss": "Vorkath", "kc": 412}, "at": 1794067301000}}
 
@@ -87,10 +87,10 @@ they were about **two minutes before `t`** (the plugin sends them two minutes be
 
 Example:
 
-    {"t": 1794067200000, "live": true}
-    {"t": 1794067212345, "where": {"x": 3264, "y": 3264, "world": 302}}
-    {"t": 1794067212345, "activity": {"kind": "skilling", "skill": "Mining"}}
-    {"t": 1794067272400, "where": {"x": 3264, "y": 3264, "world": 302}, "activity": {"kind": "skilling", "skill": "Mining"}}
+    {"t": 1794268800000, "live": true}
+    {"t": 1794268812345, "where": {"x": 3264, "y": 3264, "world": 302}}
+    {"t": 1794268812345, "activity": {"kind": "skilling", "skill": "Mining"}}
+    {"t": 1794268872400, "where": {"x": 3264, "y": 3264, "world": 302}, "activity": {"kind": "skilling", "skill": "Mining"}}
     {"t": 1794067301000, "event": {"kind": "level", "skill": "Mining", "level": 72}}
 
 The local files are **plain JSON, not encrypted**: they're the player's own, on their own PC, readable without the key.
@@ -120,7 +120,7 @@ practice). Its plaintext, before compressing, is UTF-8 newline JSON: a header li
 local file has them, each ending in `\n`:
 
     {"record": 1, "device": "0123456789abcdef", "day": "2026-11-10", "part": 0}
-    {"t": 1794067200000, "live": true}
+    {"t": 1794268800000, "live": true}
     …
 
 **The sealed chunk**, as the relay stores it and the page gets it (bytes):

@@ -15,10 +15,10 @@ const nonce = Uint8Array.from({ length: 12 }, (_, i) => 0xa0 + i);
 const device = "0123456789abcdef", day = "2026-11-10", part = 0;
 const lines = [
   { record: 1, device, day, part },
-  { t: 1794067200000, live: true },
-  { t: 1794067212345, where: { x: 3264, y: 3264, world: 302 } },
-  { t: 1794067212345, activity: { kind: "skilling", skill: "Mining" } },
-  { t: 1794067272400, where: { x: 3264, y: 3264, world: 302 }, activity: { kind: "skilling", skill: "Mining" } },
+  { t: 1794268800000, live: true },
+  { t: 1794268812345, where: { x: 3264, y: 3264, world: 302 } },
+  { t: 1794268812345, activity: { kind: "skilling", skill: "Mining" } },
+  { t: 1794268872400, where: { x: 3264, y: 3264, world: 302 }, activity: { kind: "skilling", skill: "Mining" } },
   { t: 1794067301000, event: { kind: "level", skill: "Mining", level: 72 } },
   { t: 1794067500000, where: null },
 ];

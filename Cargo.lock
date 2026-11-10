@@ -1954,6 +1954,7 @@ dependencies = [
  "base64 0.22.1",
  "eframe",
  "fast_image_resize",
+ "flate2",
  "jpeg-decoder",
  "jpeg-encoder",
  "opus",
