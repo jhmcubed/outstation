@@ -174,4 +174,22 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+
+	@ConfigItem(
+		keyName = "recordPath",
+		name = "Record my exact path for my year",
+		description = "Off (to begin with). On, the exact tile you're on goes to your own outstation, only for your"
+			+ " year's record on your PC (and its encrypted copy, if you keep one): when you move, at most once every"
+			+ " few seconds, and when you stop. On a boat, where it is at sea. Your relay passes it only to your own"
+			+ " outstation's app, never keeps it, and never shows it to anyone. Never in the Wilderness, a PvP area, or on"
+			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe).",
+		warning = "On, the exact tile you're on (and your world) goes to your outstation's relay, a server not controlled"
+			+ " or verified by the RuneLite developers, every few seconds while you move. The relay passes it on only to"
+			+ " your own outstation's app, for your year's record, and doesn't keep it; but it passes through that server.",
+		position = 11
+	)
+	default boolean recordPath()
+	{
+		return false;
+	}
 }

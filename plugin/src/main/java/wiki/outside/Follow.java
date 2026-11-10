@@ -196,6 +196,14 @@ class Follow
 		{
 			return ZANARIS.clone();
 		}
+		int[] t = onMap(x, y);
+		return t == null ? null : new int[]{(t[0] / SQUARE) * SQUARE + SQUARE / 2, (t[1] / SQUARE) * SQUARE + SQUARE / 2};
+	}
+
+	/** A point as the tile of the main map it lies on: itself, or underground the tile above it (as square() counts
+	 *  it); null off the map. */
+	static int[] onMap(int x, int y)
+	{
 		if ((y >= UNDER_Y0 + UNDER && y < Y1 + UNDER) || (y >= Y0 + UNDER && y < Y1 + UNDER && SEA_CAVES.contains(region(x, y))))
 		{
 			y -= UNDER;
@@ -204,6 +212,31 @@ class Follow
 		{
 			return null;
 		}
-		return new int[]{(x / SQUARE) * SQUARE + SQUARE / 2, (y / SQUARE) * SQUARE + SQUARE / 2};
+		return new int[]{x, y};
+	}
+
+	/**
+	 * The exact tile, for the player's own record (11/10/2026, Track: "Record my exact path for my year"): place()'s
+	 * rules, but the tile rather than its square. Prifddinas where the world map draws it; Zanaris as its one place;
+	 * a tile of the main map or the sea, underground as the tile above it; off the map, an instance's entrance (its
+	 * square's middle, ENTRANCES); null anywhere else.
+	 */
+	static int[] tile(int x, int y)
+	{
+		if (x >= PX0 && x < PX1 && y >= PY0 && y < PY1)
+		{
+			return onMap(x - PDX, y - PDY);
+		}
+		if (x >= ZX0 && x < ZX1 && y >= ZY0 && y < ZY1)
+		{
+			return ZANARIS.clone();
+		}
+		int[] t = onMap(x, y);
+		if (t != null)
+		{
+			return t;
+		}
+		int[] at = ENTRANCES.get(region(x, y));
+		return at == null ? null : at.clone();
 	}
 }

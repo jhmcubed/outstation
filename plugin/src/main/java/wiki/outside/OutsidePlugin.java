@@ -66,7 +66,8 @@ import org.slf4j.LoggerFactory;
  * Outside (11/07/2026): what you wear and carry, your looting bag, rune pouch and quiver, your skills, hitpoints,
  * prayer, run and special, sent to your outstation's channel on the relay (docs/protocol.md, "The game"), where your
  * Outside page draws them live beside your transmission and its chat, and keeps the last of them while you're away.
- * Nothing else is read or sent: no screen, no chat, no tile, no bank, nothing of other players. Each game tick, only what changed goes
+ * Nothing else is read or sent: no screen, no chat, no bank, nothing of other players, and no tile but the player's own
+ * exact path for their own year's record, with its switch on (Track, 11/10/2026). Each game tick, only what changed goes
  * (vitals alone at most every few seconds), with each new item's name and price once.
  * For outside.wiki's globe, each off to begin with (11/08/2026): following (Follow), and the world with it; what
  * they're doing (Activity, through Behind); the shooting stars they find (Stars). Each only ever the player's own, or
@@ -114,6 +115,8 @@ public class OutsidePlugin extends Plugin
 	private final Kit kit = new Kit();
 	/** following, likewise only on the client's thread */
 	private final Follow follow = new Follow();
+	/** the exact path, for the player's own year (11/10/2026; Track) */
+	private final Track track = new Track();
 	/** "and my world" as it was last tick (switched off: what was sent with the world goes at once) */
 	private boolean followWorld;
 	/** what they're doing (11/08/2026), and it two minutes behind; likewise only on the client's thread */
@@ -186,6 +189,7 @@ public class OutsidePlugin extends Plugin
 			// again; the stars not reported yet are forgotten)
 			follow.forget();
 			follow.clear();
+			track.forget();
 			doing.forget();
 			doing.clear();
 			activity.forget();
@@ -223,6 +227,7 @@ public class OutsidePlugin extends Plugin
 			resend = false;
 			kit.forget();
 			follow.again();
+			track.again();
 			doing.again();
 		}
 		// (the globe's: looked at every tick, the relay in reach or not, so what goes is always two minutes behind;
@@ -236,6 +241,7 @@ public class OutsidePlugin extends Plugin
 		long ms = System.currentTimeMillis();
 		JsonObject where = follow(ms, safe);
 		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, config.wilderness()));
+		JsonObject path = track(ms, at, safe);
 		look(ms, safe);
 		if (!open)
 		{
@@ -248,6 +254,10 @@ public class OutsidePlugin extends Plugin
 		if (what != null)
 		{
 			send(what);
+		}
+		if (path != null)
+		{
+			send(path);
 		}
 		JsonObject star = config.stars() ? stars.due(ms, config.starsCredit()) : null;
 		if (star != null)
@@ -440,6 +450,23 @@ public class OutsidePlugin extends Plugin
 			return null;
 		}
 		return follow.tick(now, at.getX(), at.getY(), world ? client.getWorld() : 0, safe);
+	}
+
+	/** The exact path's tick (Track, 11/10/2026): what to send, or null. Off, what was sent is cleared once. No
+	 *  delay: it goes only to the player's own outstation, for their record. */
+	private JsonObject track(long now, WorldPoint at, boolean safe)
+	{
+		if (!config.recordPath())
+		{
+			JsonObject gone = track.clear();
+			track.forget();
+			return gone;
+		}
+		if (at == null)
+		{
+			return null;
+		}
+		return track.tick(now, at.getX(), at.getY(), at.getPlane(), client.getWorld(), safe);
 	}
 
 	/** The activity's tick (Activity, two minutes behind through Behind): what to send, or null. Off, what was sent
