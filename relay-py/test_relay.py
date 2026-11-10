@@ -542,13 +542,18 @@ class FollowingWords(unittest.TestCase):
         self.assertEqual(W({"where": {"x": 3264, "y": 3264}}), {"x": 3264, "y": 3264})
         self.assertEqual(W({"where": {"y": 2496, "x": 1088}}), {"x": 1088, "y": 2496})        # (the corners)
         self.assertEqual(W({"where": {"x": 4032, "y": 4160}}), {"x": 4032, "y": 4160})
+        # (Sailing's seas, 11/10/2026: the band round the old map, x 960-1023 and 3968-4031, y 2048-2495 and 4160-4223)
+        self.assertEqual(W({"where": {"x": 960, "y": 2112}}), {"x": 960, "y": 2112})          # (its corner)
+        self.assertEqual(W({"where": {"x": 3264, "y": 2496}}), {"x": 3264, "y": 2496})        # (the Great Conch)
+        self.assertEqual(W({"where": {"x": 960, "y": 3264}}), {"x": 960, "y": 3264})
         self.assertEqual(W({"where": {"x": 3264.0, "y": 3264}}), {"x": 3264, "y": 3264})    # (as JavaScript reads it)
         self.assertEqual(W({"where": {"y": 4416, "x": 2368}}), {"x": 2368, "y": 4416})        # (Zanaris, as one place)
         self.assertEqual(W({"where": {"x": 2368.0, "y": 4416.0}}), relay.WHERE_ZANARIS)
         self.assertIsNot(W({"where": {"x": 2368, "y": 4416}}), relay.WHERE_ZANARIS)          # (a copy: never the constant)
         self.assertIsNone(W({"where": None}))
-        for g in ({}, {"world": 302}, None, [], {"where": {"x": 1024, "y": 3264}}, {"where": {"x": 960, "y": 3264}},
-                  {"where": {"x": 4160, "y": 3264}}, {"where": {"x": 3264, "y": 2368}}, {"where": {"x": 3264, "y": 4224}},
+        for g in ({}, {"world": 302}, None, [], {"where": {"x": 1024, "y": 3264}}, {"where": {"x": 832, "y": 3264}},
+                  {"where": {"x": 4160, "y": 3264}}, {"where": {"x": 3264, "y": 1984}}, {"where": {"x": 3264, "y": 4224}},
+                  {"where": {"x": 3264, "y": 2048}}, {"where": {"x": 896, "y": 3264}},
                   {"where": {"x": 3264, "y": 4288}}, {"where": {"x": 3265, "y": 3264}}, {"where": {"x": 3264.5, "y": 3264}},
                   {"where": {"x": True, "y": 3264}}, {"where": {"x": "3264", "y": 3264}}, {"where": {"x": 3264}},
                   {"where": {"x": 3264, "y": 3264, "plane": 0}}, {"where": [3264, 3264]}, {"where": "lumbridge"},
@@ -648,9 +653,11 @@ class ActivityLists(unittest.TestCase):
         self.assertEqual(self.ts_list(game, "ACTIVITY_RAIDS"), list(relay.ACTIVITY_RAIDS))
         self.assertEqual(self.ts_list(game, "ACTIVITY_MINIGAMES"), list(relay.ACTIVITY_MINIGAMES))
         java = self.source("plugin", "src", "main", "java", "wiki", "outside", "Activity.java")
-        for name, kept in (("RAIDS", relay.ACTIVITY_RAIDS), ("MINIGAMES", relay.ACTIVITY_MINIGAMES)):
+        trials = re.search(r'static final String TRIALS = "([^"]+)";', java).group(1)      # (by the game's flag, 11/10/2026)
+        self.assertEqual(trials, "Barracuda Trials")
+        for name, kept, more in (("RAIDS", relay.ACTIVITY_RAIDS, []), ("MINIGAMES", relay.ACTIVITY_MINIGAMES, [trials])):
             body = re.search(r"static final Map<Integer, String> %s = regions\((.*?)\);" % name, java, re.S).group(1)
-            self.assertEqual(sorted(re.findall(r'"([^"]+)", new int', body)), sorted(kept))
+            self.assertEqual(sorted(re.findall(r'"([^"]+)", new int', body) + more), sorted(kept))
         self.assertEqual(sorted(relay.ACTIVITY_MINIGAMES), list(relay.ACTIVITY_MINIGAMES))
         for pvp in ("Last Man Standing", "Castle Wars", "Clan Wars", "Soul Wars", "the Fight Pits", "Emir's Arena",
                     "Tempoross", "Wintertodt", "Zalcano"):                               # (minigames, 11/10/2026)

@@ -292,8 +292,25 @@ both Gauntlets and Zalcano's mine as Prifddinas's middle where the world map dra
 as Falador Park's `{"x": 3008, "y": 3392}` (11/10/2026). The rest off the map (the Leviathan, the Whisperer, Duke
 Sucellus, the Phantom Muspah, the Abyssal Sire, the Corporeal Beast, the Fractured Archive, the PvP minigames' arenas)
 send nothing, as anywhere else off the map. An instance whose template lies in the Wilderness is
-still dangerous. Nothing changes on the relays: an instance's square is a square like any other. Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
+still dangerous. Nothing changes on the relays: an instance's square is a square like any other.
+Both relays (`relay/src/game.ts`'s `gameWhere` and channel.ts's `takeWhere`; relay-py's `game_where` and
 `Channel.take_where`).
+
+**At sea** (11/10/2026, Jace: "do we support location tracking when people are out at sea?"): Sailing (11/19/2025) put
+a band of sea and islands round the old map (x 1024–3967, y 2496–4159): x 960–1023 to the west, 3968–4031 to the east,
+y 2048–2495 to the south (Sunbleak Island, Last Light, Charred Island, Wyrmscraig, the Great Conch) and 4160–4223 to the
+north, measured from the game's own map squares (the OSRS cache on archive.openrs2.org: the last before Sailing, 2341,
+against launch day's, 2363, and the newest, 2757 of 11/03/2026, which adds nothing past them; Shortest Path's collision
+map covers the same). The main map's bounds take it in, on the plugin (`Follow.X0`, `Y0`) and both relays (`WHERE_X`,
+`WHERE_Y`). Underground still goes as the square above it only under the old map (y 2496 up), and under the new sea
+only for the islands' caves the wiki places there (`Follow.SEA_CAVES`: Sunbleak Cave, Wyrmscraig Cavern, the Charred
+Dungeon, the Great Conch's), since older squares south of the old underground lie under no sea. A player on a boat
+stands in the boat's own world view; the plugin reads where the boat is on the main world (`OutsidePlugin.onMainWorld`,
+as RuneLite's `Perspective.localToMinimap` does it, with `WorldEntity.transformToMainWorld`), never the deck's own
+tiles (read as they were before, they gave the boat's own scene, not the sea, so nothing went). No sea is
+dangerous: the wiki's Sailing page names no PvP or Wilderness sea, and boat combat is against monsters; the game's own
+Wilderness and PvP-area flags are read at sea as anywhere.
+
 - **Which world** (11/08/2026): with the plugin's "and my world" on as well as following, `where` carries the world the
   player was on with the square, from the same moment two minutes before: `{"x", "y", "world"}`. Never on its own,
   never from a PvP, Deadman or other dangerous world (the plugin clears `where` there, as anywhere dangerous), and
@@ -301,7 +318,7 @@ still dangerous. Nothing changes on the relays: an instance's square is a square
   has reported 301 and up for years, and the range takes lower numbers too in case Jagex numbers worlds from 1. Anything
   else in it (0, 1000, `"302"`, `true`, another key) and the whole `where` is ignored.
 - A `where` that isn't `null` must be an object with exactly `x` and `y` (and `world`, above), each a whole number `k*128 + 64`, `x` from
-  1024 up to (not including) 4096 and `y` from 2496 up to 4224; or exactly `{"x": 2368, "y": 4416}`, Zanaris
+  960 up to (not including) 4096 and `y` from 2048 up to 4224 (so the middles `x` 960–4032 and `y` 2112–4160); or exactly `{"x": 2368, "y": 4416}`, Zanaris
   (`WHERE_ZANARIS`, 11/08/2026: the plugin sends any tile there, x 2368–2495 and y 4352–4479, as that one place, and
   the globe draws it on its moon). Anything else is ignored, Zanaris's neighbouring squares included, and the rest of
   the message is taken as ever.
@@ -359,12 +376,15 @@ Those fought in an instance keep their labels there (11/09/2026), and a boss fig
 Fight Caves is `TzTok-Jad`, Zuk in the Inferno `TzKal-Zuk`, Sol Heredit in the Colosseum `Sol Heredit`, then the
 minigame again a minute after the last hit; Olm in the Chambers is the raid: Olm isn't on the list).
 
-The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Blast Furnace, Brimhaven Agility Arena, Castle
+The minigames (`ACTIVITY_MINIGAMES`, 11/09/2026): Barbarian Assault, Barracuda Trials (11/10/2026), Blast Furnace, Brimhaven Agility Arena, Castle
 Wars, Clan Wars, Emir's Arena, Fishing Trawler, Giants' Foundry, Guardians of the Rift, Hallowed Sepulchre, Last Man
 Standing, Mage Training Arena, Nightmare Zone, Pest Control, Pyramid Plunder, Rogues' Den, Sorceress's Garden, Soul
 Wars, Temple Trekking, Tempoross, Tithe Farm, Trouble Brewing, Volcanic Mine, Wintertodt, Zalcano, the Colosseum, the
 Fight Caves, the Fight Pits, the Inferno. The plugin tells a raid or a minigame by RuneLite's own Discord plugin's
-region ids (`DiscordGameEventType`), less its rat pits and games room. Tempoross, Wintertodt and Zalcano, which it and the
+region ids (`DiscordGameEventType`), less its rat pits and games room, and Barracuda Trials, Sailing's obstacle courses
+at sea, which have no region there, by the game's own in-trial flag (`VarbitID.SAILING_BT_IN_TRIAL` not 0, as the
+Sailing plugin reads it; the plugin's `Activity.TRIALS`). Sailing's bosses, the Shellbane gryphon and the Mad Angel, are
+bosses like the rest; its other work (courier and bounty tasks, charting, salvaging, trawling) is skilling Sailing. Tempoross, Wintertodt and Zalcano, which it and the
 hiscores count as bosses, are minigames here (11/10/2026); their kills still pop on the Array as any boss's do (below,
 "The Array's events"). The PvP minigames (Last Man Standing, Castle Wars, Clan Wars, Soul Wars, the Fight Pits, Emir's
 Arena) are minigames like the rest since 11/10/2026 (Jace: "they are just minigames"). relay-py's tests check the

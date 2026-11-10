@@ -212,8 +212,9 @@ GAME_ID = re.compile(r"0|[1-9][0-9]{0,9}")                # an item's id as the 
 # following (11/08/2026; docs/protocol.md "The game"; the Worker's game.ts, the same): "where" is the middle of a
 # WHERE_SQUARE-tile square of the main map (x from WHERE_X[0] up to WHERE_X[1], y the same with WHERE_Y), taken at most
 # one every WHERE_EVERY_S, and shown on GET /channels for WHERE_FRESH_S after it came (the relay's where_fresh_s,
-# --where-fresh-seconds)
-WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (1024, 4096), (2496, 4224), 50, 240
+# --where-fresh-seconds). The bounds take in Sailing's seas (11/10/2026: x 960-1023 and 3968-4031, y 2048-2495 and
+# 4160-4223 round the old map, from the game's own map squares; the plugin's Follow.X0 and Y0)
+WHERE_SQUARE, WHERE_X, WHERE_Y, WHERE_EVERY_S, WHERE_FRESH_S = 128, (960, 4096), (2048, 4224), 50, 240
 # Zanaris (11/08/2026, Jace: "if someone goes to zanaris through a fairy ring on Gielinor make sure it shows their
 # location as being on Zanaris"): the plugin sends any tile there (x 2368-2495, y 4352-4479) as this one place, which
 # the globe draws on its moon. The only "where" off the main map that's taken; its neighbours aren't.
@@ -241,10 +242,11 @@ ACTIVITY_BOSSES = ("Abyssal Sire", "Alchemical Hydra", "Amoxliatl", "Araxxor", "
                    "Vorkath", "Yama", "Zulrah", "the Corrupted Gauntlet", "the Gauntlet")
 # raids and minigames (11/09/2026, Jace: "include all activities that utilize instances"; the Worker's ACTIVITY_RAIDS and
 # ACTIVITY_MINIGAMES, the same; the plugin's Activity.RAIDS and MINIGAMES's labels, by RuneLite's Discord plugin's region
-# ids). The PvP minigames are minigames like the rest (11/10/2026).
+# ids, and Barracuda Trials by the game's own in-trial flag, Activity.TRIALS, 11/10/2026). The PvP minigames are
+# minigames like the rest (11/10/2026).
 ACTIVITY_RAIDS = ("Chambers of Xeric", "The Fractured Archive", "Theatre of Blood", "Tombs of Amascut")
-ACTIVITY_MINIGAMES = ("Barbarian Assault", "Blast Furnace", "Brimhaven Agility Arena", "Castle Wars", "Clan Wars",
-                      "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift",
+ACTIVITY_MINIGAMES = ("Barbarian Assault", "Barracuda Trials", "Blast Furnace", "Brimhaven Agility Arena",
+                      "Castle Wars", "Clan Wars", "Emir's Arena", "Fishing Trawler", "Giants' Foundry", "Guardians of the Rift",
                       "Hallowed Sepulchre", "Last Man Standing", "Mage Training Arena", "Nightmare Zone",
                       "Pest Control", "Pyramid Plunder", "Rogues' Den", "Sorceress's Garden", "Soul Wars",
                       "Temple Trekking", "Tempoross", "Tithe Farm", "Trouble Brewing", "Volcanic Mine", "Wintertodt",

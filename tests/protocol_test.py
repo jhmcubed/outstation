@@ -1969,7 +1969,7 @@ class Following(Base):
         self.clients.append(g)
         v = await self.watch()
         await self.pause()
-        bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 960, "y": 3264},
+        bad = [{"x": 3265, "y": 3264}, {"x": 4160, "y": 3264}, {"x": 3264, "y": 4288}, {"x": 832, "y": 3264},
                {"x": 3264, "y": 3264, "plane": 0}, {"x": 3264}, {"x": "3264", "y": 3264}, {"x": 3264.5, "y": 3264},
                {"x": True, "y": 3264}, [3264, 3264], "lumbridge", 3264, True,
                {"x": 2368, "y": 4544}, {"x": 2496, "y": 4416}, {"x": 2368, "y": 4288}]   # (Zanaris's neighbours: off the map)
@@ -1989,6 +1989,17 @@ class Following(Base):
         # location as being on Zanaris": the plugin sends any tile there as this, which the globe draws on its moon)
         await self.live_and_following({"x": 2368, "y": 4416})
         self.assertEqual(await self.where(), {"x": 2368, "y": 4416})
+
+    async def test_the_seas_squares_show(self):
+        # (11/10/2026, Sailing: the band of sea round the old map, x 960-1023 and 3968-4031, y 2048-2495 and 4160-4223,
+        # is the main map's too: its south-west corner's square, the furthest from the old map's)
+        await self.live_and_following({"x": 960, "y": 2112})
+        self.assertEqual(await self.where(), {"x": 960, "y": 2112})
+
+    async def test_the_great_conchs_square_shows(self):
+        # (11/10/2026: the Great Conch, Sailing's island south of the old map, its square y 2432-2559)
+        await self.live_and_following({"x": 3264, "y": 2496})
+        self.assertEqual(await self.where(), {"x": 3264, "y": 2496})
 
     async def test_one_every_50_seconds_and_null_clears_whenever(self):
         tx, g = await self.live_and_following()
