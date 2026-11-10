@@ -104,7 +104,8 @@ export function gameFields(g: unknown): Fields {
 
 // Following (11/08/2026, Jace approved it with these safeguards): the plugin may send "where", the middle of the 128-tile
 // square of the main map the player was in two minutes before ({"x", "y"}; Zanaris as one place), or null to clear it. It's never one of the
-// game's fields: never kept with them, never sent to viewers, lookers or desks, never in GET /game. The channel holds it
+// game's fields: never kept with them, never sent to viewers or lookers, never in GET /game; the channel's own desks get it only
+// as {"mine"} (your year, 11/10/2026; channel.ts, tellMine). The channel holds it
 // in memory only (channel.ts, takeWhere), at most one every WHERE_EVERY_MS (null whenever it comes), and the open
 // outstations' list (GET /channels) shows it while the channel's live and listed and it came within WHERE_FRESH_MS
 // (index.ts; the Worker's WHERE_FRESH_SECONDS shortens it, for tests). relay.py's game_where, the same.

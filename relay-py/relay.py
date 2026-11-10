@@ -98,7 +98,8 @@ transmission and the chat, live, and as last known while dark.
   minutes before ({"x", "y"}; Zanaris as one place, WHERE_ZANARIS), or null to clear it (game_where). Held in memory (one every WHERE_EVERY_S at most; null
   whenever it comes), dropped when the plugin goes, logs out ({"off": true}) or holds for the player's safety ({"paused"}),
   and shown only on GET /channels, while the channel's live and listed and it came within WHERE_FRESH_S
-  (--where-fresh-seconds, for tests). Never to viewers, lookers or desks, nor in the read. With the plugin's "and my
+  (--where-fresh-seconds, for tests). Never to viewers or lookers, nor in the read; the channel's
+  own desks get it only as {"mine"} (your year, 11/10/2026; Channel.tell_mine). With the plugin's "and my
   world" on too, "where" carries the world with the square, {"x", "y", "world"} (WORLD_RANGE).
   What they're doing (11/08/2026): "activity", one coarse label ({"kind": "skilling", "skill"}, {"kind": "boss",
   "boss"}, {"kind": "fighting"}, {"kind": "idle"}: game_activity's closed lists), or null; held, dropped and shown on

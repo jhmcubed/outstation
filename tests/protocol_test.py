@@ -1889,7 +1889,7 @@ class Following(Base):
     """Following (11/08/2026): the Outside plugin may send "where", the middle of the 128-tile square of the main map the
     player was in two minutes before, or null. The relay holds it (one every 50 s at most; null whenever it comes), drops
     it when the plugin goes, logs out or holds for the player's safety, and shows it only on GET /channels, while the
-    channel's live and listed and it came within WHERE_FRESH_S. Never to viewers, lookers or desks, in GET /game or in
+    channel's live and listed and it came within WHERE_FRESH_S. Never to viewers or lookers, in GET /game or in
     the Array's events. (The throttle's end and --delay: relay-py/test_relay.py's.)"""
 
     LUMBRIDGE = {"x": 3264, "y": 3264}
@@ -2049,7 +2049,11 @@ class Following(Base):
                 pass
             self.assertTrue(any('"game"' in line for line in heard))  # (the game reached it, the world)
             for line in heard:
+                if c in (d, late[2]) and line.startswith('{"mine": {"where"'):
+                    continue                                         # (your year, 11/10/2026: the owner's desk only, as {"mine"})
                 self.assertNotIn("where", line)
+            if c in (d, late[2]):
+                self.assertTrue(any(line.startswith('{"mine": {"where"') for line in heard))
         self.assertNotIn("where", json.dumps(self.read_game()))
         with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
             self.assertNotIn("where", r.read().decode())
@@ -2122,7 +2126,7 @@ class Activity(Base):
     """What they're doing (11/08/2026): the Outside plugin may send "activity", one coarse label from closed lists
     ({"kind": "skilling", "skill"}, {"kind": "boss", "boss"}, {"kind": "fighting"}, {"kind": "idle"}), or null. Held,
     taken (one every 50 s), dropped and shown on GET /channels exactly as following's "where", and without it. Never to
-    viewers, lookers or desks, in GET /game or in the Array's events. (The throttle's end: relay-py/test_relay.py's.)"""
+    viewers or lookers, in GET /game or in the Array's events; the owner's desk only as {"mine"} (YourYear). (The throttle's end: relay-py/test_relay.py's.)"""
 
     MINING = {"kind": "skilling", "skill": "Mining"}
 
@@ -2272,8 +2276,12 @@ class Activity(Base):
                 pass
             self.assertTrue(any('"game"' in line for line in heard))
             for line in heard:
+                if c is d and line.startswith('{"mine": {"activity"'):
+                    continue                                         # (your year, 11/10/2026: the owner's desk only, as {"mine"})
                 self.assertNotIn("Kraken", line)
                 self.assertNotIn("activity", line)
+            if c is d:
+                self.assertTrue(any(line.startswith('{"mine": {"activity"') for line in heard))
         self.assertNotIn("Kraken", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
         with urllib.request.urlopen(http_url() + "/array/events", timeout=10) as r:
             self.assertNotIn("Kraken", r.read().decode())
