@@ -983,12 +983,17 @@ digits (a leading 0 dropped), `<metric>` 1–40 of `a-z`, `0-9` and `_`. Every a
 - **503** `{"error": …}` with `Retry-After` (seconds) and `no-store`: not asked just now, with nothing kept: the
   source's minute is used up, it said to wait (its 429), or this record failed lately.
 
-How it asks: each source has an allowance a minute across every visitor (Wise Old Man 15, RuneProfile 20, each icon host
+How it asks: each source has an allowance a minute across every visitor (Wise Old Man 15, or 80 with its API key, RuneProfile 20, each icon host
 60); a 429 pauses that source for its `Retry-After` (a minute when it gives none; 10 minutes at most); reads of one
 record while it's being asked wait for that one request; a record that fails waits a minute before it's asked again,
 doubling with each failure in a row, to an hour. Every request carries the relay's User-Agent
 (`outstation-relay/1.0 (lookups for outside.wiki and ghillie.wiki's Outside page: each player asked once and shared by
 every visitor; https://github.com/jhmcubed/outstation)`) and nothing from the visitor.
+
+Wise Old Man's API key (11/11/2026): the Worker's secret `WOM_API_KEY` (relay-py: the environment variable of the
+same name). With it, each request to api.wiseoldman.net carries `x-api-key: <key>` (Wise Old Man's docs, "Rate Limits
+& API Keys": 100 a minute and 20,000 a day for the key, instead of 20, 500 an hour and 3,000 a day for an address, which
+Cloudflare's shared addresses were using up); the key goes to no other host, and never to a page.
 
 Kept: the Worker in its object's storage (so a deploy or an eviction asks nothing again), a record dropped 14 days after
 it was fetched (an icon 90), and 5,000 at most (the oldest fetched go first), by an alarm once a day; relay-py in memory

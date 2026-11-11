@@ -28,7 +28,7 @@ def ok_json(v):
 class Rig:
     def __init__(self, answers=None):
         self.t, self.answers, self.asked = 1e9, dict(answers or {}), []
-        self.shelf = L.Shelf(self.fetch, lambda: self.t)
+        self.shelf = L.Shelf(self.fetch, lambda: self.t, dict(L.PER_MINUTE))
 
     async def fetch(self, url, source):
         self.asked.append(url)
@@ -42,6 +42,15 @@ class Rig:
 
 
 class Lookups(unittest.TestCase):
+    def test_wom_key_only_to_wom(self):
+        k = "test-key-not-real"
+        self.assertEqual(L.lookup_headers(L.HOSTS["wom"] + "sburb", "wom", k)["x-api-key"], k)
+        self.assertNotIn("x-api-key", L.lookup_headers(L.HOSTS["wom"] + "sburb", "wom", None))
+        self.assertNotIn("x-api-key", L.lookup_headers(L.HOSTS["rp"] + "sburb", "rp", k))
+        self.assertNotIn("x-api-key", L.lookup_headers("http://127.0.0.1:9/wom/sburb", "wom", k))
+        self.assertEqual(L.per_minute(k)["wom"], L.PER_MINUTE_WOM_KEYED)
+        self.assertEqual(L.per_minute(None), L.PER_MINUTE)
+
     def test_shapes(self):
         self.assertEqual((W("lookup/wom/Sburb")["key"], W("lookup/wom/Sburb")["url"]), ("wom:sburb", WOM + "sburb"))
         self.assertEqual(W("lookup/wom/Iron_Man-2")["url"], WOM + "iron%20man%202")

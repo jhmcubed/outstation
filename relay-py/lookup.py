@@ -12,6 +12,7 @@ Kept in memory here (the Worker's, in its object's storage), so a restart asks a
 
 import asyncio
 import json
+import os
 import re
 import time
 import urllib.error
@@ -30,6 +31,20 @@ HOSTS = {
     "metric": "https://cdn.jsdelivr.net/gh/wise-old-man/wise-old-man@master/app/public/img/metrics_small/",
 }
 PER_MINUTE = {"wom": 15, "rp": 20, "item": 60, "metric": 60}
+# Wise Old Man's key (11/11/2026; the Worker's lookup.ts says why): from the environment, WOM_API_KEY, never in the code;
+# x-api-key only to Wise Old Man's own host, and its minute a little under the keyed 100
+PER_MINUTE_WOM_KEYED = 80
+
+
+def per_minute(wom_key=None):
+    return dict(PER_MINUTE, wom=PER_MINUTE_WOM_KEYED) if wom_key else dict(PER_MINUTE)
+
+
+def lookup_headers(url, source, wom_key=None):
+    h = {"User-Agent": USER_AGENT, "Accept": "application/json" if source in ("wom", "rp") else "image/png"}
+    if wom_key and source == "wom" and url.startswith(HOSTS["wom"]):
+        h["x-api-key"] = wom_key
+    return h
 FRESH_ICON, MISS_FRESH, MISS_FRESH_ICON = 30 * DAY, 6 * HOUR, DAY
 KEEP_DAYS, KEEP_DAYS_ICON, KEPT_MOST = 14, 90, 5000
 FAIL_BASE, FAIL_CAP, PAUSE_DEFAULT, PAUSE_MOST = MINUTE, HOUR, MINUTE, 10 * MINUTE
@@ -181,9 +196,9 @@ def answer_of(w, e, stale, retry):
 
 
 def http_lookup(url, source):
-    """One GET with USER_AGENT and nothing else: (status, body or None, Retry-After seconds or None)."""
-    req = urllib.request.Request(url, headers={
-        "User-Agent": USER_AGENT, "Accept": "application/json" if source in ("wom", "rp") else "image/png"})
+    """One GET with USER_AGENT (and Wise Old Man's key, to it) and nothing else: (status, body or None, Retry-After
+    seconds or None)."""
+    req = urllib.request.Request(url, headers=lookup_headers(url, source, os.environ.get("WOM_API_KEY")))
     try:
         with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_S) as r:
             body = r.read(BODY_MOST[source] + 1)
@@ -205,8 +220,9 @@ async def async_lookup(url, source):
 class Shelf:
     """The lookups' keeping and asking (the Worker's Shelf, the same); the fetcher and the clock may be the tests'."""
 
-    def __init__(self, fetcher=async_lookup, now=time.time):
+    def __init__(self, fetcher=async_lookup, now=time.time, limits=None):
         self.fetcher, self.now = fetcher, now
+        self.limits = limits or per_minute(os.environ.get("WOM_API_KEY"))
         self.kept = {}
         self.starts = {s: [] for s in SOURCES}
         self.paused = {s: 0.0 for s in SOURCES}
@@ -218,7 +234,7 @@ class Shelf:
         while s and t - s[0] >= MINUTE:
             s.pop(0)
         at = max(0.0, self.paused[source] - t)
-        if len(s) >= PER_MINUTE[source]:
+        if len(s) >= self.limits[source]:
             at = max(at, s[0] + MINUTE - t)
         return at
 

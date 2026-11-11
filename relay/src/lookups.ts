@@ -6,7 +6,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { type Env } from "./channel";
-import { type Entry, Shelf, httpLookup, pruned, want } from "./lookup";
+import { type Entry, Shelf, httpLookup, perMinute, pruned, want } from "./lookup";
 
 const PRUNE_EVERY = 86_400_000;
 
@@ -17,7 +17,7 @@ export class Lookups extends DurableObject<Env> {
       await this.ctx.storage.put("e:" + key, e);
       if ((await this.ctx.storage.getAlarm()) == null) await this.ctx.storage.setAlarm(Date.now() + PRUNE_EVERY);
     },
-  }, httpLookup);
+  }, (url, source) => httpLookup(url, source, this.env.WOM_API_KEY), Date.now, perMinute(this.env.WOM_API_KEY));
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

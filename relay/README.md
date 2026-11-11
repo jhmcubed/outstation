@@ -24,7 +24,7 @@ It keeps the Array's events too (11/08/2026, `src/array.ts`): the last 500 kills
 
 It keeps the almanac too (11/09/2026, `src/almanac.ts`): Jagex's news, the world list and the Wiki's prices, for outside.wiki's globe (`GET /almanac`), fetched by the relay on a schedule and shared by every visitor (below, "The almanac's sources"; `../docs/protocol.md`, "The almanac"). It's in the Directory's storage, so an eviction or a deploy doesn't fetch anything again.
 
-The Lookups (one object for the whole relay, `src/lookup.ts` and `src/lookups.ts`, since 11/10/2026) ask Wise Old Man, RuneProfile and the icons' hosts for the pages and keep what came, so a page never asks them and many visitors make one request (`../docs/protocol.md`, "The lookups"). In its storage (`e:<key>`: when, the status, the type, the body), so an eviction or a deploy asks nothing again; an alarm once a day drops what's past 14 days (an icon's 90) or past 5,000 kept. Its migration (`v4` in `wrangler.jsonc`) goes up with the next deploy; nothing to make by hand. Wise Old Man's key, when there is one, isn't used yet: it goes in as a secret and a header in `httpLookup` once Wise Old Man gives one.
+The Lookups (one object for the whole relay, `src/lookup.ts` and `src/lookups.ts`, since 11/10/2026) ask Wise Old Man, RuneProfile and the icons' hosts for the pages and keep what came, so a page never asks them and many visitors make one request (`../docs/protocol.md`, "The lookups"). In its storage (`e:<key>`: when, the status, the type, the body), so an eviction or a deploy asks nothing again; an alarm once a day drops what's past 14 days (an icon's 90) or past 5,000 kept. Its migration (`v4` in `wrangler.jsonc`) goes up with the next deploy; nothing to make by hand. Wise Old Man's API key (11/11/2026, given for "Outside - jhm cubed") is the secret `WOM_API_KEY` (below, "On Cloudflare"): with it every request to Wise Old Man carries `x-api-key` (only to api.wiseoldman.net, `lookupHeaders`), its limits are the key's rather than Cloudflare's shared addresses' (100 a minute and 20,000 a day, not 20 and 3,000), and the relay's own minute for it goes from 15 to 80. Without the secret it asks as before. The key never goes in the repository.
 
 The Records (one object per channel, `src/record.ts`, since 11/10/2026) keep each player's year (`../docs/record.md`): the SHA-256 of the record key's tokens (`tokens`), each sealed chunk (`d:<id>`) with its time and size (`m:<id>`), and the public summary as checked (`year`). Only ciphertext: the app seals each chunk with a key the relay never sees, and a body that isn't sealed is refused. Apart from the channel, so a page reading a year never wakes or slows a live channel and a new key from the keeper leaves the record alone; the Worker checks the station key with the channel (`/_keyok`) and passes on only its verdict (`x-station`), the bearer token and the body. Taking a channel back deletes its object's storage. Its migration (`v3` in `wrangler.jsonc`) goes up with the next deploy; nothing to make by hand (unlike the clips' bucket). `RECORD_CHUNKS` (a var) lowers the 2,000 chunks a channel may hold, for the tests.
 
@@ -67,6 +67,12 @@ npx wrangler login
 
 ```bash
 npx wrangler secret put ADMIN_TOKEN
+```
+
+Wise Old Man's API key (11/11/2026; paste it when asked; the relay uses it from its next request, no deploy needed):
+
+```bash
+npx wrangler secret put WOM_API_KEY
 ```
 
 ```bash
