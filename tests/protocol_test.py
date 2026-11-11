@@ -3259,9 +3259,15 @@ class YourYear(Base):
                 for word in ('"mine"', '"plane"'):
                     self.assertNotIn(word, line)
         # (never kept: not in GET /game, not on GET /channels, and a desk that comes later gets none of it)
-        self.assertNotIn("3180", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+        # (the tile itself, anywhere in either answer: a position at x 3180, y 2420, or a "here". Not the digits in the
+        # text: a channel's random name or a time can hold "3180", 11/11/2026, outstation#16's relay job)
+        def holds_it(v):
+            if isinstance(v, dict):
+                return "here" in v or (v.get("x") == 3180 and v.get("y") == 2420) or any(holds_it(x) for x in v.values())
+            return isinstance(v, list) and any(holds_it(x) for x in v)
+        self.assertFalse(holds_it(http("GET", "/game/%s?code=" % self.ch)[1]))
         await self.pause(2)
-        self.assertNotIn("3180", json.dumps(http("GET", "/channels")[1]))
+        self.assertFalse(holds_it(http("GET", "/channels")[1]))
         late = await self.desk()
         for line in await self.lines(late, 1.0):
             self.assertNotIn('"here"', line)
