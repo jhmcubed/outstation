@@ -51,6 +51,21 @@ export const HOSTS: Record<Source, string> = {
 };
 // (each a little under what's asked of us: Wise Old Man's 20 a minute without a key, RuneProfile's none stated)
 export const PER_MINUTE: Record<Source, number> = { wom: 15, rp: 20, item: 60, metric: 60 };
+// Wise Old Man's key (11/11/2026, given to Jace for "Outside - jhm cubed"): a secret, WOM_API_KEY, never in the code or a
+// log. With it the relay's requests carry x-api-key, which its docs (docs.wiseoldman.net/api, "Rate Limits & API Keys")
+// say lifts its limits from 20 a minute, 500 an hour and 3,000 a day to 100 a minute and 20,000 a day, counted by the
+// key rather than by Cloudflare's shared addresses (whose 429s were refusing the relay). The minute here stays a little
+// under it, and the key goes only to Wise Old Man's own host.
+export const PER_MINUTE_WOM_KEYED = 80;
+export function perMinute(womKey?: string | null): Record<Source, number> {
+  return womKey ? { ...PER_MINUTE, wom: PER_MINUTE_WOM_KEYED } : PER_MINUTE;
+}
+/** A request's headers: USER_AGENT, what it accepts, and Wise Old Man's key only to Wise Old Man's host. */
+export function lookupHeaders(url: string, source: Source, womKey?: string | null): Record<string, string> {
+  const h: Record<string, string> = { "user-agent": USER_AGENT, accept: source === "wom" || source === "rp" ? "application/json" : "image/png" };
+  if (womKey && source === "wom" && url.startsWith(HOSTS.wom)) h["x-api-key"] = womKey;
+  return h;
+}
 export const FRESH_ICON = 30 * DAY, MISS_FRESH = 6 * HOUR, MISS_FRESH_ICON = DAY;
 export const KEEP_DAYS = 14, KEEP_DAYS_ICON = 90; // a record fetched longer ago than this is dropped (the daily prune)
 export const KEPT_MOST = 5000; // entries at most; past it the oldest fetched go first
@@ -211,11 +226,13 @@ export class Shelf {
   store: Store;
   fetcher: Fetcher;
   now: () => number;
+  limits: Record<Source, number>;
 
-  constructor(store: Store, fetcher: Fetcher, now: () => number = Date.now) {
+  constructor(store: Store, fetcher: Fetcher, now: () => number = Date.now, limits: Record<Source, number> = PER_MINUTE) {
     this.store = store;
     this.fetcher = fetcher;
     this.now = now;
+    this.limits = limits;
   }
 
   /** When the source may next be asked (0: now). */
@@ -223,7 +240,7 @@ export class Shelf {
     const t = this.now(), s = this.starts[source];
     while (s.length && t - s[0] >= MINUTE) s.shift();
     let at = Math.max(0, this.paused[source] - t);
-    if (s.length >= PER_MINUTE[source]) at = Math.max(at, s[0] + MINUTE - t);
+    if (s.length >= this.limits[source]) at = Math.max(at, s[0] + MINUTE - t);
     return at;
   }
 
@@ -288,10 +305,10 @@ export function pruned(entries: [string, number][], now: number): string[] {
   return out;
 }
 
-/** One GET with USER_AGENT and nothing else: its status, its body (capped, else null), its Retry-After in seconds. */
-export async function httpLookup(url: string, source: Source): Promise<Fetched> {
-  const r = await fetch(url, { headers: { "user-agent": USER_AGENT, accept: source === "wom" || source === "rp" ? "application/json" : "image/png" },
-                               signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+/** One GET with USER_AGENT (and Wise Old Man's key, to it) and nothing else: its status, its body (capped, else null),
+ *  its Retry-After in seconds. */
+export async function httpLookup(url: string, source: Source, womKey?: string | null): Promise<Fetched> {
+  const r = await fetch(url, { headers: lookupHeaders(url, source, womKey), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   const ra = parseInt(r.headers.get("retry-after") || "", 10);
   const retryAfter = Number.isFinite(ra) ? ra : null;
   if (r.status !== 200 || +(r.headers.get("content-length") || 0) > BODY_MOST[source]) {

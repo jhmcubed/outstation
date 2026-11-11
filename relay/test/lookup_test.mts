@@ -5,7 +5,8 @@
 //
 // Nothing here asks a real host. relay-py/test_lookup.py is the same for the Python relay.
 import { deepStrictEqual, ok, strictEqual } from "node:assert";
-import { type Entry, type Fetched, FAIL_BASE, MISS_FRESH, PER_MINUTE, Shelf, type Source, USER_AGENT, plainName, pruned, want }
+import { type Entry, type Fetched, FAIL_BASE, HOSTS, MISS_FRESH, PER_MINUTE, PER_MINUTE_WOM_KEYED, Shelf, type Source, USER_AGENT, lookupHeaders,
+  perMinute, plainName, pruned, want }
   from "../src/lookup.ts";
 
 let passed = 0;
@@ -16,7 +17,7 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
 
 /** A shelf on a clock (t) and a network (answers by URL) of the test's own, counting what it asks. */
-function rig(answers: Record<string, Fetched | (() => Fetched | Promise<Fetched>)> = {}) {
+function rig(answers: Record<string, Fetched | (() => Fetched | Promise<Fetched>)> = {}, limits = PER_MINUTE) {
   const kept = new Map<string, Entry>(), asked: string[] = [];
   const r = { t: 1_000_000_000_000, kept, asked, answers, shelf: null as unknown as Shelf };
   r.shelf = new Shelf({ get: async (k) => kept.get(k), put: async (k, e) => { kept.set(k, e); } },
@@ -25,7 +26,7 @@ function rig(answers: Record<string, Fetched | (() => Fetched | Promise<Fetched>
       const a = r.answers[url];
       if (!a) return { status: 404, body: null, retryAfter: null };
       return typeof a === "function" ? a() : a;
-    }, () => r.t);
+    }, () => r.t, limits);
   return r;
 }
 const okJson = (v: unknown): Fetched => ({ status: 200, body: enc.encode(JSON.stringify(v)), retryAfter: null });
@@ -192,6 +193,30 @@ test("what isn't JSON or a PNG isn't kept", async () => {
   r.t += 29 * DAY;
   await r.shelf.read(W("icon/item/2.png"));
   strictEqual(r.asked.filter((u) => u.endsWith("/2.png")).length, 1);
+});
+
+test("Wise Old Man's key: x-api-key only to api.wiseoldman.net, never to another host or without a key", () => {
+  const key = "test-key-not-real";
+  strictEqual(lookupHeaders(HOSTS.wom + "sburb", "wom", key)["x-api-key"], key);
+  strictEqual(lookupHeaders(HOSTS.wom + "sburb", "wom", key)["user-agent"], USER_AGENT);
+  strictEqual(lookupHeaders(HOSTS.wom + "sburb", "wom", null)["x-api-key"], undefined);
+  strictEqual(lookupHeaders(HOSTS.wom + "sburb", "wom", "")["x-api-key"], undefined);
+  // (RuneProfile, the icons, and a test's stand-in upstream for Wise Old Man never see it)
+  strictEqual(lookupHeaders(HOSTS.rp + "sburb", "rp", key)["x-api-key"], undefined);
+  strictEqual(lookupHeaders(HOSTS.item + "4151.png", "item", key)["x-api-key"], undefined);
+  strictEqual(lookupHeaders("http://127.0.0.1:9/wom/sburb", "wom", key)["x-api-key"], undefined);
+  strictEqual(lookupHeaders("https://api.wiseoldman.net.example.com/v2/players/x", "wom", key)["x-api-key"], undefined);
+});
+
+test("Wise Old Man's minute with a key: PER_MINUTE_WOM_KEYED, the others as they were", async () => {
+  deepStrictEqual(perMinute(null), PER_MINUTE);
+  strictEqual(perMinute("k").wom, PER_MINUTE_WOM_KEYED);
+  strictEqual(perMinute("k").rp, PER_MINUTE.rp);
+  ok(PER_MINUTE_WOM_KEYED > PER_MINUTE.wom && PER_MINUTE_WOM_KEYED < 100);
+  const r = rig({}, perMinute("k"));
+  for (let i = 0; i < 100; i++) r.answers[WOM + "p" + i] = okJson({ i });
+  for (let i = 0; i < 100; i++) await r.shelf.read(W("lookup/wom/p" + i));
+  strictEqual(r.asked.length, PER_MINUTE_WOM_KEYED);
 });
 
 test("each source's minute: past it, a stale one or 503, never more requests", async () => {
