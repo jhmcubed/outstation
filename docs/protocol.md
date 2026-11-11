@@ -181,7 +181,7 @@ Only the key's SHA-256 is kept.
 
 ## Asking for a station key (Cloudflare)
 
-So a friend needn't email the keeper for a code: their client asks, the keeper answers from his list, and the client collects the answer itself.
+So a friend needn't email the keeper for a code: their client asks, the keeper answers from his list, and the client collects the answer itself. Since 11/11/2026 a page may ask and collect the same way (outside.wiki's "Open your own", on the globe): the answers carry `Access-Control-Allow-Origin: *`, an `OPTIONS` is answered for `DELETE`'s preflight, and the body is read as JSON whatever its `Content-Type`, so a page sends it as plain text and needs no preflight. The same limits hold.
 
 A friend's client:
 - `POST /requests/<channel>` with `{"player", "note", "pickup"}` asks for a channel.

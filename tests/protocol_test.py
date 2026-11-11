@@ -3259,9 +3259,15 @@ class YourYear(Base):
                 for word in ('"mine"', '"plane"'):
                     self.assertNotIn(word, line)
         # (never kept: not in GET /game, not on GET /channels, and a desk that comes later gets none of it)
-        self.assertNotIn("3180", json.dumps(http("GET", "/game/%s?code=" % self.ch)[1]))
+        # (the tile itself, anywhere in either answer: a position at x 3180, y 2420, or a "here". Not the digits in the
+        # text: a channel's random name or a time can hold "3180", 11/11/2026, outstation#16's relay job)
+        def holds_it(v):
+            if isinstance(v, dict):
+                return "here" in v or (v.get("x") == 3180 and v.get("y") == 2420) or any(holds_it(x) for x in v.values())
+            return isinstance(v, list) and any(holds_it(x) for x in v)
+        self.assertFalse(holds_it(http("GET", "/game/%s?code=" % self.ch)[1]))
         await self.pause(2)
-        self.assertNotIn("3180", json.dumps(http("GET", "/channels")[1]))
+        self.assertFalse(holds_it(http("GET", "/channels")[1]))
         late = await self.desk()
         for line in await self.lines(late, 1.0):
             self.assertNotIn('"here"', line)
@@ -4047,6 +4053,26 @@ class Requests(unittest.IsolatedAsyncioTestCase):
         finally:
             tx.close()
         self.assertIn(self.name, [c["channel"] for c in admin("GET", "/admin/channels")[1]])
+
+    async def test_a_page_can_ask_and_collect_from_any_site(self):
+        # (11/11/2026: outside.wiki's "Open your own" asks from the globe; a browser sends plain text so it needs no
+        # preflight, and reads the answer only with the relay's allow-origin)
+        body = json.dumps({"player": self.name.title(), "note": "", "pickup": self.pickup}).encode()
+        req = urllib.request.Request(http_url() + "/requests/" + self.name, data=body, method="POST",
+                                     headers={"Content-Type": "text/plain;charset=UTF-8", "Origin": "https://outside.wiki"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.status, 201)
+            self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+            self.assertEqual(json.loads(r.read())["state"], "waiting")
+        req = urllib.request.Request(http_url() + "/requests/%s?pickup=%s" % (self.name, self.pickup), headers={"Origin": "https://outside.wiki"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual((r.headers.get("Access-Control-Allow-Origin"), json.loads(r.read())), ("*", {"state": "waiting"}))
+        req = urllib.request.Request(http_url() + "/requests/" + self.name, method="OPTIONS",
+                                     headers={"Origin": "https://outside.wiki", "Access-Control-Request-Method": "DELETE"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.status, 204)
+            self.assertIn("DELETE", r.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertEqual(http("DELETE", "/requests/%s?pickup=%s" % (self.name, self.pickup))[0], 204)
 
     async def test_turned_down_is_said_once(self):
         self.ask()
