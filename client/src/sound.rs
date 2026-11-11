@@ -160,6 +160,9 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
                 }
                 while let Some(m) = queue.pop_front() {
                     crate::clip::keep(&m);
+                    // (nobody seated, as the relay last told the transmitter: kept for clips, not sent, 11/10/2026;
+                    // the tape sends nothing anyway)
+                    if !taping && !crate::transmit::watched() { continue; }
                     if let Err(e) = ws.binary(m) { failed = Some(e); break; }
                 }
                 if failed.is_some() { break; }

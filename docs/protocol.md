@@ -51,10 +51,24 @@ The client says its version (`client/Cargo.toml`'s, which a release's tag must m
 
 The first transmitter sets the channel's watch code. Viewers whose code no longer matches are let go.
 
-## Viewers
+### Who's watching (11/10/2026)
+
+Every message a transmitter sends counts against the relay's Durable Object requests (Cloudflare counts incoming socket
+messages 20 to 1, outgoing ones not at all), watched or not: on 11/10/2026 a long unwatched test stream used up the free
+plan's 100,000 for the day. So the status line it hears carries `viewers` (seated) and `lookers` (lookers asking for
+frames; both relays, since 11/10/2026), and the client (transmit.rs, sound.rs) acts on them:
+- no viewer seated: one full frame every 10 s (`IDLE_FRAME_EVERY`), so the relay's last frame stays recent for whoever
+  comes first, and no sound; the full stream again the moment a status line says one's seated (the frames held back
+  half a second go at once);
+- no looker asking: no small frames; a relay that doesn't say `lookers` gets them as before;
+- every frame and sound packet is still taken and kept for the client's clips, watched or not.
+An unwatched stream at the default 8 frames a second with the game's sound goes from about 19 messages a second (8
+frames, 1 small, 10 of sound) to about 0.3 (a frame every 10 s, the `state` line every 5 s): about 3,400 requests an hour
+to about 55 (the Outside plugin's own socket, and HTTP reads like GET /channels, aside).
+
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game"}}`. `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game", "lookers"}}` (`lookers`: lookers asking for frames, for the transmitter: "Who's watching", above). `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
 - frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the game state, the chat so far, the poll, the drop guess and the sound's line.
 - `{"game": {...}}`: the player's game state, from the Outside plugin (below, "The game"), once seated.
 - `{"report": {"type", "text", "at", "data"}}`: a field report (from Dink; below, "Dink").
@@ -932,20 +946,36 @@ ghillie's `tools/release-kit/prototypes/outside-splash/` (almanac.js, station-me
     GET <relay>/lookup/wom/<name>                 Wise Old Man's player      (api.wiseoldman.net/v2/players/<name>)
     GET <relay>/lookup/wom/<name>/achievements    its achievements           (…/achievements)
     GET <relay>/lookup/wom/<name>/gained          the week's gains           (…/gained?period=week)
+        ?period=day|week|month|year               a period's                 (…/gained?period=)
+        ?from=<moment>[&to=<moment>]              between two moments        (…/gained?startDate=&endDate=)
+    GET <relay>/lookup/wom/<name>/timeline?metric=<metric>&period=… or &from=…[&to=…]
+                                                  a metric over time         (…/snapshots/timeline?metric=&…)
+    GET <relay>/lookup/wom/<name>/progress        achievements in progress   (…/achievements/progress)
     GET <relay>/lookup/wom/<name>/groups          its groups                 (…/groups)
     GET <relay>/lookup/rp/<name>                  RuneProfile's account      (api.runeprofile.com/v1/accounts/<name>)
     GET <relay>/lookup/rp/<name>/activities       its newest 20 activities   (…/activities?limit=20)
+        ?limit=1-50, ?activityTypes=<a,b>, ?cursor=<its nextCursor>          (…/activities?limit=&activityTypes=&cursor=)
+    GET <relay>/lookup/rp/<name>/skills, /quests, /diaries, /combat, /log
+                                                  (…/skills, /quests, /achievement-diaries, /combat-achievements/tasks,
+                                                   /collection-log)
     GET <relay>/icon/item/<id>.png                RuneLite's item icon       (static.runelite.net/cache/item/icon/<id>.png)
     GET <relay>/icon/metric/<metric>.png          Wise Old Man's metric icon (its GitHub's metrics_small, through jsDelivr)
 
-Only these shapes are passed on (anything else: 404; anything but GET: 405), and a page's own query string never goes
-upstream. `<name>` is one the game allows (1–12 of letters, digits, space, `_` and `-`), asked and kept as Wise Old Man
+Only these shapes are passed on (anything else: 404; anything but GET: 405). Of a page's query only the parameters
+above are read; each is checked (a bad one: 404), and they go upstream in one order whatever order they came in, so the
+same record is one record; anything else in the query is ignored and never sent. The Outside page's (ghillie.wiki)
+added `progress`, `timeline`, gains by period or between two moments, RuneProfile's other parts and its activities by
+page on 11/10/2026: a `<moment>` is what JavaScript's `toISOString` makes (`2026-11-01T07:00:00.000Z`), from 2010 on and
+not after now; `to`, when given, after `from`; upstream the end is `to`, or now if that's sooner (a stretch still going
+ends now), and without `to`, now. The record is kept by what was asked, so every visitor asking for the same stretch
+shares it. `<name>` is one the game allows (1–12 of letters, digits, space, `_` and `-`), asked and kept as Wise Old Man
 reads it: lower case, a run of spaces, `_` and `-` as one space (`Iron_Man` and `iron man` are one record). `<id>` is 1–6
 digits (a leading 0 dropped), `<metric>` 1–40 of `a-z`, `0-9` and `_`. Every answer has `Access-Control-Allow-Origin: *`.
 
 - **200**: the source's own body, as it sent it (a JSON source's checked to be JSON, an icon's to be a PNG), with
-  `x-lookup-at` (when the relay fetched it, ms). Fresh for an hour (Wise Old Man's groups six, RuneProfile's activities
-  half an hour, an icon 30 days); the first read after that asks again. `Cache-Control: public, max-age=300` (an icon's
+  `x-lookup-at` (when the relay fetched it, ms). Fresh for an hour (Wise Old Man's groups six; RuneProfile's newest
+  activities half an hour, a later page by its cursor six hours; a stretch of gains or a timeline whose `to` is over an
+  hour past, 30 days, since it can't change; an icon 30 days); the first read after that asks again. `Cache-Control: public, max-age=300` (an icon's
   `max-age=604800`). When it's past fresh and the source fails or is paused, the last good one is answered with
   `x-lookup-stale: 1` (`max-age=60`), for as long as it's kept.
 - **404** `{"error": "not found"}`: the source hasn't the player (Wise Old Man's 404, RuneProfile's 400) or the icon;

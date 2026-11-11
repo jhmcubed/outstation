@@ -22,7 +22,9 @@ export class Lookups extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean).map((p) => { try { return decodeURIComponent(p); } catch { return ""; } });
-    const w = want(parts, this.env.LOOKUP_UPSTREAM || null);
+    const q: Record<string, string> = {};
+    for (const [k, v] of url.searchParams) if (!(k in q)) q[k] = v;
+    const w = want(parts, this.env.LOOKUP_UPSTREAM || null, q);
     if (!w) return new Response(null, { status: 404, headers: { "access-control-allow-origin": "*" } });
     const a = await this.shelf.read(w);
     return new Response(a.body, { status: a.status, headers: a.headers });

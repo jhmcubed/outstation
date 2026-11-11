@@ -46,6 +46,11 @@ MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.
 # the aether's keeper (11/07/2026): the Worker's ADMIN_TOKEN, and relay-py's --admin-token (given it here)
 AETHER_KEEPER = WORKER or MODE == "python"
 SAY_BURST = 20
+# the relays take 5 game messages a second from the plugin's socket and drop the rest (game.ts's GAME_A_SECOND, relay.py's
+# GAME_A_SECOND), counted by when each arrives; a test that needs every one of a run counted sends 5 and waits this long
+# (11/11/2026: 1.05 s, measured on the test's own clock, let 6 arrive within a second on a busy GitHub runner, and the
+# Worker dropped one: the 31st star then fitted under the 30 an hour, jhmcubed/outstation#15 and the run after #10)
+GAME_PACE = 1.5
 SOUND_HOLD = 0.5
 # how long a player's square (following, 11/08/2026) shows on GET /channels after it came: 240 s as the relays are run,
 # shortened here so it can be seen to go stale (a relay already running: whatever it was started with, given here)
@@ -99,6 +104,11 @@ LOOKUP_FILES = {"/v2/players/sburb": "wom-sburb.json", "/v2/players/sburb/achiev
                 "/v2/players/sburb/gained?period=week": 500, "/v2/players/nobody": 404,
                 "/v1/accounts/sburb": "rp-sburb.json", "/v1/accounts/sburb/activities?limit=20": "rp-sburb-activities.json",
                 "/v1/accounts/nobody": 400, "/cache/item/icon/4151.png": "item-4151.png",
+                # (the Outside page's shapes, 11/10/2026)
+                "/v2/players/sburb/gained?period=month": "wom-sburb-achievements.json",
+                "/v2/players/sburb/gained?startDate=2026-10-01T06%3A00%3A00.000Z&endDate=2026-11-01T06%3A00%3A00.000Z": "wom-sburb.json",
+                "/v1/accounts/sburb/skills": "rp-sburb.json",
+                "/v1/accounts/sburb/activities?limit=50&activityTypes=new_item_obtained&cursor=abc%3D": "rp-sburb-activities.json",
                 "/gh/wise-old-man/wise-old-man@master/app/public/img/metrics_small/zulrah.png": "metric-zulrah.png"}
 
 
@@ -1031,6 +1041,29 @@ class RoundTwo(Base):
         await b.send(json.dumps({"hello": {"name": "fern", "device": "device-two-bbbb"}}))
         await self.pause()
         return tx, desk, a, b
+
+    async def test_the_transmitter_hears_who_watches_viewers_and_lookers_asking_for_frames(self):
+        # (11/10/2026, docs/protocol.md "Who's watching": with neither, the client sends a frame now and then and no
+        # sound; with no lookers, no small frames)
+        tx = await self.tx()
+        st = await last_status(tx)
+        self.assertEqual((st["viewers"], st["lookers"]), (0, 0))
+        look = await self.connect("watch", "look=1")
+        st = await last_status(tx)
+        self.assertEqual((st or {}).get("lookers", 0), 0)  # (a looker not asking for frames isn't counted: no line, or 0)
+        await look.send(json.dumps({"look": {"frames": True}}))
+        self.assertEqual((await last_status(tx))["lookers"], 1)
+        v = await self.watch()
+        st = await last_status(tx)
+        self.assertEqual((st["viewers"], st["lookers"]), (1, 1))
+        await look.send(json.dumps({"look": {"frames": False}}))
+        self.assertEqual((await last_status(tx))["lookers"], 0)
+        await look.send(json.dumps({"look": {"frames": True}}))
+        self.assertEqual((await last_status(tx))["lookers"], 1)
+        look.close()
+        self.assertEqual((await last_status(tx, settle=1.0))["lookers"], 0)
+        v.close()
+        self.assertEqual((await last_status(tx, settle=1.0))["viewers"], 0)
 
     async def test_a_looker_takes_no_seat_and_gets_few_frames_only_when_it_asks(self):
         tx = await self.tx()
@@ -2475,9 +2508,9 @@ class Stars(Base):
         other = self.world % 999 + 1                               # (thirty stars on a world of their own)
         for i in range(30):
             if i and i % 5 == 0:
-                await asyncio.sleep(1.05)                          # (5 a second at most)
+                await asyncio.sleep(GAME_PACE)                     # (5 a second at most, with room: GAME_PACE)
             await self.say(g, dict(self.star(tier=9), world=other, y=2496 + 128 * (i % 13), x=1088 + 128 * (i // 13)))
-        await asyncio.sleep(1.05)
+        await asyncio.sleep(GAME_PACE)                                         # (so the 31st is refused by the 30, not the 5 a second)
         await self.say(g, self.star(tier=9))                       # (the 31st: ignored)
         self.assertIsNone(await self.mine())
 
@@ -2699,12 +2732,12 @@ class Kept(Base):
         other = self.world % 999 + 1                                           # (thirty stars on a world of their own)
         for i in range(30):
             if i and i % 5 == 0:
-                await asyncio.sleep(1.05)                                      # (5 a second at most)
+                await asyncio.sleep(GAME_PACE)                                 # (5 a second at most, with room: GAME_PACE)
             if i == 20:
                 await self.pause(2)
                 await self.forget()
             await self.say(g, dict(self.star(tier=9), world=other, y=2496 + 128 * (i % 13), x=1088 + 128 * (i // 13)))
-        await asyncio.sleep(1.05)
+        await asyncio.sleep(GAME_PACE)                                         # (so the 31st is refused by the 30, not the 5 a second)
         await self.say(g, self.star(tier=9))                                   # (the 31st: ignored, as without a sleep)
         self.assertIsNone(await self.star_now())
 
@@ -4175,6 +4208,24 @@ class Lookups(unittest.TestCase):
         n = self.asked("/v2/players/sburb/gained?period=week")
         lookup_read("/lookup/wom/sburb/gained")
         self.assertEqual(self.asked("/v2/players/sburb/gained?period=week"), n)  # (it waits before asking again)
+
+    def test_the_outside_pages_shapes(self):
+        # (11/10/2026: a period, a stretch wholly past (its end as asked), RuneProfile's skills and a page by cursor;
+        # each passed on in one order, whatever order the page's query had, and asked once)
+        for path, upstream in (("/lookup/wom/sburb/gained?period=month", "/v2/players/sburb/gained?period=month"),
+                               ("/lookup/wom/sburb/gained?to=2026-11-01T06:00:00.000Z&from=2026-10-01T06:00:00.000Z",
+                                "/v2/players/sburb/gained?startDate=2026-10-01T06%3A00%3A00.000Z&endDate=2026-11-01T06%3A00%3A00.000Z"),
+                               ("/lookup/rp/sburb/skills", "/v1/accounts/sburb/skills"),
+                               ("/lookup/rp/sburb/activities?cursor=abc%3D&activityTypes=new_item_obtained&limit=50",
+                                "/v1/accounts/sburb/activities?limit=50&activityTypes=new_item_obtained&cursor=abc%3D")):
+            status, _, body = lookup_read(path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(json.loads(body), json.loads(lookup_fixture(LOOKUP_FILES[upstream])), path)
+            lookup_read(path)
+            self.assertEqual(self.asked(upstream), 1, upstream)
+        for path in ("/lookup/wom/sburb/gained?period=forever", "/lookup/wom/sburb/timeline?period=year",
+                     "/lookup/rp/sburb/activities?limit=500", "/lookup/wom/sburb/gained?from=yesterday"):
+            self.assertEqual(lookup_read(path)[0], 404, path)
 
     def test_only_the_shapes(self):
         n = len(UPSTREAM.paths())

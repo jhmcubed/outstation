@@ -1578,7 +1578,9 @@ class Channel:
               "open": self.sender is not None and self.state == "open",
               "static": self.sender is not None and self.state == "static",
               "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on,     # (set: someone has claimed it; Outside says "no portal here yet" when not)
-              "title": self.title, "game": self.gamer is not None}     # (game: the Outside plugin's connected, 11/07/2026)
+              "title": self.title, "game": self.gamer is not None,     # (game: the Outside plugin's connected, 11/07/2026)
+              # (lookers asking for frames, 11/10/2026: with viewers, who's watching, for the transmitter: the Worker's)
+              "lookers": sum(1 for v in self.lookers if getattr(v, "look_frames", False))}
         if place:
             st["seat"], st["place"] = False, place
         if you is not None:
@@ -2430,7 +2432,7 @@ class Relay:
             await self.almanac_read(writer, method)
             return
         if path and path[0] in ("lookup", "icon") and not key:
-            await self.lookup_read(writer, method, path)
+            await self.lookup_read(writer, method, path, q)
             return
         if path == ["admin", "almanac"] and not key:
             await self.almanac_keeper(writer, method, headers)
@@ -2558,7 +2560,10 @@ class Relay:
                     except ValueError:
                         continue
                     if isinstance(m, dict) and isinstance(m.get("look"), dict):
+                        was = sock.look_frames
                         sock.look_frames = m["look"].get("frames") is True
+                        if was != sock.look_frames:
+                            ch.tell_viewers()     # (the transmitter's "lookers")
                         if sock.look_frames and ch.sender is not None:
                             fresh = ch.last_thumb if time.monotonic() - ch.thumb_at <= THUMB_FRESH else None
                             if fresh or ch.last_frame:
@@ -2566,6 +2571,8 @@ class Relay:
                                 sock.look_at = time.monotonic()
         finally:
             ch.lookers.discard(sock)
+            if sock.look_frames:
+                ch.tell_viewers()     # (the transmitter's "lookers": one fewer)
             if ch.key is None and not ch.viewers and not ch.waiting and not ch.desks and not ch.lookers \
                     and self.channels.get(name) is ch:
                 del self.channels[name]
@@ -3097,11 +3104,11 @@ class Relay:
         finally:
             writer.close()
 
-    async def lookup_read(self, writer, method, path):
+    async def lookup_read(self, writer, method, path, q=None):
         """GET /lookup/... and /icon/... (11/10/2026; lookup.py, docs/protocol.md "The lookups"): Wise Old Man's and
         RuneProfile's records of a player and the item and metric icons, asked by the relay and shared. Anyone may read
         them (any origin, the public side too)."""
-        w = lookups.want(path, None if self.lookup in (None, "on") else self.lookup)
+        w = lookups.want(path, None if self.lookup in (None, "on") else self.lookup, q or {})
         if method != "GET":
             status, headers, body = 405, dict(lookups.CORS), b""
         elif not w:

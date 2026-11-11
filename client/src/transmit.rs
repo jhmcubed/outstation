@@ -16,6 +16,8 @@ pub struct Status {
     /// why nothing's going out (None: frames are going)
     pub why: Option<String>,
     pub viewers: u32,
+    /// lookers asking for frames (the relay's status line's "lookers", 11/10/2026); None: a relay that doesn't say
+    pub lookers: Option<u32>,
     /// the last few seconds: frames a second and KB a frame
     pub fps: f64,
     pub kb: f64,
@@ -43,6 +45,18 @@ impl Transmit {
         }
         Transmit { status, paused }
     }
+}
+
+// Who's watching (11/10/2026, Jace: test streams left running used up the relay's free Durable Object requests for the
+// day; every message a transmitter sends counts, watched or not). With no viewer seated, the picture goes out only one
+// frame every IDLE_FRAME_EVERY seconds (so whoever opens it first sees a recent picture at once, and the stream comes in
+// full the moment the relay says someone's there), the sound not at all, and the small frames only while lookers ask.
+// Nothing changes on this computer: every frame and every packet is still taken and kept for clips.
+static WATCHED: AtomicBool = AtomicBool::new(false);
+pub const IDLE_FRAME_EVERY: f64 = 10.0;
+/// whether anyone's seated watching, as the relay last said (the sound's loop sends only then)
+pub fn watched() -> bool {
+    WATCHED.load(Ordering::Relaxed)
 }
 
 static LOG: std::sync::OnceLock<Mutex<Option<std::fs::File>>> = std::sync::OnceLock::new();
@@ -93,7 +107,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
                 told_off = true;
             }
             log("dark, the tape rolling: clips only, nothing sent");
-            say(&status, |st| { st.connected = false; st.viewers = 0; st.taping = true; st.why = Some("off air".into());
+            say(&status, |st| { st.connected = false; st.viewers = 0; st.lookers = None; st.taping = true; st.why = Some("off air".into());
                                 st.note = "dark · the tape's rolling (clips only, nothing sent)".into(); });
             let ended = live(&settings, &status, &paused, &mut Out::Tape, &mut gpu, &mut gdi);
             say(&status, |st| { st.taping = false; st.fps = 0.0; });
@@ -114,7 +128,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
                 told_off = true;
             }
             gpu.stop();
-            say(&status, |st| { st.connected = false; st.why = Some("off air".into()); st.viewers = 0; });
+            say(&status, |st| { st.connected = false; st.why = Some("off air".into()); st.viewers = 0; st.lookers = None; });
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
@@ -142,7 +156,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
         let closed = live(&settings, &status, &paused, &mut ws, &mut gpu, &mut gdi);
         ws.close();
         log(&format!("off air: {}", closed));
-        say(&status, |st| { st.connected = false; st.viewers = 0; st.note = format!("off air: {}", closed); });
+        say(&status, |st| { st.connected = false; st.viewers = 0; st.lookers = None; st.note = format!("off air: {}", closed); });
         if closed.contains("(4000)") {
             // another capture started on this channel: the newest one wins, this one steps aside (reconnecting would
             // only knock that one off in turn)
@@ -187,6 +201,9 @@ fn sleep_unless_changed(settings: &Shared, who: &(String, String, String), secs:
 fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>, ws: &mut Out, gpu: &mut Gpu,
         gdi: &mut Grabber) -> String {
     let taping = ws.taping();
+    WATCHED.store(false, Ordering::Relaxed); // (till the relay says otherwise)
+    let mut last_full_out = Instant::now() - Duration::from_secs(60);
+    let mut taken = 0u32;
     let first = settings.get();
     let who = (first.relay.clone(), first.channel.clone(), first.key.clone(), first.code.clone());
     let mut windows = WindowCache::new(&first.title);
@@ -211,6 +228,11 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                         if let Some(n) = v.pointer("/relay/viewers").and_then(|x| x.as_u64()) {
                             say(status, |st| st.viewers = n as u32);
+                            WATCHED.store(n > 0, Ordering::Relaxed);
+                        }
+                        if v.pointer("/relay/channel").is_some() {
+                            let l = v.pointer("/relay/lookers").and_then(|x| x.as_u64()).map(|n| n as u32);
+                            say(status, |st| st.lookers = l);
                         }
                     }
                 }
@@ -277,9 +299,11 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                             allowance -= jpeg.len() as f64;
                             held.push_back((Instant::now(), jpeg));
                         }
+                        taken += 1;
                         // a small copy now and then, for lookers only (held back and gated like the rest; none on the
-                        // tape, which has no lookers)
-                        if !taping && last_thumb.elapsed().as_secs_f64() >= capture::THUMB_EVERY {
+                        // tape, which has no lookers; none while the relay says no looker asks, 11/10/2026)
+                        let lookers = status.lock().unwrap().lookers;
+                        if !taping && lookers != Some(0) && last_thumb.elapsed().as_secs_f64() >= capture::THUMB_EVERY {
                             held.push_back((Instant::now(), img.thumb(capture::number(&img))));
                             last_thumb = Instant::now();
                         }
@@ -296,9 +320,14 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         while held.front().is_some_and(|f| f.0.elapsed().as_secs_f64() >= HOLD_BACK) {
             let data = held.pop_front().unwrap().1;
             if &data[4..6] != b"TH" {
+                crate::clip::keep(&data); // (the replay buffer: full frames, never the small ones; every one, watched or not)
+                // (nobody seated: one now and then, so the relay's last frame stays recent; the tape sends nothing anyway)
+                if !taping && !WATCHED.load(Ordering::Relaxed) && last_full_out.elapsed().as_secs_f64() < IDLE_FRAME_EVERY {
+                    continue;
+                }
+                last_full_out = Instant::now();
                 bytes_sent += data.len();
                 sent += 1;
-                crate::clip::keep(&data); // (the replay buffer: full frames, never the small ones)
             }
             if let Err(e) = ws.binary(data) {
                 return e;
@@ -318,7 +347,15 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         if last_print.elapsed().as_secs_f64() > if taping { 60.0 } else { 5.0 } {
             let span = last_print.elapsed().as_secs_f64();
             let viewers = status.lock().unwrap().viewers;
-            let note = if sent > 0 {
+            let idle = !taping && viewers == 0 && taken > 0;
+            let note = if idle {
+                // (frames still taken at the rate asked, for clips; the KB a frame from those sent, else as it was)
+                let f = taken as f64 / span;
+                let k = if sent > 0 { bytes_sent as f64 / sent as f64 / 1024.0 } else { status.lock().unwrap().kb };
+                say(status, |st| { st.fps = f; st.kb = k; });
+                format!("live: nobody watching, so a frame every {:.0} s and no sound go out ({:.1} frames a second kept for clips){}",
+                        IDLE_FRAME_EVERY, f, if why.is_some() { "; shut" } else { "" })
+            } else if sent > 0 {
                 let (f, k) = (sent as f64 / span, bytes_sent as f64 / sent as f64 / 1024.0);
                 say(status, |st| { st.fps = f; st.kb = k; });
                 let over = if over_ceiling > 0 {
@@ -336,6 +373,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             say(status, |st| st.note = note);
             last_print = Instant::now();
             sent = 0;
+            taken = 0;
             bytes_sent = 0;
             over_ceiling = 0;
         }

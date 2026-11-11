@@ -8,14 +8,21 @@
 //
 //   GET <relay>/lookup/wom/<name>                 Wise Old Man's player (api.wiseoldman.net/v2/players/<name>)
 //   GET <relay>/lookup/wom/<name>/achievements    …/achievements
-//   GET <relay>/lookup/wom/<name>/gained          …/gained?period=week (the week only)
+//   GET <relay>/lookup/wom/<name>/gained          …/gained?period=week (?period=day|week|month|year, or ?from=&to=
+//                                                 two moments as toISOString makes them, to now without to)
+//   GET <relay>/lookup/wom/<name>/timeline?metric=<m>   …/snapshots/timeline (?period=, or ?from=&to=, as gained)
+//   GET <relay>/lookup/wom/<name>/progress        …/achievements/progress
 //   GET <relay>/lookup/wom/<name>/groups          …/groups
 //   GET <relay>/lookup/rp/<name>                  RuneProfile's account (api.runeprofile.com/v1/accounts/<name>)
-//   GET <relay>/lookup/rp/<name>/activities       …/activities?limit=20
+//   GET <relay>/lookup/rp/<name>/activities       …/activities?limit=20 (?limit=1-50, ?activityTypes=, ?cursor=)
+//   GET <relay>/lookup/rp/<name>/skills, /quests, /diaries, /combat, /log
+//                                                 …/skills, /quests, /achievement-diaries, /combat-achievements/tasks,
+//                                                 /collection-log
 //   GET <relay>/icon/item/<id>.png                RuneLite's item icon (static.runelite.net/cache/item/icon/<id>.png)
 //   GET <relay>/icon/metric/<metric>.png          Wise Old Man's metric icon (its GitHub's metrics_small, by jsDelivr)
 //
-// Only these shapes: nothing else is passed on, and a page's own query string is never sent upstream. A name is one
+// Only these shapes: nothing else is passed on, and of a page's query only the parameters above are read, checked and
+// sent upstream in one order (anything else in it is ignored). A name is one
 // the game allows (1-12 of letters, digits, space, _ and -), asked and kept as Wise Old Man reads it: lower case, a
 // run of spaces, _ and - as one space. The answer is the source's own body (a JSON source's checked as JSON, an
 // icon's as a PNG), with:
@@ -55,12 +62,66 @@ const ITEM_ID = /^[0-9]{1,6}\.png$/;
 const METRIC = /^[a-z0-9_]{1,40}\.png$/;
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-// what each record is: [the path under the source's host (after the name), how long it's fresh]
+// what each record is: [the path under the source's host (after the name), how long it's fresh]; gained, timeline and
+// activities take a query (part(), below)
 const PARTS: Record<"wom" | "rp", Record<string, [string, number]>> = {
-  wom: { "": ["", HOUR], achievements: ["/achievements", HOUR], gained: ["/gained?period=week", HOUR],
+  wom: { "": ["", HOUR], achievements: ["/achievements", HOUR], progress: ["/achievements/progress", HOUR],
          groups: ["/groups", 6 * HOUR] },
-  rp: { "": ["", HOUR], activities: ["/activities?limit=20", 30 * 60_000] },
+  rp: { "": ["", HOUR], skills: ["/skills", HOUR], quests: ["/quests", HOUR], diaries: ["/achievement-diaries", HOUR],
+        combat: ["/combat-achievements/tasks", HOUR], log: ["/collection-log", HOUR] },
 };
+// (11/10/2026, ghillie.wiki's Outside page: Wise Old Man's gains and timelines by period or between two moments, and
+// RuneProfile's activities a page at a time)
+const PERIODS = ["day", "week", "month", "year"];
+const ISO = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$/;
+const METRIC_KEY = /^[a-z0-9_]{1,40}$/;
+const CURSOR = /^[A-Za-z0-9_.:=-]{1,200}$/;
+const RP_TYPES = /^[a-z_]{1,40}(,[a-z_]{1,40}){0,7}$/;
+const LONG_PAST = 30 * DAY; // a stretch wholly past an hour ago doesn't change: kept this long before asking again
+
+/** A moment as the query gives it (ISO 8601 in UTC, as Date's toISOString makes it), or null. */
+function moment(v: string | undefined): number | null {
+  if (v === undefined || !ISO.test(v)) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) && t >= 1_262_304_000_000 ? t : null; // (2010 on: Wise Old Man's own start is later)
+}
+
+/** A part that takes a query: [the key's own end, the path under the host after the name, fresh], or null. The key
+ *  holds only what decides the answer, in one order; nothing else the page sent goes anywhere. */
+function part(source: "wom" | "rp", name: string, q: Record<string, string>, now: number): [string, string, number] | null {
+  const enc = encodeURIComponent;
+  if (source === "wom" && (name === "gained" || name === "timeline")) {
+    let up = name === "gained" ? "/gained?" : "", key = name;
+    if (name === "timeline") {
+      if (!METRIC_KEY.test(q.metric || "")) return null;
+      up = "/snapshots/timeline?metric=" + q.metric + "&";
+      key += "?metric=" + q.metric + "&";
+    } else key += "?";
+    if (q.from !== undefined) {
+      const from = moment(q.from), to = q.to === undefined ? null : moment(q.to);
+      if (from === null || (q.to !== undefined && to === null) || (to !== null && to <= from) || from > now) return null;
+      // (the end: what's asked, or now if that's later than now; a stretch over an hour past keeps)
+      const end = to === null ? now : Math.min(to, now);
+      return [key + "from=" + q.from + (q.to !== undefined ? "&to=" + q.to : ""),
+              up + "startDate=" + enc(q.from) + "&endDate=" + enc(new Date(end).toISOString()),
+              to !== null && to < now - HOUR ? LONG_PAST : HOUR];
+    }
+    const period = q.period === undefined ? (name === "gained" ? "week" : "") : q.period;
+    if (!PERIODS.includes(period)) return null;
+    return [key + "period=" + period, up + "period=" + period, HOUR];
+  }
+  if (source === "rp" && name === "activities") {
+    const limit = q.limit === undefined ? 20 : /^[1-9][0-9]?$/.test(q.limit) ? +q.limit : 0;
+    if (limit < 1 || limit > 50) return null;
+    if (q.cursor !== undefined && !CURSOR.test(q.cursor)) return null;
+    if (q.activityTypes !== undefined && !RP_TYPES.test(q.activityTypes)) return null;
+    const tail = "limit=" + limit + (q.activityTypes !== undefined ? "&activityTypes=" + q.activityTypes : "") +
+      (q.cursor !== undefined ? "&cursor=" + enc(q.cursor) : "");
+    // (a later page, by its cursor, changes little: kept longer than the newest)
+    return ["activities?" + tail, "/activities?" + tail, q.cursor !== undefined ? 6 * HOUR : 30 * 60_000];
+  }
+  return null;
+}
 
 export type Want = { source: Source; key: string; url: string; fresh: number; missFresh: number; json: boolean };
 export type Entry = { at: number; status: 200 | 404; type: string; body: Uint8Array };
@@ -81,15 +142,18 @@ export function plainName(raw: string): string | null {
 
 /** The address's parts (after the relay's own: ["lookup", "wom", name, part?] or ["icon", "item", "4151.png"]) as a
  *  record to look up, or null if it isn't one of the shapes. base: (tests) every source under this address instead. */
-export function want(parts: string[], base?: string | null): Want | null {
+export function want(parts: string[], base?: string | null, q: Record<string, string> = {}, now = Date.now()): Want | null {
   let source: Source, key: string, path: string, fresh: number, missFresh = MISS_FRESH, json = true;
   if (parts[0] === "lookup" && (parts[1] === "wom" || parts[1] === "rp") && (parts.length === 3 || parts.length === 4)) {
-    const name = plainName(parts[2]), part = parts.length === 4 ? parts[3] : "", spec = PARTS[parts[1]][part];
-    if (!name || !spec || (parts.length === 4 && !part)) return null;
+    const name = plainName(parts[2]), p = parts.length === 4 ? parts[3] : "";
+    if (!name || (parts.length === 4 && !p)) return null;
+    const spec = Object.prototype.hasOwnProperty.call(PARTS[parts[1]], p) ? PARTS[parts[1]][p] : null;
+    const withQ = spec ? null : part(parts[1], p, q, now);
+    if (!spec && !withQ) return null;
     source = parts[1];
-    key = source + ":" + name + (part ? "/" + part : "");
-    path = encodeURIComponent(name) + spec[0];
-    fresh = spec[1];
+    key = source + ":" + name + (p ? "/" + (withQ ? withQ[0] : p) : "");
+    path = encodeURIComponent(name) + (withQ ? withQ[1] : spec![0]);
+    fresh = withQ ? withQ[2] : spec![1];
   } else if (parts[0] === "icon" && parts.length === 3 && (parts[1] === "item" || parts[1] === "metric")) {
     const file = parts[2];
     if (parts[1] === "item" ? !ITEM_ID.test(file) : !METRIC.test(file)) return null;

@@ -56,6 +56,42 @@ class Lookups(unittest.TestCase):
             self.assertIsNone(L.want([x for x in bad.split("/") if x]), bad)
         self.assertIsNone(L.want(["lookup", "wom", "x", ""]))
 
+    def test_the_outside_pages_shapes(self):
+        now = 1794312000.0  # (2026-11-10T12:00:00Z, the Worker's test's)
+
+        def Q(p, q):
+            return L.want([x for x in p.split("/") if x], None, q, now)
+        self.assertEqual(Q("lookup/wom/x/gained", {"period": "month"})["url"], WOM + "x/gained?period=month")
+        self.assertEqual(Q("lookup/wom/x/gained", {})["key"], "wom:x/gained?period=week")
+        self.assertIsNone(Q("lookup/wom/x/gained", {"period": "forever"}))
+        a = Q("lookup/wom/x/gained", {"from": "2026-11-01T07:00:00.000Z", "to": "2026-11-30T07:00:00.000Z"})
+        self.assertEqual(a["url"], WOM + "x/gained?startDate=2026-11-01T07%3A00%3A00.000Z&endDate=2026-11-10T12%3A00%3A00.000Z")
+        self.assertEqual(a["key"], "wom:x/gained?from=2026-11-01T07:00:00.000Z&to=2026-11-30T07:00:00.000Z")
+        self.assertEqual(a["fresh"], L.HOUR)
+        past = Q("lookup/wom/x/gained", {"from": "2026-10-01T06:00:00.000Z", "to": "2026-11-01T06:00:00.000Z"})
+        self.assertEqual(past["url"], WOM + "x/gained?startDate=2026-10-01T06%3A00%3A00.000Z&endDate=2026-11-01T06%3A00%3A00.000Z")
+        self.assertEqual(past["fresh"], 30 * L.DAY)
+        self.assertEqual(Q("lookup/wom/x/gained", {"from": "2025-02-03T04:05:06.789Z"})["url"],
+                         WOM + "x/gained?startDate=2025-02-03T04%3A05%3A06.789Z&endDate=2026-11-10T12%3A00%3A00.000Z")
+        for bad in ({"from": "yesterday"}, {"from": "2026-11-02T00:00:00.000Z", "to": "2026-11-01T00:00:00.000Z"},
+                    {"from": "2027-01-01T00:00:00.000Z"}, {"from": "2026-11-01T00:00:00.000Z", "to": "x"}):
+            self.assertIsNone(Q("lookup/wom/x/gained", bad), bad)
+        self.assertEqual(Q("lookup/wom/x/timeline", {"metric": "zulrah", "period": "year"})["url"],
+                         WOM + "x/snapshots/timeline?metric=zulrah&period=year")
+        for bad in ({"period": "year"}, {"metric": "Zulrah", "period": "year"}, {"metric": "zulrah"}):
+            self.assertIsNone(Q("lookup/wom/x/timeline", bad), bad)
+        self.assertEqual(Q("lookup/wom/x/progress", {})["url"], WOM + "x/achievements/progress")
+        for p, up in (("skills", "/skills"), ("quests", "/quests"), ("diaries", "/achievement-diaries"),
+                      ("combat", "/combat-achievements/tasks"), ("log", "/collection-log")):
+            self.assertEqual(Q("lookup/rp/x/" + p, {})["url"], RP + "x" + up)
+        pg = Q("lookup/rp/x/activities", {"limit": "50", "activityTypes": "new_item_obtained", "cursor": "t-msc:n=7_i-3p"})
+        self.assertEqual(pg["url"], RP + "x/activities?limit=50&activityTypes=new_item_obtained&cursor=t-msc%3An%3D7_i-3p")
+        self.assertEqual(pg["fresh"], 6 * L.HOUR)
+        for bad in ({"limit": "0"}, {"limit": "51"}, {"limit": "5x"}, {"cursor": "a b"}, {"activityTypes": "DROP"}):
+            self.assertIsNone(Q("lookup/rp/x/activities", bad), bad)
+        self.assertIsNone(Q("lookup/rp/x/gained", {"period": "week"}))
+        self.assertEqual(Q("lookup/wom/x", {"cachebust": "1"})["key"], "wom:x")
+
     def test_kept_while_fresh(self):
         r = Rig({WOM + "sburb": ok_json({"username": "sburb"})})
         status, h, body = r.read("lookup/wom/sburb")

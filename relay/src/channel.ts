@@ -352,6 +352,8 @@ export class Channel extends DurableObject<Env> {
       .sort((a, b) => (this.att(a).seq || 0) - (this.att(b).seq || 0)));
   }
   live(): boolean { return this.sockets("transmit").length > 0; }
+  /** Lookers asking for frames (the status line's "lookers"). */
+  lookers(): number { return this.sockets("look").filter((ws) => this.att(ws).lookFrames).length; }
   cap(): number {
     const ceiling = parseInt(this.env.MAX_VIEWERS || "0") || 0, own = this.meta.cap || 0;
     return ceiling && own ? Math.min(ceiling, own) : ceiling || own;
@@ -401,6 +403,10 @@ export class Channel extends DurableObject<Env> {
       chat: !this.meta.chatOff,
       title: this.meta.title || "",
       game: this.sockets("game").length > 0, // (the Outside plugin's connected, 11/07/2026)
+      // (lookers asking for frames (11/10/2026): with viewers, what the transmitter needs to know of who's watching, so
+      // with neither it sends a frame now and then and no sound, and with no lookers no small frames: docs/protocol.md
+      // "Who's watching")
+      lookers: this.lookers(),
     };
     if (place) { st.seat = false; st.place = place; }
     if (you !== undefined) st.you = you;
@@ -1003,6 +1009,7 @@ export class Channel extends DurableObject<Env> {
       let m: any;
       try { m = JSON.parse(msg); } catch { return; }
       if (m && typeof m.look === "object" && m.look) {
+        const was = !!a.lookFrames;
         a.lookFrames = m.look.frames === true;
         const fresh = this.lastThumb && Date.now() - this.thumbAt <= THUMB_FRESH ? this.lastThumb : null;
         if (a.lookFrames && (fresh || this.lastFrame) && this.live()) {
@@ -1010,6 +1017,7 @@ export class Channel extends DurableObject<Env> {
           a.lookAt = Date.now();
         }
         this.keep(ws, a);
+        if (was !== a.lookFrames) this.tellViewers(); // (the transmitter's "lookers")
       }
     }
   }
@@ -1031,6 +1039,8 @@ export class Channel extends DurableObject<Env> {
     } else if (a.role === "watch") {
       this.seatWaiting();
       this.tellViewers();
+    } else if (a.role === "look") {
+      if (a.lookFrames) this.tellViewers(); // (the transmitter's "lookers": one fewer)
     } else if (a.role === "sound") {
       if (!this.sockets("sound").length) {
         this.soundHeld = [];

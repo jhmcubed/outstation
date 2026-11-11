@@ -842,7 +842,7 @@ export default {
     // icons, fetched by the relay and shared by every visitor (one object for the relay, lookups.ts); any page may read them
     if ((parts[0] === "lookup" || parts[0] === "icon") && !upgrade && env.LOOKUPS) {
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { "access-control-allow-origin": "*" } });
-      return env.LOOKUPS.get(env.LOOKUPS.idFromName("lookups")).fetch(new Request(url.origin + url.pathname));
+      return env.LOOKUPS.get(env.LOOKUPS.idFromName("lookups")).fetch(new Request(url.origin + url.pathname + url.search));
     }
 
     // the open portals: every channel handed out that has no watch code, live ones first (Outside's portals page)
