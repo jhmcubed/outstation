@@ -771,19 +771,30 @@ export default {
     }
 
     // asking for a portal: a friend's client, with a secret of its own (the pickup) that collects the answer
+    // (any page may ask and collect, 11/11/2026: outside.wiki's "Open your own" asks from the globe as the client's
+    // first screen does, so nobody has to email; the same limits hold, 3 an hour from one address and 50 waiting)
     if (parts[0] === "requests" && parts.length === 2) {
-      const name = parts[1];
-      if (!PLAYER.test(name)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
-      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
-      const pickup = "&pickup=" + encodeURIComponent(url.searchParams.get("pickup") || "");
-      if (request.method === "POST") {
-        const n = parseInt(request.headers.get("content-length") || "0") || 0;
-        if (n > 4096) return new Response(null, { status: 413 });
-        return dir.fetch(new Request(dirRequests(env, "ask", name).url, { method: "POST", headers: request.headers, body: request.body }));
-      }
-      if (request.method === "GET") return dir.fetch(dirRequests(env, "check", name, pickup));
-      if (request.method === "DELETE") return dir.fetch(dirRequests(env, "cancel", name, pickup));
-      return new Response(null, { status: 405 });
+      const answer = await (async (): Promise<Response> => {
+        if (request.method === "OPTIONS") return new Response(null, { status: 204 });
+        const name = parts[1];
+        if (!PLAYER.test(name)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
+        const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+        const pickup = "&pickup=" + encodeURIComponent(url.searchParams.get("pickup") || "");
+        if (request.method === "POST") {
+          const n = parseInt(request.headers.get("content-length") || "0") || 0;
+          if (n > 4096) return new Response(null, { status: 413 });
+          return dir.fetch(new Request(dirRequests(env, "ask", name).url, { method: "POST", headers: request.headers, body: request.body }));
+        }
+        if (request.method === "GET") return dir.fetch(dirRequests(env, "check", name, pickup));
+        if (request.method === "DELETE") return dir.fetch(dirRequests(env, "cancel", name, pickup));
+        return new Response(null, { status: 405 });
+      })();
+      const h = new Headers(answer.headers);
+      h.set("access-control-allow-origin", "*");
+      h.set("access-control-allow-methods", "GET, POST, DELETE");
+      h.set("access-control-allow-headers", "content-type");
+      h.set("cache-control", "no-store");
+      return new Response(answer.body, { status: answer.status, headers: h });
     }
 
     // invites: an outstation's own (its key in the query to read them, in the body to use one), all in its channel

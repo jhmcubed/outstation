@@ -4048,6 +4048,26 @@ class Requests(unittest.IsolatedAsyncioTestCase):
             tx.close()
         self.assertIn(self.name, [c["channel"] for c in admin("GET", "/admin/channels")[1]])
 
+    async def test_a_page_can_ask_and_collect_from_any_site(self):
+        # (11/11/2026: outside.wiki's "Open your own" asks from the globe; a browser sends plain text so it needs no
+        # preflight, and reads the answer only with the relay's allow-origin)
+        body = json.dumps({"player": self.name.title(), "note": "", "pickup": self.pickup}).encode()
+        req = urllib.request.Request(http_url() + "/requests/" + self.name, data=body, method="POST",
+                                     headers={"Content-Type": "text/plain;charset=UTF-8", "Origin": "https://outside.wiki"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.status, 201)
+            self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+            self.assertEqual(json.loads(r.read())["state"], "waiting")
+        req = urllib.request.Request(http_url() + "/requests/%s?pickup=%s" % (self.name, self.pickup), headers={"Origin": "https://outside.wiki"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual((r.headers.get("Access-Control-Allow-Origin"), json.loads(r.read())), ("*", {"state": "waiting"}))
+        req = urllib.request.Request(http_url() + "/requests/" + self.name, method="OPTIONS",
+                                     headers={"Origin": "https://outside.wiki", "Access-Control-Request-Method": "DELETE"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.status, 204)
+            self.assertIn("DELETE", r.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertEqual(http("DELETE", "/requests/%s?pickup=%s" % (self.name, self.pickup))[0], 204)
+
     async def test_turned_down_is_said_once(self):
         self.ask()
         self.assertEqual(admin("DELETE", "/admin/requests/" + self.name)[0], 204)
