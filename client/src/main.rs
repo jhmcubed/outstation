@@ -29,6 +29,7 @@ mod cursor;
 mod desk;
 mod dink;
 mod dinksetup;
+mod emotes;
 mod feed;
 mod friendlist;
 mod hotkeys;
