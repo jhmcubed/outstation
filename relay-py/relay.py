@@ -684,9 +684,9 @@ def game_fields(g):
         out["skills"] = {k: [game_whole(x) for x in v] for k, v in g["skills"].items()
                          if GAME_SKILL.fullmatch(k) and isinstance(v, list) and len(v) == 3
                          and all(game_whole(x) is not None for x in v)}
-    for k, most in (("worn", 14), ("inv", 28), ("bag", 28), ("pouch", 8)):
+    for k, most in (("worn", 14), ("inv", 28), ("bag", 28), ("pouch", 8), ("seeds", 6), ("barrel", 5)):   # (seeds, barrel: 11/14/2026)
         if k in g:
-            s = None if g[k] is None and k == "bag" else game_slots(g[k], most)   # (the bag: null, not known yet)
+            s = None if g[k] is None and k in ("bag", "seeds", "barrel") else game_slots(g[k], most)   # (null: not known yet)
             if s is not _BAD:
                 out[k] = s
     if "quiver" in g:

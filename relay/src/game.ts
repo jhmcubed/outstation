@@ -80,9 +80,11 @@ export function gameFields(g: unknown): Fields {
     }
     out.skills = skills;
   }
-  for (const [k, most] of [["worn", 14], ["inv", 28], ["bag", 28], ["pouch", 8]] as const) {
+  // (the seed box and the chugging barrel, 11/14/2026: each its slots, as the game keeps them, empty ones null)
+  for (const [k, most] of [["worn", 14], ["inv", 28], ["bag", 28], ["pouch", 8], ["seeds", 6], ["barrel", 5]] as const) {
     if (g[k] === undefined) continue;
-    const s = g[k] === null && k === "bag" ? null : slots(g[k], most); // (the bag: null, not known yet)
+    // (the bag, the seed box and the barrel: null, not known yet: the game tells RuneLite once they're looked in)
+    const s = g[k] === null && (k === "bag" || k === "seeds" || k === "barrel") ? null : slots(g[k], most);
     if (s !== undefined) out[k] = s;
   }
   if (g.quiver !== undefined) {

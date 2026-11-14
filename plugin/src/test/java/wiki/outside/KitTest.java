@@ -55,6 +55,12 @@ public class KitTest
 		assertEquals(3, first.size());
 		assertTrue(first.contains(28872));
 		assertEquals(0, kit.unnamed(now).size());
+		// (the seed box's and the chugging barrel's too, 11/14/2026)
+		now.put("seeds", Kit.slots(new int[]{-1, 5295}, new int[]{0, 91}, 6));
+		now.put("barrel", Kit.slots(new int[]{2434}, new int[]{55}, 5));
+		Set<Integer> more = kit.unnamed(now);
+		assertEquals(2, more.size());
+		assertTrue(more.contains(5295) && more.contains(2434));
 	}
 
 	@Test
@@ -80,6 +86,8 @@ public class KitTest
 		assertEquals(0, h.getAsJsonArray("inv").size());
 		assertEquals(0, h.getAsJsonArray("worn").size());
 		assertEquals(0, h.getAsJsonArray("bag").size());
+		assertEquals(0, h.getAsJsonArray("seeds").size());
+		assertEquals(0, h.getAsJsonArray("barrel").size());
 		assertTrue(h.get("quiver").isJsonNull());
 	}
 

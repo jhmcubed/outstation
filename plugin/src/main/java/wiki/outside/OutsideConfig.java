@@ -40,7 +40,7 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "items",
 		name = "Worn and carried",
-		description = "Your equipment, inventory, looting bag (once you've looked in it), rune pouch and quiver",
+		description = "Your equipment, inventory, looting bag (once you've looked in it), seed box, chugging barrel, rune pouch and quiver",
 		position = 2
 	)
 	default boolean items()

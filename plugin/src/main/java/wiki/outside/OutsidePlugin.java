@@ -63,7 +63,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Outside (11/07/2026): what you wear and carry, your looting bag, rune pouch and quiver, your skills, hitpoints,
+ * Outside (11/07/2026): what you wear and carry, your looting bag, rune pouch and quiver (and since 11/14/2026 the seed box
+ * and the chugging barrel), your skills, hitpoints,
  * prayer, run and special, sent to your outstation's channel on the relay (docs/protocol.md, "The game"), where your
  * Outside page draws them live beside your transmission and its chat, and keeps the last of them while you're away.
  * Nothing else is read or sent: no screen, no chat, no bank, nothing of other players, and no tile but the player's own
@@ -339,6 +340,19 @@ public class OutsidePlugin extends Plugin
 				m.put("bag", items(bag));
 			}
 			m.put("pouch", runePouch());
+			// (the seed box and the chugging barrel, 11/14/2026, Jace: "capture and show the contents inside of the seed
+			// box and chugging barrel too": each its slots as the game keeps them, known once the game has told RuneLite,
+			// as the looting bag is, and kept as they were till then)
+			ItemContainer seeds = client.getItemContainer(InventoryID.SEED_BOX);
+			if (seeds != null)
+			{
+				m.put("seeds", slots(seeds, 6));
+			}
+			ItemContainer barrel = client.getItemContainer(InventoryID.PREPOT_DEVICE_INV);
+			if (barrel != null)
+			{
+				m.put("barrel", slots(barrel, 5));
+			}
 			int ammo = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO);
 			int amount = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO_AMOUNT);
 			m.put("quiver", ammo > 0 && amount > 0 ? Kit.pair(ammo, amount) : com.google.gson.JsonNull.INSTANCE);

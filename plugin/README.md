@@ -14,7 +14,7 @@ It works with or without the outstation program. With both, your page has your t
 
 To your relay (Jace's, on Cloudflare, unless your key says another), over one connection, and only while you're logged in:
 - your character's name, your world, and your account type (normal, ironman…)
-- **worn and carried** (one switch): what's in each equipment slot and inventory slot; the looting bag's contents once you've looked in it; the rune pouch's runes; Dizana's quiver's ammunition; and each of those items' name and Grand Exchange price, once each
+- **worn and carried** (one switch): what's in each equipment slot and inventory slot; the looting bag's contents once you've looked in it; the seed box's and the chugging barrel's once you've opened them (11/14/2026); the rune pouch's runes; Dizana's quiver's ammunition; and each of those items' name and Grand Exchange price, once each
 - **skills** (one switch): each skill's level, boosted level and experience
 - **hitpoints, prayer, run and special** (one switch), and which prayers are on
 - that you've logged out

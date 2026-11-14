@@ -261,6 +261,8 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `inv`: 28 slots, the same
 - `bag`: the looting bag, its slots (at most 28), or `null` while it isn't known
 - `pouch`: the rune pouch's slots (at most 8)
+- `seeds` (11/14/2026): the seed box's 6 slots, each `[item id, how many]` or `null`, in their places; or `null` while it isn't known (the game tells RuneLite once it's opened)
+- `barrel` (11/14/2026): the chugging barrel's 5 slots, each a potion's `[item id, doses]` or `null`; or `null` while it isn't known, the same
 - `quiver`: `[item id, how many]` or `null`
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
