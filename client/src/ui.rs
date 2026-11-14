@@ -550,7 +550,7 @@ impl App {
 
     fn note(&mut self, text: impl Into<String>) {
         self.lines.push(Line { id: None, who: 0, host: false, name: String::new(), queued: false, text: text.into(),
-                               when: String::new(), hidden: false, note: true, ping: false });
+                               when: now_hhmm(), hidden: false, note: true, ping: false });
     }
 
     /// The conversation with a channel, made if there isn't one (named as the friends list has them, else as their
@@ -582,7 +582,7 @@ impl App {
             let friend = s2.friends.iter().any(|f| crate::ask::channel_of(f).ok().as_deref() == Some(from.as_str()));
             let t = self.thread(&from, &name);
             if t.lines.is_empty() && !friend {
-                t.lines.push(DmLine { mine: false, text: format!("{} isn't on your friends list (their outstation's name: {})", t.name, from), when: String::new(), note: true });
+                t.lines.push(DmLine { mine: false, text: format!("{} isn't on your friends list (their outstation's name: {})", t.name, from), when: now_hhmm(), note: true });
             }
             t.lines.push(DmLine { mine: false, text, when, note: false });
             if !open { t.unread += 1; }
@@ -594,12 +594,12 @@ impl App {
             let t = self.thread(&to, "");
             t.lines.push(DmLine { mine: true, text, when, note: false });
             if held {
-                t.lines.push(DmLine { mine: false, text: "their outstation's closed: the relay holds it for them till it opens (a week at most)".into(), when: String::new(), note: true });
+                t.lines.push(DmLine { mine: false, text: "their outstation's closed: the relay holds it for them till it opens (a week at most)".into(), when: now_hhmm(), note: true });
             }
         } else if let Some(d) = m.get("dm_failed") {
             let (to, text, why) = (s(d, "to"), s(d, "text"), s(d, "why"));
             let t = self.thread(&to, "");
-            t.lines.push(DmLine { mine: false, text: format!("not sent ({}): {}", why, text), when: String::new(), note: true });
+            t.lines.push(DmLine { mine: false, text: format!("not sent ({}): {}", why, text), when: now_hhmm(), note: true });
         }
     }
 
@@ -711,7 +711,7 @@ impl App {
             let name = p.get("name").and_then(|x| x.as_str()).unwrap_or("a visitor").to_string();
             self.lines.push(Line { id: None, who: 0, host: false, name: String::new(), queued: false,
                                    text: format!("{} pointed at something", if name.is_empty() { "a visitor" } else { &name }),
-                                   when: String::new(), hidden: false, note: true, ping: true });
+                                   when: now_hhmm(), hidden: false, note: true, ping: true });
             if self.settings.get().pings {
                 if let Some((l, t, r, b)) = frame_rect(&self.settings.get()) {
                     let (x, y) = (p.get("x").and_then(|x| x.as_f64()).unwrap_or(0.5), p.get("y").and_then(|x| x.as_f64()).unwrap_or(0.5));
@@ -855,7 +855,7 @@ impl App {
         if let Some(st) = &mut self.station {
             for n in st.refresh(false) {
                 self.lines.push(Line { id: None, who: 0, host: false, name: String::new(), queued: false, text: n,
-                                       when: String::new(), hidden: false, note: true, ping: false });
+                                       when: now_hhmm(), hidden: false, note: true, ping: false });
             }
             if let Some(t) = &self.station_tray { t.sync(st); }
         }
@@ -1407,6 +1407,13 @@ fn field(ui: &mut egui::Ui, text: &mut String, width: f32, hint: &str, secret: b
     let hint = if hint.is_empty() { " " } else { hint };
     ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(rich(hint, 16.0, WHEN()))
         .password(secret).font(body(16.0)).text_color(Color32::from_rgb(0xee, 0xee, 0xee)))
+}
+
+/// now, as local_hhmm has it: the outstation's own notes in the chat (a ping, the station's news, a message not sent) get
+/// their time as people's lines do (11/14/2026, Jace: "add timestamps to outstation client messages")
+fn now_hhmm() -> String {
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    local_hhmm(ms)
 }
 
 fn local_hhmm(ms: i64) -> String {
@@ -2038,7 +2045,16 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     let relay_ws = crate::friendlist::relay_ws(&s);
-    for name in &s.friends {
+    // (11/14/2026, Jace: "make the friends list look a little better, more defined"): the names in an inset of their own,
+    // as the chat's, each on a row of its own banded a shade apart, the hand's row ruled in teal; before each state a
+    // dot in its colour (lime transmitting, pink dark, an empty ring with none)
+    let rows_frame = egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::same(3));
+    let mut rows_shown = false;
+    rows_frame.show(ui, |ui| {
+    ui.set_min_width(ui.available_width());
+    if s.friends.is_empty() { ui.add_space(2.0); }
+    for (row, name) in s.friends.iter().enumerate() {
+        rows_shown = true;
         let ch = crate::ask::channel_of(name).unwrap_or_default();
         let st = app.friendlist.state(name);
         let (words, colour, about) = match &st {
@@ -2052,6 +2068,9 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
             State::Unknown => ("…".to_string(), GREY(), "reading the relay…".to_string()),
         };
         let url = crate::friendlist::page(&ch);
+        let band = if row % 2 == 0 { FIELD() } else { theme::mix(FIELD(), TEXT(), 0.045) };
+        let row_resp = egui::Frame::new().fill(band).corner_radius(2).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.horizontal(|ui| {
             let r = ui.add(egui::Label::new(rich(name, 16.0, TEXT())).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand);
             // live: a peek at their portal under the hand, the words under it (11/06/2026)
@@ -2083,9 +2102,22 @@ fn friendlist_drawer(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(rich(&words, 14.0, colour));
+                // (the state's dot, left of its words)
+                let (dot, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
+                match &st {
+                    State::Live(_) => { ui.painter().circle_filled(dot.center(), 3.5, colour); ui.painter().circle_stroke(dot.center(), 5.0, Stroke::new(1.0, theme::mix(colour, FIELD(), 0.55))); }
+                    State::OffAir => { ui.painter().circle_filled(dot.center(), 3.5, colour); }
+                    _ => { ui.painter().circle_stroke(dot.center(), 3.0, Stroke::new(1.0, colour)); }
+                }
             });
         });
+        });
+        if row_resp.response.contains_pointer() {
+            ui.painter().rect_stroke(row_resp.response.rect, 2.0, Stroke::new(1.0, TEAL()), egui::StrokeKind::Inside);
+        }
     }
+    });
+    let _ = rows_shown;
     if let Some(n) = delete {
         let _ = app.settings.update(|x| x.friends.retain(|f| f != &n));
     }
@@ -4234,6 +4266,7 @@ impl App {
                             let mut job = egui::text::LayoutJob::default();
                             if l.note {
                                 append(&mut job, &format!("✼ {}", l.text), size, GREY(), false);
+                                if !l.when.is_empty() { append(&mut job, &format!("  {}", l.when), size * 0.85, WHEN(), false); }
                             } else {
                                 append(&mut job, if l.mine { &me } else { &t.name }, size, if l.mine { LIME() } else { CYAN() }, false);
                                 append(&mut job, &format!("  {}", l.text), size, TEXT(), false);
@@ -4264,6 +4297,7 @@ impl App {
                     let _ = &fmt;
                     if l.note {
                         append(&mut job, &format!("✼ {}", l.text), size, if l.ping { CYAN() } else { GREY() }, false);
+                        if !l.when.is_empty() { append(&mut job, &format!("  {}", l.when), size * 0.85, c(WHEN()), false); }
                     } else {
                         append(&mut job, &l.name, size, c(if l.host { LIME() } else { CYAN() }), l.hidden);
                         if l.queued { append(&mut job, " (on standby)", size, c(Color32::from_rgb(0x77, 0x77, 0x77)), l.hidden); }
@@ -4374,10 +4408,12 @@ impl App {
         let ctx = ui.ctx().clone();
         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let open = self.drawer == Drawer::Report;
-            if button(ui, "file a requisition ▸", false, None)
+            // (a second click closes it, as the other buttons' drawers do: 11/14/2026, Jace: "clicking 'file a requisition'
+            // a 2nd time does not minimize the drawer like the other buttons do")
+            if button(ui, if open && self.report.requisition { "file a requisition ◂" } else { "file a requisition ▸" }, false, None)
                 .on_hover_text(tip("something you'd like the outstation to do? ask the listening post for it (a feature request): from here, on GitHub, or by email")).clicked() {
-                self.report.requisition = true;
-                if !open { self.open_drawer(&ctx, Drawer::Report); }
+                if open && self.report.requisition { self.open_drawer(&ctx, Drawer::Report); }
+                else { self.report.requisition = true; if !open { self.open_drawer(&ctx, Drawer::Report); } }
             }
             if pink_button(ui, if open && !self.report.requisition { "report an anomaly ◂" } else { "report an anomaly ▸" }, true)
                 .on_hover_text(tip("something wrong with the outstation? report it to the listening post (your words and the station log, keys and codes taken out), on GitHub, or by email")).clicked() {
