@@ -41,6 +41,7 @@ import net.runelite.api.events.GameObjectSpawned;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
@@ -143,6 +144,8 @@ public class OutsidePlugin extends Plugin
 	private ScheduledFuture<?> retry;
 	private int retryIn = 5;
 	private int ticksSinceSent;
+	/** the seed box's and the chugging barrel's slots as last sent by the game (onItemContainerChanged), or null */
+	private JsonElement seedsSeen, barrelSeen;
 	private boolean toldConnected;
 
 	@Provides
@@ -191,6 +194,8 @@ public class OutsidePlugin extends Plugin
 			follow.forget();
 			follow.clear();
 			track.forget();
+			// (the seed box and the barrel as the game last sent them: another account may log in next)
+			seedsSeen = barrelSeen = null;
 			doing.forget();
 			doing.clear();
 			activity.forget();
@@ -343,15 +348,24 @@ public class OutsidePlugin extends Plugin
 			// (the seed box and the chugging barrel, 11/14/2026, Jace: "capture and show the contents inside of the seed
 			// box and chugging barrel too": each its slots as the game keeps them, known once the game has told RuneLite,
 			// as the looting bag is, and kept as they were till then)
+			// (and as the game sent them, caught as they came, onItemContainerChanged: the client may not keep them after)
 			ItemContainer seeds = client.getItemContainer(InventoryID.SEED_BOX);
 			if (seeds != null)
 			{
-				m.put("seeds", slots(seeds, 6));
+				seedsSeen = slots(seeds, 6);
+			}
+			if (seedsSeen != null)
+			{
+				m.put("seeds", seedsSeen);
 			}
 			ItemContainer barrel = client.getItemContainer(InventoryID.PREPOT_DEVICE_INV);
 			if (barrel != null)
 			{
-				m.put("barrel", slots(barrel, 5));
+				barrelSeen = slots(barrel, 5);
+			}
+			if (barrelSeen != null)
+			{
+				m.put("barrel", barrelSeen);
 			}
 			int ammo = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO);
 			int amount = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO_AMOUNT);
@@ -557,6 +571,21 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** Their own experience (the activity's skilling). */
+	/** The seed box's and the chugging barrel's contents as the game sends them (when one's checked or filled, or the
+	 *  barrel's bank loadout opens), kept for read(): the Hub's Seed Box plugin reads the seed box the same way. */
+	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged e)
+	{
+		if (e.getContainerId() == InventoryID.SEED_BOX)
+		{
+			seedsSeen = slots(e.getItemContainer(), 6);
+		}
+		else if (e.getContainerId() == InventoryID.PREPOT_DEVICE_INV)
+		{
+			barrelSeen = slots(e.getItemContainer(), 5);
+		}
+	}
+
 	@Subscribe
 	public void onStatChanged(StatChanged e)
 	{
