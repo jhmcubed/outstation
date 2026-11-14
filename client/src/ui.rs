@@ -288,6 +288,8 @@ pub struct App {
     show_viewers: bool,
     /// when the observers' box was opened: it comes out of the dither (dither_in)
     viewers_opened: Option<Instant>,
+    /// when the drawer was opened (or another took its place): it comes out of the dither too
+    drawer_opened: Option<Instant>,
     // the look as last applied (the tint, anyone's own colours)
     look: (Option<f32>, std::collections::BTreeMap<String, String>),
     // the broadcast's title as it's being typed (it goes out on Enter, or when the box is left)
@@ -508,7 +510,7 @@ impl App {
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
-            min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false, viewers_opened: None,
+            min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false, viewers_opened: None, drawer_opened: None,
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
@@ -779,6 +781,8 @@ impl App {
             _ => size.x,
         };
         self.drawer = target;
+        // (11/14/2026, Jace: "make the drawers that open to the right dither in as well when the buttons are clicked")
+        self.drawer_opened = if target != Drawer::None && target != was { Some(Instant::now()) } else { None };
         if target == Drawer::Settings && self.panel.is_none() {
             self.panel = Some(SettingsPanel::new(&self.settings.get()));
         }
@@ -1413,6 +1417,8 @@ fn field(ui: &mut egui::Ui, text: &mut String, width: f32, hint: &str, secret: b
 
 /// How long a box takes to come out of the dither (s).
 const DITHER_IN: f32 = 0.26;
+/// and a drawer, a bigger thing, a little longer (s)
+const DITHER_IN_DRAWER: f32 = 0.34;
 /// The site's 8x8 Bayer order (its dissolve.js's B8), for the dither's cells.
 const B8: [u8; 64] = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
     3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21];
@@ -3563,6 +3569,10 @@ impl eframe::App for App {
                     });
                 }).response.rect;
                 ui.painter().set(at, theme::plate(r));
+                // (opened just now: out of the dither, as the observers' box)
+                if let Some(t) = self.drawer_opened {
+                    if !dither_in(ui, r, t, DITHER_IN_DRAWER) { self.drawer_opened = None; }
+                }
             });
         }
         if self.go_replay {
