@@ -3405,8 +3405,8 @@ impl eframe::App for App {
             self.zoom = scale;
             ctx.set_zoom_factor(scale);
         }
-        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
-        self.pings.retain(|p| p.at.elapsed() < Duration::from_millis(640));
+        // the pings: PING_S each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
+        self.pings.retain(|p| p.at.elapsed().as_secs_f32() < PING_S);
         self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
         let fade = self.settings.get().game_chat_fade;
         if fade > 0 {
@@ -3419,7 +3419,9 @@ impl eframe::App for App {
         // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
         // in wakes the window at once; 11/07/2026)
         let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
-        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else if resting { 500 } else { 110 }));
+        // (a ping is drawn every frame the screen shows, so it moves smoothly: 11/14/2026)
+        let pinging = !self.pings.is_empty();
+        ctx.request_repaint_after(Duration::from_millis(if pinging { 8 } else if busy { 30 } else if resting { 500 } else { 110 }));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -4879,25 +4881,76 @@ impl App {
         overlay(ctx, egui::ViewportId::from_hash_of("pings"), builder, move |ui, _| {
             let painter = ui.painter();
             for (age, c, name) in &pings {
-                let k = (age / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
-                let step = (k * 6.0).floor();
-                let kk = step / 6.0;
-                let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
-                let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
-                let c = *c;
-                let r = 14.0 + 28.0 * kk;
-                painter.circle_stroke(c, r, Stroke::new(3.0, colour));
-                painter.circle_filled(c, 2.0, colour);
-                if !name.is_empty() {
-                    // the name: a dark rim round it first, then the name itself
-                    let at = egui::pos2(c.x + 22.0, c.y - 26.0);
-                    for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
-                        painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10));
-                    }
-                    painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), name_colour);
-                }
+                draw_ping(painter, *c, *age, name);
             }
         });
+    }
+}
+
+/// How long a ping lasts on the screen, in seconds (11/14/2026: 0.6 s in six steps before).
+const PING_S: f32 = 1.1;
+/// The ping's cells, in points: the ring is drawn in squares this size, each there or not by the dither.
+const PING_CELL: f32 = 3.0;
+
+/// The 8 x 8 ordered dither's thresholds (Bayer's), 0 to 1: the site's own (outside-portal.js's BAYER).
+fn bayer(x: i32, y: i32) -> f32 {
+    const M: [u8; 64] = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28,
+        52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63,
+        31, 55, 23, 61, 29, 53, 21];
+    (M[((y & 7) * 8 + (x & 7)) as usize] as f32 + 0.5) / 64.0
+}
+
+/// One ping (11/14/2026, Jace: "make the ping effect that broadcasters receive when an observer clicks on the video
+/// feed look better. make it a smooth animation, add dither to it if you want to make it unique. right now its just quite
+/// plain and low frame rate."): a ring that springs out from the spot, eased, drawn every frame in square cells that the
+/// ordered dither thins into the black as it grows; a fainter ring a moment behind it; a dithered dot at the spot that
+/// fades; the viewer's name surfacing beside it and fading at the end. The cells sit on a grid fixed to the screen, so
+/// the dither holds still while the ring moves through it, as the site's own does. Held still (reduced motion): the ring
+/// whole at its middle size, then gone.
+fn draw_ping(painter: &egui::Painter, c: egui::Pos2, age: f32, name: &str) {
+    let still = crate::cursor::still();
+    let k = if still { 0.45 } else { (age / PING_S).clamp(0.0, 1.0) };
+    let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+    let lime = LIME();
+    let dim = theme::pal().lime_dim;
+    let cell = PING_CELL;
+    // a ring: its radius, its width and how lit it is; each cell in it there if the dither's threshold is under its light
+    let ring = |radius: f32, width: f32, light: f32| {
+        if light <= 0.0 || width <= 0.0 { return; }
+        let (x0, x1) = (((c.x - radius - width) / cell).floor() as i32, ((c.x + radius + width) / cell).ceil() as i32);
+        let (y0, y1) = (((c.y - radius - width) / cell).floor() as i32, ((c.y + radius + width) / cell).ceil() as i32);
+        for gy in y0..=y1 {
+            for gx in x0..=x1 {
+                let (px, py) = (gx as f32 * cell + cell / 2.0, gy as f32 * cell + cell / 2.0);
+                let d = ((px - c.x).powi(2) + (py - c.y).powi(2)).sqrt();
+                let edge = 1.0 - (d - radius).abs() / width;
+                if edge <= 0.0 { continue; }
+                let level = edge.powf(0.7) * light;
+                if bayer(gx, gy) >= level { continue; }
+                let colour = if level > 0.55 { lime } else { dim };
+                painter.rect_filled(egui::Rect::from_min_size(egui::pos2(gx as f32 * cell, gy as f32 * cell), Vec2::splat(cell)), 0.0, colour);
+            }
+        }
+    };
+    let light = if still { 1.0 } else { (1.0 - k).powf(1.4) };
+    ring(12.0 + 44.0 * ease(k * 1.15), 3.0 + 6.0 * (1.0 - k), light);
+    // (the echo, a little behind and fainter)
+    let k2 = ((k * PING_S - 0.16) / PING_S).max(0.0);
+    if !still && k2 > 0.0 {
+        ring(8.0 + 30.0 * ease(k2 * 1.2), 2.0 + 4.0 * (1.0 - k2), (1.0 - k2).powf(1.8) * 0.7);
+    }
+    // the spot: a small disk, dithered away
+    ring(0.0, 7.0 * (1.0 - k * 0.5), if still { 1.0 } else { (1.0 - k * 1.3).max(0.0) });
+    if !name.is_empty() {
+        // the name: in over the first tenth, out over the last third, a dark rim round it first
+        let a = if still { 1.0 } else { (k / 0.1).min(1.0) * ((1.0 - k) / 0.33).min(1.0) };
+        if a > 0.0 {
+            let at = egui::pos2(c.x + 24.0, c.y - 28.0 + 4.0 * (1.0 - (k / 0.15).min(1.0)));
+            for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
+                painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10).gamma_multiply(a));
+            }
+            painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), lime.gamma_multiply(a));
+        }
     }
 }
 
