@@ -192,4 +192,58 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+
+	@ConfigItem(
+		keyName = "charges",
+		name = "Item charges",
+		description = "Each worn or carried item's charges, as the game tells you them in its chat (when you check one, or"
+			+ " as it's used): only the number, by the item",
+		position = 12
+	)
+	default boolean charges()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "delve",
+		name = "Doom of Mokhaiotl delves",
+		description = "When you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level"
+			+ " (as the Delve Calculator plugin reads it), for your Outside page",
+		position = 13
+	)
+	default boolean delve()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "bank",
+		name = "My bank on my page",
+		description = "Off (to begin with). On, your whole bank (every item, how many, and its tabs) goes to your Outside"
+			+ " page each time you use it, where anyone can see it",
+		warning = "On, your whole bank (every item and how many) goes to your outstation's relay, a server not controlled"
+			+ " or verified by the RuneLite developers, each time you use your bank, and your Outside page shows it to"
+			+ " anyone who opens it. Switching it off takes it off your page.",
+		position = 14
+	)
+	default boolean bank()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "model",
+		name = "My character's model on my page",
+		description = "Off (to begin with). On, your character's 3D model as you look now goes to your Outside page"
+			+ " (as RuneProfile's does); type ::outsidemodel to send it again after a change. Off takes it down",
+		warning = "On, your character's model as you look now (its shape and colours, nothing else) goes to your"
+			+ " outstation's relay, a server not controlled or verified by the RuneLite developers, and your Outside page"
+			+ " shows it to anyone who opens it.",
+		position = 15
+	)
+	default boolean model()
+	{
+		return false;
+	}
 }

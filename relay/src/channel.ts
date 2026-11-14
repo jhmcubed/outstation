@@ -33,6 +33,8 @@ import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
+import { KEEP_AN_HOUR, KEEP_MOST, keepShape } from "./keep";
+import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
 
 export interface Env {
   CHANNEL: DurableObjectNamespace<Channel>;
@@ -629,6 +631,8 @@ export class Channel extends DurableObject<Env> {
     if (role === "_game") return this.readGame(q);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
+    if (role === "_keep") return this.kept(request, q, ip);
+    if (role === "_emotes") return this.emotes(request, q, ip);
 
     // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
     // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit). The game's v= is the
@@ -977,6 +981,7 @@ export class Channel extends DurableObject<Env> {
     this.gameDirty = false;
     this.game = new GameState();
     this.ctx.storage.delete("game");
+    this.ctx.storage.delete(["keep:bank", "keep:model"]); // (the bank and the model kept for the page, keep.ts)
   }
 
   /** GET /game/<channel>?code= (index.ts): the game state kept, for a page while the outstation's dark, and whether the
@@ -1744,6 +1749,101 @@ export class Channel extends DurableObject<Env> {
     return Response.json({ key });
   }
 
+  // kept for the player's page (keep.ts): the bank and the model, one of each, in the channel's own storage
+
+  keepUploads: number[] = []; // (in memory, as clipsUploads)
+
+  async kept(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    const what = q.get("what") || "";
+    if (!(what in KEEP_MOST)) return json({ error: "kept: bank or model" }, 404);
+    if (request.method === "GET") {
+      if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      const got = await this.ctx.storage.get<{ data: unknown; at: number }>("keep:" + what);
+      if (!got) return json({ error: "nothing kept" }, 404);
+      return json({ [what]: got.data, at: got.at });
+    }
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    if (request.method === "DELETE") {
+      await this.ctx.storage.delete("keep:" + what);
+      this.tellClip({ kept: { what, at: null } });
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const now = Date.now();
+    this.keepUploads = this.keepUploads.filter((t) => now - t < 3_600_000);
+    if (this.keepUploads.length >= KEEP_AN_HOUR * 2) return json({ error: `${KEEP_AN_HOUR} an hour at most: try again later` }, 429);
+    const raw = await request.text();
+    if (raw.length > KEEP_MOST[what]) return json({ error: `at most ${KEEP_MOST[what]} bytes` }, 413);
+    let d: unknown;
+    try { d = JSON.parse(raw); } catch { return json({ error: "not JSON" }, 400); }
+    const shaped = keepShape(what, d);
+    if (typeof shaped === "string") return json({ error: shaped }, 400);
+    this.keepUploads.push(now);
+    await this.ctx.storage.put("keep:" + what, { data: shaped, at: now });
+    this.tellClip({ kept: { what, at: now } });
+    return json({ what, at: now });
+  }
+
+  // the broadcaster's own emotes (emotes.ts): the list in storage, the pictures in the CLIPS bucket
+
+  emoteUploads: number[] = [];
+
+  async emoteList(): Promise<Emote[]> {
+    return (await this.ctx.storage.get<Emote[]>("emotes")) || [];
+  }
+
+  async dropEmotes() {
+    const all = await this.emoteList();
+    if (!all.length) return;
+    await this.env.CLIPS?.delete(all.map((e) => emoteKey(this.name, e.id, e.ext)));
+    await this.ctx.storage.delete("emotes");
+    this.tellClip({ emotes: [] });
+  }
+
+  async emotes(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (request.method === "GET") {
+      if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      return json({ emotes: await this.emoteList() });
+    }
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    const name = q.get("name") || "";
+    if (!EMOTE_NAME.test(name)) return json({ error: "a name of 2 to 24 letters, numbers or _" }, 400);
+    let list = await this.emoteList();
+    const had = list.find((e) => e.name.toLowerCase() === name.toLowerCase());
+    if (request.method === "DELETE") {
+      if (!had) return json({ error: "no such emote" }, 404);
+      await this.env.CLIPS?.delete(emoteKey(this.name, had.id, had.ext));
+      list = list.filter((e) => e !== had);
+      await this.ctx.storage.put("emotes", list);
+      this.tellClip({ emotes: list });
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    if (!this.env.CLIPS) return json({ error: "this relay doesn't keep emotes" }, 503);
+    const now = Date.now();
+    this.emoteUploads = this.emoteUploads.filter((t) => now - t < 3_600_000);
+    if (this.emoteUploads.length >= EMOTES_AN_HOUR) return json({ error: `${EMOTES_AN_HOUR} uploads an hour at most: try again later` }, 429);
+    const body = new Uint8Array(await request.arrayBuffer());
+    if (body.length > EMOTE_BYTES) return json({ error: `an emote is ${EMOTE_BYTES / 1024} KB at most` }, 413);
+    const ext = emoteKind(body);
+    if (!ext) return json({ error: "a PNG, a JPEG or a GIF" }, 415);
+    const rest = list.filter((e) => e !== had);
+    if (rest.length >= EMOTES_MOST) return json({ error: `${EMOTES_MOST} emotes at most: take one away first` }, 409);
+    if (rest.reduce((n, e) => n + e.size, 0) + body.length > EMOTES_BYTES) {
+      return json({ error: `${EMOTES_BYTES / 1024 / 1024} MB of emotes at most: take one away first` }, 409);
+    }
+    this.emoteUploads.push(now);
+    const e: Emote = { name, id: newId(), ext, size: body.length, at: now };
+    await this.env.CLIPS.put(emoteKey(this.name, e.id, ext), body, { httpMetadata: { contentType: EMOTE_TYPES[ext], cacheControl: "public, max-age=31536000, immutable" } });
+    if (had) await this.env.CLIPS.delete(emoteKey(this.name, had.id, had.ext));
+    list = [...rest, e];
+    await this.ctx.storage.put("emotes", list);
+    this.tellClip({ emotes: list });
+    return json(e);
+  }
+
   async revoke(): Promise<Response> {
     this.meta.keyHash = null;
     delete this.meta.pending; // (handed out again later, it's pending only if an invite hands it out)
@@ -1752,6 +1852,7 @@ export class Channel extends DurableObject<Env> {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel was taken back");
     }
     this.clearGame();
+    await this.dropEmotes(); // (its emotes go with it: emotes.ts)
     this.offAir();
     return new Response(null, { status: 204 });
   }

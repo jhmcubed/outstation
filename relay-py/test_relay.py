@@ -401,6 +401,15 @@ class GameFields(unittest.TestCase):
         self.assertEqual(relay.game_fields({"worn": [None] * 15, "items": {"1": ["x"]}}), {})
         self.assertEqual(relay.game_fields(["not", "an", "object"]), {})
 
+    def test_charges_and_the_delve_board(self):
+        # (11/14/2026: charges by item id, the ids in number order, at most 64; the delve board's nine counts, or null)
+        got = relay.game_fields({"charges": {"28922": 1500, "bad": 2, "1": -1, "30000": 3.0}, "delve": [5, 4, 3, 2, 1, 1, 1, 1, 12]})
+        self.assertEqual(list(got), ["charges", "delve"])
+        self.assertEqual(got["charges"], {"28922": 1500, "30000": 3})
+        self.assertEqual(len(relay.game_fields({"charges": {str(i): 1 for i in range(100)}})["charges"]), 64)
+        self.assertEqual(relay.game_fields({"delve": [1, 2]}), {})
+        self.assertEqual(relay.game_fields({"delve": None}), {"delve": None})
+
     def test_nan_and_infinity_are_not_json(self):
         ch = relay.Channel("moss", "secret-key")
         ch.take_game('{"game": {"world": 302, "name": NaN}}')

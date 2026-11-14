@@ -652,6 +652,9 @@ def game_slots(v, most):
     return _BAD if any(s is _BAD for s in out) else out
 
 
+CHARGES_MOST = 64   # (game.ts's)
+
+
 def game_fields(g):
     """A {"game"} message's fields as they're kept: each known field checked and cleaned (its words one line, its numbers
     whole), one that isn't its shape left out, and unknown ones left out. Always in this order, whatever order they
@@ -693,6 +696,22 @@ def game_fields(g):
         s = None if g["quiver"] is None else game_pair(g["quiver"])
         if s is not _BAD:
             out["quiver"] = s
+    # (11/14/2026: each worn or carried item's charges by item id, CHARGES_MOST at most; the Doom of Mokhaiotl board's
+    # delves at each level 1-8 and the waves past 8, or null: game.ts's, the same, its keys in a JS object's order)
+    if isinstance(g.get("charges"), dict):
+        keys = list(g["charges"])
+        js = sorted((k for k in keys if re.fullmatch(r"0|[1-9][0-9]*", k) and int(k) < 2 ** 32 - 1), key=int)
+        js += [k for k in keys if k not in js]
+        charges = {}
+        for k in js[:CHARGES_MOST]:
+            n = game_whole(g["charges"][k])
+            if GAME_ID.fullmatch(k) and int(k) <= GAME_INT and n is not None:
+                charges[k] = n
+        out["charges"] = charges
+    if "delve" in g and g["delve"] is None:
+        out["delve"] = None
+    elif isinstance(g.get("delve"), list) and len(g["delve"]) == 9 and all(game_whole(x) is not None for x in g["delve"]):
+        out["delve"] = [game_whole(x) for x in g["delve"]]
     p = g.get("prayers")
     if isinstance(p, list) and len(p) <= 64 and all(isinstance(x, str) for x in p):
         out["prayers"] = [one_line(x, 40) for x in p]

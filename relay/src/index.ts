@@ -8,6 +8,8 @@
 //   GET <relay>/game/<channel>?code=<watch code>                       the game state kept, and whether the plugin's connected
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
 //   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
+//   /keep/<channel>/<bank|model>                                        their bank and their model, for the page (keep.ts)
+//   /emotes/<channel>...                                                the broadcaster's own emotes (emotes.ts)
 //
 // Channels are handed out by the relay's owner (Authorization: Bearer <ADMIN_TOKEN>, a Worker secret):
 //   POST   /admin/channels/<channel>    a new key for it: {"channel", "key", "code"} (code: the attach code)
@@ -97,6 +99,9 @@ import { type ArrayEvent, ArrayFeed, type Lost, arrayAnswer, arrayBackfill, arra
 import { type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
+import { emoteKey } from "./emotes";
+const CORS_KEEP = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
+                    "access-control-allow-headers": "content-type", "access-control-max-age": "86400" };
 import { attachCode, oneLine, pyjson, relayOf } from "./text";
 import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
 import { LISTING_CHECK_MS, ListedRows, keptRow } from "./listed";
@@ -761,6 +766,29 @@ export default {
         return new Response(null, { status: 404 });
       }
       if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_clips"));
+      return new Response(null, { status: 405 });
+    }
+
+    // kept for a player's page (keep.ts, 11/14/2026): their bank and their model, through the channel
+    if (parts[0] === "keep" && parts.length === 3 && NAME.test(parts[1])) {
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_KEEP });
+      url.searchParams.set("what", parts[2]);
+      return channelStub(env, parts[1]).fetch(toChannel(new Request(url.toString(), request), parts[1], "/_keep"));
+    }
+
+    // a broadcaster's own emotes (emotes.ts, 11/14/2026): the pictures straight from the bucket, the rest through the channel
+    if (parts[0] === "emotes" && (parts.length === 2 || parts.length === 3) && NAME.test(parts[1])) {
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_KEEP });
+      if (parts.length === 3) {
+        const m = /^([A-Za-z0-9_-]{16,32})\.(png|jpg|gif)$/.exec(parts[2]);
+        if ((request.method === "GET" || request.method === "HEAD") && m) return serveFile(env.CLIPS, emoteKey(parts[1], m[1], m[2]), request);
+        if (request.method === "DELETE") {
+          url.searchParams.set("name", parts[2]);
+          return channelStub(env, parts[1]).fetch(toChannel(new Request(url.toString(), request), parts[1], "/_emotes"));
+        }
+        return new Response(null, { status: 404 });
+      }
+      if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_emotes"));
       return new Response(null, { status: 405 });
     }
 
