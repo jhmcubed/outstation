@@ -286,6 +286,8 @@ pub struct App {
     // who's watching (the relay's {"viewers"}), and whether the list is open
     viewer_list: Vec<Value>,
     show_viewers: bool,
+    /// when the observers' box was opened: it comes out of the dither (dither_in)
+    viewers_opened: Option<Instant>,
     // the look as last applied (the tint, anyone's own colours)
     look: (Option<f32>, std::collections::BTreeMap<String, String>),
     // the broadcast's title as it's being typed (it goes out on Enter, or when the box is left)
@@ -506,7 +508,7 @@ impl App {
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
-            min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
+            min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false, viewers_opened: None,
             look: (s.tint, s.colours.clone()),
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
@@ -1407,6 +1409,38 @@ fn field(ui: &mut egui::Ui, text: &mut String, width: f32, hint: &str, secret: b
     let hint = if hint.is_empty() { " " } else { hint };
     ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(rich(hint, 16.0, WHEN()))
         .password(secret).font(body(16.0)).text_color(Color32::from_rgb(0xee, 0xee, 0xee)))
+}
+
+/// How long a box takes to come out of the dither (s).
+const DITHER_IN: f32 = 0.26;
+/// The site's 8x8 Bayer order (its dissolve.js's B8), for the dither's cells.
+const B8: [u8; 64] = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
+    3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21];
+
+/// A box coming out of the dither, as things arrive on the site (11/14/2026): its rect covered in the window's own
+/// colour, cells of 2 px uncovered in the Bayer order over `dur` seconds from `at`, easing out. Drawn over what's
+/// already there; false once it's whole (nothing more to draw), true while it's still arriving (and a repaint asked).
+fn dither_in(ui: &egui::Ui, rect: egui::Rect, at: Instant, dur: f32) -> bool {
+    let p = (at.elapsed().as_secs_f32() / dur).min(1.0);
+    if p >= 1.0 { return false; }
+    let cover = (1.0 - p).powf(2.2);          // (the share still covered: dissolve.js's arriving curve)
+    let k = (cover * 64.0).round() as u8;
+    let cell = 2.0;
+    let painter = ui.painter_at(rect.expand(1.0));
+    let mut mesh = egui::Mesh::default();
+    let (cols, rows) = ((rect.width() / cell).ceil() as i32 + 1, (rect.height() / cell).ceil() as i32 + 1);
+    let bg = ABYSS();
+    for y in 0..rows {
+        for x in 0..cols {
+            if B8[((y & 7) * 8 + (x & 7)) as usize] < k {
+                let r = egui::Rect::from_min_size(egui::pos2(rect.left() - 1.0 + x as f32 * cell, rect.top() - 1.0 + y as f32 * cell), Vec2::splat(cell));
+                mesh.add_colored_rect(r, bg);
+            }
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    ui.ctx().request_repaint();
+    true
 }
 
 /// now, as local_hhmm has it: the outstation's own notes in the chat (a ping, the station's news, a message not sent) get
@@ -3712,6 +3746,7 @@ impl App {
             let open = this.show_viewers;
             if button(ui, &watching, true, Some(open)).on_hover_text(tip("who's observing now, and who's on standby (names as they gave them in the chat)")).clicked() {
                 this.show_viewers = !open;
+                if !open { this.viewers_opened = Some(Instant::now()); }
             }
         };
         if !fits {
@@ -4498,7 +4533,7 @@ impl App {
         }
         let mut act: Option<(Value, String)> = None;
         let banned: Vec<i64> = self.banned.iter().map(|b| b.0).collect();
-        egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
+        let shown = egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let watching: Vec<&Value> = self.viewer_list.iter().filter(|v| !v.get("waiting").and_then(|x| x.as_bool()).unwrap_or(false)).collect();
             let waiting: Vec<&Value> = self.viewer_list.iter().filter(|v| v.get("waiting").and_then(|x| x.as_bool()).unwrap_or(false)).collect();
@@ -4529,6 +4564,11 @@ impl App {
                 }
             });
         });
+        // (11/14/2026, Jace: "when the observers box is opened after clicking its button, make it dither in instead of being
+        // a hard cut")
+        if let Some(at) = self.viewers_opened {
+            if !dither_in(ui, shown.response.rect, at, DITHER_IN) { self.viewers_opened = None; }
+        }
         ui.add_space(6.0);
         if let Some((m, n)) = act {
             self.desk.send(m);
