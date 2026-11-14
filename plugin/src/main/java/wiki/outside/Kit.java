@@ -54,11 +54,11 @@ public class Kit
 		}
 	}
 
-	/** Ids not named yet, from the item fields (worn, inv, bag, pouch, quiver), marked as named. */
+	/** Ids not named yet, from the item fields (worn, inv, bag, pouch, seeds, barrel, quiver), marked as named. */
 	public Set<Integer> unnamed(Map<String, JsonElement> now)
 	{
 		Set<Integer> ids = new TreeSet<>();
-		for (String f : new String[]{"worn", "inv", "bag", "pouch"})
+		for (String f : new String[]{"worn", "inv", "bag", "pouch", "seeds", "barrel"})
 		{
 			JsonElement a = now.get(f);
 			if (a != null && a.isJsonArray())
@@ -129,6 +129,8 @@ public class Kit
 		o.add("inv", new JsonArray());
 		o.add("bag", new JsonArray());
 		o.add("pouch", new JsonArray());
+		o.add("seeds", new JsonArray());
+		o.add("barrel", new JsonArray());
 		o.add("quiver", JsonNull.INSTANCE);
 		o.add("vitals", new JsonObject());
 		o.add("prayers", new JsonArray());

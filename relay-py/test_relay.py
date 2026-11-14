@@ -393,6 +393,10 @@ class GameFields(unittest.TestCase):
         self.assertNotIn("pouch", got)                                     # (only the bag may be null)
         self.assertEqual(relay.game_fields({"quiver": [11212, 120], "off": False, "world": True, "paused": False}),
                          {"off": False, "paused": False, "quiver": [11212, 120]})
+        # (the seed box and the chugging barrel, 11/14/2026: their slots, empty ones null; null too, not known yet)
+        self.assertEqual(relay.game_fields({"barrel": [[2434, 55], None, None, None, None], "seeds": None, "pouch": [[565, 801]]}),
+                         {"pouch": [[565, 801]], "seeds": None, "barrel": [[2434, 55], None, None, None, None]})
+        self.assertEqual(relay.game_fields({"seeds": [None] * 7, "barrel": [[1, -1]]}), {})
         self.assertEqual(relay.game_fields({"paused": True}), {})          # (a word or two, or false)
         self.assertEqual(relay.game_fields({"worn": [None] * 15, "items": {"1": ["x"]}}), {})
         self.assertEqual(relay.game_fields(["not", "an", "object"]), {})
