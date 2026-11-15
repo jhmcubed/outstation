@@ -111,15 +111,33 @@ public final class Kept
 	// the faces the game never draws left out
 
 	/** A face the game never draws (its third colour), and a face shaded flat (one colour, not one a corner). */
-	static final int HIDDEN = -2;
+	static final int HIDDEN = -2, FLAT = -1;
 
 	/**
-	 * {"v": vertices (x, y, z, the game's units, rounded), "f": faces (three vertices' places each), "c": each face's
-	 * colour (the game's packed HSL unlit, or -1 for a textured face, drawn grey)}: every face drawn but the hidden and the
-	 * wholly see-through ones. Null arrays are taken as none.
+	 * The model as the page draws it: every face drawn but the hidden and the wholly see-through ones.
+	 * <ul>
+	 * <li>"v": vertices (x, y, z, the game's units, rounded); "f": faces (three vertices' places each)</li>
+	 * <li>"c": each face's colour unlit (the game's packed HSL, or -1 for a textured face), as since 11/14/2026</li>
+	 * <li>(11/15/2026, Jace: "draw ours as accurately to the game as possible, shading and geometry") "g": each face's
+	 * three corners as the game has lit them (its packed HSL each; a flat face's one colour three times; a textured
+	 * face's three 7-bit lightnesses, which multiply its texture)</li>
+	 * <li>"a": each face's opacity, 0 to 255 (only when any face is see-through); "p": each face's draw priority (only when
+	 * the model has them)</li>
+	 * <li>"t": each face's texture id, -1 for none, and "uv": its three corners' texture coordinates, u then v, times
+	 * 4096 (0s for an untextured face), found as the client finds them from the face's texture triangle (RuneProfile's
+	 * ModelMeshBuilder.computeFaceUvs, BSD 2-Clause): only when any face is textured</li>
+	 * </ul>
+	 * Null arrays are taken as none.
 	 */
 	public static JsonObject model(float[] x, float[] y, float[] z, int vertices, int[] a, int[] b, int[] c, int faces,
 		int[] colors1, int[] colors3, short[] unlit, byte[] transparencies, short[] textures)
+	{
+		return model(x, y, z, vertices, a, b, c, faces, colors1, null, colors3, unlit, transparencies, textures, null, null, null, null, null);
+	}
+
+	public static JsonObject model(float[] x, float[] y, float[] z, int vertices, int[] a, int[] b, int[] c, int faces,
+		int[] colors1, int[] colors2, int[] colors3, short[] unlit, byte[] transparencies, short[] textures,
+		byte[] priorities, byte[] textureFaces, int[] tex1, int[] tex2, int[] tex3)
 	{
 		JsonObject o = new JsonObject();
 		JsonArray v = new JsonArray();
@@ -129,15 +147,17 @@ public final class Kept
 			v.add(clamp(Math.round(y[i])));
 			v.add(clamp(Math.round(z[i])));
 		}
-		JsonArray f = new JsonArray();
-		JsonArray col = new JsonArray();
+		JsonArray f = new JsonArray(), col = new JsonArray(), lit = new JsonArray(), alpha = new JsonArray();
+		JsonArray pri = new JsonArray(), tex = new JsonArray(), uv = new JsonArray();
+		boolean seeThrough = false, anyTexture = false;
 		for (int i = 0; i < faces; i++)
 		{
 			if (colors3 != null && colors3[i] == HIDDEN)
 			{
 				continue;
 			}
-			if (transparencies != null && (transparencies[i] & 0xff) == 255)
+			int al = transparencies == null ? 255 : 255 - (transparencies[i] & 0xff);
+			if (al == 0)
 			{
 				continue;
 			}
@@ -148,14 +168,96 @@ public final class Kept
 			f.add(a[i]);
 			f.add(b[i]);
 			f.add(c[i]);
-			boolean textured = textures != null && textures[i] != -1;
+			int tid = textures != null ? textures[i] : -1;
+			boolean textured = tid != -1;
 			int hsl = unlit != null ? unlit[i] & 0xffff : (colors1 != null ? colors1[i] & 0xffff : 0);
 			col.add(textured ? -1 : hsl);
+			if (colors1 != null)
+			{
+				boolean flat = colors3 == null || colors3[i] == FLAT;
+				int c1 = colors1[i];
+				int c2 = flat || colors2 == null ? c1 : colors2[i];
+				int c3 = flat ? c1 : colors3[i];
+				lit.add(textured ? c1 : c1 & 0xffff);
+				lit.add(textured ? c2 : c2 & 0xffff);
+				lit.add(textured ? c3 : c3 & 0xffff);
+			}
+			alpha.add(al);
+			seeThrough |= al != 255;
+			pri.add(priorities == null ? 0 : priorities[i] & 0xff);
+			tex.add(tid);
+			if (textured && textureFaces != null && tex1 != null && (textureFaces[i] & 0xff) < tex1.length)
+			{
+				anyTexture = true;
+				float[] u = new float[3], w = new float[3];
+				uvs(x, y, z, a[i], b[i], c[i], tex1[textureFaces[i] & 0xff], tex2[textureFaces[i] & 0xff], tex3[textureFaces[i] & 0xff], u, w);
+				for (int k = 0; k < 3; k++)
+				{
+					uv.add(fin(u[k]));
+					uv.add(fin(w[k]));
+				}
+			}
+			else
+			{
+				for (int k = 0; k < 6; k++)
+				{
+					uv.add(0);
+				}
+			}
 		}
 		o.add("v", v);
 		o.add("f", f);
 		o.add("c", col);
+		if (colors1 != null)
+		{
+			o.add("g", lit);
+		}
+		if (seeThrough)
+		{
+			o.add("a", alpha);
+		}
+		if (priorities != null)
+		{
+			o.add("p", pri);
+		}
+		if (anyTexture)
+		{
+			o.add("t", tex);
+			o.add("uv", uv);
+		}
 		return o;
+	}
+
+	/** A texture coordinate times 4096, kept to what the relay takes. */
+	private static int fin(float t)
+	{
+		if (Float.isNaN(t) || Float.isInfinite(t))
+		{
+			return 0;
+		}
+		return (int) Math.max(-1_000_000, Math.min(1_000_000, Math.round(t * 4096f)));
+	}
+
+	/** A face's corners' texture coordinates from its texture triangle (origin, then its two axes), as the client finds them. */
+	static void uvs(float[] vx, float[] vy, float[] vz, int fa, int fb, int fc, int ta, int tb, int tc, float[] u, float[] v)
+	{
+		float ox = vx[ta], oy = vy[ta], oz = vz[ta];
+		float ux = vx[tb] - ox, uy = vy[tb] - oy, uz = vz[tb] - oz;
+		float wx = vx[tc] - ox, wy = vy[tc] - oy, wz = vz[tc] - oz;
+		float[][] p = {{vx[fa] - ox, vy[fa] - oy, vz[fa] - oz}, {vx[fb] - ox, vy[fb] - oy, vz[fb] - oz}, {vx[fc] - ox, vy[fc] - oy, vz[fc] - oz}};
+		float nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+		float px = wy * nz - wz * ny, py = wz * nx - wx * nz, pz = wx * ny - wy * nx;
+		float s = 1f / (px * ux + py * uy + pz * uz);
+		for (int k = 0; k < 3; k++)
+		{
+			u[k] = (px * p[k][0] + py * p[k][1] + pz * p[k][2]) * s;
+		}
+		px = uy * nz - uz * ny; py = uz * nx - ux * nz; pz = ux * ny - uy * nx;
+		s = 1f / (px * wx + py * wy + pz * wz);
+		for (int k = 0; k < 3; k++)
+		{
+			v[k] = (px * p[k][0] + py * p[k][1] + pz * p[k][2]) * s;
+		}
 	}
 
 	private static int clamp(int n)

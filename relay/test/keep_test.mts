@@ -28,6 +28,15 @@ test("a model: vertices in threes, faces on them, a colour a face", () => {
   strictEqual(typeof keepShape("nothing", m), "string");
 });
 
+test("a model as the game lit it, with its textures (11/15/2026)", () => {
+  const m = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [-1], g: [50, 60, 70], a: [128], p: [2], t: [7], uv: [0, 0, 4096, 0, 0, 4096], tex: { "7": "iVBORw0KGgo=" }, b: 0.8 };
+  deepStrictEqual(keepShape("model", m), m);
+  strictEqual(typeof keepShape("model", { ...m, g: [1, 2] }), "string");
+  strictEqual(typeof keepShape("model", { ...m, uv: [0] }), "string");
+  strictEqual(typeof keepShape("model", { ...m, tex: { "7": "<script>" } }), "string");
+  strictEqual(typeof keepShape("model", { ...m, b: 9 }), "string");
+});
+
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {
   strictEqual(emoteKind(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "png");
   strictEqual(emoteKind(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), "jpg");
