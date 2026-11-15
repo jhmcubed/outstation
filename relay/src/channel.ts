@@ -89,6 +89,9 @@ interface Dm { from: string; name: string; text: string; at: number }
 // easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
 // begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (relay.py's, the same)
 export const INVITES_START = 3, INVITE_EVERY_S = 36_000, INVITES_AN_HOUR = 5;
+// a channel claimed by the Outside plugin itself (11/15/2026, docs/protocol.md "Claiming a name"): at most this many a
+// day from one address, and this many a day in all, so names can't be taken in bulk
+export const CLAIMS_AN_ADDRESS = 3, CLAIMS_A_DAY = 200;
 // a channel asked for or invited: a player's name as the page has it (lower case, no spaces)
 export const PLAYER = /^[a-z0-9]{1,12}$/;
 
@@ -169,6 +172,11 @@ interface Poll {
 
 interface Meta {
   keyHash: string | null;
+  // claimed by the Outside plugin from the Plugin Hub (11/15/2026, docs/protocol.md "Claiming a name"), nobody vouching
+  // for it: the page marks the name unproven (GET /proof). A keeper's or an invite's key clears it. `account`: a hash
+  // of the account hash the plugin sent with the claim, for the proof to come (never shown, never sent back).
+  unproven?: boolean;
+  account?: string;
   code: string;
   cap: number; // the channel's own cap on viewers (the desk's {"cap"}): 0 none
   chatId: number;
@@ -605,7 +613,12 @@ export class Channel extends DurableObject<Env> {
     let [, role] = url.pathname.split("/");
     if (role === "watch" && q.get("look") === "1") role = "look";
 
-    if (role === "_mint") return this.mint(q.get("new") === "1");
+    if (role === "_mint") return this.mint(q.get("new") === "1", q.get("claim") === "1", request.headers.get("x-account") || "");
+    if (role === "_proof") {
+      // (who stands behind the name: "unproven", claimed by the plugin alone; "vouched", a keeper's or an invite's key)
+      if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+      return json({ proof: this.meta.unproven ? "unproven" : "vouched" });
+    }
     if (role === "_status") {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
@@ -1744,11 +1757,19 @@ export class Channel extends DurableObject<Env> {
   // Jace's admin (index.ts checks the admin token before it reaches here)
 
   // (onlyNew: an invite's, which never takes a channel that has a key already, whatever the Directory says)
-  async mint(onlyNew = false): Promise<Response> {
+  // (claim: the plugin's own, unproven; anything else (the keeper's, an invite's) is vouched for and clears it)
+  async mint(onlyNew = false, claim = false, account = ""): Promise<Response> {
     if (onlyNew && this.meta.keyHash !== null) return json({ error: "that name has an outstation already" }, 409);
     const bytes = crypto.getRandomValues(new Uint8Array(18));
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);
+    if (claim) {
+      this.meta.unproven = true;
+      if (account) this.meta.account = await this.hash("account:" + account);
+    } else {
+      delete this.meta.unproven;
+      delete this.meta.account;
+    }
     if (onlyNew) this.meta.pending = true; // (an invite's: not taken up till its key's used; the keeper's leaves it as it was)
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {

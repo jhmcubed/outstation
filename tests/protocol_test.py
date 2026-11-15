@@ -2901,6 +2901,56 @@ async def nothing_game(c, wait=0.5):
         return None
 
 
+class Claims(Base):
+    """Claiming a name (11/15/2026; docs/protocol.md "Claiming a name"): the Outside plugin's own channel, for a player
+    from the Plugin Hub with no outstation and no invite. Only a name nobody has, at most three a day from one address,
+    and marked unproven (GET /proof) till someone vouches for it."""
+
+    async def given(self, name):
+        """A name handed out by the keeper (the Worker), or claimed by its first transmitter (relay.py)."""
+        if WORKER:
+            self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
+        else:
+            c = await Client().open("%s/transmit/%s?key=its-own-key-%s" % (RELAY, name, secrets.token_hex(3)))
+            self.clients.append(c)
+            await next_of(c, "relay")
+
+    async def test_a_claim_is_a_station_key_for_a_name_nobody_has_and_unproven(self):
+        name = "c" + secrets.token_hex(5)
+        status, got = http("POST", "/claim", {"player": name, "account": "-1234567890123"})
+        self.assertEqual(status, 200, got)
+        self.assertEqual((got["channel"], got["proof"]), (name, "unproven"))
+        enc = got["code"][len("outstation1:"):]
+        self.assertTrue(got["code"].startswith("outstation1:"))
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(enc + "=" * (-len(enc) % 4))), {"relay": RELAY, "channel": name, "key": got["key"]})
+        # (the page's mark: anyone may read it)
+        st, h, body = raw("GET", "/proof/" + name)
+        self.assertEqual((st, json.loads(body)), (200, {"proof": "unproven"}))
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+        # (its key works as any other: here, transmitting)
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, got["key"]))
+        self.clients.append(tx)
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+        # (the same name again: taken)
+        self.assertEqual(http("POST", "/claim", {"player": name})[0], 409)
+        # (a name the keeper handed out, or an invite's: taken, and vouched for)
+        other = "c" + secrets.token_hex(5)
+        await self.given(other)
+        self.assertEqual(http("POST", "/claim", {"player": other})[0], 409)
+        self.assertEqual(json.loads(raw("GET", "/proof/" + other)[2]), {"proof": "vouched"})
+        # (nobody's: no proof to read)
+        self.assertEqual(raw("GET", "/proof/c" + secrets.token_hex(5))[0], 404)
+        # (only a name as a channel has it: lower case, letters and numbers, 12 at most)
+        for bad in ("Has Space", "UPPER", "", "x" * 13, 7):
+            self.assertEqual(http("POST", "/claim", {"player": bad})[0], 400, bad)
+        # (three a day from one place: two more take names, the next is refused; a refused claim took nothing)
+        self.assertEqual(http("POST", "/claim", {"player": "c" + secrets.token_hex(5)})[0], 200)
+        self.assertEqual(http("POST", "/claim", {"player": "c" + secrets.token_hex(5)})[0], 200)
+        late = "c" + secrets.token_hex(5)
+        self.assertEqual(http("POST", "/claim", {"player": late})[0], 429)
+        self.assertEqual(raw("GET", "/proof/" + late)[0], 404)
+
+
 class Invites(Base):
     """An outstation's invites (11/07/2026): it hands out channels of its own, three to begin with and one more every 10
     hours on air (the earning is relay-py/test_relay.py's: ten hours on air can't be waited for here). An invite's code

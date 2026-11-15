@@ -103,6 +103,8 @@ public class OutsidePlugin extends Plugin
 {
 	private static final Logger log = LoggerFactory.getLogger(OutsidePlugin.class);
 	static final String VERSION = "0.2.0";
+	/** the relay a page is claimed on when there's no key yet (docs/protocol.md "Claiming a name") */
+	static final String HOME_RELAY = "https://relay.ghillie.workers.dev";
 	/** vitals alone (run energy draining as you run) go at most this often, in ticks */
 	private static final int VITALS_EVERY = 5;
 	/** the longest wait between tries to reach the relay, in seconds */
@@ -1178,6 +1180,28 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
+			public void claim()
+			{
+				clientThread.invokeLater(() ->
+				{
+					if (client.getLocalPlayer() == null || client.getLocalPlayer().getName() == null)
+					{
+						panel.claiming(false, "log in first: your page is named after the character you're logged in as");
+						return;
+					}
+					String shown = client.getLocalPlayer().getName();
+					String name = channelName(shown);
+					if (name == null)
+					{
+						panel.claiming(false, "\"" + shown + "\" can't be a page's name");
+						return;
+					}
+					long hash = client.getAccountHash();
+					claimPage(name, hash == -1 ? null : Long.toString(hash));
+				});
+			}
+
+			@Override
 			public void openPage()
 			{
 				Attach a = Attach.parse(config.stationKey(), gson);
@@ -1187,6 +1211,76 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 		};
+	}
+
+	/** A player's name as a channel has it: lower case, the spaces, hyphens and underscores the game treats alike taken
+	 *  out (its names use a no-break space), 1 to 12 letters or numbers; null when it can't be one. */
+	static String channelName(String shown)
+	{
+		if (shown == null)
+		{
+			return null;
+		}
+		String n = shown.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\u00a0_-]", "");
+		return n.matches("[a-z0-9]{1,12}") ? n : null;
+	}
+
+	/** Claims a page for the name (docs/protocol.md "Claiming a name"): the key that comes back goes in the settings,
+	 *  which connects as any key does (onConfigChanged). */
+	private void claimPage(String name, String account)
+	{
+		panel.claiming(true, null);
+		JsonObject body = new JsonObject();
+		body.addProperty("player", name);
+		if (account != null)
+		{
+			body.addProperty("account", account);
+		}
+		Request req = new Request.Builder().url(HOME_RELAY + "/claim").header("User-Agent", "outside-plugin/" + VERSION)
+			.post(RequestBody.create(JSON, gson.toJson(body))).build();
+		http.newCall(req).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				panel.claiming(false, "the relay's out of reach: try again in a bit");
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					String text = res.body() != null ? res.body().string() : "";
+					JsonObject o = null;
+					try
+					{
+						o = gson.fromJson(text, JsonObject.class);
+					}
+					catch (RuntimeException ignored)
+					{
+					}
+					if (res.code() == 200 && o != null && o.has("code") && Attach.parse(o.get("code").getAsString(), gson) != null)
+					{
+						configManager.setConfiguration(OutsideConfig.GROUP, "stationKey", o.get("code").getAsString());
+						panel.claiming(false, "your page: outside.wiki/" + name + " (marked unproven till it's proven yours)");
+						say("your Outside page is made: outside.wiki/" + name);
+						return;
+					}
+					if (res.code() == 409)
+					{
+						panel.claiming(false, "outside.wiki/" + name + " has an outstation already. If it's yours, paste its station key in the plugin's settings.");
+						return;
+					}
+					String why = o != null && o.has("error") ? o.get("error").getAsString() : "the relay said " + res.code();
+					panel.claiming(false, why);
+				}
+				catch (IOException ex)
+				{
+					panel.claiming(false, "the relay's out of reach: try again in a bit");
+				}
+			}
+		});
 	}
 
 	/** The motions on their page and the one it shows first, into the side tab. */

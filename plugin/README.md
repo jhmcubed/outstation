@@ -7,14 +7,17 @@ It works with or without the outstation program. With both, your page has your t
 ## Setting it up
 
 1. Install **Outside** from the Plugin Hub (RuneLite's wrench icon, then Plugin Hub; not there yet: see "Trying it before the Hub" below).
-2. In the plugin's settings, paste your **station key** (it starts `outstation1:`): the one your outstation attached with, or a friend's invite.
-3. Log in. The game's chat says "your outstation (name) is receiving what you wear and carry", with your page's address.
+2. Log in, open the **Outside** side tab (a lime ✼) and press **Make my Outside page** (11/15/2026). Your page is made under the name you're logged in as, at outside.wiki/<your name>, and its station key goes into the plugin's settings by itself. Until it's proven yours, the page marks the name **unproven**. A name that already has a page can't be taken.
+   - Have an outstation or a friend's invite instead? Paste its **station key** (it starts `outstation1:`) in the plugin's settings.
+3. The game's chat says "your outstation (name) is receiving what you wear and carry", with your page's address.
 
 ## Its side tab (11/15/2026)
 
 The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**; **Capture my character**, which records the next emote you do within 8 seconds from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it (blank: "idle" or "motion"), with your model standing still; the motions on your page, the one picked showing first to everyone who opens it, ✕ taking one away; and **Take my model off my page**. The same as `::outsidemodel`, `::outsidemotion <a name>` and `::outsideforget <a name>`. It needs "My character's model on my page" switched on.
 
 ## What it sends, and only that
+
+**Making your page** (only when you press Make my Outside page; 11/15/2026): your character's name and your account hash (the number RuneLite gives plugins for your account, as RuneProfile's and Dink's plugins send it), once, to Jace's relay on Cloudflare. The relay keeps only a hash of the account hash, for proving the page is yours, and shows it to nobody (docs/protocol.md, "Claiming a name").
 
 To your relay (Jace's, on Cloudflare, unless your key says another), over one connection, and only while you're logged in:
 - your character's name, your world, and your account type (normal, ironman…)
@@ -139,6 +142,6 @@ The manifest, `plugins/outside` in runelite/plugin-hub (the Hub builds outside-p
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
 commit=<the full commit hash>
-warning=This plugin submits your equipment, inventory, looting bag, rune pouch, item charges, skills and vitals, and the Doom of Mokhaiotl board's counts when you read it; if you switch them on, your bank and your character's model; if you switch them on, the rough area and world you were in two minutes ago, your exact path for your own record (passed only to your own outstation), what you were doing (skilling, bossing, raiding, a minigame, fighting or idle), and the location and size of shooting stars you see, with your outstation's name as their finder if you ask; and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page and outside.wiki show them publicly.
+warning=This plugin submits your character's name and account hash when you make your page, and your equipment, inventory, looting bag, rune pouch, item charges, skills and vitals, and the Doom of Mokhaiotl board's counts when you read it; if you switch them on, your bank and your character's model; if you switch them on, the rough area and world you were in two minutes ago, your exact path for your own record (passed only to your own outstation), what you were doing (skilling, bossing, raiding, a minigame, fighting or idle), and the location and size of shooting stars you see, with your outstation's name as their finder if you ask; and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page and outside.wiki show them publicly.
 ```
 

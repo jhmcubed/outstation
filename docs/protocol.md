@@ -201,6 +201,31 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
 
+## Claiming a name (11/15/2026)
+
+The Outside plugin's own channel, for a player who comes from the Plugin Hub with no outstation and no invite (Jace: the
+plugin first; players find the Hub before they'd download an .exe). The plugin's side tab asks for it with the name of
+the player logged in; the answer is a station key like any other, which the plugin keeps in its settings.
+
+    POST /claim   {"player": <the name as a channel has it>, "account"?: <the account hash, as digits>}
+                  200 {"channel", "key", "code", "proof": "unproven"}
+                  400 a name that isn't 1 to 12 lower-case letters or numbers; 409 a name with an outstation already;
+                  429 past the day's claims; 413 a body over 1 KB
+    GET  /proof/<channel>   anyone's (CORS *, a minute's cache)   200 {"proof": "unproven" | "vouched"} / 404
+
+- **Only a name nobody has.** A name the keeper handed out, an invite's, or one claimed before is refused (409). As an
+  invite's, two claims at once can't both take it.
+- **At most 3 a day from one address, 200 a day in all**, so names can't be taken in bulk. Only claims that take a
+  name count. The address is kept as a hash, a day at most.
+- **Unproven.** Nothing the plugin sends proves the player is who they say: the plugin is open source and anyone can
+  send what it sends. So a claimed channel is marked unproven, and the page says so beside the name (GET /proof). A
+  key from the keeper or an invite (someone vouching) clears it: "vouched". Proving it from the game itself (the
+  experience the plugin reports live, found on the official hiscores after logging out) is the next step.
+- **account**: the account hash RuneLite gives the plugin (`client.getAccountHash()`), as digits. The relay keeps only
+  a hash of it, for that proof; it's never shown or sent back.
+- Like an invite's, the channel isn't on the open outstations' list till its key's first used.
+- relay.py: the same, from its own side only (its public side refuses every POST); GET /proof from either.
+
 ## Invites (11/07/2026)
 
 Each outstation hands out a few channels of its own, so a friend can bring a friend without the keeper (Jace: "each of my friends being able to pass out a few keys so that way the platform propagates easier", "people earning more invites through streaming"). Both relays.

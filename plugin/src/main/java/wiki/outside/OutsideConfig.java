@@ -12,8 +12,8 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "stationKey",
 		name = "Station key",
-		description = "Your outstation's station key (it starts outstation1:), from the outstation or a friend's invite."
-			+ " With it, what you wear and carry and your stats show live on your Outside page.",
+		description = "Your station key (it starts outstation1:): made for you by \"Make my Outside page\" in the Outside side tab,"
+			+ " or from the outstation or a friend's invite. With it, what you wear and carry and your stats show live on your Outside page.",
 		secret = true,
 		position = 0
 	)

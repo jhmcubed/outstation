@@ -93,7 +93,7 @@
 // Taking a channel back (DELETE /admin/channels/<channel>) deletes its record and summary too: nobody could manage them.
 
 import { DurableObject } from "cloudflare:workers";
-import { Channel, PLAYER, type Env, type Listing } from "./channel";
+import { Channel, CLAIMS_AN_ADDRESS, CLAIMS_A_DAY, PLAYER, type Env, type Listing } from "./channel";
 import { Aether } from "./aether";
 import { type ArrayEvent, ArrayFeed, type Lost, arrayAnswer, arrayBackfill, arraySince } from "./array";
 import { type StarReport, WHERE_FRESH_MS } from "./game";
@@ -315,6 +315,7 @@ export class Directory extends DurableObject<Env> {
     }
     if (url.pathname === "/requests") return this.requests(request, url);
     if (url.pathname === "/reports") return this.reports(request, url);
+    if (url.pathname === "/claim") return this.claim(url);
     if (url.pathname === "/taken") {
       // the aether's (11/07/2026, aether.ts): whether a visitor's name, in a channel's form (lower case, no spaces), is
       // a channel handed out's, whatever its case
@@ -348,6 +349,26 @@ export class Directory extends DurableObject<Env> {
     }
     const all = await this.ctx.storage.list({ prefix: "c:" });
     return Response.json([...all.entries()].map(([k, v]) => ({ channel: k.slice(2), by: null, ...(v as object) })));
+  }
+
+  /** A name claimed by the Outside plugin (11/15/2026, docs/protocol.md "Claiming a name"): only one nobody has, at most
+   *  CLAIMS_AN_ADDRESS a day from one address (kept as a hash) and CLAIMS_A_DAY in all; only the claims that take a
+   *  name count. As an invite's, the read and the write can't be split by another request. 204, 409 or 429. */
+  async claim(url: URL): Promise<Response> {
+    const name = url.searchParams.get("name") || "", from = url.searchParams.get("from") || "", now = Date.now();
+    const day = ((await this.ctx.storage.get<{ from: string; at: number }[]>("claims")) || []).filter((c) => now - c.at < 86_400_000);
+    if (day.length >= CLAIMS_A_DAY) return Response.json({ error: "enough names have been claimed today: try again tomorrow" }, { status: 429 });
+    if (day.filter((c) => c.from === from).length >= CLAIMS_AN_ADDRESS) {
+      return Response.json({ error: `${CLAIMS_AN_ADDRESS} names a day at most from one place: try again tomorrow` }, { status: 429 });
+    }
+    if (await this.ctx.storage.get("c:" + name)) return Response.json({ error: "that name has an outstation already" }, { status: 409 });
+    await this.ctx.storage.put("c:" + name, { since: now, by: null, claimed: true });
+    day.push({ from, at: now });
+    await this.ctx.storage.put("claims", day);
+    this.given = null;
+    const rows = await this.listedRows();
+    if (rows.drop(name)) await this.saveListed(rows);
+    return new Response(null, { status: 204 });
   }
 
   /** The channels handed out, each with whose invite it came from: read from storage once, till one's handed out or
@@ -823,6 +844,49 @@ export default {
       h.set("access-control-allow-headers", "content-type");
       h.set("cache-control", "no-store");
       return new Response(answer.body, { status: answer.status, headers: h });
+    }
+
+    // claiming a name (11/15/2026, docs/protocol.md "Claiming a name"): the Outside plugin's own channel, for a player
+    // from the Plugin Hub with no outstation and no invite. Only a name nobody has; marked unproven
+    if (parts[0] === "claim" && parts.length === 1) {
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const raw = await request.text();
+      if (raw.length > 1024) return Response.json({ error: "a claim is a name" }, { status: 413 });
+      let body: { player?: unknown; account?: unknown } | null = null;
+      try { body = JSON.parse(raw); } catch { /* (below) */ }
+      const player = typeof body?.player === "string" ? body.player : "";
+      if (!PLAYER.test(player)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
+      const account = typeof body?.account === "string" && /^-?[0-9]{1,20}$/.test(body.account) ? body.account : "";
+      const ip = request.headers.get("cf-connecting-ip") || "";
+      const from = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("claim:" + ip)))]
+        .slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+      const row = "https://dir/?name=" + encodeURIComponent(player);
+      const took = await dir.fetch("https://dir/claim?name=" + encodeURIComponent(player) + "&from=" + from, { method: "POST" });
+      if (took.status !== 204) return new Response(took.body, { status: took.status, headers: { "content-type": "application/json" } });
+      let minted: Response | null = null;
+      try {
+        minted = await channelStub(env, player).fetch(new Request(new URL("/_mint?new=1&claim=1", request.url).toString(),
+          { method: "POST", headers: { "x-channel": player, "x-account": account } }));
+      } catch { /* (below) */ }
+      const got = minted && minted.ok ? ((await minted.json()) as { key?: string }) : null;
+      if (!got?.key) {
+        await dir.fetch(row, { method: "DELETE" }).catch(() => null);
+        return Response.json({ error: minted?.status === 409 ? "that name has an outstation already" : "the claim didn't go through: try again" },
+                             { status: minted?.status === 409 ? 409 : 503 });
+      }
+      return Response.json({ channel: player, key: got.key, code: attachCode(relayOf(request.url), player, got.key), proof: "unproven" });
+    }
+
+    // who stands behind a name (11/15/2026): {"proof": "unproven" | "vouched"}, anyone's, for the page's mark
+    if (parts[0] === "proof" && parts.length === 2 && (request.method === "GET" || request.method === "HEAD")) {
+      const name = parts[1];
+      if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
+      const r = await channelStub(env, name).fetch(toChannel(request, name, "/_proof"));
+      const h = new Headers(r.headers);
+      h.set("access-control-allow-origin", "*");
+      h.set("cache-control", "public, max-age=60");
+      return new Response(r.body, { status: r.status, headers: h });
     }
 
     // invites: an outstation's own (its key in the query to read them, in the body to use one), all in its channel

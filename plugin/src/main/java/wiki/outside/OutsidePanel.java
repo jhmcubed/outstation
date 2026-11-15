@@ -45,6 +45,8 @@ public class OutsidePanel extends PluginPanel
 		void removeModel();
 
 		void openPage();
+
+		void claim();
 	}
 
 	/** a motion on their page, as the relay lists it */
@@ -67,6 +69,9 @@ public class OutsidePanel extends PluginPanel
 	private final JTextField name = new JTextField();
 	private final JButton capture = new JButton("Capture my character");
 	private final JPanel motions = new JPanel();
+	private final JPanel start = new JPanel();
+	private final JButton claim = new JButton("Make my Outside page");
+	private final JLabel claimStatus = new JLabel(" ");
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -83,6 +88,20 @@ public class OutsidePanel extends PluginPanel
 		who.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		col.add(left(who));
 		col.add(Box.createVerticalStrut(8));
+		// (11/15/2026, the plugin first: a player from the Plugin Hub with no outstation and no invite makes their own page
+		// here, under the name they're logged in as; docs/protocol.md "Claiming a name")
+		start.setLayout(new BoxLayout(start, BoxLayout.Y_AXIS));
+		start.add(left(small("<html>No page yet. Log in, then make one: it's named after the character you're logged in as,"
+			+ " and shows what you wear and carry and your stats, live.</html>")));
+		start.add(Box.createVerticalStrut(4));
+		claim.addActionListener(e -> hooks.claim());
+		start.add(wide(claim));
+		claimStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		start.add(left(claimStatus));
+		start.add(left(small("<html>Have an outstation or a friend's invite? Paste its station key in the plugin's settings instead.</html>")));
+		start.add(Box.createVerticalStrut(10));
+		start.setVisible(false);
+		col.add(start);
 		col.add(wide(button("Open my page", hooks::openPage)));
 		col.add(Box.createVerticalStrut(14));
 
@@ -124,7 +143,23 @@ public class OutsidePanel extends PluginPanel
 	/** Whose page it is (their channel), or that there's no key yet. */
 	public void who(String channel)
 	{
-		SwingUtilities.invokeLater(() -> who.setText(channel == null ? "no station key yet (the plugin's settings)" : "outside.wiki/" + channel));
+		SwingUtilities.invokeLater(() ->
+		{
+			who.setText(channel == null ? "no page yet" : "outside.wiki/" + channel);
+			start.setVisible(channel == null);
+			revalidate();
+		});
+	}
+
+	/** While a claim's asked, the button waits; then a line under it (null: none). */
+	public void claiming(boolean on, String words)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			claim.setEnabled(!on);
+			claim.setText(on ? "Making your page…" : "Make my Outside page");
+			claimStatus.setText(words == null ? " " : "<html>" + esc(words) + "</html>");
+		});
 	}
 
 	/** A line under the capture button. */

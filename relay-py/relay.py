@@ -213,6 +213,9 @@ DMS_KEPT, DMS_DAYS, DMS_A_MINUTE = 20, 7, 20
 # easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
 # begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (the Worker's, the same)
 INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
+# a channel claimed by the Outside plugin itself (11/15/2026, docs/protocol.md "Claiming a name"): at most this many a
+# day from one address, and this many a day in all (the Worker's channel.ts, the same)
+CLAIMS_AN_ADDRESS, CLAIMS_A_DAY = 3, 200
 PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
 # the game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's socket. A message at most GAME_MESSAGE long, and
 # GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as JSON (a message that would take it past is
@@ -1416,6 +1419,10 @@ class Channel:
         # it is, GET /channels leaves it out and only counts it under its inviter ("pending"): the inviter typed the
         # name, and the friend hasn't agreed to anything. The first right key, from anything, takes it up (key_used).
         self.pending = False
+        # claimed by the Outside plugin with nobody vouching for it (11/15/2026, docs/protocol.md "Claiming a name"):
+        # GET /proof says "unproven"; a hash of the account hash the plugin sent, for the proof to come
+        self.unproven = False
+        self.account = None
         # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
         # streams and the plugin's going: a page shows the last of it while the player's away)
         self.gamer = None
@@ -2463,6 +2470,17 @@ class Relay:
         if len(path) == 2 and path[0] == "invites" and not key:
             await self.invites(reader, writer, method, headers, path[1], q)
             return
+        if len(path) == 1 and path[0] == "claim" and not key:
+            peer = writer.get_extra_info("peername")
+            await self.claim(reader, writer, method, headers, peer[0] if peer else "")
+            return
+        if len(path) == 2 and path[0] == "proof" and not key and method in ("GET", "HEAD"):
+            ch = self.channels.get(path[1])
+            if ch is None or ch.key is None:
+                await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
+            else:
+                await self.plain(writer, "200 OK", {"proof": "unproven" if ch.unproven else "vouched"})
+            return
         if settling:
             await self.settling_gone(reader, writer, headers)
             return
@@ -3411,6 +3429,75 @@ class Relay:
         code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
         return await answer("200 OK", {"channel": player, "key": new_key, "code": code,
                                        "left": invite_numbers(ch.seconds_in_all(), ch.invited)["left"]})
+
+    async def plain(self, writer, status, body):
+        """A JSON answer anyone's page may read (GET /proof's)."""
+        data = json.dumps(body).encode()
+        writer.write(("HTTP/1.1 %s\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n"
+                      "Cache-Control: public, max-age=60\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+                      % (status, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def claim(self, reader, writer, method, headers, peer):
+        """Claiming a name (11/15/2026; docs/protocol.md "Claiming a name"; the Worker's /claim, the same): the Outside
+        plugin's own channel, for a player with no outstation and no invite.
+            POST /claim  {"player", "account"?}  {"channel", "key", "code", "proof": "unproven"}
+        Only a name nobody has; at most CLAIMS_AN_ADDRESS a day from one address and CLAIMS_A_DAY in all (only the
+        claims that take a name count). Marked unproven till someone vouches (a keeper's or an invite's key)."""
+        async def answer(status, body=None):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        try:
+            raw = await read_body(reader, headers, 1024)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request")
+        if raw is None:
+            return await answer("413 Payload Too Large", {"error": "a claim is a name"})
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        player = body.get("player")
+        if not isinstance(player, str) or not PLAYER.fullmatch(player):
+            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters or numbers, lower case"})
+        account = body.get("account") if isinstance(body.get("account"), str) and re.fullmatch(r"-?[0-9]{1,20}", body.get("account")) else ""
+        now = time.time()
+        self.claims = [c for c in getattr(self, "claims", []) if now - c[1] < 86400]
+        if len(self.claims) >= CLAIMS_A_DAY:
+            return await answer("429 Too Many Requests", {"error": "enough names have been claimed today: try again tomorrow"})
+        frm = hashlib.sha256(("claim:" + (peer or "")).encode()).hexdigest()[:24]
+        if sum(1 for c in self.claims if c[0] == frm) >= CLAIMS_AN_ADDRESS:
+            return await answer("429 Too Many Requests", {"error": "%d names a day at most from one place: try again tomorrow" % CLAIMS_AN_ADDRESS})
+        other = self.channels.get(player)
+        if other is not None and other.key is not None:
+            return await answer("409 Conflict", {"error": "that name has an outstation already"})
+        new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
+        if other is None:
+            other = self.channels[player] = Channel(player, new_key, self.array, self.stars)
+        else:
+            other.key = new_key
+            other.tell_viewers()
+        other.by = None
+        other.pending = True          # (not taken up till its key's used, as an invite's)
+        other.unproven = True
+        other.account = hashlib.sha256(("account:" + account).encode()).hexdigest() if account else None
+        self.claims.append((frm, now))
+        self.log("claim     %s" % player)
+        code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
+        return await answer("200 OK", {"channel": player, "key": new_key, "code": code, "proof": "unproven"})
 
     async def settling_gone(self, reader, writer, headers):
         """Settling went on 11/10/2026 (the module's head): anything on /settle/<channel> or /home/<channel> is a 410
