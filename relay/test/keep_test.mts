@@ -60,6 +60,13 @@ test("a motion is a model with its frames; its name (11/15/2026)", () => {
   strictEqual(MOTION_NAME.test("x".repeat(25)), false);
 });
 
+test("the encounter: a boss's name and its model (11/15/2026)", () => {
+  const model = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100] };
+  deepStrictEqual(keepShape("encounter", { name: "Vorkath", model, x: 1 }), { name: "Vorkath", model });
+  strictEqual(typeof keepShape("encounter", { name: "<b>", model }), "string");
+  strictEqual(typeof keepShape("encounter", { name: "Vorkath" }), "string");
+});
+
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {
   strictEqual(emoteKind(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "png");
   strictEqual(emoteKind(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), "jpg");

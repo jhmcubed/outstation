@@ -981,7 +981,8 @@ export class Channel extends DurableObject<Env> {
     this.gameDirty = false;
     this.game = new GameState();
     this.ctx.storage.delete("game");
-    this.ctx.storage.delete(["keep:bank", "keep:model"]); // (the bank and the model kept for the page, keep.ts)
+    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter"]); // (the bank, the model and the encounter, keep.ts)
+    this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("encounter")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
     this.ctx.waitUntil(this.ctx.storage.get<{ name: string }[]>("keep:motions").then((l) => {
       this.ctx.storage.delete("keep:motions");
@@ -1794,7 +1795,7 @@ export class Channel extends DurableObject<Env> {
     const shaped = keepShape(what, d);
     if (typeof shaped === "string") return json({ error: shaped }, 400);
     this.keepUploads.push(now);
-    if (what === "model" && this.env.CLIPS) {
+    if ((what === "model" || what === "encounter") && this.env.CLIPS) {
       await this.env.CLIPS.put(this.keepKey(what), JSON.stringify(shaped), { httpMetadata: { contentType: "application/json" } });
       await this.ctx.storage.put("keep:" + what, { at: now, r2: true });
     } else {

@@ -330,6 +330,7 @@ public class OutsidePlugin extends Plugin
 		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, config.wilderness()));
 		JsonObject path = track(ms, at, safe);
 		look(ms, safe);
+		encounter(ms, safe);
 		if (!open)
 		{
 			return;
@@ -840,6 +841,58 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** The character's model as it is now (the client's thread). */
+	// ---- the encounter (11/15/2026, Jace: "build what you think is best" under the subject's form): the last boss they
+	// fought, its model, on their page as the fight ends; never from anywhere dangerous; each boss at most once every
+	// ENCOUNTER_EVERY; only with the model switch on
+	private static final long ENCOUNTER_EVERY = 30 * 60_000L, ENCOUNTER_OVER = 20_000L;
+	private final Map<String, Long> encounterSent = new HashMap<>();
+	private JsonObject encounterModel;
+	private String encounterName;
+	private long encounterAt;
+
+	private void encounter(long now, boolean safe)
+	{
+		if (!config.model() || !open)
+		{
+			return;
+		}
+		if (!safe)
+		{
+			encounterModel = null;   // (nothing from anywhere dangerous: what was caught there is let go)
+			encounterName = null;
+			return;
+		}
+		Player me = client.getLocalPlayer();
+		Actor t = me == null ? null : me.getInteracting();
+		String boss = t instanceof NPC && t.getName() != null ? Activity.BOSSES.get(t.getName()) : null;
+		if (boss != null && !Activity.WILDERNESS_BOSSES.contains(boss))
+		{
+			if (!boss.equals(encounterName))
+			{
+				Long last = encounterSent.get(boss);
+				Model m = ((NPC) t).getModel();
+				if ((last == null || now - last >= ENCOUNTER_EVERY) && m != null)
+				{
+					// (written out at once: one shared model object for anything animated)
+					encounterModel = wholeModel(modelJson(m), null, null, null);
+					encounterName = boss;
+				}
+			}
+			encounterAt = now;
+			return;
+		}
+		if (encounterModel != null && now - encounterAt >= ENCOUNTER_OVER)
+		{
+			JsonObject o = new JsonObject();
+			o.addProperty("name", encounterName);
+			o.add("model", encounterModel);
+			encounterSent.put(encounterName, now);
+			keep("encounter", o);
+			encounterModel = null;
+			encounterName = null;
+		}
+	}
+
 	/** The side tab's icon: a lime ✼, drawn here (no picture to ship). */
 	private static java.awt.image.BufferedImage tabIcon()
 	{
@@ -1302,7 +1355,10 @@ public class OutsidePlugin extends Plugin
 				}
 				if (body != null && code == 200)
 				{
-					say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your bank is on your page");
+					if (!"encounter".equals(what))
+					{
+						say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your bank is on your page");
+					}
 				}
 				else if (body != null && code != 200)
 				{

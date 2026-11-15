@@ -472,6 +472,8 @@ Too big for the game's fields, each sent over HTTP by the Outside plugin when th
 - `GET /keep/<channel>/<what>?code=<watch code>`: `{"<what>": ..., "at"}`, 404 none. `DELETE /keep/<channel>/<what>?key=<key>`: taken away (the plugin does, when its switch goes off).
 - A change goes to the channel's seated viewers, lookers and desks as `{"kept": {"what", "at"}}` (`"at": null`, taken away), and the page fetches it again. 12 uploads an hour each. Forgotten with the game's state (a new key, the channel taken back). The Python relay doesn't keep them.
 
+- The encounter (11/15/2026): the last boss they fought, `{"name", "model"}` (the boss's name as the plugin's boss list has it, its model as a model's), `POST /keep/<channel>/encounter`, sent as a fight ends (20 s with no more of it), each boss at most once every 30 minutes, never from anywhere dangerous (following's rules) or a Wilderness boss, and only with "My character's model on my page" on. Kept in the CLIPS bucket, as the model.
+
 ## Emotes (11/14/2026)
 
 A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):
