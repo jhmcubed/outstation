@@ -1974,6 +1974,39 @@ def year_step(s, part, now):
     return xy + [year_time(s[2], part, now)] if len(s) == 3 else xy
 
 
+def year_brief(year):
+    """A posted year's brief (11/15/2026, docs/record.md, "The brief"): what an Outside page shows of it without the whole
+    summary: the range, totals and clock as posted, the five activities with the most minutes, the first six moments,
+    the heat summed into 128-tile squares (Zanaris its one place), how many log slots, which parts were posted.
+    GET /year/<channel>?brief=1. record.ts's yearBrief, the same."""
+    out = {"v": 1}
+    for k in ("tz", "range", "totals"):
+        if k in year:
+            out[k] = year[k]
+    out["parts"] = [k for k in YEAR_PARTS if k not in ("v", "tz") and k in year]
+    acts = sorted(year.get("activities") or [], key=lambda a: -a["minutes"])
+    if acts:
+        out["activities"] = acts[:5]
+    if year.get("moments"):
+        out["moments"] = year["moments"][:6]
+    if isinstance(year.get("log"), list):
+        out["log"] = len(year["log"])
+    h = year.get("heat")
+    cells = h if isinstance(h, list) else h.get("cells", []) if isinstance(h, dict) else []
+    total = {}
+    for c in cells:
+        z = c[0] == WHERE_ZANARIS["x"] and c[1] == WHERE_ZANARIS["y"]
+        x = c[0] if z else c[0] // 128 * 128 + 64
+        y = c[1] if z else c[1] // 128 * 128 + 64
+        if (x, y) in total:
+            total[(x, y)][2] += c[2]
+        else:
+            total[(x, y)] = [x, y, c[2]]
+    if total:
+        out["heat"] = sorted(total.values(), key=lambda c: (-c[2], c[0], c[1]))
+    return out
+
+
 def year_summary(body, now=None):
     """A public summary checked (docs/record.md, "The public summary"): (the summary as it's stored, its parts in their
     order, None), or (None, why not), the part named. The Worker's yearSummary, the same."""
@@ -2297,9 +2330,13 @@ class Records:
             rows.append({"id": i, "at": m["at"], "size": m["size"], "data": base64.b64encode(raw).decode()})
         return {"chunks": rows, "bytes": total, "next": nxt}
 
-    def year_get(self, name):
+    def year_get(self, name, brief=False):
         y = self.read_json(os.path.join(self.folder(name), "year.json"), None)
-        return None if y is None else '{"year": %s, "at": %d}' % (y["text"], y["at"])
+        if y is None:
+            return None
+        if brief:
+            return '{"year": %s, "at": %d, "brief": true}' % (json.dumps(year_brief(json.loads(y["text"]))), y["at"])
+        return '{"year": %s, "at": %d}' % (y["text"], y["at"])
 
     def year_put(self, name, text, now):
         self.write_json(os.path.join(self.folder(name), "year.json"), {"text": text, "at": now})
@@ -3635,7 +3672,7 @@ class Relay:
             # (a blank after= is none, as on the Worker)
             return await answer("200 OK", rec.listing(name, q.get("data") == "1", q.get("after", ""), now))
         if method == "GET":
-            got = rec.year_get(name)
+            got = rec.year_get(name, q.get("brief") == "1")
             return await answer("200 OK", got) if got is not None else \
                 await answer("404 Not Found", {"error": "no year posted for that outstation"})
         if not station and not rec.token_ok(name, token, "write"):

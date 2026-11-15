@@ -89,7 +89,7 @@
 //   PUT    /record/<channel>/<id>?key=<key>    a sealed chunk;   DELETE /record/<channel>/<id>?key=   one gone
 //   DELETE /record/<channel>?key=<key>         everything: the chunks, the tokens, the public summary
 //   GET    /record/<channel>[?data=1&after=]   Authorization: Bearer <read token>
-//   PUT, DELETE /year/<channel>   ?key=<key> or Authorization: Bearer <write token>;   GET /year/<channel>   anyone's
+//   PUT, DELETE /year/<channel>   ?key=<key> or Authorization: Bearer <write token>;   GET /year/<channel>   anyone's (?brief=1: what an Outside page shows of it)
 // Taking a channel back (DELETE /admin/channels/<channel>) deletes its record and summary too: nobody could manage them.
 
 import { DurableObject } from "cloudflare:workers";
@@ -560,7 +560,7 @@ async function record(request: Request, env: Env, parts: string[], url: URL): Pr
   } else if (kind === "record" && parts.length === 2 && (m === "GET" || m === "DELETE")) {
     what = m === "GET" ? "list" + url.search : "all";
   } else if (kind === "year" && parts.length === 2 && (m === "GET" || m === "PUT" || m === "DELETE")) {
-    what = "year";
+    what = m === "GET" && url.searchParams.get("brief") === "1" ? "year?brief=1" : "year";
     if (m === "PUT") {
       if ((parseInt(request.headers.get("content-length") || "0") || 0) > YEAR_MOST) return recordAnswer({ error: `a year is ${YEAR_MOST / 1024} KB at most` }, 413);
       const raw = await request.text();

@@ -3465,6 +3465,43 @@ class YourYear(Base):
         self.assertEqual(self.year("GET")[0], 404)
         self.assertEqual(self.year("PUT", {"v": 1})[0], 403)
 
+    async def test_the_brief_is_what_a_page_shows(self):
+        # (11/15/2026, docs/record.md, "The brief": GET /year/<channel>?brief=1, the light summary an Outside page reads)
+        await self.claim()
+        now = int(time.time() * 1000)
+        y = {"v": 1, "tz": "Europe/London", "range": {"from": now - 86400000, "to": now},
+             "totals": {"minutes": 600, "kills": 12},
+             "heat": {"cell": 8, "cells": [[3260, 3268, 10], [3268, 3268, 5, "skilling:Mining"], [3140, 3268, 40],
+                                           [2368, 4416, 7]]},
+             "activities": [{"activity": {"kind": "idle"}, "minutes": 5}, {"activity": {"kind": "fighting"}, "minutes": 50},
+                            {"activity": {"kind": "skilling", "skill": "Mining"}, "minutes": 20},
+                            {"activity": {"kind": "boss", "boss": "Vorkath"}, "minutes": 30},
+                            {"activity": {"kind": "boss", "boss": "Zulrah"}, "minutes": 40},
+                            {"activity": {"kind": "boss", "boss": "Giant Mole"}, "minutes": 1}],
+             "moments": [{"event": {"kind": "level", "skill": "Mining", "level": n}} for n in range(60, 68)],
+             "log": [{"name": "Pet rock"}, {}]}
+        self.assertEqual(self.year("PUT", y, key=self.key)[0], 200)
+        st, h, body = raw("GET", "/year/%s?brief=1" % self.ch)
+        self.assertEqual(st, 200)
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+        got = json.loads(body)
+        self.assertTrue(got["brief"])
+        b = got["year"]
+        self.assertEqual(list(b), ["v", "tz", "range", "totals", "parts", "activities", "moments", "log", "heat"])
+        self.assertEqual(b["parts"], ["range", "totals", "heat", "activities", "moments", "log"])
+        self.assertEqual([a["minutes"] for a in b["activities"]], [50, 40, 30, 20, 5])
+        self.assertEqual(len(b["moments"]), 6)
+        self.assertEqual(b["log"], 2)
+        # (8-tile cells summed into their 128-tile squares, most first; Zanaris its one place)
+        self.assertEqual(b["heat"], [[3136, 3264, 40], [3264, 3264, 15], [2368, 4416, 7]])
+        # (both relays answer the same bytes)
+        self.assertIn(b'"heat": [[3136, 3264, 40], [3264, 3264, 15], [2368, 4416, 7]]', body)
+        # (a new post: a new brief; gone with the year)
+        self.assertEqual(self.year("PUT", {"v": 1, "totals": {"days": 3}}, key=self.key)[0], 200)
+        self.assertEqual(json.loads(raw("GET", "/year/%s?brief=1" % self.ch)[2])["year"], {"v": 1, "totals": {"days": 3}, "parts": ["totals"]})
+        self.assertEqual(self.year("DELETE", key=self.key)[0], 204)
+        self.assertEqual(raw("GET", "/year/%s?brief=1" % self.ch)[0], 404)
+
     async def test_days_acts_and_the_time_zone(self):
         # (11/10/2026: the calendar strip's days, an activity on heat cells and paths, the poster's time zone; all
         # optional, so a year without them is as it was)

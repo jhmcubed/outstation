@@ -355,6 +355,26 @@ The write token lets the page post or take down the summary without the station 
 can't touch the encrypted chunks. A GET is any origin's (CORS `*`): it's public by the player's choice, even for an
 outstation with a watch code. "delete everything" takes it down too.
 
+### The brief (11/15/2026)
+
+    GET    /year/<channel>?brief=1                      anyone                                     200 {"year", "at", "brief": true} / 404
+
+What an Outside page shows of a posted year (its "the year" section), without fetching the whole summary (up to 5 MB):
+
+    {
+      "v": 1,
+      "tz", "range", "totals":   as posted, when posted
+      "parts":      the parts posted, in the summary's order (never v or tz)
+      "activities": the five with the most minutes, most first (a tie keeps the posted order)
+      "moments":    the first six, as posted
+      "log":        how many log slots were posted (a number, not the slots)
+      "heat":       [[x, y, minutes], …], the heat's cells summed into 128-tile squares (each square's middle; Zanaris its
+                    one place, 2368, 4416), most minutes first, then by x, then y; no act
+    }
+
+A part not posted is left out. The Worker makes it once a post and keeps it beside the summary (gone with it); relay.py
+makes it on each read. Both answer the same bytes (tests/protocol_test.py's YourYear, `test_the_brief_is_what_a_page_shows`).
+
 ## Delete everything
 
 The app's "delete my record…" asks first, then `DELETE /record/<channel>?key=` (every chunk, every token, the public
