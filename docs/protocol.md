@@ -264,6 +264,7 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `seeds` (11/14/2026): the seed box's 6 slots, each `[item id, how many]` or `null`, in their places; or `null` while it isn't known (the game tells RuneLite once it's opened)
 - `barrel` (11/14/2026): the chugging barrel's 5 slots, each a potion's `[item id, doses]` or `null`; or `null` while it isn't known, the same
 - `charges` (11/14/2026): each worn or carried item's charges as the game last told of them in its chat (the item checked, or named in the line), `{"<item id>": n}`, at most 64; the page writes them on the items
+- `anim` (11/15/2026, the live view): `[the animation they're doing now (its id, -1 none), the worn gear's mark (hex)]`, with the model switch on; null while held. The page plays the live motion recorded for it.
 - `delve` (11/14/2026): the board beside the Doom of Mokhaiotl as last read (the Delve Calculator plugin's way: its interface 920, each level's count in child 46 + 3 a level), the delves finished at each level 1 to 8 and then the waves past 8, nine whole numbers; or `null`
 - `quiver`: `[item id, how many]` or `null`
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
@@ -473,6 +474,8 @@ Too big for the game's fields, each sent over HTTP by the Outside plugin when th
 - A change goes to the channel's seated viewers, lookers and desks as `{"kept": {"what", "at"}}` (`"at": null`, taken away), and the page fetches it again. 12 uploads an hour each. Forgotten with the game's state (a new key, the channel taken back). The Python relay doesn't keep them.
 
 - The encounter (11/15/2026): the last boss they fought, `{"name", "model"}` (the boss's name as the plugin's boss list has it, its model as a model's), `POST /keep/<channel>/encounter`, sent as a fight ends (20 s with no more of it), each boss at most once every 30 minutes, never from anywhere dangerous (following's rules) or a Wilderness boss, and only with "My character's model on my page" on. Kept in the CLIPS bucket, as the model.
+
+- The live view (11/15/2026, Jace: "a static set of gear/animation of their choosing while also having the ability for the viewer to show the 'live view'"): `POST /keep/<channel>/live?key=&gear=<mark>` the model in the gear they wear now (sent a few seconds after the gear changes, at most every 20 s), `POST /keep/<channel>/livemotion?key=&gear=&anim=<id|idle>` a motion recorded in the background the first time each animation is seen in that gear (and them standing, "idle"); `GET /keep/<channel>/live`, `/livemotions` (`{"gear", "anims": [{"anim", "at", "frames"}]}`), `/livemotion?anim=`. 24 live motions at most, the oldest let go first; a new gear lets the old gear's all go. In the CLIPS bucket (`keep/<channel>/live/…`). Changes go out as `{"kept": {"what": "live" | "livemotion", "gear", …}}`. Never from anywhere dangerous.
 
 ## Emotes (11/14/2026)
 

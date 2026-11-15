@@ -33,7 +33,7 @@ import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
-import { KEEP_AN_HOUR, KEEP_MOST, keepShape, MOTIONS_MOST, MOTION_NAME } from "./keep";
+import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
 
 export interface Env {
@@ -984,6 +984,10 @@ export class Channel extends DurableObject<Env> {
     this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter"]); // (the bank, the model and the encounter, keep.ts)
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("encounter")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
+    this.ctx.waitUntil(this.ctx.storage.get<{ anims: { anim: string }[] }>("keep:live").then((l) => {
+      this.ctx.storage.delete("keep:live");
+      return l ? this.env.CLIPS?.delete([this.keepKey("live/model"), ...l.anims.map((a) => this.keepKey("live/" + a.anim))]) : undefined;
+    }));
     this.ctx.waitUntil(this.ctx.storage.get<{ name: string }[]>("keep:motions").then((l) => {
       this.ctx.storage.delete("keep:motions");
       return l && l.length ? this.env.CLIPS?.delete(l.map((m) => this.keepKey("motion/" + m.name))) : undefined;
@@ -1762,6 +1766,7 @@ export class Channel extends DurableObject<Env> {
   async kept(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
     const what = q.get("what") || "";
     if (what === "motions" || what === "motion") return this.motions(request, q, ip, what);
+    if (what === "live" || what === "livemotion" || what === "livemotions") return this.liveKeep(request, q, ip, what);
     if (!(what in KEEP_MOST)) return json({ error: "kept: bank or model" }, 404);
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
@@ -1807,6 +1812,72 @@ export class Channel extends DurableObject<Env> {
   }
 
   keepKey(what: string): string { return `keep/${this.name}/${what}.json`; }
+
+  // the live view (keep.ts, 11/15/2026): the model in their gear now, and a live motion an animation in that gear, in the
+  // bucket; the list (keep:live: the gear, and each motion's animation and when) in the channel's storage
+  //   POST /keep/<ch>/live?key=&gear=          GET /keep/<ch>/live?code=          {"live", "gear", "at"}
+  //   POST /keep/<ch>/livemotion?key=&gear=&anim=   GET /keep/<ch>/livemotion?anim=&code=   {"livemotion", "anim", "at"}
+  //   GET /keep/<ch>/livemotions?code=          {"gear", "anims": [{"anim", "at", "frames"}]}
+  async liveKeep(request: Request, q: URLSearchParams, ip: string, what: string): Promise<Response> {
+    type Live = { gear: string; at: number; anims: { anim: string; at: number; frames: number }[] };
+    const state = (await this.ctx.storage.get<Live>("keep:live")) || { gear: "", at: 0, anims: [] };
+    const headers = { "content-type": "application/json", "cache-control": "no-cache", "access-control-allow-origin": "*" };
+    if (request.method === "GET") {
+      if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      if (what === "livemotions") return json({ gear: state.gear, anims: state.anims });
+      if (what === "live") {
+        const o = state.gear ? await this.env.CLIPS?.get(this.keepKey("live/model")) : null;
+        if (!o) return json({ error: "nothing live" }, 404);
+        return new Response('{"live": ' + (await o.text()) + ', "gear": ' + JSON.stringify(state.gear) + ', "at": ' + state.at + "}", { headers });
+      }
+      const anim = q.get("anim") || "", row = state.anims.find((a) => a.anim === anim);
+      const o = row ? await this.env.CLIPS?.get(this.keepKey("live/" + anim)) : null;
+      if (!row || !o) return json({ error: "no such live motion" }, 404);
+      return new Response('{"livemotion": ' + (await o.text()) + ', "anim": ' + JSON.stringify(anim) + ', "at": ' + row.at + "}", { headers });
+    }
+    if (request.method !== "POST" || what === "livemotions") return new Response(null, { status: 405 });
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    if (!this.env.CLIPS) return json({ error: "this relay doesn't keep the live view" }, 503);
+    const gear = q.get("gear") || "", anim = q.get("anim") || "";
+    if (!GEAR.test(gear)) return json({ error: "gear: the gear's mark" }, 400);
+    if (what === "livemotion" && !ANIM.test(anim)) return json({ error: "anim: the animation's id, or idle" }, 400);
+    const now = Date.now();
+    this.liveUploads = this.liveUploads.filter((t) => now - t < 3_600_000);
+    if (this.liveUploads.length >= 240) return json({ error: "too many live uploads this hour" }, 429);
+    const raw = await request.text();
+    if (raw.length > KEEP_MOST[what]) return json({ error: `at most ${KEEP_MOST[what]} bytes` }, 413);
+    let d: unknown;
+    try { d = JSON.parse(raw); } catch { return json({ error: "not JSON" }, 400); }
+    const shaped = keepShape(what, d);
+    if (typeof shaped === "string") return json({ error: shaped }, 400);
+    this.liveUploads.push(now);
+    if (what === "live") {
+      // (a new gear: its live motions start over, the old gear's let go)
+      if (gear !== state.gear && state.anims.length) await this.env.CLIPS.delete(state.anims.map((a) => this.keepKey("live/" + a.anim)));
+      await this.env.CLIPS.put(this.keepKey("live/model"), JSON.stringify(shaped), { httpMetadata: { contentType: "application/json" } });
+      const next: Live = { gear, at: now, anims: gear === state.gear ? state.anims : [] };
+      await this.ctx.storage.put("keep:live", next);
+      this.tellClip({ kept: { what: "live", gear, at: now } });
+      return json({ what, gear, at: now });
+    }
+    if (gear !== state.gear) return json({ error: "that gear isn't the live one" }, 409);
+    let anims = state.anims.filter((a) => a.anim !== anim);
+    // (the oldest let go past LIVE_MOST)
+    while (anims.length >= LIVE_MOST) {
+      const old = anims.reduce((x, y) => (y.at < x.at ? y : x));
+      await this.env.CLIPS.delete(this.keepKey("live/" + old.anim));
+      anims = anims.filter((a) => a !== old);
+    }
+    await this.env.CLIPS.put(this.keepKey("live/" + anim), JSON.stringify(shaped), { httpMetadata: { contentType: "application/json" } });
+    const frames = ((shaped as Record<string, { v: unknown[] }>).frames?.v || []).length;
+    anims.push({ anim, at: now, frames });
+    await this.ctx.storage.put("keep:live", { ...state, anims });
+    this.tellClip({ kept: { what: "livemotion", gear, anim, at: now } });
+    return json({ what, gear, anim, at: now });
+  }
+
+  liveUploads: number[] = [];
 
   // the motion library (keep.ts, 11/15/2026): each motion in the bucket under its name, the list in the channel's storage
   async motions(request: Request, q: URLSearchParams, ip: string, what: string): Promise<Response> {

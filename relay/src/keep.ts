@@ -23,9 +23,13 @@
 // A change goes to the page's viewers, lookers and desks as {"kept": {"what", "at"}} (null "at": taken away), so the
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 
-export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024 };
+export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
+  live: 4 * 1024 * 1024, livemotion: 4 * 1024 * 1024 };
 // (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
 export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
+// (11/15/2026, Jace: "the live view"): the model in the gear they wear now ("live"), and its live motions, one an
+// animation (its id, or "idle"), LIVE_MOST at most, the oldest let go first; a new gear's live model lets the others go
+export const LIVE_MOST = 24, GEAR = /^[0-9a-f]{1,16}$/, ANIM = /^(idle|[0-9]{1,6})$/;
 export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
 export const BANK_SLOTS = 1600, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
@@ -63,7 +67,8 @@ export function keepShape(what: string, d: unknown): unknown | string {
     if (typeof m === "string") return "model's " + m;
     return { name: d.name, model: m, ...(whole(d.kc) ? { kc: d.kc } : {}) };
   }
-  if (what === "motion") {
+  if (what === "live") return modelShape(d, true);
+  if (what === "motion" || what === "livemotion") {
     const m = modelShape(d, true);
     if (typeof m === "string") return m;
     if (!(m as Record<string, unknown>).frames) return "a motion has its frames";

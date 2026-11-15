@@ -269,6 +269,9 @@ public class OutsidePlugin extends Plugin
 			seedsSeen = barrelSeen = null;
 			charges.clear();
 			delveSeen = null;
+			liveGear = gearSeen = null;
+			liveRecorded.clear();
+			autoStart = -1;
 			doing.forget();
 			doing.clear();
 			activity.forget();
@@ -331,6 +334,8 @@ public class OutsidePlugin extends Plugin
 		JsonObject path = track(ms, at, safe);
 		look(ms, safe);
 		encounter(ms, safe);
+		liveSafe = safe && !paused;
+		liveGearTick(ms);
 		if (!open)
 		{
 			return;
@@ -477,6 +482,14 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 			m.put("charges", ch);
+		}
+		// (the live view, 11/15/2026: the animation they're doing now and the gear it's in)
+		if (config.model() && me != null && liveGear != null)
+		{
+			JsonArray an = new JsonArray();
+			an.add(me.getAnimation());
+			an.add(liveGear);
+			m.put("anim", an);
 		}
 		if (config.delve() && delveSeen != null)
 		{
@@ -841,6 +854,171 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** The character's model as it is now (the client's thread). */
+	// ---- the live view (11/15/2026, Jace: "allow them to have a static set of gear/animation of their choosing while also
+	// having the ability for the viewer to show the 'live view' that shows what they are currently wearing and what they
+	// are doing in game"; "yes, build the live view that way"): the model in the gear they wear now, sent a few seconds
+	// after it changes (at most every LIVE_EVERY), its gear marked; each animation they do recorded the first time it's
+	// seen in that gear (one at a time, at most one starting every LIVE_GAP), and them standing (idle); the animation
+	// they're doing now goes with the game's fields ("anim"), so the page plays the one that matches. Only with the model
+	// switch on, never anywhere dangerous, never while a capture of theirs is recording.
+	private static final long LIVE_EVERY = 20_000L, LIVE_GAP = 6_000L;
+	private String liveGear, gearSeen;
+	private long gearAt, liveSentAt, liveAutoAt;
+	private boolean liveSafe, liveDue;
+	private final Set<String> liveRecorded = new HashSet<>();
+	private int autoStart = -1, autoLast, autoCount, autoPetCount;
+	private String autoAnim;
+	private JsonObject autoBase, autoPet;
+	private final List<String> autoFrames = new ArrayList<>(), autoPetFrames = new ArrayList<>();
+
+	/** The worn gear's mark: its items, hashed. */
+	private String gearMark()
+	{
+		ItemContainer w = client.getItemContainer(InventoryID.WORN);
+		java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+		if (w != null)
+		{
+			for (Item it : w.getItems())
+			{
+				int id = it.getId();
+				crc.update(new byte[]{(byte) (id >> 24), (byte) (id >> 16), (byte) (id >> 8), (byte) id});
+			}
+		}
+		return Long.toHexString(crc.getValue());
+	}
+
+	private void liveGearTick(long now)
+	{
+		if (!config.model() || !open || !liveSafe)
+		{
+			return;
+		}
+		String g = gearMark();
+		if (!g.equals(gearSeen))
+		{
+			gearSeen = g;
+			gearAt = now;
+			liveDue = true;
+		}
+		// (a few seconds after the gear settles, and not more often than LIVE_EVERY)
+		if (liveDue && now - gearAt >= 3_000 && now - liveSentAt >= LIVE_EVERY && motionArmed < 0 && autoStart < 0)
+		{
+			Player me = client.getLocalPlayer();
+			Model m = me == null ? null : me.getModel();
+			if (m == null)
+			{
+				return;
+			}
+			JsonObject player = modelJson(m);
+			Model pet = petModel();
+			JsonObject o = wholeModel(player, pet == null ? null : modelJson(pet), null, null);
+			liveDue = false;
+			liveSentAt = now;
+			if (!g.equals(liveGear))
+			{
+				liveRecorded.clear();
+			}
+			liveGear = g;
+			keepLive("live", null, o);
+		}
+	}
+
+	/** Each client cycle: an animation not yet recorded in this gear (or them standing), recorded in the background. */
+	private void liveRecordTick(Player me, int cycle)
+	{
+		if (!config.model() || !open || !liveSafe || liveGear == null || motionArmed >= 0)
+		{
+			autoStart = -1;
+			return;
+		}
+		if (autoStart < 0)
+		{
+			int anim = me.getAnimation();
+			boolean standing = anim == -1 && me.getPoseAnimation() == me.getIdlePoseAnimation();
+			String key = anim != -1 ? String.valueOf(anim) : standing ? "idle" : null;
+			long now = System.currentTimeMillis();
+			if (key == null || liveRecorded.contains(key) || now - liveAutoAt < LIVE_GAP)
+			{
+				return;
+			}
+			Model base = me.getModel();
+			if (base == null)
+			{
+				return;
+			}
+			autoCount = base.getVerticesCount();
+			autoBase = modelJson(base);
+			Model pet = petModel();
+			autoPetCount = pet == null ? 0 : pet.getVerticesCount();
+			autoPet = pet == null ? null : modelJson(pet);
+			autoAnim = key;
+			autoStart = cycle;
+			autoLast = cycle - MOTION_EVERY;
+			autoFrames.clear();
+			autoPetFrames.clear();
+			liveAutoAt = now;
+		}
+		if (cycle - autoLast < MOTION_EVERY)
+		{
+			return;
+		}
+		autoLast = cycle;
+		boolean idle = "idle".equals(autoAnim);
+		// (standing: let go the moment they move; an animation: until it ends)
+		if (idle && (me.getAnimation() != -1 || me.getPoseAnimation() != me.getIdlePoseAnimation()))
+		{
+			autoStart = -1;
+			return;
+		}
+		Model m = me.getModel();
+		if (m != null && m.getVerticesCount() == autoCount)
+		{
+			autoFrames.add(Kept.frame(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount()));
+			Model p = autoPet == null ? null : petModel();
+			autoPetFrames.add(p != null && p.getVerticesCount() == autoPetCount ? Kept.frame(p.getVerticesX(), p.getVerticesY(), p.getVerticesZ(), p.getVerticesCount()) : null);
+		}
+		boolean done = autoFrames.size() >= MOTION_MOST
+			|| (idle ? cycle - autoStart >= MOTION_IDLE : !autoAnim.equals(String.valueOf(me.getAnimation())) && autoFrames.size() > 2);
+		if (!done)
+		{
+			return;
+		}
+		autoStart = -1;
+		if (autoFrames.size() < 3)
+		{
+			return;
+		}
+		liveRecorded.add(autoAnim);
+		JsonObject frames = Kept.frames(autoFrames, 1000.0 / (MOTION_EVERY * 20));
+		JsonObject petFrames = autoPet != null && !autoPetFrames.contains(null) ? Kept.frames(autoPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
+		keepLive("livemotion", autoAnim, wholeModel(autoBase, autoPet, frames, petFrames));
+	}
+
+	/** The live view's uploads (the relay's /keep/<channel>/live and /livemotion), quietly: nothing said in the chat. */
+	private void keepLive(String what, String anim, JsonObject body)
+	{
+		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
+		if (a == null || !config.send() || liveGear == null)
+		{
+			return;
+		}
+		String url = a.keepUrl(what) + "&gear=" + liveGear + (anim == null ? "" : "&anim=" + anim);
+		http.newCall(new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION).post(RequestBody.create(JSON, gson.toJson(body))).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				log.debug("outside: live {} failed", what, ex);
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				r.close();
+			}
+		});
+	}
+
 	// ---- the encounter (11/15/2026, Jace: "build what you think is best" under the subject's form): the last boss they
 	// fought, its model, on their page as the fight ends; never from anywhere dangerous; each boss at most once every
 	// ENCOUNTER_EVERY; only with the model switch on
@@ -1171,6 +1349,11 @@ public class OutsidePlugin extends Plugin
 	{
 		if (motionArmed < 0)
 		{
+			Player lp = client.getLocalPlayer();
+			if (lp != null && client.getGameState() == GameState.LOGGED_IN)
+			{
+				liveRecordTick(lp, client.getGameCycle());
+			}
 			return;
 		}
 		Player me = client.getLocalPlayer();
