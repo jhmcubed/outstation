@@ -361,6 +361,12 @@ export class Directory extends DurableObject<Env> {
     if (day.filter((c) => c.from === from).length >= CLAIMS_AN_ADDRESS) {
       return Response.json({ error: `${CLAIMS_AN_ADDRESS} names a day at most from one place: try again tomorrow` }, { status: 429 });
     }
+    if (url.searchParams.get("counted") === "1") {
+      // (a challenge given: counted against the day, no name taken)
+      day.push({ from, at: now });
+      await this.ctx.storage.put("claims", day);
+      return new Response(null, { status: 204 });
+    }
     if (await this.ctx.storage.get("c:" + name)) return Response.json({ error: "that name has an outstation already" }, { status: 409 });
     await this.ctx.storage.put("c:" + name, { since: now, by: null, claimed: true });
     day.push({ from, at: now });
@@ -864,6 +870,16 @@ export default {
       const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
       const row = "https://dir/?name=" + encodeURIComponent(player);
       const took = await dir.fetch("https://dir/claim?name=" + encodeURIComponent(player) + "&from=" + from, { method: "POST" });
+      if (took.status === 409) {
+        // (taking a name back, 11/15/2026: a name held unproven gives a challenger's key; counted against the day as a
+        // claim is; docs/protocol.md "Taking a name back")
+        const ch = await channelStub(env, player).fetch(new Request(new URL("/_challenge", request.url).toString(),
+          { method: "POST", headers: { "x-channel": player, "x-account": account } }));
+        if (!ch.ok) return new Response(ch.body, { status: ch.status, headers: { "content-type": "application/json" } });
+        const { key } = (await ch.json()) as { key: string };
+        await dir.fetch("https://dir/claim?name=" + encodeURIComponent(player) + "&from=" + from + "&counted=1", { method: "POST" });
+        return Response.json({ channel: player, key, code: attachCode(relayOf(request.url), player, key), proof: "challenging" });
+      }
       if (took.status !== 204) return new Response(took.body, { status: took.status, headers: { "content-type": "application/json" } });
       let minted: Response | null = null;
       try {

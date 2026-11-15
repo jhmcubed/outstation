@@ -217,6 +217,7 @@ INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
 # a channel claimed by the Outside plugin itself (11/15/2026, docs/protocol.md "Claiming a name"): at most this many a
 # day from one address, and this many a day in all (the Worker's channel.ts, the same)
 CLAIMS_AN_ADDRESS, CLAIMS_A_DAY = 3, 200
+CHALLENGERS, CHALLENGE_DAYS = 5, 7      # taking a name back: challengers at once on one name, how long one's kept
 PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
 # the game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's socket. A message at most GAME_MESSAGE long, and
 # GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as JSON (a message that would take it past is
@@ -1428,7 +1429,12 @@ class Channel:
         # logout, with when they're next asked and how often they have been
         self.proven = None
         self.wit = {}
-        self.wit_reading = False
+        self.cwit = {}               # each challenger's proof, by its key
+        self.wit_reading = set()
+        # taking a name back (11/15/2026): those challenging an unproven holder, each {"key", "at", "account"}, and
+        # their plugins' proving sockets by key
+        self.challengers = []
+        self.provers = {}
         # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
         # streams and the plugin's going: a page shows the last of it while the player's away)
         self.gamer = None
@@ -1484,60 +1490,122 @@ class Channel:
         for v in list(self.viewers) + list(self.lookers) + list(self.desks):
             v.send_nowait(line)
 
-    # proving the name from the game itself (11/15/2026; witness.py, docs/protocol.md "Proving a name"; the Worker's)
+    # proving the name from the game itself (11/15/2026; witness.py, docs/protocol.md "Proving a name"; the Worker's),
+    # for each party: "" the page's holder, or a challenger by its key (docs/protocol.md "Taking a name back"), whose
+    # plugin's messages feed only its own proof
 
-    def witness_name(self):
-        n = self.game.kept.get("name")
-        return n if isinstance(n, str) and witness.channel_form(n) == self.name.lower() else None
+    def wit_of(self, party):
+        return self.cwit.setdefault(party, {}) if party else self.wit
+
+    def wit_said(self, party):
+        if party:
+            return self.cwit.get(party, {}).get("said", {})
+        return {"name": self.game.kept.get("name"), "skills": self.game.kept.get("skills")}
+
+    def wit_open(self, party):
+        if not self.unproven or self.proven:
+            return False
+        return not party or any(c["key"] == party for c in self.challengers)
 
     def witness_game(self, fields):
-        """The session's start read from the hiscores as its first skills come, on an unproven page."""
-        if not self.unproven or self.proven or fields.get("off") is True:
+        self.wit_start("", fields)
+
+    def witness_off(self):
+        self.wit_off("")
+
+    def wit_start(self, party, fields):
+        """A party's first skills a session: the hiscores read as it starts, under the name it says, if it's the page's."""
+        if not self.wit_open(party) or fields.get("off") is True:
             return
-        if "skills" not in fields or self.wit.get("h0") or self.wit_reading:
+        w = self.wit_of(party)
+        if "skills" not in fields or w.get("h0") or party in self.wit_reading:
             return
-        n = fields.get("name") if isinstance(fields.get("name"), str) else self.game.kept.get("name")
+        n = fields.get("name") if isinstance(fields.get("name"), str) else self.wit_said(party).get("name")
         if not isinstance(n, str) or witness.channel_form(n) != self.name.lower():
             return
-        self.wit_reading = True
+        self.wit_reading.add(party)
 
         async def read():
             try:
                 h0 = await witness.read_xp(n, False)
-                if h0:
-                    self.wit = dict(self.wit, name=n, h0=h0)
+                if h0 and self.wit_open(party):
+                    self.wit_of(party).update(name=n, h0=h0)
             finally:
-                self.wit_reading = False
+                self.wit_reading.discard(party)
         asyncio.ensure_future(read())
 
-    def witness_off(self):
-        """Logged out (or the plugin's gone): what they reported above the session's start and the hiscores now is
-        claimed, and asked of the hiscores again after a while."""
-        h0, name = self.wit.get("h0"), self.witness_name()
-        if not self.unproven or self.proven or not h0 or not name or name != self.wit.get("name"):
+    def wit_off(self, party):
+        """A party logged out (or its plugin's gone): what it reported above the session's start and the hiscores now
+        is claimed, and asked of the hiscores again after a while."""
+        w, said = self.wit_of(party), self.wit_said(party)
+        h0 = w.get("h0")
+        name = said.get("name") if isinstance(said.get("name"), str) and witness.channel_form(said.get("name")) == self.name.lower() else None
+        if not self.wit_open(party) or not h0 or not name or name != w.get("name"):
             return
-        self.wit["h0"] = None               # (one claim a session)
-        said = witness.reported(self.game.kept.get("skills"))
+        w["h0"] = None                      # (one claim a session)
+        xp = witness.reported(said.get("skills"))
 
         async def claim():
             h_off = await witness.read_xp(name, True)
-            claims = witness.claims_of(h0, said, h_off) if h_off else {}
-            self.wit = {}
+            claims = witness.claims_of(h0, xp, h_off) if h_off else {}
+            w.pop("name", None)
             if not claims:
                 return
             for i in range(len(witness.WAITS)):
                 await asyncio.sleep(witness.wait_s(i))
-                if not self.unproven or self.proven:
+                if not self.wit_open(party):
                     return
                 h1 = await witness.read_xp(name, True)
-                said_now = witness.judge(claims, h1) if h1 else "wait"
-                if said_now == "proven":
-                    self.proven = {"at": int(time.time() * 1000), "account": self.account}
-                    self.unproven = False
+                verdict = witness.judge(claims, h1) if h1 else "wait"
+                if verdict == "proven":
+                    self.wit_proven(party)
                     return
-                if said_now == "no":
+                if verdict == "no":
                     return
         asyncio.ensure_future(claim())
+
+    def wit_proven(self, party):
+        """A party proven. The holder: the page is theirs, every challenge dropped. A challenger: the name taken back
+        (its key the page's, the holder's stopped, what the holder's plugin sent gone), its plugin told to come again
+        (4012). The Worker's witProven, the same."""
+        ch = next((c for c in self.challengers if c["key"] == party), None) if party else None
+        if party and ch is None:
+            return
+        self.proven = {"at": int(time.time() * 1000), "account": ch["account"] if ch else self.account}
+        self.unproven = False
+        self.challengers = []
+        self.wit, self.cwit = {}, {}
+        provers, self.provers = self.provers, {}
+        if ch:
+            self.key = ch["key"]
+            self.account = ch["account"]
+            for s in [self.sender, self.gamer, self.sounder] + list(self.desks):
+                if s is not None:
+                    asyncio.ensure_future(s.close(4003, "this name was proven by another: its key no longer opens it"))
+            self.game = Game()
+        for k, s in provers.items():
+            asyncio.ensure_future(s.close(4012, "proven: this page is yours now; connect again") if ch and k == party
+                                  else s.close(4003, "this name was proven by another"))
+
+    def take_prove(self, party, msg):
+        """A challenger's plugin's message, for its own proof only: never on the page or to anyone watching."""
+        try:
+            m = json.loads(msg, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(m, dict) or not isinstance(m.get("game"), dict) or not self.wit_open(party):
+            return
+        fields = game_fields(m["game"])
+        self.wit_start(party, fields)
+        w = self.wit_of(party)
+        said = dict(w.get("said") or {})
+        if isinstance(fields.get("name"), str):
+            said["name"] = fields["name"]
+        if "skills" in fields:
+            said["skills"] = fields["skills"]
+        w["said"] = said
+        if fields.get("off") is True:
+            self.wit_off(party)
 
     def take_where(self, w, fields):
         """Following (game_where): a message's "where" taken (one every WHERE_EVERY_S at most; more are ignored), or the
@@ -2544,6 +2612,8 @@ class Relay:
             ch = self.channels.get(path[1])
             if ch is None or ch.key is None:
                 await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
+            elif q.get("key") and ch.unproven and any(c["key"] == q.get("key") for c in ch.challengers):
+                await self.plain(writer, "200 OK", {"proof": "challenging"})
             else:
                 await self.plain(writer, "200 OK", {"proof": "proven" if ch.proven else "unproven" if ch.unproven else "vouched"})
             return
@@ -3043,7 +3113,14 @@ class Relay:
         """The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's {"game"} messages into the channel's
         kept state (Channel.take_game), GAME_A_SECOND a second at most and GAME_MESSAGE long at most (the rest
         dropped, with no answer). One at a time: a newer one replaces the older. Its v= is the plugin's own version,
-        which --min-client never looks at. Held back by --delay as everything is."""
+        which --min-client never looks at. Held back by --delay as everything is.
+        A challenger's key (11/15/2026, "Taking a name back") opens a proving socket instead: its messages feed only
+        its own proof."""
+        held = self.channels.get(name)
+        if held is not None and held.unproven and any(c["key"] == key and time.time() - c["at"] < CHALLENGE_DAYS * 86400
+                                                       for c in held.challengers):
+            await self.prove(sock, held, key)
+            return
         ch = await self.claim(sock, name, key)
         if ch is None:
             return
@@ -3080,6 +3157,32 @@ class Relay:
                 ch.drop_here()               # (the exact path, the same)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
+
+    async def prove(self, sock, ch, key):
+        """A challenger's plugin: its {"game"} messages for its own proof only (Channel.take_prove), as the game's are
+        limited; one at a time for a challenger."""
+        old = ch.provers.get(key)
+        if old is not None:
+            await old.close(4000, "replaced by a newer game")
+        ch.provers[key] = sock
+        self.log("prove     %s" % ch.name)
+        read = deque()
+        try:
+            while ch.provers.get(key) is sock:
+                msg = await sock.recv()
+                if not isinstance(msg, str):
+                    continue
+                now = time.monotonic()
+                while read and now - read[0] >= 1.0:
+                    read.popleft()
+                if len(read) >= GAME_A_SECOND or len(msg) > GAME_MESSAGE:
+                    continue
+                read.append(now)
+                ch.take_prove(key, msg)
+        finally:
+            if ch.provers.get(key) is sock:
+                del ch.provers[key]
+                ch.wit_off(key)
 
     async def channel_list(self, writer):
         """The open portals (11/05/2026, Jace: "a page ... that shows all active connected public portals"): every channel
@@ -3549,9 +3652,22 @@ class Relay:
         if sum(1 for c in self.claims if c[0] == frm) >= CLAIMS_AN_ADDRESS:
             return await answer("429 Too Many Requests", {"error": "%d names a day at most from one place: try again tomorrow" % CLAIMS_AN_ADDRESS})
         other = self.channels.get(player)
-        if other is not None and other.key is not None:
-            return await answer("409 Conflict", {"error": "that name has an outstation already"})
         new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
+        account_hash = hashlib.sha256(("account:" + account).encode()).hexdigest() if account else None
+        if other is not None and other.key is not None:
+            if not other.unproven or other.proven:
+                return await answer("409 Conflict", {"error": "that name has an outstation already"})
+            # (taking a name back, 11/15/2026: a name held unproven gives a challenger's key, counted as a claim)
+            t = time.time()
+            other.challengers = [c for c in other.challengers if t - c["at"] < CHALLENGE_DAYS * 86400]
+            for gone in other.challengers[:max(0, len(other.challengers) - (CHALLENGERS - 1))]:
+                other.cwit.pop(gone["key"], None)
+            other.challengers = other.challengers[max(0, len(other.challengers) - (CHALLENGERS - 1)):]
+            other.challengers.append({"key": new_key, "at": t, "account": account_hash})
+            self.claims.append((frm, now))
+            self.log("challenge %s" % player)
+            code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
+            return await answer("200 OK", {"channel": player, "key": new_key, "code": code, "proof": "challenging"})
         if other is None:
             other = self.channels[player] = Channel(player, new_key, self.array, self.stars)
         else:
@@ -3561,8 +3677,8 @@ class Relay:
         other.pending = True          # (not taken up till its key's used, as an invite's)
         other.unproven = True
         other.proven = None
-        other.wit = {}
-        other.account = hashlib.sha256(("account:" + account).encode()).hexdigest() if account else None
+        other.wit, other.cwit, other.challengers = {}, {}, []
+        other.account = account_hash
         self.claims.append((frm, now))
         self.log("claim     %s" % player)
         code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)

@@ -2954,8 +2954,10 @@ class Claims(Base):
         tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, got["key"]))
         self.clients.append(tx)
         self.assertTrue((await next_of(tx, "relay"))["live"])
-        # (the same name again: taken)
-        self.assertEqual(self.claim({"player": name})[0], 409)
+        # (the same name again, while it's unproven: a challenger's key, its own; docs/protocol.md "Taking a name back")
+        st, again = self.claim({"player": name})
+        self.assertEqual((st, again["proof"]), (200, "challenging"))
+        self.assertNotEqual(again["key"], got["key"])
         # (a name the keeper handed out, or an invite's: taken, and vouched for)
         other = "c" + secrets.token_hex(5)
         await self.given(other)
@@ -2966,18 +2968,16 @@ class Claims(Base):
         # (only a name as a channel has it: lower case, letters and numbers, 12 at most)
         for bad in ("Has Space", "UPPER", "", "x" * 13, 7):
             self.assertEqual(self.claim({"player": bad})[0], 400, bad)
-        # (three a day from one place: two more take names, the next is refused; a refused claim took nothing)
-        self.assertEqual(self.claim({"player": "c" + secrets.token_hex(5)})[0], 200)
+        # (three a day from one place, a challenge counted as a claim: one more takes a name, the next is refused; a
+        # refused claim took nothing)
         self.assertEqual(self.claim({"player": "c" + secrets.token_hex(5)})[0], 200)
         late = "c" + secrets.token_hex(5)
         self.assertEqual(self.claim({"player": late})[0], 429)
         self.assertEqual(raw("GET", "/proof/" + late)[0], 404)
 
 
-class Proving(Base):
-    """Proving a name from the game itself (11/15/2026; docs/protocol.md "Proving a name"): a claimed page becomes
-    proven when experience the plugin reported, not yet on the hiscores as they logged out, is found there after. A copy
-    of what's already public proves nothing; nor does another account's name."""
+class Witnessing(Base):
+    """(Proving's and TakingBack's helpers: a claimed page, its plugin, its proof and the hiscores' stand-in)"""
 
     async def claimed(self):
         """A page claimed from a place of its own (x-test-from), so the day's limit never touches it."""
@@ -3006,6 +3006,11 @@ class Proving(Base):
                 return want
             await asyncio.sleep(0.3)
         return self.proof(name)
+
+class Proving(Witnessing):
+    """Proving a name from the game itself (11/15/2026; docs/protocol.md "Proving a name"): a claimed page becomes
+    proven when experience the plugin reported, not yet on the hiscores as they logged out, is found there after. A copy
+    of what's already public proves nothing; nor does another account's name."""
 
     async def test_experience_reported_before_the_hiscores_had_it_proves_the_page(self):
         name, key = await self.claimed()
@@ -3050,6 +3055,74 @@ class Proving(Base):
         self.hiscores(alt, {"Ranged": 5600})
         await self.pause(3.0)
         self.assertEqual(self.proof(name), "unproven")
+
+
+class TakingBack(Witnessing):
+    """Taking a name back (11/15/2026; docs/protocol.md "Taking a name back"): a claim on a name held unproven gives a
+    challenger's key, whose plugin proves itself off the page; proven, its key becomes the page's and the holder's
+    stops working."""
+
+    async def test_a_proven_challenger_takes_the_name_and_the_holders_key_stops(self):
+        name, held = await self.claimed()                          # (the first to claim it: someone else)
+        h = await self.plugin(name, held)
+        await h.send(json.dumps({"game": {"name": name, "world": 301, "skills": {"Ranged": [99, 99, 13034431]}}}))
+        await self.pause(0.5)
+        # (the real player claims it too: a challenger's key)
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        got = json.loads(out)
+        self.assertEqual((st, got["channel"], got["proof"]), (200, name, "challenging"))
+        mine = got["key"]
+        self.assertEqual(json.loads(raw("GET", "/proof/%s?key=%s" % (name, mine))[2])["proof"], "challenging")
+        self.assertEqual(self.proof(name), "unproven")
+        # (its plugin proves itself; nothing it sends reaches the page)
+        self.hiscores(name, {"Ranged": 5000})
+        c = await self.plugin(name, mine)
+        await c.send(json.dumps({"game": {"name": name, "world": 420, "skills": {"Ranged": [80, 80, 5000]}}}))
+        await self.pause(1.5)
+        await c.send(json.dumps({"game": {"skills": {"Ranged": [81, 81, 5600]}}}))
+        await self.pause(0.3)
+        page = http("GET", "/game/%s?code=" % name)[1]["game"]
+        self.assertEqual((page["world"], page["skills"]["Ranged"][2]), (301, 13034431))
+        await c.send(json.dumps({"game": {"off": True}}))
+        await self.pause(1.0)
+        self.assertEqual(self.proof(name), "unproven")
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        # (the challenger's plugin is told to come again; the holder's is shut out, its key no longer opens the page)
+        self.assertEqual(await c.recv_close(), ("close", 4012))
+        self.assertEqual(await h.recv_close(), ("close", 4003))
+        late = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, held))
+        self.clients.append(late)
+        self.assertEqual(await late.recv_close(), ("close", 4003))
+        # (the challenger's key opens the page now, as its holder's)
+        again = await self.plugin(name, mine)
+        await again.send(json.dumps({"game": {"name": name, "world": 420}}))
+        await self.pause(0.5)
+        self.assertEqual(http("GET", "/game/%s?code=" % name)[1]["game"]["world"], 420)
+        # (proven: no more challenges)
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        self.assertEqual(st, 409)
+
+    async def test_the_holder_proving_it_ends_the_challenges(self):
+        name, held = await self.claimed()
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        mine = json.loads(out)["key"]
+        c = await self.plugin(name, mine)
+        self.hiscores(name, {"Ranged": 5000})
+        h = await self.plugin(name, held)
+        await h.send(json.dumps({"game": {"name": name, "skills": {"Ranged": [80, 80, 5000]}}}))
+        await self.pause(1.5)
+        await h.send(json.dumps({"game": {"skills": {"Ranged": [81, 81, 5600]}}}))
+        await self.pause(0.3)
+        await h.send(json.dumps({"game": {"off": True}}))
+        await self.pause(1.0)
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        self.assertEqual(await c.recv_close(), ("close", 4003))
+        self.assertEqual(json.loads(raw("GET", "/proof/%s?key=%s" % (name, mine))[2])["proof"], "proven")
 
 
 class Invites(Base):

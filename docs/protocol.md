@@ -208,15 +208,17 @@ plugin first; players find the Hub before they'd download an .exe). The plugin's
 the player logged in; the answer is a station key like any other, which the plugin keeps in its settings.
 
     POST /claim   {"player": <the name as a channel has it>, "account"?: <the account hash, as digits>}
-                  200 {"channel", "key", "code", "proof": "unproven"}
-                  400 a name that isn't 1 to 12 lower-case letters or numbers; 409 a name with an outstation already;
+                  200 {"channel", "key", "code", "proof": "unproven"}, or "challenging" for a name held unproven (below,
+                      "Taking a name back")
+                  400 a name that isn't 1 to 12 lower-case letters or numbers; 409 a name proven or vouched for already;
                   429 past the day's claims; 413 a body over 1 KB
-    GET  /proof/<channel>   anyone's (CORS *, a minute's cache)   200 {"proof": "unproven" | "vouched"} / 404
+    GET  /proof/<channel>[?key=]   anyone's (CORS *, a minute's cache)   200 {"proof": "unproven" | "proven" | "vouched"}
+                  (a challenger's own key: "challenging") / 404
 
-- **Only a name nobody has.** A name the keeper handed out, an invite's, or one claimed before is refused (409). As an
-  invite's, two claims at once can't both take it.
+- **Only a name nobody has**, or one held unproven (a challenge, below). A name the keeper handed out, an invite's, or
+  a proven one is refused (409). As an invite's, two claims at once can't both take a new name.
 - **At most 3 a day from one address, 200 a day in all**, so names can't be taken in bulk. Only claims that take a
-  name count. The address is kept as a hash, a day at most.
+  name or give a challenge count. The address is kept as a hash, a day at most.
 - **Unproven.** Nothing the plugin sends proves the player is who they say: the plugin is open source and anyone can
   send what it sends. So a claimed channel is marked unproven, and the page says so beside the name (GET /proof), till
   it's proven from the game itself (below, "Proving a name"): "proven". A key from the keeper or an invite (someone
@@ -252,6 +254,24 @@ exact experience the plugin reports while they play, before the official hiscore
   typing it in as it happens. Contrived; the transmission would show someone else's game.
 - Tests: `WITNESS_WAIT_S` (the Worker) and `--witness-wait` (relay.py) make every wait that many seconds; the hiscores
   and Wise Old Man come from the tests' stand-in (`LOOKUP_UPSTREAM`, `--lookup`). protocol_test's `Proving`.
+
+## Taking a name back (11/15/2026)
+
+Jace: "a proven player's claim replaces an unproven holder, and that holder's key stops working". A player can't be
+proven without a key, and the name's key is its holder's, so a claim on a name held unproven gives a **challenger's
+key** of its own (`"proof": "challenging"`), and the challenger proves itself as a holder does ("Proving a name"):
+
+- The challenger's plugin connects to the game's address with its key, as any plugin does, and the relay opens a
+  **proving socket**: its `{"game"}` messages are kept only for its own proof (the name and skills it last said), never
+  on the page, never to anyone watching, and the page's own plugin socket isn't touched. One at a time a challenger.
+- **The challenger proven**: its key becomes the page's; every socket on the holder's key is closed (4003, "this name
+  was proven by another") and its key never opens the page again; what the holder's plugin sent is gone; the page is
+  proven, with the challenger's account hash's hash. The challenger's proving socket is closed with **4012** ("proven:
+  connect again"), and the plugin connects again at once, now as the page's own.
+- **The holder proven first** (it was theirs): every challenge ends; challengers' sockets are closed (4003).
+- At most 5 challengers on a name at once (the oldest goes) and each kept 7 days; a proven or vouched-for name takes
+  none. `GET /proof/<channel>?key=<a challenger's key>` says "challenging", for the plugin's side tab.
+- A squatter gains nothing by challenging: the proof needs the account's own future experience either way.
 
 ## Invites (11/07/2026)
 

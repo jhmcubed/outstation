@@ -160,8 +160,11 @@ public class OutsidePanel extends PluginPanel
 	{
 		SwingUtilities.invokeLater(() ->
 		{
-			boolean un = "unproven".equals(proof);
-			proofLine.setText(un ? "<html>Your page is marked unproven. Gain any experience, then log out: within a few minutes"
+			boolean un = "unproven".equals(proof) || "challenging".equals(proof);
+			proofLine.setText("challenging".equals(proof)
+				? "<html>Someone claimed this name first and hasn't proven it. Gain any experience, then log out: when the official"
+				+ " hiscores show it, the page is yours, and their key stops working.</html>"
+				: un ? "<html>Your page is marked unproven. Gain any experience, then log out: within a few minutes"
 				+ " the official hiscores show it, and your page is proven yours.</html>" : " ");
 			proofLine.setVisible(un);
 			revalidate();

@@ -164,6 +164,8 @@ public class OutsidePlugin extends Plugin
 	private Attach attach;
 	private ScheduledFuture<?> retry;
 	private int retryIn = 5;
+	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
+	private volatile boolean challenging = false;
 	private int ticksSinceSent;
 	/** the seed box's and the chugging barrel's slots as last sent by the game (onItemContainerChanged), or null */
 	private JsonElement seedsSeen, barrelSeen;
@@ -1269,14 +1271,26 @@ public class OutsidePlugin extends Plugin
 					}
 					if (res.code() == 200 && o != null && o.has("code") && Attach.parse(o.get("code").getAsString(), gson) != null)
 					{
+						boolean back = o.has("proof") && "challenging".equals(o.get("proof").getAsString());
+						challenging = back;
 						configManager.setConfiguration(OutsideConfig.GROUP, "stationKey", o.get("code").getAsString());
-						panel.claiming(false, "your page: outside.wiki/" + name + " (marked unproven till it's proven yours)");
-						say("your Outside page is made: outside.wiki/" + name);
+						if (back)
+						{
+							// (taking a name back: someone else claimed it first and hasn't proven it)
+							panel.claiming(false, "outside.wiki/" + name + " was claimed by someone who hasn't proven it. Gain any experience,"
+								+ " then log out: when the official hiscores show it, the page is yours.");
+							say("you're taking back outside.wiki/" + name + ": gain any experience, then log out");
+						}
+						else
+						{
+							panel.claiming(false, "your page: outside.wiki/" + name + " (marked unproven till it's proven yours)");
+							say("your Outside page is made: outside.wiki/" + name);
+						}
 						return;
 					}
 					if (res.code() == 409)
 					{
-						panel.claiming(false, "outside.wiki/" + name + " has an outstation already. If it's yours, paste its station key in the plugin's settings.");
+						panel.claiming(false, "outside.wiki/" + name + " is proven or vouched for already. If it's yours, paste its station key in the plugin's settings.");
 						return;
 					}
 					String why = o != null && o.has("error") ? o.get("error").getAsString() : "the relay said " + res.code();
@@ -1302,7 +1316,8 @@ public class OutsidePlugin extends Plugin
 			}
 			return;
 		}
-		http.newCall(new Request.Builder().url(a.proofUrl()).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		http.newCall(new Request.Builder().url(a.proofUrl() + "?key=" + java.net.URLEncoder.encode(a.getKey(), java.nio.charset.StandardCharsets.UTF_8))
+			.header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
 		{
 			@Override
 			public void onFailure(Call call, IOException ex)
@@ -1315,7 +1330,9 @@ public class OutsidePlugin extends Plugin
 				try (Response res = r)
 				{
 					JsonObject o = res.code() == 200 && res.body() != null ? gson.fromJson(res.body().string(), JsonObject.class) : null;
-					panel.proof(o != null && o.has("proof") ? o.get("proof").getAsString() : null);
+					String proof = o != null && o.has("proof") ? o.get("proof").getAsString() : null;
+					challenging = "challenging".equals(proof);
+					panel.proof(proof);
 				}
 				catch (IOException | RuntimeException ignored)
 				{
@@ -2292,7 +2309,8 @@ public class OutsidePlugin extends Plugin
 				if (!toldConnected)
 				{
 					toldConnected = true;
-					say("your outstation (" + attach.getChannel() + ") is receiving what you wear and carry: " + attach.page());
+					say(challenging ? "your claim on outside.wiki/" + attach.getChannel() + " is being proven: gain any experience, then log out"
+						: "your outstation (" + attach.getChannel() + ") is receiving what you wear and carry: " + attach.page());
 				}
 			}
 
@@ -2325,10 +2343,20 @@ public class OutsidePlugin extends Plugin
 		}
 		socket = null;
 		open = false;
+		if (code == 4012)
+		{
+			// (taking a name back, 11/15/2026: proven, the page is theirs now; its key opens it as the holder's)
+			challenging = false;
+			say("your Outside page is proven yours: outside.wiki/" + attach.getChannel());
+			readProof();
+			retry = executor.schedule(this::connect, 1, TimeUnit.SECONDS);
+			return;
+		}
 		if (code == 4001 || code == 4003)
 		{
 			stopped = true;
-			say("the relay didn't take your station key: paste it again in the plugin's settings");
+			say(challenging ? "someone else proved this name first, so your claim on it has ended"
+				: "the relay didn't take your station key: paste it again in the plugin's settings");
 			return;
 		}
 		if (code == 4000)
