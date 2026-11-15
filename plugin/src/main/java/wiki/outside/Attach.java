@@ -94,6 +94,25 @@ public final class Attach
 		return base + "/game/" + enc(channel) + "?key=" + enc(key) + "&v=" + enc(version);
 	}
 
+	/** The relay's keep for the page (11/14/2026): http(s)://…/keep/<channel>/<what>?key=… (a bare relay as https://). */
+	public String keepUrl(String what)
+	{
+		String base = relay.trim().replaceAll("/+$", "");
+		if (base.startsWith("wss://"))
+		{
+			base = "https://" + base.substring(6);
+		}
+		else if (base.startsWith("ws://"))
+		{
+			base = "http://" + base.substring(5);
+		}
+		else if (!base.contains("://"))
+		{
+			base = "https://" + base;
+		}
+		return base + "/keep/" + enc(channel) + "/" + enc(what) + "?key=" + enc(key);
+	}
+
 	/** The outstation's page on Outside. */
 	public String page()
 	{

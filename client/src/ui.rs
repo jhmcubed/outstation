@@ -304,6 +304,11 @@ pub struct App {
     peek_tex: Option<(egui::TextureHandle, String, Instant)>,
     /// the clips on the player's Outside page, as the clips drawer last read them (clipsup.rs)
     page_clips: crate::clipsup::PageClips,
+    /// your own emotes (emotes.rs, 11/14/2026): the relay's list, each picture as a texture by its id, and one dropped
+    /// on the drawer waiting to go up (its bytes, the name in its box)
+    emotes: crate::emotes::Emotes,
+    emote_tex: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    emote_new: Option<(Vec<u8>, String)>,
     /// the clips drawer (11/10/2026): each clip's still as a texture, by its id (None: it wouldn't decode), the clips
     /// folder as last looked at (when, and its newest), and the clip asked about before it's taken down (id, name)
     clip_stills: std::collections::HashMap<String, Option<egui::TextureHandle>>,
@@ -511,7 +516,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, year_ask: None, year_size: None, year_done: Arc::new(Mutex::new(None)), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), emotes: crate::emotes::Emotes::new(), emote_tex: std::collections::HashMap::new(), emote_new: None, clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, year_ask: None, year_size: None, year_done: Arc::new(Mutex::new(None)), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -2572,6 +2577,125 @@ const PC_MOST: usize = 10;
 
 /// Your year (11/10/2026; record.rs, docs/record.md): the record on this PC, its encrypted copy on the relay, the record
 /// key (copied to another PC, or pasted from one), "open my year" and "delete my record…".
+/// A picture (PNG, JPEG, or a GIF's first look: none, it's named instead) as a texture, or None.
+fn picture_tex(ctx: &egui::Context, key: &str, b: &[u8]) -> Option<egui::TextureHandle> {
+    match crate::emotes::kind(b)? {
+        "jpg" => decode(b).filter(|(px, w, h)| px.len() == (*w as usize) * (*h as usize) * 3)
+            .map(|(px, w, h)| ctx.load_texture(key, egui::ColorImage::from_rgb([w as usize, h as usize], &px), egui::TextureOptions::NEAREST)),
+        "png" => {
+            let mut d = png::Decoder::new(std::io::Cursor::new(b));
+            d.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+            let mut r = d.read_info().ok()?;
+            let mut buf = vec![0; r.output_buffer_size()?];
+            let info = r.next_frame(&mut buf).ok()?;
+            let (w, h) = (info.width as usize, info.height as usize);
+            let px: Vec<u8> = match info.color_type {
+                png::ColorType::Rgba => buf[..w * h * 4].to_vec(),
+                png::ColorType::Rgb => buf[..w * h * 3].chunks(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+                png::ColorType::GrayscaleAlpha => buf[..w * h * 2].chunks(2).flat_map(|c| [c[0], c[0], c[0], c[1]]).collect(),
+                png::ColorType::Grayscale => buf[..w * h].iter().flat_map(|&g| [g, g, g, 255]).collect(),
+                _ => return None,
+            };
+            Some(ctx.load_texture(key, egui::ColorImage::from_rgba_unmultiplied([w, h], &px), egui::TextureOptions::NEAREST))
+        }
+        _ => None,
+    }
+}
+
+/// settings ▸ emotes (11/14/2026, Jace: "allow for custom emotes, png/jpg and gifs, only in the broadcaster's own
+/// chat"): a picture dropped on the window goes up under a name you choose; each one's listed with its picture, its
+/// name as observers type it, and "take it away". Your Outside page's transmission chat shows them, with an emote menu.
+fn emotes_ui(app: &mut App, ui: &mut egui::Ui) {
+    let s = app.settings.get();
+    let ctx = ui.ctx().clone();
+    let w = ui.available_width();
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    ui.label(rich("emotes", 16.0, LIME()));
+    if !s.attached() {
+        ui.label(wrapped("your own emotes go on your channel: attach to one first.", 14.0, QUIET(), w));
+        return;
+    }
+    ui.label(wrapped(&format!("your own, for your transmission's chat: an observer types :name: (or picks it from the chat bar's emote menu) and everyone sees the picture. Drop a PNG, JPG or GIF on this window to add one: {} at most, {} KB each.",
+        crate::emotes::MOST, crate::emotes::BYTES / 1024), 14.0, GREY(), w));
+    // a picture dropped on the window, while this drawer's open
+    let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+    for f in dropped {
+        let bytes = f.bytes().ok();
+        let file = f.path().to_string_lossy().to_string();
+        match bytes {
+            Some(b) if b.len() > crate::emotes::BYTES => app.note(format!("that picture is {} KB: an emote is {} KB at most", b.len() / 1024, crate::emotes::BYTES / 1024)),
+            Some(b) if crate::emotes::kind(&b).is_none() => app.note("an emote is a PNG, a JPG or a GIF".to_string()),
+            Some(b) => { app.emote_tex.remove("new"); app.emote_new = Some((b, crate::emotes::name_from(&file))); }
+            None => app.note("couldn't read that file".to_string()),
+        }
+    }
+    if app.emotes.read_at.is_none_or(|t| t.elapsed() > Duration::from_secs(120)) {
+        let c = ctx.clone();
+        app.emotes.read(&s, move || c.request_repaint());
+    }
+    let busy = *app.emotes.busy.lock().unwrap();
+    // the one waiting to go up: its picture, its name, and up it goes
+    let mut go: Option<(Vec<u8>, String)> = None;
+    let mut drop_new = false;
+    if let Some((b, name)) = &mut app.emote_new {
+        ui.add_space(6.0);
+        let tex = app.emote_tex.entry("new".into()).or_insert_with(|| picture_tex(&ctx, "emote new", b)).clone();
+        ui.horizontal(|ui| {
+            match &tex {
+                Some(t) => { let sz = t.size_vec2(); let k = 32.0 / sz.y.max(1.0); ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::new((sz.x * k).min(96.0), 32.0))); }
+                None => { ui.label(rich("GIF", 14.0, GREY())); }
+            }
+            ui.label(rich(":", 14.0, GREY()));
+            ui.add(egui::TextEdit::singleline(name).desired_width(140.0).char_limit(24));
+            ui.label(rich(":", 14.0, GREY()));
+        });
+        let ok = crate::emotes::name_ok(name);
+        if !ok { ui.label(wrapped("a name of 2 to 24 letters, numbers or _", 13.0, PINK(), w)); }
+        ui.horizontal(|ui| {
+            if button(ui, "send it up", true, None).clicked() && ok && !busy { go = Some((b.clone(), name.clone())); }
+            if button(ui, "never mind", true, None).clicked() { drop_new = true; }
+        });
+    }
+    if let Some((b, name)) = go {
+        let c = ctx.clone();
+        app.emotes.upload(&s, &name, b, move || c.request_repaint());
+        app.emote_new = None;
+        app.emote_tex.remove("new");
+    }
+    if drop_new { app.emote_new = None; app.emote_tex.remove("new"); }
+    ui.add_space(6.0);
+    let rows = app.emotes.rows.lock().unwrap().clone();
+    let mut away: Option<String> = None;
+    match rows {
+        None => { ui.label(rich("reading your emotes…", 14.0, QUIET())); }
+        Some(Err(e)) => { ui.label(wrapped(&e, 14.0, PINK(), w)); }
+        Some(Ok(list)) if list.is_empty() => { ui.label(wrapped("none yet", 14.0, QUIET(), w)); }
+        Some(Ok(list)) => {
+            let total: u64 = list.iter().map(|e| e.size).sum();
+            ui.label(rich(&format!("{} of {}, {} KB of 4,096", list.len(), crate::emotes::MOST, total / 1024), 14.0, GREY()));
+            for e in &list {
+                let tex = app.emote_tex.entry(e.id.clone()).or_insert_with(|| e.picture.as_ref().and_then(|b| picture_tex(&ctx, &format!("emote {}", e.id), b))).clone();
+                ui.horizontal(|ui| {
+                    match &tex {
+                        Some(t) => { let sz = t.size_vec2(); let k = 28.0 / sz.y.max(1.0); ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::new((sz.x * k).min(84.0), 28.0))); }
+                        None => { ui.label(rich(&e.ext.to_uppercase(), 13.0, QUIET())); }
+                    }
+                    ui.label(rich(&format!(":{}:", e.name), 14.0, LIME()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if button(ui, "take it away", true, None).clicked() && !busy { away = Some(e.name.clone()); }
+                    });
+                });
+            }
+        }
+    }
+    if let Some(n) = away {
+        let c = ctx.clone();
+        app.emotes.delete(&s, &n, move || c.request_repaint());
+    }
+}
+
 fn year_ui(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let w = ui.available_width();
@@ -3405,8 +3529,8 @@ impl eframe::App for App {
             self.zoom = scale;
             ctx.set_zoom_factor(scale);
         }
-        // the pings: about 0.6 s each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
-        self.pings.retain(|p| p.at.elapsed() < Duration::from_millis(640));
+        // the pings: PING_S each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
+        self.pings.retain(|p| p.at.elapsed().as_secs_f32() < PING_S);
         self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
         let fade = self.settings.get().game_chat_fade;
         if fade > 0 {
@@ -3419,7 +3543,9 @@ impl eframe::App for App {
         // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
         // in wakes the window at once; 11/07/2026)
         let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
-        ctx.request_repaint_after(Duration::from_millis(if busy { 30 } else if resting { 500 } else { 110 }));
+        // (a ping is drawn every frame the screen shows, so it moves smoothly: 11/14/2026)
+        let pinging = !self.pings.is_empty();
+        ctx.request_repaint_after(Duration::from_millis(if pinging { 8 } else if busy { 30 } else if resting { 500 } else { 110 }));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -3482,6 +3608,7 @@ impl eframe::App for App {
                         if self.drawer == Drawer::Settings {
                             if let Some(p) = &mut self.panel { p.ui(ui, &self.settings); }
                             year_ui(self, ui);
+                            emotes_ui(self, ui);
                         } else if self.drawer == Drawer::Friends {
                             #[cfg(feature = "station")]
                             friends_drawer(self, ui);
@@ -4879,25 +5006,76 @@ impl App {
         overlay(ctx, egui::ViewportId::from_hash_of("pings"), builder, move |ui, _| {
             let painter = ui.painter();
             for (age, c, name) in &pings {
-                let k = (age / 0.54).min(1.0); // about 0.6 s, in 6 steps of 90 ms
-                let step = (k * 6.0).floor();
-                let kk = step / 6.0;
-                let colour = if step < 3.6 { LIME() } else { theme::pal().lime_dim };
-                let name_colour = if step < 6.0 { LIME() } else { theme::pal().lime_dim };
-                let c = *c;
-                let r = 14.0 + 28.0 * kk;
-                painter.circle_stroke(c, r, Stroke::new(3.0, colour));
-                painter.circle_filled(c, 2.0, colour);
-                if !name.is_empty() {
-                    // the name: a dark rim round it first, then the name itself
-                    let at = egui::pos2(c.x + 22.0, c.y - 26.0);
-                    for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
-                        painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10));
-                    }
-                    painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), name_colour);
-                }
+                draw_ping(painter, *c, *age, name);
             }
         });
+    }
+}
+
+/// How long a ping lasts on the screen, in seconds (11/14/2026: 0.6 s in six steps before).
+const PING_S: f32 = 1.1;
+/// The ping's cells, in points: the ring is drawn in squares this size, each there or not by the dither.
+const PING_CELL: f32 = 3.0;
+
+/// The 8 x 8 ordered dither's thresholds (Bayer's), 0 to 1: the site's own (outside-portal.js's BAYER).
+fn bayer(x: i32, y: i32) -> f32 {
+    const M: [u8; 64] = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28,
+        52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63,
+        31, 55, 23, 61, 29, 53, 21];
+    (M[((y & 7) * 8 + (x & 7)) as usize] as f32 + 0.5) / 64.0
+}
+
+/// One ping (11/14/2026, Jace: "make the ping effect that broadcasters receive when an observer clicks on the video
+/// feed look better. make it a smooth animation, add dither to it if you want to make it unique. right now its just quite
+/// plain and low frame rate."): a ring that springs out from the spot, eased, drawn every frame in square cells that the
+/// ordered dither thins into the black as it grows; a fainter ring a moment behind it; a dithered dot at the spot that
+/// fades; the viewer's name surfacing beside it and fading at the end. The cells sit on a grid fixed to the screen, so
+/// the dither holds still while the ring moves through it, as the site's own does. Held still (reduced motion): the ring
+/// whole at its middle size, then gone.
+fn draw_ping(painter: &egui::Painter, c: egui::Pos2, age: f32, name: &str) {
+    let still = crate::cursor::still();
+    let k = if still { 0.45 } else { (age / PING_S).clamp(0.0, 1.0) };
+    let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+    let lime = LIME();
+    let dim = theme::pal().lime_dim;
+    let cell = PING_CELL;
+    // a ring: its radius, its width and how lit it is; each cell in it there if the dither's threshold is under its light
+    let ring = |radius: f32, width: f32, light: f32| {
+        if light <= 0.0 || width <= 0.0 { return; }
+        let (x0, x1) = (((c.x - radius - width) / cell).floor() as i32, ((c.x + radius + width) / cell).ceil() as i32);
+        let (y0, y1) = (((c.y - radius - width) / cell).floor() as i32, ((c.y + radius + width) / cell).ceil() as i32);
+        for gy in y0..=y1 {
+            for gx in x0..=x1 {
+                let (px, py) = (gx as f32 * cell + cell / 2.0, gy as f32 * cell + cell / 2.0);
+                let d = ((px - c.x).powi(2) + (py - c.y).powi(2)).sqrt();
+                let edge = 1.0 - (d - radius).abs() / width;
+                if edge <= 0.0 { continue; }
+                let level = edge.powf(0.7) * light;
+                if bayer(gx, gy) >= level { continue; }
+                let colour = if level > 0.55 { lime } else { dim };
+                painter.rect_filled(egui::Rect::from_min_size(egui::pos2(gx as f32 * cell, gy as f32 * cell), Vec2::splat(cell)), 0.0, colour);
+            }
+        }
+    };
+    let light = if still { 1.0 } else { (1.0 - k).powf(1.4) };
+    ring(12.0 + 44.0 * ease(k * 1.15), 3.0 + 6.0 * (1.0 - k), light);
+    // (the echo, a little behind and fainter)
+    let k2 = ((k * PING_S - 0.16) / PING_S).max(0.0);
+    if !still && k2 > 0.0 {
+        ring(8.0 + 30.0 * ease(k2 * 1.2), 2.0 + 4.0 * (1.0 - k2), (1.0 - k2).powf(1.8) * 0.7);
+    }
+    // the spot: a small disk, dithered away
+    ring(0.0, 7.0 * (1.0 - k * 0.5), if still { 1.0 } else { (1.0 - k * 1.3).max(0.0) });
+    if !name.is_empty() {
+        // the name: in over the first tenth, out over the last third, a dark rim round it first
+        let a = if still { 1.0 } else { (k / 0.1).min(1.0) * ((1.0 - k) / 0.33).min(1.0) };
+        if a > 0.0 {
+            let at = egui::pos2(c.x + 24.0, c.y - 28.0 + 4.0 * (1.0 - (k / 0.15).min(1.0)));
+            for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
+                painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10).gamma_multiply(a));
+            }
+            painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), lime.gamma_multiply(a));
+        }
     }
 }
 

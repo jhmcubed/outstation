@@ -43,6 +43,19 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.Model;
+import net.runelite.api.widgets.Widget;
+import net.runelite.client.util.Text;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.RequestBody;
+import java.io.IOException;
+import java.util.HashSet;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
@@ -83,7 +96,7 @@ import org.slf4j.LoggerFactory;
 public class OutsidePlugin extends Plugin
 {
 	private static final Logger log = LoggerFactory.getLogger(OutsidePlugin.class);
-	static final String VERSION = "0.1.0";
+	static final String VERSION = "0.2.0";
 	/** vitals alone (run energy draining as you run) go at most this often, in ticks */
 	private static final int VITALS_EVERY = 5;
 	/** the longest wait between tries to reach the relay, in seconds */
@@ -147,6 +160,21 @@ public class OutsidePlugin extends Plugin
 	/** the seed box's and the chugging barrel's slots as last sent by the game (onItemContainerChanged), or null */
 	private JsonElement seedsSeen, barrelSeen;
 	private boolean toldConnected;
+	/** (11/14/2026) each item's charges as the game last told of them, by item id (kept on this RuneLite's profile for
+	 *  the account, so they're known after a restart); the item last checked, and on which tick; the client's thread */
+	private final Map<Integer, Integer> charges = new HashMap<>();
+	private int checkedItem = -1, checkedTick = -100, ticks;
+	/** (11/14/2026) the Doom of Mokhaiotl board's counts as last read (also kept on the profile), or null */
+	private JsonElement delveSeen;
+	/** (11/14/2026) the bank changed on this tick (sent a few ticks after the last change), or -1 */
+	private int bankChanged = -1;
+	private static final MediaType JSON = MediaType.parse("application/json");
+	/** the board beside the Doom of Mokhaiotl (the Delve Calculator plugin's: its scoreboard interface, each level's
+	 *  count in child 46 + 3 a level, 1 to 8, then the waves past 8) */
+	private static final int DELVE_BOARD = 920, DELVE_FIRST = 46, DELVE_STEP = 3;
+
+	@Inject
+	private ConfigManager configManager;
 
 	@Provides
 	OutsideConfig provideConfig(ConfigManager configManager)
@@ -181,6 +209,22 @@ public class OutsidePlugin extends Plugin
 			toldConnected = false;
 			connect();
 		}
+		// (the model: on, it goes now; off, it's taken down. The bank: off, it's taken down; on, it goes next time it's used)
+		if (e.getKey().equals("model"))
+		{
+			if (config.model())
+			{
+				clientThread.invokeLater(this::sendModel);
+			}
+			else
+			{
+				keep("model", null);
+			}
+		}
+		if (e.getKey().equals("bank") && !config.bank())
+		{
+			keep("bank", null);
+		}
 		resend = true;
 	}
 
@@ -196,6 +240,8 @@ public class OutsidePlugin extends Plugin
 			track.forget();
 			// (the seed box and the barrel as the game last sent them: another account may log in next)
 			seedsSeen = barrelSeen = null;
+			charges.clear();
+			delveSeen = null;
 			doing.forget();
 			doing.clear();
 			activity.forget();
@@ -218,6 +264,7 @@ public class OutsidePlugin extends Plugin
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
 			resend = true;
+			loadKept();
 		}
 	}
 
@@ -227,6 +274,13 @@ public class OutsidePlugin extends Plugin
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
+		}
+		ticks++;
+		// (the bank: sent three ticks after it last changed, so a whole deposit goes once)
+		if (bankChanged >= 0 && ticks - bankChanged >= 3)
+		{
+			bankChanged = -1;
+			sendBank();
 		}
 		if (open && resend)
 		{
@@ -370,6 +424,35 @@ public class OutsidePlugin extends Plugin
 			int ammo = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO);
 			int amount = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO_AMOUNT);
 			m.put("quiver", ammo > 0 && amount > 0 ? Kit.pair(ammo, amount) : com.google.gson.JsonNull.INSTANCE);
+		}
+		if (config.items() && config.charges())
+		{
+			// (only the items worn or carried now)
+			Set<Integer> here = new HashSet<>();
+			for (int c : new int[]{InventoryID.WORN, InventoryID.INV})
+			{
+				ItemContainer ic = client.getItemContainer(c);
+				if (ic != null)
+				{
+					for (Item it : ic.getItems())
+					{
+						here.add(it.getId());
+					}
+				}
+			}
+			JsonObject ch = new JsonObject();
+			for (Map.Entry<Integer, Integer> e : new java.util.TreeMap<>(charges).entrySet())
+			{
+				if (here.contains(e.getKey()))
+				{
+					ch.addProperty(String.valueOf(e.getKey()), e.getValue());
+				}
+			}
+			m.put("charges", ch);
+		}
+		if (config.delve() && delveSeen != null)
+		{
+			m.put("delve", delveSeen);
 		}
 		if (config.skills())
 		{
@@ -583,6 +666,242 @@ public class OutsidePlugin extends Plugin
 		else if (e.getContainerId() == InventoryID.PREPOT_DEVICE_INV)
 		{
 			barrelSeen = slots(e.getItemContainer(), 5);
+		}
+		else if (e.getContainerId() == InventoryID.BANK && config.bank())
+		{
+			bankChanged = ticks;
+		}
+	}
+
+	// ---- (11/14/2026) charges, the delve board, the bank and the model: Kept
+
+	/** An item checked ("Check", "Inspect" and the like): the next charges the game tells of are its. */
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked e)
+	{
+		String opt = e.getMenuOption() == null ? "" : Text.removeTags(e.getMenuOption()).toLowerCase();
+		if (e.getItemId() > 0 && (opt.startsWith("check") || opt.equals("inspect") || opt.equals("charges")))
+		{
+			checkedItem = e.getItemId();
+			checkedTick = ticks;
+		}
+	}
+
+	/** The game's own words of an item's charges: the item just checked, or the worn or carried one it names. */
+	@Subscribe
+	public void onChatMessage(ChatMessage e)
+	{
+		if (!config.charges() || (e.getType() != ChatMessageType.GAMEMESSAGE && e.getType() != ChatMessageType.SPAM))
+		{
+			return;
+		}
+		String msg = Text.removeTags(e.getMessage());
+		Integer n = Kept.charges(msg);
+		if (n == null)
+		{
+			return;
+		}
+		int item = -1;
+		if (checkedItem > 0 && ticks - checkedTick <= 3)
+		{
+			item = checkedItem;
+		}
+		else
+		{
+			for (int c : new int[]{InventoryID.WORN, InventoryID.INV})
+			{
+				ItemContainer ic = client.getItemContainer(c);
+				if (ic == null)
+				{
+					continue;
+				}
+				for (Item it : ic.getItems())
+				{
+					if (item < 0 && it.getId() > 0 && Kept.about(msg, itemManager.getItemComposition(it.getId()).getName()))
+					{
+						item = it.getId();
+					}
+				}
+			}
+		}
+		if (item > 0)
+		{
+			charges.put(item, n);
+			checkedItem = -1;
+			saveKept();
+		}
+	}
+
+	/** The board beside the Doom of Mokhaiotl opened: its counts read (as the Delve Calculator plugin reads them). */
+	@Subscribe
+	public void onWidgetLoaded(WidgetLoaded e)
+	{
+		if (e.getGroupId() == DELVE_BOARD && config.delve())
+		{
+			clientThread.invokeLater(this::readDelve);
+		}
+	}
+
+	private void readDelve()
+	{
+		JsonArray counts = new JsonArray();
+		boolean any = false;
+		for (int i = 0; i < 9; i++)
+		{
+			Widget w = client.getWidget(DELVE_BOARD, DELVE_FIRST + i * DELVE_STEP);
+			String t = w == null || w.getText() == null ? "" : w.getText().replaceAll("[^0-9]", "");
+			int n = 0;
+			if (!t.isEmpty() && t.length() < 10)
+			{
+				n = Integer.parseInt(t);
+				any = true;
+			}
+			counts.add(n);
+		}
+		if (any)
+		{
+			delveSeen = counts;
+			saveKept();
+		}
+	}
+
+	/** ::outsidemodel: the model again, as they look now. */
+	@Subscribe
+	public void onCommandExecuted(CommandExecuted e)
+	{
+		if ("outsidemodel".equalsIgnoreCase(e.getCommand()))
+		{
+			if (config.model())
+			{
+				sendModel();
+			}
+			else
+			{
+				say("switch on \"My character's model on my page\" in the plugin's settings first");
+			}
+		}
+	}
+
+	/** The character's model as it is now (the client's thread). */
+	private void sendModel()
+	{
+		Player me = client.getLocalPlayer();
+		Model m = me == null ? null : me.getModel();
+		if (m == null)
+		{
+			say("your model isn't there to send yet: try ::outsidemodel in a moment");
+			return;
+		}
+		JsonObject o = Kept.model(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
+			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceCount(),
+			m.getFaceColors1(), m.getFaceColors3(), m.getUnlitFaceColors(), m.getFaceTransparencies(), m.getFaceTextures());
+		keep("model", o);
+	}
+
+	/** The whole bank, its tabs and each item's name and price (the client's thread). */
+	private void sendBank()
+	{
+		ItemContainer bank = client.getItemContainer(InventoryID.BANK);
+		if (bank == null || !config.bank())
+		{
+			return;
+		}
+		Item[] items = bank.getItems();
+		int[] ids = new int[items.length];
+		int[] qs = new int[items.length];
+		Map<Integer, Object[]> names = new LinkedHashMap<>();
+		for (int i = 0; i < items.length; i++)
+		{
+			// (a placeholder as its item, none of it)
+			int id = items[i].getId();
+			int real = id > 0 ? itemManager.canonicalize(id) : id;
+			ids[i] = real;
+			qs[i] = real != id ? 0 : items[i].getQuantity();
+			if (real > 0 && !names.containsKey(real))
+			{
+				names.put(real, new Object[]{itemManager.getItemComposition(real).getName(), (long) itemManager.getItemPrice(real)});
+			}
+		}
+		int[] tabVarbits = {VarbitID.BANK_TAB_1, VarbitID.BANK_TAB_2, VarbitID.BANK_TAB_3, VarbitID.BANK_TAB_4,
+			VarbitID.BANK_TAB_5, VarbitID.BANK_TAB_6, VarbitID.BANK_TAB_7, VarbitID.BANK_TAB_8, VarbitID.BANK_TAB_9};
+		int[] tabs = new int[9];
+		for (int i = 0; i < 9; i++)
+		{
+			tabs[i] = client.getVarbitValue(tabVarbits[i]);
+		}
+		keep("bank", Kept.bank(ids, qs, tabs, names));
+	}
+
+	/** Sent to the relay's keep (POST; null: DELETE), off the client's thread; a failure said in the chat. */
+	private void keep(String what, JsonObject body)
+	{
+		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
+		if (a == null || !config.send())
+		{
+			return;
+		}
+		Request.Builder b = new Request.Builder().url(a.keepUrl(what)).header("User-Agent", "outside-plugin/" + VERSION);
+		b = body == null ? b.delete() : b.post(RequestBody.create(JSON, gson.toJson(body)));
+		http.newCall(b.build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				log.debug("outside: keep {} failed", what, ex);
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				int code = r.code();
+				r.close();
+				if (body != null && code == 200)
+				{
+					say("model".equals(what) ? "your model is on your page" : "your bank is on your page");
+				}
+				else if (body != null && code != 200)
+				{
+					say("your " + what + " didn't go up (the relay said " + code + ")");
+				}
+			}
+		});
+	}
+
+	/** Charges and the delve board, as kept on this RuneLite's profile for the account. */
+	private void loadKept()
+	{
+		charges.clear();
+		try
+		{
+			String c = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "charges");
+			if (c != null)
+			{
+				JsonObject o = gson.fromJson(c, JsonObject.class);
+				for (Map.Entry<String, JsonElement> e : o.entrySet())
+				{
+					charges.put(Integer.parseInt(e.getKey()), e.getValue().getAsInt());
+				}
+			}
+			String d = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delve");
+			delveSeen = d == null ? null : gson.fromJson(d, JsonArray.class);
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("outside: charges or delve unreadable", e);
+		}
+	}
+
+	private void saveKept()
+	{
+		JsonObject o = new JsonObject();
+		for (Map.Entry<Integer, Integer> e : charges.entrySet())
+		{
+			o.addProperty(String.valueOf(e.getKey()), e.getValue());
+		}
+		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "charges", gson.toJson(o));
+		if (delveSeen != null)
+		{
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delve", gson.toJson(delveSeen));
 		}
 	}
 

@@ -263,6 +263,8 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `pouch`: the rune pouch's slots (at most 8)
 - `seeds` (11/14/2026): the seed box's 6 slots, each `[item id, how many]` or `null`, in their places; or `null` while it isn't known (the game tells RuneLite once it's opened)
 - `barrel` (11/14/2026): the chugging barrel's 5 slots, each a potion's `[item id, doses]` or `null`; or `null` while it isn't known, the same
+- `charges` (11/14/2026): each worn or carried item's charges as the game last told of them in its chat (the item checked, or named in the line), `{"<item id>": n}`, at most 64; the page writes them on the items
+- `delve` (11/14/2026): the board beside the Doom of Mokhaiotl as last read (the Delve Calculator plugin's way: its interface 920, each level's count in child 46 + 3 a level), the delves finished at each level 1 to 8 and then the waves past 8, nine whole numbers; or `null`
 - `quiver`: `[item id, how many]` or `null`
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
@@ -459,6 +461,25 @@ viewers see anyway, and refuses the socket.
 last of it while the player's away, until the plugin next changes it.
 - On Cloudflare: in memory, and saved in the channel's storage at most once a minute while messages come (the first at once, then a minute after the last save), and when the game socket closes; a channel that's slept starts from what was saved, so a restart of the channel's object while the plugin's sending loses at most that minute. Forgotten when the keeper gives the channel a new key or takes it back.
 - On the Python relay: in memory only, as everything there, while the relay runs. `--delay` holds the game's messages back too.
+
+## Kept for the page: the bank and the model (11/14/2026)
+
+Too big for the game's fields, each sent over HTTP by the Outside plugin when the player's switched it on, kept in the channel's own storage, one of each (relay/src/keep.ts):
+
+- `POST /keep/<channel>/bank?key=<key>`: `{"items": [[id, how many], ...], "tabs": [9 counts], "names": {"<id>": [name, price]}}`, the bank in its order, a placeholder as `[its item, 0]`, the tabs' counts as the game's BANK_TAB_1 to 9 (the main tab is what's left, at the end), at most 1,600 slots and 256 KB. Sent three ticks after the bank last changed, while "My bank on my page" is on.
+- `POST /keep/<channel>/model?key=<key>`: `{"v": [x, y, z, ...], "f": [a, b, c, ...], "c": [colour, ...]}`, the character's model as RuneProfile's exporter reads it: whole-number vertices in the game's units (y down), each face three vertices' places, each face's colour the game's packed HSL unlit (or -1, a textured face), the faces the game never draws left out; at most 20,000 vertices, 30,000 faces and 640 KB. Sent when "My character's model on my page" is switched on, and on `::outsidemodel`.
+- `GET /keep/<channel>/<what>?code=<watch code>`: `{"<what>": ..., "at"}`, 404 none. `DELETE /keep/<channel>/<what>?key=<key>`: taken away (the plugin does, when its switch goes off).
+- A change goes to the channel's seated viewers, lookers and desks as `{"kept": {"what", "at"}}` (`"at": null`, taken away), and the page fetches it again. 12 uploads an hour each. Forgotten with the game's state (a new key, the channel taken back). The Python relay doesn't keep them.
+
+## Emotes (11/14/2026)
+
+A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):
+
+- `GET /emotes/<channel>?code=<watch code>`: `{"emotes": [{"name", "id", "ext", "size", "at"}]}`, oldest first.
+- `GET /emotes/<channel>/<id>.<png|jpg|gif>`: the picture, straight from the CLIPS bucket (`emotes/<channel>/<id>.<ext>`), kept a year by browsers.
+- `POST /emotes/<channel>?key=<key>&name=<name>`: the picture itself as the body; PNG, JPEG or GIF by its own first bytes; a name of 2 to 24 letters, numbers or `_`; one already of that name (whatever its case) replaced.
+- `DELETE /emotes/<channel>/<name>?key=<key>`: taken away.
+- At most 30 an outstation, each at most 256 KB, all at most 4 MB; 60 uploads an hour. A change goes to the channel's viewers, lookers and desks as `{"emotes": [the list]}`. The channel taken back takes its emotes with it. The Python relay doesn't keep them.
 
 ## Clips (11/06/2026)
 

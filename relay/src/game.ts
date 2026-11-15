@@ -19,6 +19,7 @@ import { oneLine, pyjson } from "./text";
 // JSON (a message that would take it past is ignored), its dictionary of item names and prices at most GAME_ITEMS ids
 // (past that, new ones are ignored). relay.py's, the same.
 export const GAME_MESSAGE = 64 * 1024, GAME_KEPT = 192 * 1024, GAME_ITEMS = 3000, GAME_A_SECOND = 5;
+export const CHARGES_MOST = 64;
 const GAME_INT = 2 ** 31 - 1; // the most any number in the game holds (a Java int: RuneLite's)
 export const SKILL = /^[A-Za-z][A-Za-z _-]{0,23}$/; // a skill's name (the Array's events' too: array.ts)
 const ID = /^(0|[1-9][0-9]{0,9})$/; // an item's id as the dictionary has it
@@ -91,6 +92,20 @@ export function gameFields(g: unknown): Fields {
     const s = g.quiver === null ? null : pair(g.quiver);
     if (s !== undefined) out.quiver = s;
   }
+  // (11/14/2026, Jace: "show charges on the items that have charges like my tonalztics of ralos"): each worn or carried
+  // item's charges as the game last told of them, by item id, CHARGES_MOST at most
+  if (isObj(g.charges)) {
+    const charges: Record<string, number> = {};
+    for (const [k, v] of Object.entries(g.charges).slice(0, CHARGES_MOST)) {
+      const n = whole(v);
+      if (ID.test(k) && Number(k) <= GAME_INT && n !== undefined) charges[k] = n;
+    }
+    out.charges = charges;
+  }
+  // (11/14/2026, Jace: "capture the wave data from the Doom of Mokhaiotl board nearby the boss"): the board's delves
+  // completed at each level, 1 to 8, then the waves past 8, as the Delve Calculator plugin reads it; null, not read yet
+  if (g.delve === null) out.delve = null;
+  else if (Array.isArray(g.delve) && g.delve.length === 9 && g.delve.every((x) => whole(x) !== undefined)) out.delve = g.delve as number[];
   const p = g.prayers;
   if (Array.isArray(p) && p.length <= 64 && p.every((x) => typeof x === "string")) out.prayers = p.map((x) => oneLine(x, 40));
   if (isObj(g.items)) {
