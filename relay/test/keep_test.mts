@@ -49,6 +49,21 @@ test("a model with its pet and their motions (11/15/2026)", () => {
   strictEqual(typeof keepShape("model", { ...m, pet: { v: [1] } }), "string");
 });
 
+test("a model's effects and the ground, still and in a motion (11/15/2026)", () => {
+  const frame = Buffer.alloc(18).toString("base64"), fx2 = Buffer.alloc(12).toString("base64");
+  const tri = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100], g: [100, 100, 100] };
+  const effect = { v: [0, -50, 0, 9, -50, 0], f: [0, 1, 1], c: [200] };
+  const m = { ...tri, fx: [effect], ground: tri, frames: { fps: 12.5, v: [frame, frame], fx: { m: { "123.2.1": effect }, f: [[{ k: "123.2.1", v: fx2 }], []] } } };
+  deepStrictEqual(keepShape("model", m), m);
+  strictEqual(typeof keepShape("model", { ...m, fx: Array(5).fill(effect) }), "string");   // (four at most)
+  strictEqual(typeof keepShape("model", { ...m, ground: { ...tri, frames: { fps: 12.5, v: [frame] } } }), "string");   // (the ground doesn't move)
+  strictEqual(typeof keepShape("model", { ...m, frames: { ...m.frames, fx: { m: m.frames.fx.m, f: [[]] } } }), "string");   // (a row a frame)
+  strictEqual(typeof keepShape("model", { ...m, frames: { ...m.frames, fx: { m: m.frames.fx.m, f: [[{ k: "9.9.9", v: fx2 }], []] } } }), "string");   // (no such effect)
+  strictEqual(typeof keepShape("model", { ...m, frames: { ...m.frames, fx: { m: m.frames.fx.m, f: [[{ k: "123.2.1", v: frame }], []] } } }), "string");   // (not its vertices)
+  strictEqual(typeof keepShape("model", { ...m, frames: { ...m.frames, fx: { m: { "<b>": effect }, f: [[], []] } } }), "string");
+  deepStrictEqual((keepShape("model", { ...m, pet: { ...tri, fx: [effect], ground: tri } }) as Record<string, Record<string, unknown>>).pet, tri);   // (only the player's)
+});
+
 test("a motion is a model with its frames; its name (11/15/2026)", () => {
   const frame = Buffer.alloc(18).toString("base64");
   const m = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100], frames: { fps: 12.5, v: [frame] } };

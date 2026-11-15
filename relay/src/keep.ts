@@ -33,6 +33,11 @@ export const LIVE_MOST = 24, GEAR = /^[0-9a-f]{1,16}$/, ANIM = /^(idle|[0-9]{1,6
 export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
 export const BANK_SLOTS = 1600, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
+// (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the model viewer/capturer?"): a
+// still model's effects ("fx": FX_MOST models), a motion's ("frames.fx": FX_MODELS models by key, and each frame's
+// effects there, FX_MOST a frame, each its key and its vertices as a frame's), and the ground round them ("ground": a
+// model, GROUND_FACES at most); docs/protocol.md, "Kept for the page"
+export const FX_MOST = 4, FX_MODELS = 8, FX_KEY = /^[0-9]{1,6}\.[0-9]{1,5}\.[0-9]{1,5}$/, GROUND_FACES = 6000;
 const ID = /^(0|[1-9][0-9]{0,9})$/;
 const INT = 2 ** 31 - 1;
 
@@ -80,7 +85,8 @@ export function keepShape(what: string, d: unknown): unknown | string {
 /** A model's shape (keep.ts's header): the player's, which may carry its pet's ("pet": a model of its own, with no pet)
  *  and either may carry a motion ("frames": {"fps", "v": [each frame's vertices, x, y, z as little-endian 16-bit
  *  numbers in base64, as many as "v" has]}, MOTION_FRAMES at most; 11/15/2026). */
-function modelShape(d: Record<string, unknown>, top: boolean): unknown | string {
+function modelShape(d: Record<string, unknown>, top: boolean, part = false): unknown | string {
+  if (part && d.frames !== undefined) return "an effect or the ground has no frames";
   const v = d.v, f = d.f, c = d.c;
   if (!ints(v, -8192, 8192, 3 * MODEL_VERTICES) || (v as number[]).length % 3) return "v: x, y, z for each vertex";
   const nv = (v as number[]).length / 3;
@@ -102,6 +108,33 @@ function modelShape(d: Record<string, unknown>, top: boolean): unknown | string 
     const len = 4 * Math.ceil(nv * 6 / 3);
     for (const x of fr.v) if (typeof x !== "string" || x.length !== len || !/^[A-Za-z0-9+/]*={0,2}$/.test(x)) return "frames: each frame every vertex, in base64";
     out.frames = { fps: fr.fps, v: fr.v };
+    if (fr.fx !== undefined) {
+      const fx = fr.fx;
+      if (!isObj(fx) || !isObj(fx.m) || !Array.isArray(fx.f) || fx.f.length !== fr.v.length) return "frames.fx: {m, f}, a row each frame";
+      const keys = Object.keys(fx.m);
+      if (!keys.length || keys.length > FX_MODELS) return "frames.fx.m: " + FX_MODELS + " effects at most";
+      const models: Record<string, unknown> = {}, counts: Record<string, number> = {};
+      for (const k of keys) {
+        const em = fx.m[k];
+        if (!FX_KEY.test(k) || !isObj(em)) return "frames.fx.m: an effect's model under its key";
+        const e = modelShape(em, false, true);
+        if (typeof e === "string") return "an effect's " + e;
+        models[k] = e;
+        counts[k] = ((em.v as number[]).length) / 3;
+      }
+      const rows: unknown[] = [];
+      for (const row of fx.f) {
+        if (!Array.isArray(row) || row.length > FX_MOST) return "frames.fx.f: " + FX_MOST + " effects a frame at most";
+        const r: unknown[] = [];
+        for (const e of row) {
+          if (!isObj(e) || typeof e.k !== "string" || !(e.k in counts) || typeof e.v !== "string") return "frames.fx.f: each {k, v}";
+          if (e.v.length !== 4 * Math.ceil(counts[e.k] * 6 / 3) || !/^[A-Za-z0-9+/]*={0,2}$/.test(e.v)) return "frames.fx.f: each effect's every vertex, in base64";
+          r.push({ k: e.k, v: e.v });
+        }
+        rows.push(r);
+      }
+      (out.frames as Record<string, unknown>).fx = { m: models, f: rows };
+    }
   }
   if (top) {
     if (d.pet !== undefined) {
@@ -109,6 +142,24 @@ function modelShape(d: Record<string, unknown>, top: boolean): unknown | string 
       const pet = modelShape(d.pet, false);
       if (typeof pet === "string") return "pet's " + pet;
       out.pet = pet;
+    }
+    if (d.fx !== undefined) {
+      if (!Array.isArray(d.fx) || !d.fx.length || d.fx.length > FX_MOST) return "fx: " + FX_MOST + " effects at most";
+      const fx: unknown[] = [];
+      for (const em of d.fx) {
+        if (!isObj(em)) return "fx: each a model";
+        const e = modelShape(em, false, true);
+        if (typeof e === "string") return "an effect's " + e;
+        fx.push(e);
+      }
+      out.fx = fx;
+    }
+    if (d.ground !== undefined) {
+      if (!isObj(d.ground)) return "ground: a model";
+      if (Array.isArray(d.ground.f) && d.ground.f.length > 3 * GROUND_FACES) return "ground: " + GROUND_FACES + " faces at most";
+      const g = modelShape(d.ground, false, true);
+      if (typeof g === "string") return "the ground's " + g;
+      out.ground = g;
     }
     if (d.tex !== undefined) {
       if (!isObj(d.tex) || Object.keys(d.tex).length > 16) return "tex: 16 textures at most";

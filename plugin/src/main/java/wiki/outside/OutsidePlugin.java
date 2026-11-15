@@ -18,6 +18,12 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import net.runelite.api.Actor;
+import net.runelite.api.ActorSpotAnim;
+import net.runelite.api.Perspective;
+import net.runelite.api.Scene;
+import net.runelite.api.SceneTileModel;
+import net.runelite.api.SceneTilePaint;
+import net.runelite.api.Tile;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.EnumComposition;
@@ -946,8 +952,11 @@ public class OutsidePlugin extends Plugin
 			{
 				return;
 			}
-			autoCount = base.getVerticesCount();
-			autoBase = modelJson(base);
+			Snap bs = snap(base, true);
+			List<Fx> bfx = effects(me, null);
+			autoCount = ownOf(bs, bfx);
+			autoBase = Kept.trim(bs.json, autoCount);
+			autoFx = new FxTrack();
 			Model pet = petModel();
 			autoPetCount = pet == null ? 0 : pet.getVerticesCount();
 			autoPet = pet == null ? null : modelJson(pet);
@@ -971,9 +980,12 @@ public class OutsidePlugin extends Plugin
 			return;
 		}
 		Model m = me.getModel();
-		if (m != null && m.getVerticesCount() == autoCount)
+		Snap ms = m == null ? null : snap(m, false);
+		List<Fx> mfx = ms == null ? null : effects(me, autoFx.models.keySet());
+		if (ms != null && ownOf(ms, mfx) == autoCount)
 		{
-			autoFrames.add(Kept.frame(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount()));
+			autoFrames.add(Kept.frame(ms.x, ms.y, ms.z, autoCount));
+			autoFx.add(mfx);
 			Model p = autoPet == null ? null : petModel();
 			autoPetFrames.add(p != null && p.getVerticesCount() == autoPetCount ? Kept.frame(p.getVerticesX(), p.getVerticesY(), p.getVerticesZ(), p.getVerticesCount()) : null);
 		}
@@ -990,6 +1002,7 @@ public class OutsidePlugin extends Plugin
 		}
 		liveRecorded.add(autoAnim);
 		JsonObject frames = Kept.frames(autoFrames, 1000.0 / (MOTION_EVERY * 20));
+		autoFx.into(frames);
 		JsonObject petFrames = autoPet != null && !autoPetFrames.contains(null) ? Kept.frames(autoPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
 		keepLive("livemotion", autoAnim, wholeModel(autoBase, autoPet, frames, petFrames));
 	}
@@ -1234,7 +1247,12 @@ public class OutsidePlugin extends Plugin
 		}
 		// (each written out the moment it's read: the client hands out one shared model for anything animated, so reading
 		// the pet's after the player's overwrote the player's; 11/15/2026, Jace saw only his pet)
-		JsonObject player = modelJson(m);
+		Snap snap = snap(m, true);
+		// (11/15/2026: their effects as they are now, each a model of its own, and the ground round them if they let it go)
+		List<Fx> fx = effects(me, null);
+		JsonObject player = Kept.trim(snap.json, ownOf(snap, fx));
+		addEffects(player, fx);
+		addGround(player, me);
 		Model pet = petModel();
 		keep("model", wholeModel(player, pet == null ? null : modelJson(pet), null, null));
 	}
@@ -1244,6 +1262,277 @@ public class OutsidePlugin extends Plugin
 	{
 		NPC pet = client.getFollower();
 		return pet == null ? null : pet.getModel();
+	}
+
+	// ---- effects and the ground (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the
+	// model viewer/capturer?"). Effects: each spot animation on them (a special attack's, a teleport's, an emote's), its
+	// own model raised by its height, kept apart from theirs (Kept.ownVertices: the client may merge them into the
+	// player's model), so the page can draw them, and a motion's frames carry them frame by frame. The ground: the tiles
+	// round them (GROUND_TILES each way) as the scene has them, painted and shaped, turned into their model's own space;
+	// only with "The ground under my model" on, and only on a capture they ask for (never the live view's own).
+
+	private static final int GROUND_TILES = 5, FX_MOST = 4, FX_MODELS = 8;
+
+	/** A model read at once (the client's model object is shared): its vertices copied, and as JSON if asked. */
+	private static final class Snap
+	{
+		JsonObject json;
+		float[] x, z, y;
+		int n;
+	}
+
+	private Snap snap(Model m, boolean json)
+	{
+		Snap s = new Snap();
+		s.n = m.getVerticesCount();
+		s.x = java.util.Arrays.copyOf(m.getVerticesX(), s.n);
+		s.y = java.util.Arrays.copyOf(m.getVerticesY(), s.n);
+		s.z = java.util.Arrays.copyOf(m.getVerticesZ(), s.n);
+		s.json = json ? modelJson(m) : null;
+		return s;
+	}
+
+	/** One effect on them now: its key (id, vertices, faces), its vertices (raised by its height), and its model as
+	 *  JSON unless it's one already known. */
+	private static final class Fx
+	{
+		String key;
+		JsonObject json;
+		float[] x, y, z;
+		int n;
+	}
+
+	private List<Fx> effects(Player me, Set<String> known)
+	{
+		List<Fx> out = new ArrayList<>();
+		if (me.getSpotAnims() == null)
+		{
+			return out;
+		}
+		for (ActorSpotAnim sa : me.getSpotAnims())
+		{
+			if (out.size() >= FX_MOST)
+			{
+				break;
+			}
+			Model m = sa.getModel();
+			if (m == null || m.getVerticesCount() <= 0 || m.getFaceCount() <= 0)
+			{
+				continue;
+			}
+			Fx f = new Fx();
+			f.n = m.getVerticesCount();
+			f.key = sa.getId() + "." + f.n + "." + m.getFaceCount();
+			f.x = java.util.Arrays.copyOf(m.getVerticesX(), f.n);
+			f.y = java.util.Arrays.copyOf(m.getVerticesY(), f.n);
+			f.z = java.util.Arrays.copyOf(m.getVerticesZ(), f.n);
+			for (int i = 0; i < f.n; i++)
+			{
+				f.y[i] -= sa.getHeight();
+			}
+			if (known == null || !known.contains(f.key))
+			{
+				f.json = Kept.model(f.x, f.y, f.z, f.n, m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceCount(),
+					m.getFaceColors1(), m.getFaceColors2(), m.getFaceColors3(), m.getUnlitFaceColors(), m.getFaceTransparencies(),
+					m.getFaceTextures(), m.getFaceRenderPriorities(), m.getTextureFaces(), m.getTexIndices1(), m.getTexIndices2(),
+					m.getTexIndices3());
+			}
+			out.add(f);
+		}
+		return out;
+	}
+
+	/** How many of the snapped model's vertices are the player's own (the effects merged after them, in either order). */
+	private static int ownOf(Snap s, List<Fx> fx)
+	{
+		if (fx == null || fx.isEmpty())
+		{
+			return s.n;
+		}
+		for (int pass = 0; pass < 2; pass++)
+		{
+			List<Fx> l = new ArrayList<>(fx);
+			if (pass == 1)
+			{
+				java.util.Collections.reverse(l);
+			}
+			List<float[]> xs = new ArrayList<>(), zs = new ArrayList<>();
+			int[] counts = new int[l.size()];
+			for (int k = 0; k < l.size(); k++)
+			{
+				xs.add(l.get(k).x);
+				zs.add(l.get(k).z);
+				counts[k] = l.get(k).n;
+			}
+			int own = Kept.ownVertices(s.x, s.z, s.n, xs, zs, counts);
+			if (own != s.n)
+			{
+				return own;
+			}
+		}
+		return s.n;
+	}
+
+	/** The still capture's effects: "fx", each a model. */
+	private static void addEffects(JsonObject o, List<Fx> fx)
+	{
+		JsonArray a = new JsonArray();
+		for (Fx f : fx)
+		{
+			if (f.json != null)
+			{
+				a.add(f.json);
+			}
+		}
+		if (a.size() > 0)
+		{
+			o.add("fx", a);
+		}
+	}
+
+	/** A motion's effects, frame by frame: each effect's model once ("m", by its key), then each frame's effects there,
+	 *  their key and their vertices then ("f", one list a frame). */
+	private static final class FxTrack
+	{
+		final Map<String, JsonObject> models = new LinkedHashMap<>();
+		final List<JsonArray> rows = new ArrayList<>();
+
+		void add(List<Fx> fx)
+		{
+			JsonArray row = new JsonArray();
+			for (Fx f : fx)
+			{
+				if (!models.containsKey(f.key))
+				{
+					if (f.json == null || models.size() >= FX_MODELS)
+					{
+						continue;
+					}
+					models.put(f.key, f.json);
+				}
+				JsonObject e = new JsonObject();
+				e.addProperty("k", f.key);
+				e.addProperty("v", Kept.frame(f.x, f.y, f.z, f.n));
+				row.add(e);
+			}
+			rows.add(row);
+		}
+
+		void into(JsonObject frames)
+		{
+			if (models.isEmpty())
+			{
+				return;
+			}
+			JsonObject fx = new JsonObject(), m = new JsonObject();
+			models.forEach(m::add);
+			JsonArray f = new JsonArray();
+			rows.forEach(f::add);
+			fx.add("m", m);
+			fx.add("f", f);
+			frames.add("fx", fx);
+		}
+	}
+
+	/** The ground round them, with "The ground under my model" on: "ground", a model in theirs's own space. */
+	private void addGround(JsonObject o, Player me)
+	{
+		if (!config.ground())
+		{
+			return;
+		}
+		try
+		{
+			JsonObject g = groundJson(me);
+			if (g != null && g.getAsJsonArray("f").size() > 0)
+			{
+				o.add("ground", g);
+			}
+		}
+		catch (RuntimeException ex)
+		{
+			log.debug("outside: the ground", ex);
+		}
+	}
+
+	private JsonObject groundJson(Player me)
+	{
+		WorldView wv = me.getWorldView();
+		LocalPoint lp = me.getLocalLocation();
+		if (wv == null || lp == null)
+		{
+			return null;
+		}
+		Scene scene = wv.getScene();
+		int plane = wv.getPlane();
+		Tile[][][] tiles = scene.getTiles();
+		int[][][] hs = wv.getTileHeights();
+		int px = lp.getX(), py = lp.getY(), ph = Perspective.getTileHeight(client, lp, plane);
+		// (the client turns a model by its orientation as it draws it (Perspective.modelToCanvas): x' = x cos + z sin,
+		// z' = z cos - x sin; the ground's turned back the other way into the model's own space)
+		double ang = me.getOrientation() * Math.PI / 1024.0, cs = Math.cos(ang), sn = Math.sin(ang);
+		int sx0 = lp.getSceneX(), sy0 = lp.getSceneY();
+		List<int[]> tris = new ArrayList<>();
+		for (int dx = -GROUND_TILES; dx <= GROUND_TILES; dx++)
+		{
+			for (int dy = -GROUND_TILES; dy <= GROUND_TILES; dy++)
+			{
+				int x = sx0 + dx, y = sy0 + dy;
+				if (x < 0 || y < 0 || x >= tiles[plane].length - 1 || y >= tiles[plane][x].length - 1)
+				{
+					continue;
+				}
+				Tile t = tiles[plane][x][y];
+				if (t == null)
+				{
+					continue;
+				}
+				int bx = x * 128, by = y * 128;
+				SceneTilePaint p = t.getSceneTilePaint();
+				if (p != null)
+				{
+					int tex = p.getTexture();
+					int[] sw = {bx, hs[plane][x][y], by}, se = {bx + 128, hs[plane][x + 1][y], by};
+					int[] ne = {bx + 128, hs[plane][x + 1][y + 1], by + 128}, nw = {bx, hs[plane][x][y + 1], by + 128};
+					tris.add(tri(ne, nw, se, p.getNeColor(), p.getNwColor(), p.getSeColor(), tex, bx, by, px, py, ph, cs, sn));
+					tris.add(tri(sw, se, nw, p.getSwColor(), p.getSeColor(), p.getNwColor(), tex, bx, by, px, py, ph, cs, sn));
+				}
+				SceneTileModel tm = t.getSceneTileModel();
+				if (tm != null && tm.getFaceX() != null)
+				{
+					int[] fa = tm.getFaceX(), fb = tm.getFaceY(), fc = tm.getFaceZ(), vx = tm.getVertexX(), vy = tm.getVertexY(), vz = tm.getVertexZ();
+					int[] ca = tm.getTriangleColorA(), cb = tm.getTriangleColorB(), cc = tm.getTriangleColorC(), tt = tm.getTriangleTextureId();
+					for (int i = 0; i < fa.length; i++)
+					{
+						int[] a = {vx[fa[i]], vy[fa[i]], vz[fa[i]]}, b = {vx[fb[i]], vy[fb[i]], vz[fb[i]]}, c = {vx[fc[i]], vy[fc[i]], vz[fc[i]]};
+						tris.add(tri(a, b, c, ca[i], cb[i], cc[i], tt == null ? -1 : tt[i], bx, by, px, py, ph, cs, sn));
+					}
+				}
+			}
+		}
+		return Kept.ground(tris);
+	}
+
+	/** One of the ground's triangles as Kept.ground takes it: each corner (x, height, the scene's y) moved into the
+	 *  player's model space, its colours, its texture and each corner's place on its tile as u, v. */
+	private static int[] tri(int[] a, int[] b, int[] c, int ca, int cb, int cc, int tex, int bx, int by, int px, int py, int ph, double cs, double sn)
+	{
+		int[] q = new int[19];
+		int[][] k = {a, b, c};
+		for (int i = 0; i < 3; i++)
+		{
+			double dx = k[i][0] - px, dz = k[i][2] - py;
+			q[i * 3] = (int) Math.round(dx * cs - dz * sn);
+			q[i * 3 + 1] = k[i][1] - ph;
+			q[i * 3 + 2] = (int) Math.round(dz * cs + dx * sn);
+			q[13 + i * 2] = Math.round((k[i][0] - bx) / 128f * 4096);
+			q[14 + i * 2] = Math.round((k[i][2] - by) / 128f * 4096);
+		}
+		q[9] = ca;
+		q[10] = cb;
+		q[11] = cc;
+		q[12] = tex;
+		return q;
 	}
 
 	private JsonObject modelJson(Model m)
@@ -1276,7 +1565,26 @@ public class OutsidePlugin extends Plugin
 		}
 		// each texture it uses, as the client has it (128 x 128, 0 a see-through texel), a PNG each
 		JsonObject pics = new JsonObject();
-		for (JsonObject part : pet != null ? new JsonObject[]{o, o.getAsJsonObject("pet")} : new JsonObject[]{o})
+		List<JsonObject> parts = new ArrayList<>();
+		parts.add(o);
+		if (pet != null)
+		{
+			parts.add(o.getAsJsonObject("pet"));
+		}
+		// (11/15/2026: the effects' and the ground's textures too)
+		if (o.has("ground"))
+		{
+			parts.add(o.getAsJsonObject("ground"));
+		}
+		if (o.has("fx"))
+		{
+			o.getAsJsonArray("fx").forEach(e -> parts.add(e.getAsJsonObject()));
+		}
+		if (o.has("frames") && o.getAsJsonObject("frames").has("fx"))
+		{
+			o.getAsJsonObject("frames").getAsJsonObject("fx").getAsJsonObject("m").entrySet().forEach(e -> parts.add(e.getValue().getAsJsonObject()));
+		}
+		for (JsonObject part : parts)
 		{
 			if (!part.has("t") || client.getTextureProvider() == null)
 			{
@@ -1315,6 +1623,7 @@ public class OutsidePlugin extends Plugin
 	private int motionArmed = -1, motionStart = -1, motionLast;
 	private boolean motionIdle;
 	private JsonObject motionBase, motionPet;
+	private FxTrack motionFx = new FxTrack(), autoFx = new FxTrack();
 	private int motionCount, motionPetCount;
 	private final List<String> motionFrames = new ArrayList<>(), motionPetFrames = new ArrayList<>();
 
@@ -1390,8 +1699,12 @@ public class OutsidePlugin extends Plugin
 				}
 				return;
 			}
-			motionCount = base.getVerticesCount();
-			motionBase = modelJson(base);
+			Snap bs = snap(base, true);
+			List<Fx> bfx = effects(me, null);
+			motionCount = ownOf(bs, bfx);
+			motionBase = Kept.trim(bs.json, motionCount);
+			motionFx = new FxTrack();
+			addGround(motionBase, me);
 			Model pet = petModel();
 			motionPetCount = pet == null ? 0 : pet.getVerticesCount();
 			motionPet = pet == null ? null : modelJson(pet);
@@ -1402,9 +1715,12 @@ public class OutsidePlugin extends Plugin
 		}
 		motionLast = now;
 		Model m = me.getModel();
-		if (m != null && m.getVerticesCount() == motionCount)
+		Snap ms = m == null ? null : snap(m, false);
+		List<Fx> mfx = ms == null ? null : effects(me, motionFx.models.keySet());
+		if (ms != null && ownOf(ms, mfx) == motionCount)
 		{
-			motionFrames.add(Kept.frame(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount()));
+			motionFrames.add(Kept.frame(ms.x, ms.y, ms.z, motionCount));
+			motionFx.add(mfx);
 			Model p = motionPet == null ? null : petModel();
 			motionPetFrames.add(p != null && p.getVerticesCount() == motionPetCount
 				? Kept.frame(p.getVerticesX(), p.getVerticesY(), p.getVerticesZ(), p.getVerticesCount()) : null);
@@ -1417,6 +1733,7 @@ public class OutsidePlugin extends Plugin
 		}
 		motionArmed = -1;
 		JsonObject frames = Kept.frames(motionFrames, 1000.0 / (MOTION_EVERY * 20));
+		motionFx.into(frames);
 		JsonObject petFrames = motionPet != null && !motionPetFrames.contains(null) ? Kept.frames(motionPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
 		say("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
 		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
