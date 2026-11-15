@@ -228,6 +228,33 @@ public final class Kept
 		return o;
 	}
 
+	/** One frame of a motion: every vertex's x, y, z rounded (as "v"'s), as little-endian 16-bit numbers, in base64. */
+	public static String frame(float[] x, float[] y, float[] z, int vertices)
+	{
+		java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(vertices * 6).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+		for (int i = 0; i < vertices; i++)
+		{
+			b.putShort((short) clamp(Math.round(x[i])));
+			b.putShort((short) clamp(Math.round(y[i])));
+			b.putShort((short) clamp(Math.round(z[i])));
+		}
+		return java.util.Base64.getEncoder().encodeToString(b.array());
+	}
+
+	/** A motion's frames: {"fps", "v": [each frame (frame)]}. */
+	public static JsonObject frames(java.util.List<String> frames, double fps)
+	{
+		JsonObject o = new JsonObject();
+		o.addProperty("fps", Math.round(fps * 100) / 100.0);
+		JsonArray v = new JsonArray();
+		for (String f : frames)
+		{
+			v.add(f);
+		}
+		o.add("v", v);
+		return o;
+	}
+
 	/** A texture coordinate times 4096, kept to what the relay takes. */
 	private static int fin(float t)
 	{

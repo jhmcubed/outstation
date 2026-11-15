@@ -72,4 +72,21 @@ public class KeptTest
 		assertEquals("[-1,7]", m.get("t").toString());
 		assertEquals("[0,0,0,0,0,0,0,0,4096,0,0,4096]", m.get("uv").toString());   // (the texture triangle is the face)
 	}
+
+	@Test
+	public void aMotionsFramesAsLittleEndianNumbers()
+	{
+		String f = Kept.frame(new float[]{1, -2}, new float[]{3, 9000}, new float[]{0, 256}, 2);
+		byte[] b = java.util.Base64.getDecoder().decode(f);
+		assertEquals(12, b.length);
+		java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(b).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+		assertEquals(1, bb.getShort());
+		assertEquals(3, bb.getShort());
+		assertEquals(0, bb.getShort());
+		assertEquals(-2, bb.getShort());
+		assertEquals(8192, bb.getShort());   // (kept in range)
+		assertEquals(256, bb.getShort());
+		JsonObject o = Kept.frames(java.util.Arrays.asList(f, f), 12.5);
+		assertEquals("{\"fps\":12.5,\"v\":[\"" + f + "\",\"" + f + "\"]}", o.toString());
+	}
 }

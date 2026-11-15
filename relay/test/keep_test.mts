@@ -37,6 +37,18 @@ test("a model as the game lit it, with its textures (11/15/2026)", () => {
   strictEqual(typeof keepShape("model", { ...m, b: 9 }), "string");
 });
 
+test("a model with its pet and their motions (11/15/2026)", () => {
+  const frame = Buffer.alloc(18).toString("base64");   // (three vertices, x y z each, 16 bits)
+  const pet = { v: [0, 0, 0, 5, 0, 0, 0, 5, 0], f: [0, 1, 2], c: [100], frames: { fps: 12.5, v: [frame] } };
+  const m = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100], frames: { fps: 12.5, v: [frame, frame] }, pet };
+  deepStrictEqual(keepShape("model", m), m);
+  strictEqual(typeof keepShape("model", { ...m, frames: { fps: 12.5, v: ["AAAA"] } }), "string");   // (not every vertex)
+  strictEqual(typeof keepShape("model", { ...m, frames: { fps: 0, v: [frame] } }), "string");
+  strictEqual(typeof keepShape("model", { ...m, pet: { ...pet, pet } }), "object");   // (a pet's own pet left out)
+  deepStrictEqual((keepShape("model", { ...m, pet: { ...pet, pet } }) as Record<string, Record<string, unknown>>).pet.pet, undefined);
+  strictEqual(typeof keepShape("model", { ...m, pet: { v: [1] } }), "string");
+});
+
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {
   strictEqual(emoteKind(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "png");
   strictEqual(emoteKind(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), "jpg");
