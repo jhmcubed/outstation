@@ -62,4 +62,34 @@ public class ReportsTest
 		assertEquals(2, d.getAsJsonObject("extra").getAsJsonArray("items").size());
 		assertNull(Reports.loot("Cow", Arrays.asList(new Reports.Item(526, "Bones", 1, 100)), 100_000, "a"));
 	}
+
+	@Test
+	public void diariesCombatTasksSlayerAndQuests()
+	{
+		// (11/15/2026: the game's own lines, as Dink reads them)
+		JsonObject d = Reports.fromChat("Congratulations! You have completed all of the hard tasks in the Varrock area. Speak to Toby to claim your reward.", "sburb");
+		assertEquals("ACHIEVEMENT_DIARY", d.get("type").getAsString());
+		assertEquals("Varrock", d.getAsJsonObject("extra").get("area").getAsString());
+		assertEquals("HARD", d.getAsJsonObject("extra").get("difficulty").getAsString());
+		JsonObject c = Reports.fromChat("Congratulations, you've completed an elite combat task: Moving Collateral (4 points).", "sburb");
+		assertEquals("COMBAT_ACHIEVEMENT", c.get("type").getAsString());
+		assertEquals("Elite", c.getAsJsonObject("extra").get("tier").getAsString());
+		assertEquals("Moving Collateral", c.getAsJsonObject("extra").get("task").getAsString());
+		assertEquals("180 Abyssal demons", Reports.slayerTask("You have completed your task! You killed 180 Abyssal demons. You gained 10,800 xp."));
+		assertNull(Reports.slayerTask("You have completed 5 tasks."));
+		JsonObject s = Reports.slayerDone("You've completed 312 tasks and received 15 points, giving you a total of 1,450; return to a Slayer master.", "180 Abyssal demons", "sburb");
+		assertEquals("SLAYER", s.get("type").getAsString());
+		assertEquals(312, s.getAsJsonObject("extra").get("slayerCompleted").getAsInt());
+		assertEquals(15, s.getAsJsonObject("extra").get("slayerPoints").getAsInt());
+		assertEquals(0, Reports.slayerDone("You've completed 3 Wilderness tasks.", "40 Lava dragons", "a").getAsJsonObject("extra").get("slayerPoints").getAsInt());
+		assertNull(Reports.slayerDone("Something else.", "x", "a"));
+		JsonObject q = Reports.quest("Dragon Slayer II", 180, 216, "sburb");
+		assertEquals("QUEST", q.get("type").getAsString());
+		assertEquals(180, q.getAsJsonObject("extra").get("completedQuests").getAsInt());
+		java.util.List<String> fresh = Progress.newlyDone(
+			Progress.quests(1, 3, Arrays.asList("A"), Arrays.asList("B"), Arrays.asList("C")),
+			Progress.quests(2, 3, Arrays.asList("A", "B"), Arrays.asList(), Arrays.asList("C")));
+		assertEquals(Arrays.asList("B"), fresh);
+		assertTrue(Progress.newlyDone(null, Progress.quests(2, 3, Arrays.asList("A"), Arrays.asList(), Arrays.asList())).isEmpty());
+	}
 }

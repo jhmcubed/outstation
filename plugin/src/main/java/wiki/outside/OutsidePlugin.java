@@ -168,6 +168,8 @@ public class OutsidePlugin extends Plugin
 	private long progressSig = Long.MIN_VALUE;
 	private int progressAt = -1;
 	private String slayerKey;
+	/** the slayer task the game's just said is done, till its next line gives the count and the points */
+	private String slayerDoneTask;
 	private volatile WebSocket socket;
 	private volatile boolean open;
 	/** stopped for good until the key changes (a wrong key, or another RuneLite took over) */
@@ -577,7 +579,13 @@ public class OutsidePlugin extends Plugin
 			{
 				progressSig = sig;
 				progressAt = ticks;
+				JsonObject before = questsSeen;
 				questsSeen = Progress.readQuests(client);
+				// (a quest that's done now and wasn't at the last read, this session: a field report; 11/15/2026)
+				for (String q : Progress.newlyDone(before, questsSeen))
+				{
+					report(Reports.quest(q, questsSeen.getAsJsonArray("done").size(), questsSeen.get("total").getAsInt(), myName()));
+				}
 				diariesSeen = Progress.readDiaries(client);
 			}
 			m.put("quests", questsSeen);
@@ -826,7 +834,23 @@ public class OutsidePlugin extends Plugin
 	{
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
-			report(Reports.fromChat(Text.removeTags(e.getMessage()), myName()));
+			String said = Text.removeTags(e.getMessage());
+			report(Reports.fromChat(said, myName()));
+			// (a slayer task's end comes in two lines: the task, then the count and the points; 11/15/2026)
+			String task = Reports.slayerTask(said);
+			if (task != null)
+			{
+				slayerDoneTask = task;
+			}
+			else if (slayerDoneTask != null)
+			{
+				JsonObject done = Reports.slayerDone(said, slayerDoneTask, myName());
+				if (done != null)
+				{
+					slayerDoneTask = null;
+					report(done);
+				}
+			}
 		}
 		if (!config.charges() || (e.getType() != ChatMessageType.GAMEMESSAGE && e.getType() != ChatMessageType.SPAM))
 		{
@@ -1348,6 +1372,7 @@ public class OutsidePlugin extends Plugin
 	private void characterChanged()
 	{
 		progressAt = -1;
+		questsSeen = null;
 		slayerKey = null;
 		slayerSeen = null;
 		Attach any = Attach.parse(stationKey(), gson), a = key();

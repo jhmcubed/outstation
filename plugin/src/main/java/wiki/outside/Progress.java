@@ -128,6 +128,26 @@ final class Progress
 		return o;
 	}
 
+	/** The quests done in `now` and not in `before` (none when there's no before: the first read of a session). */
+	static List<String> newlyDone(JsonObject before, JsonObject now)
+	{
+		List<String> out = new java.util.ArrayList<>();
+		if (before == null || now == null)
+		{
+			return out;
+		}
+		java.util.Set<String> had = new java.util.HashSet<>();
+		before.getAsJsonArray("done").forEach(e -> had.add(e.getAsString()));
+		now.getAsJsonArray("done").forEach(e ->
+		{
+			if (!had.contains(e.getAsString()))
+			{
+				out.add(e.getAsString());
+			}
+		});
+		return out;
+	}
+
 	private static JsonArray names(List<String> list)
 	{
 		JsonArray a = new JsonArray();

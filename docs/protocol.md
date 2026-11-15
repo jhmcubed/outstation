@@ -782,7 +782,10 @@ in the order Dink gave them.
 **The plugin's own reports** (11/15/2026, the plugin first): a player with no outstation has no Dink going through one,
 so the Outside plugin posts its own to this route with `&from=plugin`, in Dink's shape (`type`, `content`, `extra`):
 kill counts, collection log slots, pets and clues from the game's messages, levels from the stats, and a monster's
-loot worth the plugin's "Drops worth at least" or more (plugin/src/main/java/wiki/outside/Reports.java). While the
+loot worth the plugin's "Drops worth at least" or more (plugin/src/main/java/wiki/outside/Reports.java); and since
+11/15/2026 diary tiers (`ACHIEVEMENT_DIARY`), combat tasks (`COMBAT_ACHIEVEMENT`) and slayer tasks (`SLAYER`, its two
+lines: the task, then the count and the points) from the game's messages as Dink reads them, and a quest (`QUEST`) when
+the quest list read again finds it done (the first read of a session tells nothing). While the
 outstation transmits, the relay drops them (204, nothing kept): Dink's come through it then, and nothing's told twice.
 
 **Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting), or

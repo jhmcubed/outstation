@@ -23,6 +23,11 @@ final class Reports
 	private static final Pattern CLOG = Pattern.compile("^New item added to your collection log: (.+?)\\s*$");
 	private static final Pattern CLUE = Pattern.compile("^You have completed ([\\d,]+) (beginner|easy|medium|hard|elite|master) Treasure Trails?\\.?\\s*$",
 		Pattern.CASE_INSENSITIVE);
+	// (11/15/2026: Dink's DiaryNotifier, CombatTaskNotifier and SlayerNotifier patterns)
+	private static final Pattern DIARY = Pattern.compile("^Congratulations! You have completed all of the (.+) tasks in the (.+) area\\..*$");
+	private static final Pattern COMBAT = Pattern.compile("^Congratulations, you've completed an? (\\w+) combat task: (.+?)(?:\\s+\\(\\d+ points?\\))?\\.?$");
+	private static final Pattern SLAYER_TASK = Pattern.compile("^You have completed your task! You killed ([\\d,]+ [^.]+)\\..*$");
+	private static final Pattern SLAYER_DONE = Pattern.compile("^You've completed (?:at least )?([\\d,]+) (?:Wilderness |Mortimer )?tasks?(?: and received ([\\d,]+) points, giving you a total of ([\\d,]+))?.*$");
 	private static final String[] PET = {
 		"You have a funny feeling like you're being followed.",
 		"You feel something weird sneaking into your backpack.",
@@ -64,6 +69,23 @@ final class Reports
 			x.addProperty("numberCompleted", number(t.group(1)));
 			return report("CLUE", who + " has completed " + t.group(1) + " " + t.group(2).toLowerCase() + " clues", x);
 		}
+		Matcher d = DIARY.matcher(m);
+		if (d.matches())
+		{
+			JsonObject x = new JsonObject();
+			x.addProperty("area", d.group(2));
+			x.addProperty("difficulty", d.group(1).toUpperCase(java.util.Locale.ROOT));
+			return report("ACHIEVEMENT_DIARY", who + " has completed the " + d.group(1).toLowerCase(java.util.Locale.ROOT) + " " + d.group(2) + " diary", x);
+		}
+		Matcher ca = COMBAT.matcher(m);
+		if (ca.matches())
+		{
+			JsonObject x = new JsonObject();
+			String tier = ca.group(1).substring(0, 1).toUpperCase(java.util.Locale.ROOT) + ca.group(1).substring(1).toLowerCase(java.util.Locale.ROOT);
+			x.addProperty("tier", tier);
+			x.addProperty("task", ca.group(2));
+			return report("COMBAT_ACHIEVEMENT", who + " has completed the " + tier.toLowerCase(java.util.Locale.ROOT) + " combat task " + ca.group(2), x);
+		}
 		for (int i = 0; i < PET.length; i++)
 		{
 			if (m.equals(PET[i]))
@@ -74,6 +96,39 @@ final class Reports
 			}
 		}
 		return null;
+	}
+
+	/** The task just finished, from the game's "You have completed your task!" line (the count and the monster), or null. */
+	static String slayerTask(String msg)
+	{
+		Matcher t = msg == null ? null : SLAYER_TASK.matcher(msg.trim());
+		return t != null && t.matches() ? t.group(1) : null;
+	}
+
+	/** The line after it, "You've completed N tasks…", as the slayer report for that task; null when it isn't. */
+	static JsonObject slayerDone(String msg, String task, String who)
+	{
+		Matcher c = msg == null || task == null ? null : SLAYER_DONE.matcher(msg.trim());
+		if (c == null || !c.matches())
+		{
+			return null;
+		}
+		JsonObject x = new JsonObject();
+		x.addProperty("slayerTask", task);
+		// (numbers, not the game's "1,450": the relay reads them with parseInt)
+		x.addProperty("slayerCompleted", number(c.group(1)));
+		x.addProperty("slayerPoints", c.group(2) == null ? 0 : number(c.group(2)));
+		return report("SLAYER", who + " has completed a slayer task: " + task, x);
+	}
+
+	/** A quest done (11/15/2026: told by the quest list read again, Progress), with how many are done of how many. */
+	static JsonObject quest(String name, int done, int total, String who)
+	{
+		JsonObject x = new JsonObject();
+		x.addProperty("questName", name);
+		x.addProperty("completedQuests", done);
+		x.addProperty("totalQuests", total);
+		return report("QUEST", who + " has completed a quest: " + name, x);
 	}
 
 	/** Levels gained (a skill's name -> its new level), as one report. */

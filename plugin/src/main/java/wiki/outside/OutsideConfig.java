@@ -264,8 +264,8 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "reports",
 		name = "Levels, kills, drops and log slots",
-		description = "Your levels as you gain them, kill counts, collection log slots, pets, clue counts and drops worth at"
-			+ " least the amount below, as the game tells you them, for your page's event log and outside.wiki's feed (as"
+		description = "Your levels as you gain them, kill counts, collection log slots, pets, clue counts, quests, diary tiers,"
+			+ " combat tasks, slayer tasks and drops worth at least the amount below, as the game tells you them, for your page's event log and outside.wiki's feed (as"
 			+ " Dink would send them; while your outstation transmits, Dink's go through it instead)",
 		position = 12
 	)
