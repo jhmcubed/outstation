@@ -60,6 +60,30 @@ public interface OutsideConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "progress",
+		name = "Quests, diaries and combat achievements",
+		description = "Your quests (done and started) and quest points, each Achievement Diary's tiers and tasks, and your combat"
+			+ " achievements' points and tasks by tier",
+		position = 3
+	)
+	default boolean progress()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "slayer",
+		name = "My slayer task",
+		description = "Your slayer task (the monster, how many are left of how many, and where if your master named it),"
+			+ " your slayer points and your task streak",
+		position = 3
+	)
+	default boolean slayer()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "wilderness",
 		name = "In the Wilderness too",
 		description = "Off (to begin with): in the Wilderness, a PvP area or on a PvP or Deadman world, nothing more is"

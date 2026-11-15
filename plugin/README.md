@@ -24,6 +24,8 @@ To your relay (Jace's, on Cloudflare, unless your key says another), over one co
 - your character's name, your world, and your account type (normal, ironman…)
 - **worn and carried** (one switch): what's in each equipment slot and inventory slot; the looting bag's contents once you've looked in it; the seed box's and the chugging barrel's once you've opened them (11/14/2026); the rune pouch's runes; Dizana's quiver's ammunition; and each of those items' name and Grand Exchange price, once each
 - **skills** (one switch): each skill's level, boosted level and experience
+- **quests, diaries and combat achievements** (one switch, on; 11/15/2026): your quest points, which quests you've done and which you've started (RuneLite's own quest list), each Achievement Diary area's tiers and how many of its tasks you've done, and your combat achievements' points and tasks done in each tier
+- **my slayer task** (one switch, on; 11/15/2026): the monster you're assigned, how many are left of how many, the area if your master named one, your slayer points and your task streak, read as RuneLite's own slayer plugin reads them
 - **hitpoints, prayer, run and special** (one switch), and which prayers are on
 - **item charges** (one switch, on; 11/14/2026): each worn or carried item's charges, as the game tells you them in its chat when you check one or as it's used (only the number, by the item; kept on this RuneLite's profile so they're known after a restart)
 - **Doom of Mokhaiotl delves** (one switch, on; 11/14/2026): when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level and the waves past 8, as the Delve Calculator plugin reads it ("Credits")
@@ -45,7 +47,7 @@ Only what changed goes, at most once a game tick (hitpoints and the like alone, 
 
 ## Credits
 
-The Doom of Mokhaiotl's board is read where the Delve Calculator plugin reads it (github.com/Speaax/Delve-calculator: its scoreboard interface, 920, and each level's count in child 46 + 3 a level), BSD 2-Clause, Copyright (c) 2025, Speaax. The character's model is read as RuneProfile's exporter reads it (github.com/ReinhardtR/runeprofile-plugin, its ModelMeshBuilder: the hidden faces' sentinel, the see-through ones left out), BSD 2-Clause, Copyright (c) 2022, Reinhardt Rijna. Both under the licence below, with their own names.
+The Doom of Mokhaiotl's board is read where the Delve Calculator plugin reads it (github.com/Speaax/Delve-calculator: its scoreboard interface, 920, and each level's count in child 46 + 3 a level), BSD 2-Clause, Copyright (c) 2025, Speaax. The character's model is read as RuneProfile's exporter reads it (github.com/ReinhardtR/runeprofile-plugin, its ModelMeshBuilder: the hidden faces' sentinel, the see-through ones left out), BSD 2-Clause, Copyright (c) 2022, Reinhardt Rijna. The Achievement Diaries' completion rule (Karamja's first three tiers at 2) and the game's diary summary scripts are read as Dink reads them (github.com/pajlads/DinkPlugin, its AchievementDiary and DiaryNotifier), BSD 2-Clause, Copyright (c) 2022, Jake Barter, and the slayer task as RuneLite's own slayer plugin reads it (github.com/runelite/runelite, its SlayerPlugin: the task, boss and area tables and their columns), BSD 2-Clause, Copyright (c) 2017, Tyler, and (c) 2018, Shaun Dreclin. All under the licence below, with their own names.
 
 The shooting stars' landing sites (`Sites.java`) are Shooting Star Info's (github.com/pwatts6060/runelite-plugins, its `Location.java`), less its Wilderness sites and Prifddinas's, under its licence:
 

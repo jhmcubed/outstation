@@ -49,6 +49,8 @@ public class OutsidePanel extends PluginPanel
 		void claim();
 
 		void openYear();
+
+		void copyKey();
 	}
 
 	/** a motion on their page, as the relay lists it */
@@ -78,6 +80,7 @@ public class OutsidePanel extends PluginPanel
 	private final JLabel proofLine = small(" ");
 	private final JLabel otherLine = small(" ");
 	private final JLabel yearStatus = small(" ");
+	private final JLabel keyStatus = small(" ");
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -158,6 +161,18 @@ public class OutsidePanel extends PluginPanel
 		yearStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		page.add(left(yearStatus));
 
+		page.add(Box.createVerticalStrut(14));
+		// (11/15/2026, "Open your own" led by the plugin: an outstation transmits to the same page with the same key, and a
+		// key made here is kept with the account, not in the settings, so this is how it's handed over)
+		page.add(left(heading("A transmission")));
+		page.add(left(small("<html><div style='width:155px'>The outstation program adds your game itself to your page: a few frames"
+			+ " a second, its sound if you want, a chat. It takes this page's key: copy it, and paste it into its first screen."
+			+ " Keep it to yourself: whoever has it can send to your page.</div></html>")));
+		page.add(Box.createVerticalStrut(6));
+		page.add(wide(button("Copy my station key", hooks::copyKey)));
+		keyStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(keyStatus));
+
 		page.setVisible(false);
 		col.add(page);
 
@@ -184,6 +199,12 @@ public class OutsidePanel extends PluginPanel
 			}
 			revalidate();
 		});
+	}
+
+	/** A line under "Copy my station key". */
+	public void keyStatus(String words)
+	{
+		SwingUtilities.invokeLater(() -> keyStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
 	/** A line under "Open my year". */

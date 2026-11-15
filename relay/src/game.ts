@@ -29,6 +29,14 @@ type Slot = [number, number] | null;
 type Item = [string, number]; // its name, its price on the Grand Exchange
 export type Fields = Record<string, unknown> & { items?: Record<string, Item> };
 
+// (11/15/2026) the achievement diaries' areas, as the plugin names them (Progress.AREAS), in this order; a quest list at
+// most NAMES_MOST names, each at most 80 characters
+export const DIARY_AREAS = ["Ardougne", "Desert", "Falador", "Fremennik", "Kandarin", "Karamja", "Kourend & Kebos",
+  "Lumbridge & Draynor", "Morytania", "Varrock", "Western Provinces", "Wilderness"];
+const NAMES_MOST = 400;
+const names = (v: unknown): string[] | undefined =>
+  Array.isArray(v) && v.length <= NAMES_MOST && v.every((x) => typeof x === "string") ? v.map((x) => oneLine(x, 80)) : undefined;
+
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** A whole number from 0 to most, or undefined. */
@@ -106,6 +114,37 @@ export function gameFields(g: unknown): Fields {
   // completed at each level, 1 to 8, then the waves past 8, as the Delve Calculator plugin reads it; null, not read yet
   if (g.delve === null) out.delve = null;
   else if (Array.isArray(g.delve) && g.delve.length === 9 && g.delve.every((x) => whole(x) !== undefined)) out.delve = g.delve as number[];
+  // (11/15/2026, Jace: "add quests, achievement diaries, combat achievements and slayer tasks to the plugin"; the
+  // plugin's Progress.java): each whole or null (switched off: taken off the page)
+  if (g.quests === null) out.quests = null;
+  else if (isObj(g.quests)) {
+    const q = g.quests, points = whole(q.points), total = whole(q.total), done = names(q.done), started = names(q.started), todo = names(q.todo);
+    if (points !== undefined && total !== undefined && done && started && todo) out.quests = { points, total, done, started, todo };
+  }
+  if (g.diaries === null) out.diaries = null;
+  else if (isObj(g.diaries)) {
+    // (the twelve areas by name, in this order; four tiers 0 or 1, then the area's tasks done and in all)
+    const d: Record<string, number[]> = {};
+    for (const a of DIARY_AREAS) {
+      const v = g.diaries[a];
+      if (Array.isArray(v) && v.length === 6 && v.every((x, i) => whole(x, i < 4 ? 1 : GAME_INT) !== undefined)) d[a] = v as number[];
+    }
+    if (Object.keys(d).length) out.diaries = d;
+  }
+  if (g.combat === null) out.combat = null;
+  else if (isObj(g.combat)) {
+    const c = g.combat, points = whole(c.points), t = c.tiers;
+    if (points !== undefined && Array.isArray(t) && t.length === 6 && t.every((x) => pair(x) !== undefined))
+      out.combat = { points, tiers: (t as unknown[]).map((x) => pair(x) as [number, number]) };
+  }
+  if (g.slayer === null) out.slayer = null;
+  else if (isObj(g.slayer)) {
+    const s = g.slayer, left = whole(s.left), of = whole(s.of), points = whole(s.points), streak = whole(s.streak);
+    const task = s.task === null ? null : typeof s.task === "string" ? oneLine(s.task, 80) : undefined;
+    const area = s.area === null ? null : typeof s.area === "string" ? oneLine(s.area, 80) : undefined;
+    if (left !== undefined && of !== undefined && points !== undefined && streak !== undefined && task !== undefined && area !== undefined)
+      out.slayer = { task, left, of, area, points, streak };
+  }
   // (11/15/2026, the live view: the animation they're doing now, its id or -1, with the gear it's in; null, none)
   if (g.anim === null) out.anim = null;
   else if (Array.isArray(g.anim) && g.anim.length === 2 && Number.isInteger(g.anim[0]) && (g.anim[0] as number) >= -1 && (g.anim[0] as number) < 1_000_000

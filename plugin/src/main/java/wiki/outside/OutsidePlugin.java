@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonNull;
 import com.google.inject.Provides;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -109,6 +110,8 @@ public class OutsidePlugin extends Plugin
 	static final String HOME_RELAY = "https://relay.ghillie.workers.dev";
 	/** vitals alone (run energy draining as you run) go at most this often, in ticks */
 	private static final int VITALS_EVERY = 5;
+	/** quests and diaries read again at least this often, in ticks (5 minutes) */
+	private static final int PROGRESS_EVERY = 500;
 	/** the longest wait between tries to reach the relay, in seconds */
 	private static final int RETRY_MOST = 60;
 
@@ -159,6 +162,12 @@ public class OutsidePlugin extends Plugin
 	private volatile boolean resend;
 	/** sending held while somewhere dangerous (the Wilderness, a PvP area or world: held()), and said so once */
 	private boolean paused;
+	// (quests and diaries, read again when what they depend on changes, or every 5 minutes; the slayer task's names
+	// looked up again when its varps change; 11/15/2026)
+	private JsonObject questsSeen, diariesSeen, slayerSeen;
+	private long progressSig = Long.MIN_VALUE;
+	private int progressAt = -1;
+	private String slayerKey;
 	private volatile WebSocket socket;
 	private volatile boolean open;
 	/** stopped for good until the key changes (a wrong key, or another RuneLite took over) */
@@ -560,6 +569,41 @@ public class OutsidePlugin extends Plugin
 				skills.add(s.getName(), v);
 			}
 			m.put("skills", skills);
+		}
+		if (config.progress())
+		{
+			long sig = Progress.signature(client);
+			if (sig != progressSig || progressAt < 0 || ticks - progressAt >= PROGRESS_EVERY)
+			{
+				progressSig = sig;
+				progressAt = ticks;
+				questsSeen = Progress.readQuests(client);
+				diariesSeen = Progress.readDiaries(client);
+			}
+			m.put("quests", questsSeen);
+			m.put("diaries", diariesSeen);
+			m.put("combat", Progress.readCombat(client));
+		}
+		else
+		{
+			// (switched off: taken off their page)
+			m.put("quests", JsonNull.INSTANCE);
+			m.put("diaries", JsonNull.INSTANCE);
+			m.put("combat", JsonNull.INSTANCE);
+		}
+		if (config.slayer())
+		{
+			String k = Progress.slayerKey(client);
+			if (!k.equals(slayerKey) || slayerSeen == null)
+			{
+				slayerKey = k;
+				slayerSeen = Progress.readSlayer(client);
+			}
+			m.put("slayer", slayerSeen);
+		}
+		else
+		{
+			m.put("slayer", JsonNull.INSTANCE);
 		}
 		if (config.vitals())
 		{
@@ -1253,6 +1297,26 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
+			public void copyKey()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					panel.keyStatus("no key for this character yet");
+					return;
+				}
+				try
+				{
+					java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(stationKey().trim()), null);
+					panel.keyStatus("copied: paste it into the outstation's first screen");
+				}
+				catch (IllegalStateException | java.awt.HeadlessException ex)
+				{
+					panel.keyStatus("the clipboard's busy: try again");
+				}
+			}
+
+			@Override
 			public void openPage()
 			{
 				Attach a = key();
@@ -1283,6 +1347,9 @@ public class OutsidePlugin extends Plugin
 	/** Another character logged in (or the first, once its name is known): the side tab, and the relay on their key. */
 	private void characterChanged()
 	{
+		progressAt = -1;
+		slayerKey = null;
+		slayerSeen = null;
 		Attach any = Attach.parse(stationKey(), gson), a = key();
 		if (panel != null)
 		{

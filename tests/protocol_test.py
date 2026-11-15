@@ -1876,6 +1876,29 @@ class Game(Base):
         with self.assertRaises(asyncio.TimeoutError):
             await next_of(v, "game", timeout=0.5)
 
+    async def test_quests_diaries_combat_achievements_and_slayer_pass_cleaned_and_null_takes_them_off(self):
+        # (11/15/2026: the plugin's Progress.java; an unknown diary area, a tier past 1 and a slayer without its task's
+        # field are left out; null for each takes it off the page)
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        sent = {"quests": {"points": 201, "total": 216, "done": ["Cook's Assistant", "Dragon\nSlayer I"], "started": ["Desert Treasure II"], "todo": ["Sins of the Father"]},
+                "diaries": {"Varrock": [1, 1, 0, 0, 30, 42], "Karamja": [1, 2, 0, 0, 1, 1], "Narnia": [1, 1, 1, 1, 9, 9]},
+                "combat": {"points": 1234, "tiers": [[33, 33], [41, 115], [30, 304], [12, 820], [2, 1465], [0, 2005]]},
+                "slayer": {"task": "Abyssal demons", "left": 87, "of": 180, "area": "Catacombs of Kourend", "points": 1450, "streak": 312}}
+        await g.send(json.dumps({"game": sent}))
+        got = await next_of(v, "game")
+        self.assertEqual(got["quests"]["done"], ["Cook's Assistant", "Dragon Slayer I"])
+        self.assertEqual(got["diaries"], {"Varrock": [1, 1, 0, 0, 30, 42]})
+        self.assertEqual(got["combat"], sent["combat"])
+        self.assertEqual(got["slayer"], sent["slayer"])
+        await g.send(json.dumps({"game": {"slayer": {"task": None, "left": 0, "of": 0, "area": None, "points": 1450, "streak": 313}}}))
+        self.assertIsNone((await next_of(v, "game"))["slayer"]["task"])
+        await g.send(json.dumps({"game": {"quests": None, "diaries": None, "combat": None, "slayer": None}}))
+        got = await next_of(v, "game")
+        self.assertEqual([got[k] for k in ("quests", "diaries", "combat", "slayer")], [None] * 4)
+        self.assertIsNone(self.read()[1]["game"]["quests"])
+
     async def test_a_second_game_socket_replaces_the_first(self):
         old = await self.game()
         await self.pause()

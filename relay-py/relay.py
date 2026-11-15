@@ -660,6 +660,18 @@ def game_slots(v, most):
 CHARGES_MOST = 64   # (game.ts's)
 
 
+# (11/15/2026) the achievement diaries' areas in the plugin's order, and a quest list's most names: game.ts's
+DIARY_AREAS = ["Ardougne", "Desert", "Falador", "Fremennik", "Kandarin", "Karamja", "Kourend & Kebos",
+               "Lumbridge & Draynor", "Morytania", "Varrock", "Western Provinces", "Wilderness"]
+NAMES_MOST = 400
+
+
+def game_names(v):
+    if isinstance(v, list) and len(v) <= NAMES_MOST and all(isinstance(x, str) for x in v):
+        return [one_line(x, 80) for x in v]
+    return None
+
+
 def game_fields(g):
     """A {"game"} message's fields as they're kept: each known field checked and cleaned (its words one line, its numbers
     whole), one that isn't its shape left out, and unknown ones left out. Always in this order, whatever order they
@@ -713,6 +725,41 @@ def game_fields(g):
             if GAME_ID.fullmatch(k) and int(k) <= GAME_INT and n is not None:
                 charges[k] = n
         out["charges"] = charges
+    # (11/15/2026: quests, diaries, combat achievements, the slayer task; the plugin's Progress.java: game.ts's, the same)
+    if "quests" in g and g["quests"] is None:
+        out["quests"] = None
+    elif isinstance(g.get("quests"), dict):
+        q = g["quests"]
+        points, total = game_whole(q.get("points")), game_whole(q.get("total"))
+        done, started, todo = game_names(q.get("done")), game_names(q.get("started")), game_names(q.get("todo"))
+        if points is not None and total is not None and done is not None and started is not None and todo is not None:
+            out["quests"] = {"points": points, "total": total, "done": done, "started": started, "todo": todo}
+    if "diaries" in g and g["diaries"] is None:
+        out["diaries"] = None
+    elif isinstance(g.get("diaries"), dict):
+        d = {}
+        for a in DIARY_AREAS:
+            v = g["diaries"].get(a)
+            if isinstance(v, list) and len(v) == 6 and all(game_whole(x, 1 if i < 4 else GAME_INT) is not None for i, x in enumerate(v)):
+                d[a] = [game_whole(x) for x in v]
+        if d:
+            out["diaries"] = d
+    if "combat" in g and g["combat"] is None:
+        out["combat"] = None
+    elif isinstance(g.get("combat"), dict):
+        c = g["combat"]
+        points, t = game_whole(c.get("points")), c.get("tiers")
+        if points is not None and isinstance(t, list) and len(t) == 6 and all(game_pair(x) is not _BAD for x in t):
+            out["combat"] = {"points": points, "tiers": [game_pair(x) for x in t]}
+    if "slayer" in g and g["slayer"] is None:
+        out["slayer"] = None
+    elif isinstance(g.get("slayer"), dict):
+        s = g["slayer"]
+        nums = [game_whole(s.get(k)) for k in ("left", "of", "points", "streak")]
+        task = None if s.get("task") is None and "task" in s else one_line(s["task"], 80) if isinstance(s.get("task"), str) else False
+        area = None if s.get("area") is None and "area" in s else one_line(s["area"], 80) if isinstance(s.get("area"), str) else False
+        if all(n is not None for n in nums) and task is not False and area is not False:
+            out["slayer"] = {"task": task, "left": nums[0], "of": nums[1], "area": area, "points": nums[2], "streak": nums[3]}
     # (11/15/2026, the live view: the animation now, its id or -1, with the gear's mark; null, none: game.ts's)
     if "anim" in g and g["anim"] is None:
         out["anim"] = None
