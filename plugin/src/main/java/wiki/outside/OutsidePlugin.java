@@ -804,7 +804,11 @@ public class OutsidePlugin extends Plugin
 			say("your model isn't there to send yet: try ::outsidemodel in a moment");
 			return;
 		}
-		keep("model", wholeModel(m, petModel(), null, null));
+		// (each written out the moment it's read: the client hands out one shared model for anything animated, so reading
+		// the pet's after the player's overwrote the player's; 11/15/2026, Jace saw only his pet)
+		JsonObject player = modelJson(m);
+		Model pet = petModel();
+		keep("model", wholeModel(player, pet == null ? null : modelJson(pet), null, null));
 	}
 
 	/** The pet following them (11/15/2026, Jace: "one thing i would like to have it do is capture the pet"), or null. */
@@ -826,16 +830,16 @@ public class OutsidePlugin extends Plugin
 
 	/** The player's model, their pet's beside it (if one's following), each with the frames of a motion if one was
 	 *  recorded, every texture either uses and the brightness the player has the game at (the palette's). */
-	private JsonObject wholeModel(Model m, Model pet, JsonObject frames, JsonObject petFrames)
+	private JsonObject wholeModel(JsonObject o, JsonObject petJson, JsonObject frames, JsonObject petFrames)
 	{
-		JsonObject o = modelJson(m);
+		JsonObject pet = petJson;
 		if (frames != null)
 		{
 			o.add("frames", frames);
 		}
 		if (pet != null)
 		{
-			JsonObject p = modelJson(pet);
+			JsonObject p = pet;
 			if (petFrames != null)
 			{
 				p.add("frames", petFrames);
@@ -882,7 +886,8 @@ public class OutsidePlugin extends Plugin
 	private static final int MOTION_EVERY = 4, MOTION_MOST = 50, MOTION_WAIT = 400, MOTION_IDLE = 150;
 	private int motionArmed = -1, motionStart = -1, motionLast;
 	private boolean motionIdle;
-	private Model motionBase, motionPet;
+	private JsonObject motionBase, motionPet;
+	private int motionCount, motionPetCount;
 	private final List<String> motionFrames = new ArrayList<>(), motionPetFrames = new ArrayList<>();
 
 	private void armMotion()
@@ -918,13 +923,18 @@ public class OutsidePlugin extends Plugin
 			motionLast = now - MOTION_EVERY;
 			motionFrames.clear();
 			motionPetFrames.clear();
-			motionBase = me.getModel();
-			motionPet = petModel();
-			if (motionBase == null)
+			// (each written out as it's read: one shared model object for anything animated)
+			Model base = me.getModel();
+			if (base == null)
 			{
 				motionArmed = -1;
 				return;
 			}
+			motionCount = base.getVerticesCount();
+			motionBase = modelJson(base);
+			Model pet = petModel();
+			motionPetCount = pet == null ? 0 : pet.getVerticesCount();
+			motionPet = pet == null ? null : modelJson(pet);
 		}
 		if (now - motionLast < MOTION_EVERY)
 		{
@@ -932,11 +942,11 @@ public class OutsidePlugin extends Plugin
 		}
 		motionLast = now;
 		Model m = me.getModel();
-		if (m != null && m.getVerticesCount() == motionBase.getVerticesCount())
+		if (m != null && m.getVerticesCount() == motionCount)
 		{
 			motionFrames.add(Kept.frame(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount()));
 			Model p = motionPet == null ? null : petModel();
-			motionPetFrames.add(p != null && p.getVerticesCount() == motionPet.getVerticesCount()
+			motionPetFrames.add(p != null && p.getVerticesCount() == motionPetCount
 				? Kept.frame(p.getVerticesX(), p.getVerticesY(), p.getVerticesZ(), p.getVerticesCount()) : null);
 		}
 		boolean done = motionFrames.size() >= MOTION_MOST
@@ -1034,6 +1044,18 @@ public class OutsidePlugin extends Plugin
 			public void onResponse(Call call, Response r)
 			{
 				int code = r.code();
+				String why = "";
+				try
+				{
+					// (the relay's own words for what it refused: {"error": "..."})
+					String t = r.body() == null ? "" : r.body().string();
+					JsonObject e = t.startsWith("{") ? gson.fromJson(t, JsonObject.class) : null;
+					why = e != null && e.has("error") ? ": " + e.get("error").getAsString() : "";
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					why = "";
+				}
 				r.close();
 				if (body != null && code == 200)
 				{
@@ -1041,7 +1063,7 @@ public class OutsidePlugin extends Plugin
 				}
 				else if (body != null && code != 200)
 				{
-					say("your " + what + " didn't go up (the relay said " + code + ")");
+					say("your " + what + " didn't go up (the relay said " + code + why + ")");
 				}
 			}
 		});
