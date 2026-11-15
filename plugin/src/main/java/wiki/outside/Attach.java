@@ -119,6 +119,12 @@ public final class Attach
 		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/dink/" + enc(channel) + "?") + "&from=plugin";
 	}
 
+	/** Your year's routes (11/15/2026; docs/record.md, "Sync"): http(s)://…/record/<channel>/<tail>?key=…. */
+	public String recordUrl(String tail)
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/record/" + enc(channel) + "/" + enc(tail) + "?");
+	}
+
 	/** Who stands behind the page (11/15/2026): http(s)://…/proof/<channel>, anyone's. */
 	public String proofUrl()
 	{

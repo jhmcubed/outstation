@@ -177,11 +177,42 @@ public interface OutsideConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "year",
+		name = "Record my year",
+		description = "On (to begin with). This plugin keeps your year on this PC: the rough area you're in (a square of"
+			+ " the map about 128 tiles a side, two minutes behind), what you're doing, your levels, kills, pets, log"
+			+ " slots, clues and big drops, and with \"Record my exact path\" on, the tiles you walk. Nothing of it leaves"
+			+ " this PC unless the switch below is on. Never in the Wilderness, a PvP area, or on a PvP or Deadman world."
+			+ " Kept in RuneLite's folder, outside/record.",
+		position = 10
+	)
+	default boolean year()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "yearCopy",
+		name = "Keep an encrypted copy on the relay",
+		description = "Off (to begin with). On, your year's record goes to your relay sealed with a key only this PC (and"
+			+ " any you give it to) holds, so \"Open my year\" in the Outside tab can show it on outside.wiki. The relay"
+			+ " can't read it, nor can anyone else without the key.",
+		warning = "On, your year's record (where you've been, what you did, and with the exact path on, the tiles you"
+			+ " walked) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
+			+ " encrypted with a key only your own computers hold. Lose the key and that copy can't be read by anyone.",
+		position = 10
+	)
+	default boolean yearCopy()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "recordPath",
 		name = "Record my exact path for my year",
-		description = "Off (to begin with). On, the exact tile you're on goes to your own outstation, only for your"
-			+ " year's record on your PC (and its encrypted copy, if you keep one): when you move, at most once every"
-			+ " few seconds, and when you stop. On a boat, where it is at sea. Your relay passes it only to your own"
+		description = "Off (to begin with). On, the exact tile you're on goes into your year's record on this PC (and its"
+			+ " encrypted copy, if you keep one), and to your own outstation's app if you run one: when you move, at most"
+			+ " once every few seconds, and when you stop. On a boat, where it is at sea. Your relay passes it only to your own"
 			+ " outstation's app, never keeps it, and never shows it to anyone. Never in the Wilderness, a PvP area, or on"
 			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe).",
 		warning = "On, the exact tile you're on (and your world) goes to your outstation's relay, a server not controlled"

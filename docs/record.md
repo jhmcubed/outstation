@@ -135,6 +135,30 @@ draws the tiles: a path through them in order, a gap at a `null` or past `HOLD_M
 as finely as the player chooses (11/10/2026): its heat in cells down to 8 tiles, its paths and replay at exact tiles;
 its top places are still squares (below).
 
+## The plugin's record (11/15/2026)
+
+Jace: the plugin first. The Outside plugin keeps the year itself (plugin/src/main/java/wiki/outside/Record.java), in this
+format exactly, so the page reads either the same way:
+
+- **Where:** RuneLite's folder, `.runelite/outside/record/<channel>/`: the month files, `device` and `sent.json`, as the
+  app's. One folder a character (each has its own page).
+- **What:** written from what the plugin itself works out each tick, not from the relay: the place (following's logic,
+  two minutes behind, the same safeguards) and the activity (the same), run apart from the public switches, so the
+  year records with "Follow me on the globe" and "What I'm doing" off; the exact path with "Record my exact path" on;
+  the events from the plugin's own reports (Reports.java: kills, levels, pets, log slots, clues, drops of 1,000,000 or
+  more); the heartbeat as above; nulls on logging out. `t` is the plugin's clock. No `live` lines.
+- **Switches:** "Record my year" (on: this PC only) and "Keep an encrypted copy on the relay" (off, behind a warning;
+  "Open my year" in the side tab asks to switch it on). The record key is made the first time it's needed and kept
+  with the character's account in RuneLite's settings (`recordKey`, "record1:…").
+- **Sync:** as the app's: the tokens registered, then each day whose lines changed (sent.json by line count) sealed and
+  PUT; hourly, on logging out, and before "Open my year".
+- **Viewing:** "Open my year" opens `https://outside.wiki/<channel>/year/mine#k=<the key, base64url>` (outside-wiki's
+  Worker serves the year page there).
+- **Both at once:** with the app open on the same record too, an event can be written by both a moment apart; the
+  page takes the same event within a minute once (year.js's merge).
+- Checked against `tests/fixtures/record/vectors.json` (a copy in `plugin/src/test/resources`): the plugin makes the
+  same keys, tokens and chunk id, opens WebCrypto's sealed chunk, and its own seal opens the same way.
+
 ## Encryption
 
 **The record key:** 32 random bytes, made by the app the first time the relay copy is switched on (ring's system

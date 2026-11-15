@@ -47,6 +47,8 @@ public class OutsidePanel extends PluginPanel
 		void openPage();
 
 		void claim();
+
+		void openYear();
 	}
 
 	/** a motion on their page, as the relay lists it */
@@ -75,6 +77,7 @@ public class OutsidePanel extends PluginPanel
 	private final JLabel claimStatus = new JLabel(" ");
 	private final JLabel proofLine = small(" ");
 	private final JLabel otherLine = small(" ");
+	private final JLabel yearStatus = small(" ");
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -145,6 +148,15 @@ public class OutsidePanel extends PluginPanel
 		page.add(motions);
 		page.add(Box.createVerticalStrut(14));
 		page.add(wide(button("Take my model off my page", hooks::removeModel)));
+		page.add(Box.createVerticalStrut(14));
+		// (11/15/2026: your year, kept by this plugin; docs/record.md)
+		page.add(left(heading("Your year")));
+		page.add(left(small("<html><div style='width:155px'>Where you've been, what you did and what you found, kept on this PC"
+			+ " and shown only to you. To see it, an encrypted copy goes to the relay: only your computers hold its key.</div></html>")));
+		page.add(Box.createVerticalStrut(6));
+		page.add(wide(button("Open my year", hooks::openYear)));
+		yearStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(yearStatus));
 
 		page.setVisible(false);
 		col.add(page);
@@ -172,6 +184,12 @@ public class OutsidePanel extends PluginPanel
 			}
 			revalidate();
 		});
+	}
+
+	/** A line under "Open my year". */
+	public void yearStatus(String words)
+	{
+		SwingUtilities.invokeLater(() -> yearStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
 	/** When the key in the settings is another character's (its page), and who's logged in: said under the button. */

@@ -170,6 +170,15 @@ public class OutsidePlugin extends Plugin
 	 *  into his alt, the side tab still said sburb, and the alt's kit would have gone to sburb's page: a key is now this
 	 *  character's own (kept per account), and nothing goes on a key whose page isn't the character logged in. */
 	private volatile String character = null;
+	/** your year (11/15/2026; Record): the character's record, its own place and activity (two minutes behind, the
+	 *  public switches' logic run apart, so it records with them off), what's held, and when a line last stated it */
+	private volatile Record yearRecord = null;
+	private volatile String yearFor = null;
+	private final Follow yearFollow = new Follow();
+	private final Behind yearDoing = new Behind("activity");
+	private final java.util.Map<String, JsonElement> yearHeld = new java.util.concurrent.ConcurrentHashMap<>();
+	private long yearStated = 0;
+	private volatile long yearSynced = 0;
 	/** each skill's real level as last seen this session, for the levels' reports */
 	private final java.util.Map<String, Integer> levelsSeen = new java.util.concurrent.ConcurrentHashMap<>();
 	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
@@ -317,6 +326,7 @@ public class OutsidePlugin extends Plugin
 		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
+			yearLogout();
 			character = null;
 			levelsSeen.clear();
 		}
@@ -369,6 +379,7 @@ public class OutsidePlugin extends Plugin
 		JsonObject where = follow(ms, safe);
 		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, config.wilderness()));
 		JsonObject path = track(ms, at, safe);
+		yearTick(ms, at, safe, activitySafe(riskyWorld, wild, pvpArea, false), path);
 		look(ms, safe);
 		encounter(ms, safe);
 		liveSafe = safe && !paused;
@@ -1211,6 +1222,12 @@ public class OutsidePlugin extends Plugin
 			{
 				keep("model", null);
 				panel.status("taking your model off your page");
+			}
+
+			@Override
+			public void openYear()
+			{
+				openMyYear();
 			}
 
 			@Override
@@ -2122,7 +2139,7 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onStatChanged(StatChanged e)
 	{
-		if (config.activity())
+		if (config.activity() || config.year())
 		{
 			activity.xp(System.currentTimeMillis(), e.getSkill().getName(), e.getXp());
 		}
@@ -2154,6 +2171,329 @@ public class OutsidePlugin extends Plugin
 		report(Reports.loot(e.getNpc().getName(), items, Math.max(0, config.reportLoot()), myName()));
 	}
 
+	// ---- your year (11/15/2026; Record, docs/record.md)
+
+	/** The record for the character logged in (made the first time), or null: not logged in, or "Record my year" off. */
+	private Record yearRecord()
+	{
+		String c = character;
+		if (c == null || !config.year())
+		{
+			return null;
+		}
+		if (yearRecord == null || !c.equals(yearFor))
+		{
+			try
+			{
+				yearRecord = new Record(net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("outside").resolve("record").resolve(c), gson);
+				yearFor = c;
+				yearHeld.clear();
+			}
+			catch (IOException ex)
+			{
+				log.debug("outside: the year's folder couldn't be made", ex);
+				return null;
+			}
+		}
+		return yearRecord;
+	}
+
+	/** A line written to the year: its time, and what it states. */
+	private void yearWrite(long t, java.util.Map<String, JsonElement> fields)
+	{
+		Record r = yearRecord();
+		if (r == null || fields.isEmpty())
+		{
+			return;
+		}
+		JsonObject line = new JsonObject();
+		line.addProperty("t", t);
+		fields.forEach(line::add);
+		try
+		{
+			r.write(line);
+		}
+		catch (IOException ex)
+		{
+			log.debug("outside: a line of the year couldn't be written", ex);
+		}
+	}
+
+	/** Each tick: the year's place (two minutes behind, as following's), its activity (the same), the exact path (with
+	 *  its switch on), each when it changes or is cleared; a line restating what's held a minute after the last; and
+	 *  the hourly upload. */
+	private void yearTick(long now, WorldPoint at, boolean safe, boolean actSafe, JsonObject path)
+	{
+		if (!config.year() || character == null)
+		{
+			return;
+		}
+		java.util.Map<String, JsonElement> said = new java.util.LinkedHashMap<>();
+		JsonObject w = at == null ? null : yearFollow.tick(now, at.getX(), at.getY(), client.getWorld(), safe);
+		if (!config.activity())
+		{
+			activity.region(at == null ? -1 : at.getRegionID(), at == null ? 0 : at.getPlane());
+			activity.trial(client.getVarbitValue(VarbitID.SAILING_BT_IN_TRIAL) != 0);
+		}
+		JsonObject a = yearDoing.tick(now, activity.now(now), actSafe);
+		for (JsonObject o : new JsonObject[]{w, a, path})
+		{
+			if (o == null)
+			{
+				continue;
+			}
+			for (java.util.Map.Entry<String, JsonElement> e : o.entrySet())
+			{
+				said.put(e.getKey(), e.getValue());
+				if (e.getValue() == null || e.getValue().isJsonNull())
+				{
+					yearHeld.remove(e.getKey());
+				}
+				else
+				{
+					yearHeld.put(e.getKey(), e.getValue());
+				}
+			}
+		}
+		if (said.containsKey("where") || said.containsKey("activity"))
+		{
+			yearStated = now;
+		}
+		else if (!yearHeld.isEmpty() && now - yearStated >= 60_000)
+		{
+			// (the heartbeat: a long stay in one place counts as long)
+			said.putAll(yearHeld);
+			yearStated = now;
+		}
+		yearWrite(now, said);
+		if (now - yearSynced > 3_600_000)
+		{
+			yearSynced = now;
+			executor.submit(() -> yearSync(null));
+		}
+	}
+
+	/** A report's events (array.ts's arrayEvents' shapes) into the year, never from somewhere the plugin holds back. */
+	private void yearEvents(JsonObject payload)
+	{
+		if (payload == null || paused || !config.year())
+		{
+			return;
+		}
+		JsonObject x = payload.getAsJsonObject("extra");
+		java.util.List<JsonObject> events = new java.util.ArrayList<>();
+		switch (payload.get("type").getAsString())
+		{
+			case "KILL_COUNT":
+				events.add(event("kill", "boss", x.get("boss"), "kc", x.get("count")));
+				break;
+			case "LEVEL":
+				for (java.util.Map.Entry<String, JsonElement> e : x.getAsJsonObject("levelledSkills").entrySet())
+				{
+					events.add(event("level", "skill", new com.google.gson.JsonPrimitive(e.getKey()), "level", e.getValue()));
+				}
+				break;
+			case "PET":
+				events.add(event("pet", null, null, null, null));
+				break;
+			case "COLLECTION":
+				events.add(event("clog", "name", x.get("itemName"), null, null));
+				break;
+			case "CLUE":
+				events.add(event("clue", "tier", x.get("clueType"), "count", x.get("numberCompleted")));
+				break;
+			case "LOOT":
+			{
+				long value = 0;
+				String name = null;
+				long most = -1;
+				for (JsonElement i : x.getAsJsonArray("items"))
+				{
+					JsonObject o = i.getAsJsonObject();
+					long worth = o.get("quantity").getAsLong() * o.get("priceEach").getAsLong();
+					value += worth;
+					if (worth > most)
+					{
+						most = worth;
+						name = o.get("name").getAsString();
+					}
+				}
+				if (value >= 1_000_000)
+				{
+					events.add(event("loot", "name", new com.google.gson.JsonPrimitive(name), "value", new com.google.gson.JsonPrimitive(value)));
+				}
+				break;
+			}
+			default:
+				break;
+		}
+		long now = System.currentTimeMillis();
+		for (JsonObject ev : events)
+		{
+			java.util.Map<String, JsonElement> one = new java.util.LinkedHashMap<>();
+			one.put("event", ev);
+			yearWrite(now, one);
+		}
+	}
+
+	private static JsonObject event(String kind, String k1, JsonElement v1, String k2, JsonElement v2)
+	{
+		JsonObject o = new JsonObject();
+		o.addProperty("kind", kind);
+		if (k1 != null && v1 != null)
+		{
+			o.add(k1, v1);
+		}
+		if (k2 != null && v2 != null)
+		{
+			o.add(k2, v2);
+		}
+		return o;
+	}
+
+	/** Logged out: what's held is cleared in the record (a gap, not a stay), and what's new goes up. */
+	private void yearLogout()
+	{
+		if (yearRecord != null && character != null && !yearHeld.isEmpty())
+		{
+			java.util.Map<String, JsonElement> gone = new java.util.LinkedHashMap<>();
+			for (String k : yearHeld.keySet())
+			{
+				gone.put(k, com.google.gson.JsonNull.INSTANCE);
+			}
+			yearWrite(System.currentTimeMillis(), gone);
+		}
+		yearHeld.clear();
+		yearFollow.forget();
+		yearDoing.forget();
+		if (executor != null)
+		{
+			executor.submit(() -> yearSync(null));
+		}
+	}
+
+	/** This character's record key ("record1:", kept with their account), made the first time it's asked for. */
+	private byte[] recordKey(boolean make)
+	{
+		String text = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "recordKey");
+		byte[] k = Record.parseKey(text);
+		if (k == null && make)
+		{
+			k = Record.newKey();
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "recordKey", Record.keyText(k));
+		}
+		return k;
+	}
+
+	/** Uploads each day whose lines changed (docs/record.md, "Sync"): the tokens registered first. On the executor;
+	 *  `then` after, whatever happened. */
+	private void yearSync(Runnable then)
+	{
+		try
+		{
+			Attach a = key();
+			Record r = yearRecord;
+			byte[] k = recordKey(false);
+			if (a == null || r == null || k == null || !config.yearCopy())
+			{
+				return;
+			}
+			JsonObject tokens = new JsonObject();
+			tokens.addProperty("read", Record.readToken(k));
+			tokens.addProperty("write", Record.writeToken(k));
+			try (Response res = http.newCall(new Request.Builder().url(a.recordUrl("token")).header("User-Agent", "outside-plugin/" + VERSION)
+				.post(RequestBody.create(JSON, gson.toJson(tokens))).build()).execute())
+			{
+				if (res.code() != 204 && res.code() != 200)
+				{
+					panel.yearStatus("the relay didn't take your year's key (" + res.code() + ")");
+					return;
+				}
+			}
+			String to = a.getRelay() + "|" + a.getChannel() + "|" + Record.readToken(k).substring(0, 8);
+			java.util.Map<String, Integer> sent = r.sent(to);
+			byte[] seal = Record.sealKey(k);
+			for (java.util.Map.Entry<String, java.util.List<String>> d : r.days().entrySet())
+			{
+				java.util.List<String> lines = d.getValue();
+				if (sent.getOrDefault(d.getKey(), -1) == lines.size())
+				{
+					continue;
+				}
+				boolean ok = true;
+				for (int part = 0; part * Record.PART_LINES < lines.size() && ok; part++)
+				{
+					java.util.List<String> some = lines.subList(part * Record.PART_LINES, Math.min(lines.size(), (part + 1) * Record.PART_LINES));
+					String id = Record.chunkId(k, r.device, d.getKey(), part);
+					byte[] sealed = Record.seal(seal, id, Record.plaintext(r.device, d.getKey(), part, some));
+					try (Response res = http.newCall(new Request.Builder().url(a.recordUrl(id)).header("User-Agent", "outside-plugin/" + VERSION)
+						.put(RequestBody.create(MediaType.parse("application/octet-stream"), sealed)).build()).execute())
+					{
+						ok = res.isSuccessful();
+					}
+				}
+				if (ok)
+				{
+					r.markSent(to, d.getKey(), lines.size());
+				}
+			}
+		}
+		catch (IOException | RuntimeException ex)
+		{
+			log.debug("outside: the year didn't go up", ex);
+		}
+		finally
+		{
+			if (then != null)
+			{
+				then.run();
+			}
+		}
+	}
+
+	/** "Open my year": the encrypted copy switched on if it isn't (asked first), what's new sent, and the year's page
+	 *  opened with the key in its fragment (never sent to any server; docs/record.md, "Viewing"). */
+	private void openMyYear()
+	{
+		Attach a = key();
+		if (a == null || character == null)
+		{
+			panel.yearStatus("log in on a character with a page first");
+			return;
+		}
+		if (!config.year())
+		{
+			panel.yearStatus("switch on \"Record my year\" in the plugin's settings first");
+			return;
+		}
+		if (!config.yearCopy())
+		{
+			javax.swing.SwingUtilities.invokeLater(() ->
+			{
+				int yes = javax.swing.JOptionPane.showConfirmDialog(panel,
+					"<html><div style='width:280px'>Your year is kept on this PC. To see it on outside.wiki, an encrypted copy"
+						+ " goes to the relay, sealed with a key only your own computers hold: the relay can't read it, and"
+						+ " lose the key and nobody can.<br><br>Keep an encrypted copy on the relay?</div></html>",
+					"Your year", javax.swing.JOptionPane.YES_NO_OPTION);
+				if (yes == javax.swing.JOptionPane.YES_OPTION)
+				{
+					configManager.setConfiguration(OutsideConfig.GROUP, "yearCopy", true);
+					openMyYear();
+				}
+			});
+			return;
+		}
+		byte[] k = recordKey(true);
+		panel.yearStatus("sending what's new, then opening your year");
+		String page = "https://outside.wiki/" + java.net.URLEncoder.encode(a.getChannel(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20")
+			+ "/year/mine#k=" + Record.keyB64u(k);
+		executor.submit(() -> yearSync(() ->
+		{
+			panel.yearStatus(" ");
+			net.runelite.client.util.LinkBrowser.browse(page);
+		}));
+	}
+
 	/** The name they're logged in as, for a report's line. */
 	private String myName()
 	{
@@ -2166,6 +2506,7 @@ public class OutsidePlugin extends Plugin
 	 *  area or world), as nothing else is sent there. */
 	private void report(JsonObject payload)
 	{
+		yearEvents(payload);
 		Attach a = attach;
 		String c = character;
 		if (payload == null || !config.reports() || !config.send() || paused || a == null || c == null
@@ -2195,7 +2536,7 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onHitsplatApplied(HitsplatApplied e)
 	{
-		if (!config.activity())
+		if (!config.activity() && !config.year())
 		{
 			return;
 		}
