@@ -477,6 +477,11 @@ Too big for the game's fields, each sent over HTTP by the Outside plugin when th
 
 - The live view (11/15/2026, Jace: "a static set of gear/animation of their choosing while also having the ability for the viewer to show the 'live view'"): `POST /keep/<channel>/live?key=&gear=<mark>` the model in the gear they wear now (sent a few seconds after the gear changes, at most every 20 s), `POST /keep/<channel>/livemotion?key=&gear=&anim=<id|idle>` a motion recorded in the background the first time each animation is seen in that gear (and them standing, "idle"); `GET /keep/<channel>/live`, `/livemotions` (`{"gear", "anims": [{"anim", "at", "frames"}]}`), `/livemotion?anim=`. 24 live motions at most, the oldest let go first; a new gear lets the old gear's all go. In the CLIPS bucket (`keep/<channel>/live/…`). Changes go out as `{"kept": {"what": "live" | "livemotion", "gear", …}}`. Never from anywhere dangerous.
 
+- Effects and the ground (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the model viewer/capturer?"), on the player's model only (never its pet's), each optional and checked as a model's (relay/src/keep.ts):
+  - `"fx"`: the effects on them at a still capture, at most 4, each a model (no frames) already in the player's space (raised by the spot animation's height). The client may merge them into the player's own model; the plugin keeps the player's own vertices apart (Kept.ownVertices).
+  - `"frames": {"fx": {"m": {"<id>.<vertices>.<faces>": model, ...}, "f": [[{"k", "v"}, ...], ...]}}`: through a motion, each effect's model once under its key (8 at most), then each frame's effects there (4 at most), each its key and its vertices as a frame's are (16-bit, base64); one row a frame, an empty row for none.
+  - `"ground"`: the tiles round them as the capture was made (with the plugin's "The ground under my model" on; never the live view's), a model of at most 6,000 faces in the player's model space (turned back by their orientation), its colours the game's lit HSL, a textured tile's corners lightnesses and its `t`/`uv`.
+
 ## Emotes (11/14/2026)
 
 A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):

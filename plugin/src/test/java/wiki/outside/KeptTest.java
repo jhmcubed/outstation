@@ -98,4 +98,50 @@ public class KeptTest
 		assertNull(OutsidePlugin.motionName(new String[]{"no!"}));
 		assertNull(OutsidePlugin.motionName(new String[]{"aaaaaaaaaaaaaaaaaaaaaaaaa"}));
 	}
+
+	// (11/15/2026: effects and the ground)
+	@Test
+	public void theEffectsMergedAfterThePlayersOwnAreFound()
+	{
+		// the player's 3 vertices, then a 2-vertex effect merged after them
+		float[] x = {0, 1, 2, 10, 11}, z = {0, 0, 0, 5, 6};
+		java.util.List<float[]> ex = java.util.Arrays.asList(new float[]{10, 11}), ez = java.util.Arrays.asList(new float[]{5, 6});
+		assertEquals(3, Kept.ownVertices(x, z, 5, ex, ez, new int[]{2}));
+		// not where the effect is: all the player's
+		assertEquals(5, Kept.ownVertices(x, z, 5, ex, java.util.Arrays.asList(new float[]{5, 7}), new int[]{2}));
+		// not merged at all (the model's no bigger than the effect): all the player's
+		assertEquals(2, Kept.ownVertices(new float[]{10, 11}, new float[]{5, 6}, 2, ex, ez, new int[]{2}));
+		assertEquals(5, Kept.ownVertices(x, z, 5, java.util.Collections.emptyList(), java.util.Collections.emptyList(), new int[]{}));
+	}
+
+	@Test
+	public void aModelTrimmedToThePlayersOwn()
+	{
+		JsonObject m = Kept.model(new float[]{0, 1, 0, 9, 9, 9}, new float[]{0, 0, 1, 0, 0, 0}, new float[]{0, 0, 0, 0, 1, 2}, 6,
+			new int[]{0, 3}, new int[]{1, 4}, new int[]{2, 5}, 2, new int[]{100, 200}, null, new int[]{-1, -1}, null, null, null, null, null, null, null, null);
+		JsonObject t = Kept.trim(m, 3);
+		assertEquals("[0,0,0,1,0,0,0,1,0]", t.get("v").toString());
+		assertEquals("[0,1,2]", t.get("f").toString());
+		assertEquals("[100]", t.get("c").toString());
+		assertEquals("[100,100,100]", t.get("g").toString());
+		assertEquals(m, Kept.trim(m, 6));   // (nothing past it: as it was)
+	}
+
+	@Test
+	public void theGroundAsAModel()
+	{
+		int[] plain = {0, 0, 0, 128, 0, 0, 0, -10, 128, 100, 101, 102, -1, 0, 0, 4096, 0, 0, 4096};
+		int[] hidden = plain.clone();
+		hidden[10] = Kept.TILE_HIDDEN;
+		int[] textured = plain.clone();
+		textured[12] = 5;
+		textured[9] = 0x1234 | 70;
+		JsonObject g = Kept.ground(java.util.Arrays.asList(plain, hidden, textured));
+		assertEquals("[0,1,2,3,4,5]", g.get("f").toString());
+		assertEquals("[100,-1]", g.get("c").toString());
+		assertEquals(6 * 3, g.getAsJsonArray("v").size());
+		assertEquals((0x1234 | 70) & 127, g.getAsJsonArray("g").get(3).getAsInt());   // (a textured corner: its lightness)
+		assertEquals("[-1,5]", g.get("t").toString());
+		assertEquals("[0,0,0,0,0,0,0,0,4096,0,0,4096]", g.get("uv").toString());
+	}
 }

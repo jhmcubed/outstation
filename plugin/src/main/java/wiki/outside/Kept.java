@@ -255,6 +255,172 @@ public final class Kept
 		return o;
 	}
 
+	// ---- effects and the ground (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the
+	// model viewer/capturer?")
+
+	/**
+	 * How many of a player model's vertices are the player's own: the client may hand out the player's model with their
+	 * effects (spot animations) merged in after them. When the last {@code fx} vertices lie exactly where the effects'
+	 * own models put them across (x and z the same, in order), the player's own are the ones before; otherwise all.
+	 * {@code fxX}/{@code fxZ}: each effect's vertices' x and z, in order.
+	 */
+	public static int ownVertices(float[] x, float[] z, int vertices, java.util.List<float[]> fxX, java.util.List<float[]> fxZ, int[] fxCounts)
+	{
+		int s = 0;
+		for (int n : fxCounts)
+		{
+			s += n;
+		}
+		if (s <= 0 || s >= vertices)
+		{
+			return vertices;
+		}
+		int at = vertices - s;
+		for (int k = 0; k < fxCounts.length; k++)
+		{
+			float[] ex = fxX.get(k), ez = fxZ.get(k);
+			for (int i = 0; i < fxCounts[k]; i++, at++)
+			{
+				if (Math.abs(x[at] - ex[i]) > 0.5f || Math.abs(z[at] - ez[i]) > 0.5f)
+				{
+					return vertices;
+				}
+			}
+		}
+		return vertices - s;
+	}
+
+	/** A model (as {@link #model}) cut to its first {@code keep} vertices: every face reaching past them dropped, with
+	 *  its colours, opacity, priority and texture. */
+	public static JsonObject trim(JsonObject m, int keep)
+	{
+		JsonArray v = m.getAsJsonArray("v");
+		if (v == null || v.size() <= keep * 3)
+		{
+			return m;
+		}
+		JsonArray f = m.getAsJsonArray("f");
+		int nf = f.size() / 3;
+		JsonObject o = new JsonObject();
+		JsonArray nv = new JsonArray();
+		for (int i = 0; i < keep * 3; i++)
+		{
+			nv.add(v.get(i));
+		}
+		o.add("v", nv);
+		String[] per = {"c", "a", "p", "t"};
+		JsonArray of = new JsonArray(), og = new JsonArray(), ouv = new JsonArray();
+		JsonArray[] op = new JsonArray[per.length];
+		for (int k = 0; k < per.length; k++)
+		{
+			op[k] = m.has(per[k]) ? new JsonArray() : null;
+		}
+		for (int t = 0; t < nf; t++)
+		{
+			int a = f.get(t * 3).getAsInt(), b = f.get(t * 3 + 1).getAsInt(), c = f.get(t * 3 + 2).getAsInt();
+			if (a >= keep || b >= keep || c >= keep)
+			{
+				continue;
+			}
+			of.add(a);
+			of.add(b);
+			of.add(c);
+			for (int k = 0; k < per.length; k++)
+			{
+				if (op[k] != null)
+				{
+					op[k].add(m.getAsJsonArray(per[k]).get(t));
+				}
+			}
+			if (m.has("g"))
+			{
+				for (int q = 0; q < 3; q++)
+				{
+					og.add(m.getAsJsonArray("g").get(t * 3 + q));
+				}
+			}
+			if (m.has("uv"))
+			{
+				for (int q = 0; q < 6; q++)
+				{
+					ouv.add(m.getAsJsonArray("uv").get(t * 6 + q));
+				}
+			}
+		}
+		o.add("f", of);
+		for (int k = 0; k < per.length; k++)
+		{
+			if (op[k] != null)
+			{
+				o.add(per[k], op[k]);
+			}
+		}
+		if (m.has("g"))
+		{
+			o.add("g", og);
+		}
+		if (m.has("uv"))
+		{
+			o.add("uv", ouv);
+		}
+		return o;
+	}
+
+	/** A colour the game marks "don't draw" on a tile. */
+	static final int TILE_HIDDEN = 12345678;
+
+	/**
+	 * The ground round the player as a model (the same shape as {@link #model}, three vertices a face), from its triangles:
+	 * each {@code tri} is x, y, z for its three corners (already in the player's model space), then its three colours
+	 * (the game's packed HSL, lit), then its texture (-1 for none), then u, v for each corner times 4096. A face with a
+	 * colour the game never draws is left out.
+	 */
+	public static JsonObject ground(java.util.List<int[]> tris)
+	{
+		JsonObject o = new JsonObject();
+		JsonArray v = new JsonArray(), f = new JsonArray(), c = new JsonArray(), g = new JsonArray(), t = new JsonArray(), uv = new JsonArray();
+		boolean anyTexture = false;
+		int n = 0;
+		for (int[] q : tris)
+		{
+			if (q[9] == TILE_HIDDEN || q[10] == TILE_HIDDEN || q[11] == TILE_HIDDEN)
+			{
+				continue;
+			}
+			for (int k = 0; k < 9; k++)
+			{
+				v.add(clamp(q[k]));
+			}
+			f.add(n);
+			f.add(n + 1);
+			f.add(n + 2);
+			n += 3;
+			boolean textured = q[12] >= 0;
+			anyTexture |= textured;
+			c.add(textured ? -1 : q[9] & 0xffff);
+			for (int k = 0; k < 3; k++)
+			{
+				// (a textured face's corners as a model's: 7-bit lightnesses that multiply its texture)
+				g.add(textured ? q[9 + k] & 127 : q[9 + k] & 0xffff);
+			}
+			t.add(q[12]);
+			for (int k = 0; k < 6; k++)
+			{
+				uv.add(textured ? q[13 + k] : 0);
+			}
+		}
+		o.add("v", v);
+		o.add("f", f);
+		o.add("c", c);
+		o.add("g", g);
+		if (anyTexture)
+		{
+			o.add("t", t);
+			o.add("uv", uv);
+		}
+		return o;
+	}
+
 	/** A texture coordinate times 4096, kept to what the relay takes. */
 	private static int fin(float t)
 	{
