@@ -1812,16 +1812,25 @@ export class Channel extends DurableObject<Env> {
     const list = (await this.ctx.storage.get<{ name: string; at: number; frames: number }[]>("keep:motions")) || [];
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
-      if (what === "motions") return json({ motions: list });
+      if (what === "motions") return json({ motions: list, first: (await this.ctx.storage.get<string>("keep:motionsFirst")) || "" });
       const name = (q.get("name") || "").toLowerCase(), row = list.find((m) => m.name === name);
       const o = row ? await this.env.CLIPS?.get(this.keepKey("motion/" + name)) : null;
       if (!row || !o) return json({ error: "no such motion" }, 404);
       return new Response('{"motion": ' + (await o.text()) + ', "name": ' + JSON.stringify(name) + ', "at": ' + row.at + "}",
                           { headers: { "content-type": "application/json", "cache-control": "no-cache", "access-control-allow-origin": "*" } });
     }
-    if (what !== "motion") return new Response(null, { status: 405 });
     const no = await this.checkKey(q.get("key") || "", ip);
     if (no) return json({ error: no[1] }, 403);
+    // (11/15/2026, Jace: "allow them to have a static set of gear/animation of their choosing"): the one their page shows
+    // first ("" the still model); POST /keep/<channel>/motions?key=&first=<name>
+    if (what === "motions") {
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const first = (q.get("first") || "").trim().toLowerCase();
+      if (first && !list.some((m) => m.name === first)) return json({ error: "no such motion" }, 404);
+      await this.ctx.storage.put("keep:motionsFirst", first);
+      this.tellClip({ kept: { what: "motion", name: first, at: Date.now() } });
+      return json({ first });
+    }
     const name = (q.get("name") || "").trim().toLowerCase();
     if (!MOTION_NAME.test(name)) return json({ error: "a motion's name: 1 to 24 letters, numbers, spaces, - or _" }, 400);
     if (!this.env.CLIPS) return json({ error: "this relay doesn't keep motions" }, 503);

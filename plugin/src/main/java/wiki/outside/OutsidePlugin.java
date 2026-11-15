@@ -176,6 +176,13 @@ public class OutsidePlugin extends Plugin
 	@Inject
 	private ConfigManager configManager;
 
+	@Inject
+	private net.runelite.client.ui.ClientToolbar clientToolbar;
+
+	/** the side tab (11/15/2026; OutsidePanel) and its button */
+	private OutsidePanel panel;
+	private net.runelite.client.ui.NavigationButton navButton;
+
 	@Provides
 	OutsideConfig provideConfig(ConfigManager configManager)
 	{
@@ -185,12 +192,26 @@ public class OutsidePlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		panel = new OutsidePanel(panelHooks());
+		navButton = net.runelite.client.ui.NavigationButton.builder().tooltip("Outside").icon(tabIcon()).priority(8).panel(panel).build();
+		clientToolbar.addNavigation(navButton);
+		Attach a = Attach.parse(config.stationKey(), gson);
+		panel.who(a == null ? null : a.getChannel());
+		if (a != null)
+		{
+			readMotions();
+		}
 		connect();
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+			navButton = null;
+		}
 		close("plugin off");
 	}
 
@@ -200,6 +221,12 @@ public class OutsidePlugin extends Plugin
 		if (!OutsideConfig.GROUP.equals(e.getGroup()))
 		{
 			return;
+		}
+		if (panel != null && e.getKey().equals("stationKey"))
+		{
+			Attach a = Attach.parse(config.stationKey(), gson);
+			panel.who(a == null ? null : a.getChannel());
+			readMotions();
 		}
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
@@ -813,6 +840,158 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** The character's model as it is now (the client's thread). */
+	/** The side tab's icon: a lime ✼, drawn here (no picture to ship). */
+	private static java.awt.image.BufferedImage tabIcon()
+	{
+		java.awt.image.BufferedImage im = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = im.createGraphics();
+		g.setColor(new java.awt.Color(0xb9, 0xff, 0x00));
+		g.fillRect(7, 1, 2, 14);
+		g.fillRect(1, 7, 14, 2);
+		for (int i = 0; i < 4; i++)
+		{
+			g.fillRect(3 + i, 3 + i, 2, 2);
+			g.fillRect(11 - i, 3 + i, 2, 2);
+			g.fillRect(3 + i, 11 - i, 2, 2);
+			g.fillRect(11 - i, 11 - i, 2, 2);
+		}
+		g.dispose();
+		return im;
+	}
+
+	private OutsidePanel.Hooks panelHooks()
+	{
+		return new OutsidePanel.Hooks()
+		{
+			@Override
+			public void capture(String name)
+			{
+				clientThread.invokeLater(() ->
+				{
+					if (!config.model())
+					{
+						panel.status("switch on \"My character's model on my page\" in the plugin's settings first");
+						return;
+					}
+					if (client.getLocalPlayer() == null)
+					{
+						panel.status("log in first");
+						return;
+					}
+					String n = name.isEmpty() ? null : motionName(name.split("\\s+"));
+					if (!name.isEmpty() && n == null)
+					{
+						panel.status("a name: up to 24 letters, numbers, spaces, - or _");
+						return;
+					}
+					armMotion(n);
+				});
+			}
+
+			@Override
+			public void refresh()
+			{
+				readMotions();
+			}
+
+			@Override
+			public void first(String name)
+			{
+				Attach a = Attach.parse(config.stationKey(), gson);
+				if (a == null)
+				{
+					return;
+				}
+				String url = a.keepUrl("motions") + "&first=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+				http.newCall(new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION).post(RequestBody.create(JSON, "")).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.status("the relay's out of reach");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						r.close();
+						panel.status(name.isEmpty() ? "your page shows your model standing still first" : "your page shows \"" + name + "\" first");
+					}
+				});
+			}
+
+			@Override
+			public void forget(String name)
+			{
+				keep("motion", name, null);
+			}
+
+			@Override
+			public void removeModel()
+			{
+				keep("model", null);
+				panel.status("taking your model off your page");
+			}
+
+			@Override
+			public void openPage()
+			{
+				Attach a = Attach.parse(config.stationKey(), gson);
+				if (a != null)
+				{
+					net.runelite.client.util.LinkBrowser.browse("https://outside.wiki/" + java.net.URLEncoder.encode(a.getChannel(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+				}
+			}
+		};
+	}
+
+	/** The motions on their page and the one it shows first, into the side tab. */
+	private void readMotions()
+	{
+		Attach a = Attach.parse(config.stationKey(), gson);
+		if (a == null || panel == null)
+		{
+			return;
+		}
+		String url = a.keepUrl("motions").replaceFirst("\\?key=[^&]*", "?code=");
+		http.newCall(new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				panel.showMotions(null, "");
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try
+				{
+					String t = r.body() == null ? "" : r.body().string();
+					JsonObject o = gson.fromJson(t, JsonObject.class);
+					List<OutsidePanel.Motion> list = new ArrayList<>();
+					if (o != null && o.has("motions"))
+					{
+						for (JsonElement e : o.getAsJsonArray("motions"))
+						{
+							JsonObject m = e.getAsJsonObject();
+							list.add(new OutsidePanel.Motion(m.get("name").getAsString(), m.has("frames") ? m.get("frames").getAsInt() : 0));
+						}
+					}
+					panel.showMotions(list, o != null && o.has("first") ? o.get("first").getAsString() : "");
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					panel.showMotions(null, "");
+				}
+				finally
+				{
+					r.close();
+				}
+			}
+		});
+	}
+
 	private void sendModel()
 	{
 		Player me = client.getLocalPlayer();
@@ -926,6 +1105,10 @@ public class OutsidePlugin extends Plugin
 	{
 		motionAs = name;
 		motionArmed = client.getGameCycle();
+		if (panel != null)
+		{
+			panel.capturing(true);
+		}
 		motionStart = -1;
 		say("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
 	}
@@ -941,6 +1124,10 @@ public class OutsidePlugin extends Plugin
 		if (me == null)
 		{
 			motionArmed = -1;
+			if (panel != null)
+			{
+				panel.capturing(false);
+			}
 			return;
 		}
 		int now = client.getGameCycle();
@@ -961,6 +1148,10 @@ public class OutsidePlugin extends Plugin
 			if (base == null)
 			{
 				motionArmed = -1;
+				if (panel != null)
+				{
+					panel.capturing(false);
+				}
 				return;
 			}
 			motionCount = base.getVerticesCount();
@@ -995,7 +1186,13 @@ public class OutsidePlugin extends Plugin
 		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
 		String name = motionAs != null ? motionAs : motionIdle ? "idle" : "motion";
 		say("it goes on your page as \"" + name + "\"");
+		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment)
+		keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
 		keep("motion", name, wholeModel(motionBase, motionPet, frames, petFrames));
+		if (panel != null)
+		{
+			panel.capturing(false);
+		}
 	}
 
 	/** A texture as the client has it, a PNG in base64 (0 a see-through texel), or null. */
@@ -1099,6 +1296,10 @@ public class OutsidePlugin extends Plugin
 					why = "";
 				}
 				r.close();
+				if ("motion".equals(what) || "model".equals(what))
+				{
+					readMotions();
+				}
 				if (body != null && code == 200)
 				{
 					say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your bank is on your page");
@@ -1475,6 +1676,10 @@ public class OutsidePlugin extends Plugin
 
 	private void say(String words)
 	{
+		if (panel != null)
+		{
+			panel.status(words);
+		}
 		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
 			.runeLiteFormattedMessage("Outside: " + words).build()));
 	}

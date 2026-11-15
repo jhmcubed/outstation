@@ -17,7 +17,8 @@
 //   and since 11/15/2026 the motion library: a motion is a model with its frames (and its pet's), kept under a name
 //   (MOTION_NAME, lower case), MOTIONS_MOST a channel, one of a name replaced:
 //   POST /keep/<channel>/motion?key=&name=   GET /keep/<channel>/motion?name=&code=   DELETE /keep/<channel>/motion?key=&name=
-//   GET /keep/<channel>/motions?code=         {"motions": [{"name", "at", "frames"}]}, oldest first
+//   GET /keep/<channel>/motions?code=         {"motions": [{"name", "at", "frames"}], "first"}, oldest first
+//   POST /keep/<channel>/motions?key=&first=  the one the page shows first ("" the still model)
 // A change goes to the page's viewers, lookers and desks as {"kept": {"what", "at"}} (null "at": taken away), so the
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 

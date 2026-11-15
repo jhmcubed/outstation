@@ -10,6 +10,10 @@ It works with or without the outstation program. With both, your page has your t
 2. In the plugin's settings, paste your **station key** (it starts `outstation1:`): the one your outstation attached with, or a friend's invite.
 3. Log in. The game's chat says "your outstation (name) is receiving what you wear and carry", with your page's address.
 
+## Its side tab (11/15/2026)
+
+The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**; **Capture my character**, which records the next emote you do within 8 seconds from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it (blank: "idle" or "motion"), with your model standing still; the motions on your page, the one picked showing first to everyone who opens it, ✕ taking one away; and **Take my model off my page**. The same as `::outsidemodel`, `::outsidemotion <a name>` and `::outsideforget <a name>`. It needs "My character's model on my page" switched on.
+
 ## What it sends, and only that
 
 To your relay (Jace's, on Cloudflare, unless your key says another), over one connection, and only while you're logged in:
