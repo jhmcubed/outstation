@@ -73,6 +73,7 @@ public class OutsidePanel extends PluginPanel
 	private final JButton claim = new JButton("Make my Outside page");
 	private final JLabel claimStatus = new JLabel(" ");
 	private final JLabel proofLine = small(" ");
+	private final JLabel otherLine = small(" ");
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -96,7 +97,9 @@ public class OutsidePanel extends PluginPanel
 		// here, under the name they're logged in as; docs/protocol.md "Claiming a name")
 		start.setLayout(new BoxLayout(start, BoxLayout.Y_AXIS));
 		start.add(left(small("<html>No page yet. Log in, then make one: it's named after the character you're logged in as,"
-			+ " and shows what you wear and carry and your stats, live.</html>")));
+			+ " and shows what you wear and carry and your stats, live. Each character has a page and a key of its own.</html>")));
+		otherLine.setVisible(false);
+		start.add(left(otherLine));
 		start.add(Box.createVerticalStrut(4));
 		claim.addActionListener(e -> hooks.claim());
 		start.add(wide(claim));
@@ -151,6 +154,18 @@ public class OutsidePanel extends PluginPanel
 		{
 			who.setText(channel == null ? "no page yet" : "outside.wiki/" + channel);
 			start.setVisible(channel == null);
+			revalidate();
+		});
+	}
+
+	/** When the key in the settings is another character's (its page), and who's logged in: said under the button. */
+	public void otherKey(String theirs, String me)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			otherLine.setText(theirs == null ? " " : "<html>The station key in the plugin's settings is outside.wiki/" + esc(theirs)
+				+ "'s, so nothing of " + esc(me) + "'s goes there. Make " + esc(me) + " a page of its own here.</html>");
+			otherLine.setVisible(theirs != null);
 			revalidate();
 		});
 	}

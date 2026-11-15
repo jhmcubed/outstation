@@ -164,6 +164,10 @@ public class OutsidePlugin extends Plugin
 	private Attach attach;
 	private ScheduledFuture<?> retry;
 	private int retryIn = 5;
+	/** the character logged in, as a channel has its name (null: not known yet, or logged out). 11/15/2026, Jace: logged
+	 *  into his alt, the side tab still said sburb, and the alt's kit would have gone to sburb's page: a key is now this
+	 *  character's own (kept per account), and nothing goes on a key whose page isn't the character logged in. */
+	private volatile String character = null;
 	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
 	private volatile boolean challenging = false;
 	private int ticksSinceSent;
@@ -205,7 +209,7 @@ public class OutsidePlugin extends Plugin
 		panel = new OutsidePanel(panelHooks());
 		navButton = net.runelite.client.ui.NavigationButton.builder().tooltip("Outside").icon(tabIcon()).priority(8).panel(panel).build();
 		clientToolbar.addNavigation(navButton);
-		Attach a = Attach.parse(config.stationKey(), gson);
+		Attach a = key();
 		panel.who(a == null ? null : a.getChannel());
 		if (a != null)
 		{
@@ -235,7 +239,7 @@ public class OutsidePlugin extends Plugin
 		}
 		if (panel != null && e.getKey().equals("stationKey"))
 		{
-			Attach a = Attach.parse(config.stationKey(), gson);
+			Attach a = key();
 			panel.who(a == null ? null : a.getChannel());
 			readMotions();
 			readProof();
@@ -307,6 +311,10 @@ public class OutsidePlugin extends Plugin
 			send(off);
 			resend = true;
 		}
+		if (e.getGameState() == GameState.LOGIN_SCREEN)
+		{
+			character = null;
+		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
 			resend = true;
@@ -320,6 +328,14 @@ public class OutsidePlugin extends Plugin
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
+		}
+		// (whose game this is: known from the first tick; another than before, the key and the side tab follow)
+		Player me = client.getLocalPlayer();
+		String whose = me == null ? null : channelName(me.getName());
+		if (whose != null && !whose.equals(character))
+		{
+			character = whose;
+			characterChanged();
 		}
 		ticks++;
 		// (the bank: sent three ticks after it last changed, so a whole deposit goes once)
@@ -1020,7 +1036,7 @@ public class OutsidePlugin extends Plugin
 	/** The live view's uploads (the relay's /keep/<channel>/live and /livemotion), quietly: nothing said in the chat. */
 	private void keepLive(String what, String anim, JsonObject body)
 	{
-		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
+		Attach a = attach != null ? attach : key();
 		if (a == null || !config.send() || liveGear == null)
 		{
 			return;
@@ -1152,7 +1168,7 @@ public class OutsidePlugin extends Plugin
 			@Override
 			public void first(String name)
 			{
-				Attach a = Attach.parse(config.stationKey(), gson);
+				Attach a = key();
 				if (a == null)
 				{
 					return;
@@ -1213,13 +1229,49 @@ public class OutsidePlugin extends Plugin
 			@Override
 			public void openPage()
 			{
-				Attach a = Attach.parse(config.stationKey(), gson);
+				Attach a = key();
 				if (a != null)
 				{
 					net.runelite.client.util.LinkBrowser.browse("https://outside.wiki/" + java.net.URLEncoder.encode(a.getChannel(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
 				}
 			}
 		};
+	}
+
+	/** The station key for the character logged in: their own (kept with their account by "Make my Outside page"), else
+	 *  the one in the plugin's settings. */
+	private String stationKey()
+	{
+		String own = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "stationKey");
+		return own != null && !own.trim().isEmpty() ? own : config.stationKey();
+	}
+
+	/** The key read, or null: none, or one whose page isn't the character logged in (another account's). */
+	private Attach key()
+	{
+		Attach a = Attach.parse(stationKey(), gson);
+		String c = character;
+		return a != null && c != null && !a.getChannel().toLowerCase(java.util.Locale.ROOT).equals(c) ? null : a;
+	}
+
+	/** Another character logged in (or the first, once its name is known): the side tab, and the relay on their key. */
+	private void characterChanged()
+	{
+		Attach any = Attach.parse(stationKey(), gson), a = key();
+		if (panel != null)
+		{
+			panel.who(a == null ? null : a.getChannel());
+			panel.otherKey(any != null && a == null ? any.getChannel() : null, character);
+			readMotions();
+			readProof();
+		}
+		if (attach != null && (a == null || !a.getChannel().equals(attach.getChannel())))
+		{
+			close("another character");
+		}
+		stopped = false;
+		toldConnected = false;
+		connect();
 	}
 
 	/** A player's name as a channel has it: lower case, the spaces, hyphens and underscores the game treats alike taken
@@ -1273,7 +1325,7 @@ public class OutsidePlugin extends Plugin
 					{
 						boolean back = o.has("proof") && "challenging".equals(o.get("proof").getAsString());
 						challenging = back;
-						configManager.setConfiguration(OutsideConfig.GROUP, "stationKey", o.get("code").getAsString());
+						configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "stationKey", o.get("code").getAsString());
 						if (back)
 						{
 							// (taking a name back: someone else claimed it first and hasn't proven it)
@@ -1307,7 +1359,7 @@ public class OutsidePlugin extends Plugin
 	/** Whether their page is proven theirs, into the side tab (docs/protocol.md "Proving a name"). */
 	private void readProof()
 	{
-		Attach a = Attach.parse(config.stationKey(), gson);
+		Attach a = key();
 		if (a == null || panel == null)
 		{
 			if (panel != null)
@@ -1344,7 +1396,7 @@ public class OutsidePlugin extends Plugin
 	/** The motions on their page and the one it shows first, into the side tab. */
 	private void readMotions()
 	{
-		Attach a = Attach.parse(config.stationKey(), gson);
+		Attach a = key();
 		if (a == null || panel == null)
 		{
 			return;
@@ -1968,7 +2020,7 @@ public class OutsidePlugin extends Plugin
 
 	private void keep(String what, String name, JsonObject body)
 	{
-		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
+		Attach a = attach != null ? attach : key();
 		if (a == null || !config.send())
 		{
 			return;
@@ -2277,7 +2329,9 @@ public class OutsidePlugin extends Plugin
 	private boolean send(JsonObject fields)
 	{
 		WebSocket ws = socket;
-		if (ws == null || !open)
+		Attach a = attach;
+		String c = character;
+		if (ws == null || !open || a == null || c == null || !a.getChannel().toLowerCase(java.util.Locale.ROOT).equals(c))
 		{
 			return false;
 		}
@@ -2292,7 +2346,7 @@ public class OutsidePlugin extends Plugin
 		{
 			return;
 		}
-		attach = Attach.parse(config.stationKey(), gson);
+		attach = key();
 		if (attach == null)
 		{
 			return;
