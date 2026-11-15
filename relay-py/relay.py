@@ -708,6 +708,12 @@ def game_fields(g):
             if GAME_ID.fullmatch(k) and int(k) <= GAME_INT and n is not None:
                 charges[k] = n
         out["charges"] = charges
+    # (11/15/2026, the live view: the animation now, its id or -1, with the gear's mark; null, none: game.ts's)
+    if "anim" in g and g["anim"] is None:
+        out["anim"] = None
+    elif (isinstance(g.get("anim"), list) and len(g["anim"]) == 2 and isinstance(g["anim"][0], int) and not isinstance(g["anim"][0], bool)
+          and -1 <= g["anim"][0] < 1_000_000 and isinstance(g["anim"][1], str) and re.fullmatch(r"[0-9a-f]{1,16}", g["anim"][1])):
+        out["anim"] = [g["anim"][0], g["anim"][1]]
     if "delve" in g and g["delve"] is None:
         out["delve"] = None
     elif isinstance(g.get("delve"), list) and len(g["delve"]) == 9 and all(game_whole(x) is not None for x in g["delve"]):

@@ -3,6 +3,7 @@
 //   - "bank" (Jace: "an option for people to capture their entire bank, just as the liveloadout twitch extension/plugin
 //     offers"): {"items": [[id, how many], ...], "tabs": [the count in each of the bank's tabs 1-9], "names": {id:
 //     [name, price]}}, the bank in its own order (the main tab's last, as the game lays it), at most BANK_SLOTS items
+//   - "encounter" (11/15/2026): the last boss they fought, {"name", "model"}, sent as the fight ends
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
@@ -14,10 +15,21 @@
 //   POST   /keep/<channel>/<what>?key=<key>     the JSON above (at most KEEP_MOST[what] bytes), KEEP_AN_HOUR an hour
 //   GET    /keep/<channel>/<what>?code=<code>   {"<what>": ..., "at"} (404 none)
 //   DELETE /keep/<channel>/<what>?key=<key>     taken away
+//   and since 11/15/2026 the motion library: a motion is a model with its frames (and its pet's), kept under a name
+//   (MOTION_NAME, lower case), MOTIONS_MOST a channel, one of a name replaced:
+//   POST /keep/<channel>/motion?key=&name=   GET /keep/<channel>/motion?name=&code=   DELETE /keep/<channel>/motion?key=&name=
+//   GET /keep/<channel>/motions?code=         {"motions": [{"name", "at", "frames"}], "first"}, oldest first
+//   POST /keep/<channel>/motions?key=&first=  the one the page shows first ("" the still model)
 // A change goes to the page's viewers, lookers and desks as {"kept": {"what", "at"}} (null "at": taken away), so the
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 
-export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024 };
+export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
+  live: 4 * 1024 * 1024, livemotion: 4 * 1024 * 1024 };
+// (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
+export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
+// (11/15/2026, Jace: "the live view"): the model in the gear they wear now ("live"), and its live motions, one an
+// animation (its id, or "idle"), LIVE_MOST at most, the oldest let go first; a new gear's live model lets the others go
+export const LIVE_MOST = 24, GEAR = /^[0-9a-f]{1,16}$/, ANIM = /^(idle|[0-9]{1,6})$/;
 export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
 export const BANK_SLOTS = 1600, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
@@ -47,6 +59,21 @@ export function keepShape(what: string, d: unknown): unknown | string {
     return { items: items.map((s) => [s[0], s[1]]), tabs, names: n };
   }
   if (what === "model") return modelShape(d, true);
+  // (11/15/2026: the last boss they fought, "the encounter": its name and its model as the fight ended)
+  if (what === "encounter") {
+    if (typeof d.name !== "string" || !/^[A-Za-z0-9' .,-]{1,40}$/.test(d.name)) return "name: the boss's";
+    if (!isObj(d.model)) return "model: the boss's";
+    const m = modelShape(d.model, true);
+    if (typeof m === "string") return "model's " + m;
+    return { name: d.name, model: m, ...(whole(d.kc) ? { kc: d.kc } : {}) };
+  }
+  if (what === "live") return modelShape(d, true);
+  if (what === "motion" || what === "livemotion") {
+    const m = modelShape(d, true);
+    if (typeof m === "string") return m;
+    if (!(m as Record<string, unknown>).frames) return "a motion has its frames";
+    return m;
+  }
   return "kept: bank or model";
 }
 

@@ -134,6 +134,7 @@ public class Kit
 		o.add("quiver", JsonNull.INSTANCE);
 		o.add("vitals", new JsonObject());
 		o.add("prayers", new JsonArray());
+		o.add("anim", JsonNull.INSTANCE);   // (the live view's animation, 11/15/2026)
 		return o;
 	}
 

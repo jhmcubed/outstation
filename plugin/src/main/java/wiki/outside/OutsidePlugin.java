@@ -176,6 +176,13 @@ public class OutsidePlugin extends Plugin
 	@Inject
 	private ConfigManager configManager;
 
+	@Inject
+	private net.runelite.client.ui.ClientToolbar clientToolbar;
+
+	/** the side tab (11/15/2026; OutsidePanel) and its button */
+	private OutsidePanel panel;
+	private net.runelite.client.ui.NavigationButton navButton;
+
 	@Provides
 	OutsideConfig provideConfig(ConfigManager configManager)
 	{
@@ -185,12 +192,26 @@ public class OutsidePlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		panel = new OutsidePanel(panelHooks());
+		navButton = net.runelite.client.ui.NavigationButton.builder().tooltip("Outside").icon(tabIcon()).priority(8).panel(panel).build();
+		clientToolbar.addNavigation(navButton);
+		Attach a = Attach.parse(config.stationKey(), gson);
+		panel.who(a == null ? null : a.getChannel());
+		if (a != null)
+		{
+			readMotions();
+		}
 		connect();
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+			navButton = null;
+		}
 		close("plugin off");
 	}
 
@@ -200,6 +221,12 @@ public class OutsidePlugin extends Plugin
 		if (!OutsideConfig.GROUP.equals(e.getGroup()))
 		{
 			return;
+		}
+		if (panel != null && e.getKey().equals("stationKey"))
+		{
+			Attach a = Attach.parse(config.stationKey(), gson);
+			panel.who(a == null ? null : a.getChannel());
+			readMotions();
 		}
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
@@ -242,6 +269,9 @@ public class OutsidePlugin extends Plugin
 			seedsSeen = barrelSeen = null;
 			charges.clear();
 			delveSeen = null;
+			liveGear = gearSeen = null;
+			liveRecorded.clear();
+			autoStart = -1;
 			doing.forget();
 			doing.clear();
 			activity.forget();
@@ -303,6 +333,9 @@ public class OutsidePlugin extends Plugin
 		JsonObject what = activity(ms, activitySafe(riskyWorld, wild, pvpArea, config.wilderness()));
 		JsonObject path = track(ms, at, safe);
 		look(ms, safe);
+		encounter(ms, safe);
+		liveSafe = safe && !paused;
+		liveGearTick(ms);
 		if (!open)
 		{
 			return;
@@ -449,6 +482,14 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 			m.put("charges", ch);
+		}
+		// (the live view, 11/15/2026: the animation they're doing now and the gear it's in)
+		if (config.model() && me != null && liveGear != null)
+		{
+			JsonArray an = new JsonArray();
+			an.add(me.getAnimation());
+			an.add(liveGear);
+			m.put("anim", an);
 		}
 		if (config.delve() && delveSeen != null)
 		{
@@ -769,11 +810,29 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted e)
 	{
+		if ("outsideforget".equalsIgnoreCase(e.getCommand()))
+		{
+			String name = motionName(e.getArguments());
+			if (name == null || e.getArguments().length == 0)
+			{
+				say("which motion? ::outsideforget and its name");
+				return;
+			}
+			keep("motion", name, null);
+			say("taking the motion \"" + name + "\" off your page");
+			return;
+		}
 		if ("outsidemotion".equalsIgnoreCase(e.getCommand()))
 		{
 			if (config.model())
 			{
-				armMotion();
+				String name = motionName(e.getArguments());
+				if (e.getArguments().length > 0 && name == null)
+				{
+					say("a motion's name: up to 24 letters, numbers, spaces, - or _");
+					return;
+				}
+				armMotion(name);
 			}
 			else
 			{
@@ -795,6 +854,375 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** The character's model as it is now (the client's thread). */
+	// ---- the live view (11/15/2026, Jace: "allow them to have a static set of gear/animation of their choosing while also
+	// having the ability for the viewer to show the 'live view' that shows what they are currently wearing and what they
+	// are doing in game"; "yes, build the live view that way"): the model in the gear they wear now, sent a few seconds
+	// after it changes (at most every LIVE_EVERY), its gear marked; each animation they do recorded the first time it's
+	// seen in that gear (one at a time, at most one starting every LIVE_GAP), and them standing (idle); the animation
+	// they're doing now goes with the game's fields ("anim"), so the page plays the one that matches. Only with the model
+	// switch on, never anywhere dangerous, never while a capture of theirs is recording.
+	private static final long LIVE_EVERY = 20_000L, LIVE_GAP = 6_000L;
+	private String liveGear, gearSeen;
+	private long gearAt, liveSentAt, liveAutoAt;
+	private boolean liveSafe, liveDue;
+	private final Set<String> liveRecorded = new HashSet<>();
+	private int autoStart = -1, autoLast, autoCount, autoPetCount;
+	private String autoAnim;
+	private JsonObject autoBase, autoPet;
+	private final List<String> autoFrames = new ArrayList<>(), autoPetFrames = new ArrayList<>();
+
+	/** The worn gear's mark: its items, hashed. */
+	private String gearMark()
+	{
+		ItemContainer w = client.getItemContainer(InventoryID.WORN);
+		java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+		if (w != null)
+		{
+			for (Item it : w.getItems())
+			{
+				int id = it.getId();
+				crc.update(new byte[]{(byte) (id >> 24), (byte) (id >> 16), (byte) (id >> 8), (byte) id});
+			}
+		}
+		return Long.toHexString(crc.getValue());
+	}
+
+	private void liveGearTick(long now)
+	{
+		if (!config.model() || !open || !liveSafe)
+		{
+			return;
+		}
+		String g = gearMark();
+		if (!g.equals(gearSeen))
+		{
+			gearSeen = g;
+			gearAt = now;
+			liveDue = true;
+		}
+		// (a few seconds after the gear settles, and not more often than LIVE_EVERY)
+		if (liveDue && now - gearAt >= 3_000 && now - liveSentAt >= LIVE_EVERY && motionArmed < 0 && autoStart < 0)
+		{
+			Player me = client.getLocalPlayer();
+			Model m = me == null ? null : me.getModel();
+			if (m == null)
+			{
+				return;
+			}
+			JsonObject player = modelJson(m);
+			Model pet = petModel();
+			JsonObject o = wholeModel(player, pet == null ? null : modelJson(pet), null, null);
+			liveDue = false;
+			liveSentAt = now;
+			if (!g.equals(liveGear))
+			{
+				liveRecorded.clear();
+			}
+			liveGear = g;
+			keepLive("live", null, o);
+		}
+	}
+
+	/** Each client cycle: an animation not yet recorded in this gear (or them standing), recorded in the background. */
+	private void liveRecordTick(Player me, int cycle)
+	{
+		if (!config.model() || !open || !liveSafe || liveGear == null || motionArmed >= 0)
+		{
+			autoStart = -1;
+			return;
+		}
+		if (autoStart < 0)
+		{
+			int anim = me.getAnimation();
+			boolean standing = anim == -1 && me.getPoseAnimation() == me.getIdlePoseAnimation();
+			String key = anim != -1 ? String.valueOf(anim) : standing ? "idle" : null;
+			long now = System.currentTimeMillis();
+			if (key == null || liveRecorded.contains(key) || now - liveAutoAt < LIVE_GAP)
+			{
+				return;
+			}
+			Model base = me.getModel();
+			if (base == null)
+			{
+				return;
+			}
+			autoCount = base.getVerticesCount();
+			autoBase = modelJson(base);
+			Model pet = petModel();
+			autoPetCount = pet == null ? 0 : pet.getVerticesCount();
+			autoPet = pet == null ? null : modelJson(pet);
+			autoAnim = key;
+			autoStart = cycle;
+			autoLast = cycle - MOTION_EVERY;
+			autoFrames.clear();
+			autoPetFrames.clear();
+			liveAutoAt = now;
+		}
+		if (cycle - autoLast < MOTION_EVERY)
+		{
+			return;
+		}
+		autoLast = cycle;
+		boolean idle = "idle".equals(autoAnim);
+		// (standing: let go the moment they move; an animation: until it ends)
+		if (idle && (me.getAnimation() != -1 || me.getPoseAnimation() != me.getIdlePoseAnimation()))
+		{
+			autoStart = -1;
+			return;
+		}
+		Model m = me.getModel();
+		if (m != null && m.getVerticesCount() == autoCount)
+		{
+			autoFrames.add(Kept.frame(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount()));
+			Model p = autoPet == null ? null : petModel();
+			autoPetFrames.add(p != null && p.getVerticesCount() == autoPetCount ? Kept.frame(p.getVerticesX(), p.getVerticesY(), p.getVerticesZ(), p.getVerticesCount()) : null);
+		}
+		boolean done = autoFrames.size() >= MOTION_MOST
+			|| (idle ? cycle - autoStart >= MOTION_IDLE : !autoAnim.equals(String.valueOf(me.getAnimation())) && autoFrames.size() > 2);
+		if (!done)
+		{
+			return;
+		}
+		autoStart = -1;
+		if (autoFrames.size() < 3)
+		{
+			return;
+		}
+		liveRecorded.add(autoAnim);
+		JsonObject frames = Kept.frames(autoFrames, 1000.0 / (MOTION_EVERY * 20));
+		JsonObject petFrames = autoPet != null && !autoPetFrames.contains(null) ? Kept.frames(autoPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
+		keepLive("livemotion", autoAnim, wholeModel(autoBase, autoPet, frames, petFrames));
+	}
+
+	/** The live view's uploads (the relay's /keep/<channel>/live and /livemotion), quietly: nothing said in the chat. */
+	private void keepLive(String what, String anim, JsonObject body)
+	{
+		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
+		if (a == null || !config.send() || liveGear == null)
+		{
+			return;
+		}
+		String url = a.keepUrl(what) + "&gear=" + liveGear + (anim == null ? "" : "&anim=" + anim);
+		http.newCall(new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION).post(RequestBody.create(JSON, gson.toJson(body))).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				log.debug("outside: live {} failed", what, ex);
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				r.close();
+			}
+		});
+	}
+
+	// ---- the encounter (11/15/2026, Jace: "build what you think is best" under the subject's form): the last boss they
+	// fought, its model, on their page as the fight ends; never from anywhere dangerous; each boss at most once every
+	// ENCOUNTER_EVERY; only with the model switch on
+	private static final long ENCOUNTER_EVERY = 30 * 60_000L, ENCOUNTER_OVER = 20_000L;
+	private final Map<String, Long> encounterSent = new HashMap<>();
+	private JsonObject encounterModel;
+	private String encounterName;
+	private long encounterAt;
+
+	private void encounter(long now, boolean safe)
+	{
+		if (!config.model() || !open)
+		{
+			return;
+		}
+		if (!safe)
+		{
+			encounterModel = null;   // (nothing from anywhere dangerous: what was caught there is let go)
+			encounterName = null;
+			return;
+		}
+		Player me = client.getLocalPlayer();
+		Actor t = me == null ? null : me.getInteracting();
+		String boss = t instanceof NPC && t.getName() != null ? Activity.BOSSES.get(t.getName()) : null;
+		if (boss != null && !Activity.WILDERNESS_BOSSES.contains(boss))
+		{
+			if (!boss.equals(encounterName))
+			{
+				Long last = encounterSent.get(boss);
+				Model m = ((NPC) t).getModel();
+				if ((last == null || now - last >= ENCOUNTER_EVERY) && m != null)
+				{
+					// (written out at once: one shared model object for anything animated)
+					encounterModel = wholeModel(modelJson(m), null, null, null);
+					encounterName = boss;
+				}
+			}
+			encounterAt = now;
+			return;
+		}
+		if (encounterModel != null && now - encounterAt >= ENCOUNTER_OVER)
+		{
+			JsonObject o = new JsonObject();
+			o.addProperty("name", encounterName);
+			o.add("model", encounterModel);
+			encounterSent.put(encounterName, now);
+			keep("encounter", o);
+			encounterModel = null;
+			encounterName = null;
+		}
+	}
+
+	/** The side tab's icon: a lime ✼, drawn here (no picture to ship). */
+	private static java.awt.image.BufferedImage tabIcon()
+	{
+		java.awt.image.BufferedImage im = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = im.createGraphics();
+		g.setColor(new java.awt.Color(0xb9, 0xff, 0x00));
+		g.fillRect(7, 1, 2, 14);
+		g.fillRect(1, 7, 14, 2);
+		for (int i = 0; i < 4; i++)
+		{
+			g.fillRect(3 + i, 3 + i, 2, 2);
+			g.fillRect(11 - i, 3 + i, 2, 2);
+			g.fillRect(3 + i, 11 - i, 2, 2);
+			g.fillRect(11 - i, 11 - i, 2, 2);
+		}
+		g.dispose();
+		return im;
+	}
+
+	private OutsidePanel.Hooks panelHooks()
+	{
+		return new OutsidePanel.Hooks()
+		{
+			@Override
+			public void capture(String name)
+			{
+				clientThread.invokeLater(() ->
+				{
+					if (!config.model())
+					{
+						panel.status("switch on \"My character's model on my page\" in the plugin's settings first");
+						return;
+					}
+					if (client.getLocalPlayer() == null)
+					{
+						panel.status("log in first");
+						return;
+					}
+					String n = name.isEmpty() ? null : motionName(name.split("\\s+"));
+					if (!name.isEmpty() && n == null)
+					{
+						panel.status("a name: up to 24 letters, numbers, spaces, - or _");
+						return;
+					}
+					armMotion(n);
+				});
+			}
+
+			@Override
+			public void refresh()
+			{
+				readMotions();
+			}
+
+			@Override
+			public void first(String name)
+			{
+				Attach a = Attach.parse(config.stationKey(), gson);
+				if (a == null)
+				{
+					return;
+				}
+				String url = a.keepUrl("motions") + "&first=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+				http.newCall(new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION).post(RequestBody.create(JSON, "")).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.status("the relay's out of reach");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						r.close();
+						panel.status(name.isEmpty() ? "your page shows your model standing still first" : "your page shows \"" + name + "\" first");
+					}
+				});
+			}
+
+			@Override
+			public void forget(String name)
+			{
+				keep("motion", name, null);
+			}
+
+			@Override
+			public void removeModel()
+			{
+				keep("model", null);
+				panel.status("taking your model off your page");
+			}
+
+			@Override
+			public void openPage()
+			{
+				Attach a = Attach.parse(config.stationKey(), gson);
+				if (a != null)
+				{
+					net.runelite.client.util.LinkBrowser.browse("https://outside.wiki/" + java.net.URLEncoder.encode(a.getChannel(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+				}
+			}
+		};
+	}
+
+	/** The motions on their page and the one it shows first, into the side tab. */
+	private void readMotions()
+	{
+		Attach a = Attach.parse(config.stationKey(), gson);
+		if (a == null || panel == null)
+		{
+			return;
+		}
+		String url = a.keepUrl("motions").replaceFirst("\\?key=[^&]*", "?code=");
+		http.newCall(new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				panel.showMotions(null, "");
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try
+				{
+					String t = r.body() == null ? "" : r.body().string();
+					JsonObject o = gson.fromJson(t, JsonObject.class);
+					List<OutsidePanel.Motion> list = new ArrayList<>();
+					if (o != null && o.has("motions"))
+					{
+						for (JsonElement e : o.getAsJsonArray("motions"))
+						{
+							JsonObject m = e.getAsJsonObject();
+							list.add(new OutsidePanel.Motion(m.get("name").getAsString(), m.has("frames") ? m.get("frames").getAsInt() : 0));
+						}
+					}
+					panel.showMotions(list, o != null && o.has("first") && !o.get("first").isJsonNull() ? o.get("first").getAsString() : (list.stream().anyMatch(m -> "idle".equals(m.name)) ? "idle" : ""));
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					panel.showMotions(null, "");
+				}
+				finally
+				{
+					r.close();
+				}
+			}
+		});
+	}
+
 	private void sendModel()
 	{
 		Player me = client.getLocalPlayer();
@@ -890,9 +1318,28 @@ public class OutsidePlugin extends Plugin
 	private int motionCount, motionPetCount;
 	private final List<String> motionFrames = new ArrayList<>(), motionPetFrames = new ArrayList<>();
 
-	private void armMotion()
+	/** A motion's name from the command's words (lower case), or null: none given, or not a name the relay takes. */
+	static String motionName(String[] args)
 	{
+		if (args == null || args.length == 0)
+		{
+			return null;
+		}
+		String n = String.join(" ", args).trim().toLowerCase();
+		return n.matches("[a-z0-9_ -]{1,24}") ? n : null;
+	}
+
+	/** the name the motion being recorded goes under (null: "idle" if they stood, "motion" if they did something) */
+	private String motionAs;
+
+	private void armMotion(String name)
+	{
+		motionAs = name;
 		motionArmed = client.getGameCycle();
+		if (panel != null)
+		{
+			panel.capturing(true);
+		}
 		motionStart = -1;
 		say("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
 	}
@@ -902,12 +1349,21 @@ public class OutsidePlugin extends Plugin
 	{
 		if (motionArmed < 0)
 		{
+			Player lp = client.getLocalPlayer();
+			if (lp != null && client.getGameState() == GameState.LOGGED_IN)
+			{
+				liveRecordTick(lp, client.getGameCycle());
+			}
 			return;
 		}
 		Player me = client.getLocalPlayer();
 		if (me == null)
 		{
 			motionArmed = -1;
+			if (panel != null)
+			{
+				panel.capturing(false);
+			}
 			return;
 		}
 		int now = client.getGameCycle();
@@ -928,6 +1384,10 @@ public class OutsidePlugin extends Plugin
 			if (base == null)
 			{
 				motionArmed = -1;
+				if (panel != null)
+				{
+					panel.capturing(false);
+				}
 				return;
 			}
 			motionCount = base.getVerticesCount();
@@ -959,7 +1419,16 @@ public class OutsidePlugin extends Plugin
 		JsonObject frames = Kept.frames(motionFrames, 1000.0 / (MOTION_EVERY * 20));
 		JsonObject petFrames = motionPet != null && !motionPetFrames.contains(null) ? Kept.frames(motionPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
 		say("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
-		keep("model", wholeModel(motionBase, motionPet, frames, petFrames));
+		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
+		String name = motionAs != null ? motionAs : motionIdle ? "idle" : "motion";
+		say("it goes on your page as \"" + name + "\"");
+		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment)
+		keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
+		keep("motion", name, wholeModel(motionBase, motionPet, frames, petFrames));
+		if (panel != null)
+		{
+			panel.capturing(false);
+		}
 	}
 
 	/** A texture as the client has it, a PNG in base64 (0 a see-through texel), or null. */
@@ -1025,12 +1494,18 @@ public class OutsidePlugin extends Plugin
 	/** Sent to the relay's keep (POST; null: DELETE), off the client's thread; a failure said in the chat. */
 	private void keep(String what, JsonObject body)
 	{
+		keep(what, null, body);
+	}
+
+	private void keep(String what, String name, JsonObject body)
+	{
 		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
 		if (a == null || !config.send())
 		{
 			return;
 		}
-		Request.Builder b = new Request.Builder().url(a.keepUrl(what)).header("User-Agent", "outside-plugin/" + VERSION);
+		String url = a.keepUrl(what) + (name == null ? "" : "&name=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+		Request.Builder b = new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION);
 		b = body == null ? b.delete() : b.post(RequestBody.create(JSON, gson.toJson(body)));
 		http.newCall(b.build()).enqueue(new Callback()
 		{
@@ -1057,9 +1532,16 @@ public class OutsidePlugin extends Plugin
 					why = "";
 				}
 				r.close();
+				if ("motion".equals(what) || "model".equals(what))
+				{
+					readMotions();
+				}
 				if (body != null && code == 200)
 				{
-					say("model".equals(what) ? "your model is on your page" : "your bank is on your page");
+					if (!"encounter".equals(what))
+					{
+						say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your bank is on your page");
+					}
 				}
 				else if (body != null && code != 200)
 				{
@@ -1433,6 +1915,10 @@ public class OutsidePlugin extends Plugin
 
 	private void say(String words)
 	{
+		if (panel != null)
+		{
+			panel.status(words);
+		}
 		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
 			.runeLiteFormattedMessage("Outside: " + words).build()));
 	}

@@ -3,7 +3,7 @@
 //
 //   node test/keep_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { keepShape, BANK_SLOTS } from "../src/keep.ts";
+import { keepShape, BANK_SLOTS, MOTION_NAME } from "../src/keep.ts";
 import { emoteKind, EMOTE_NAME } from "../src/emotes.ts";
 
 let passed = 0;
@@ -47,6 +47,24 @@ test("a model with its pet and their motions (11/15/2026)", () => {
   strictEqual(typeof keepShape("model", { ...m, pet: { ...pet, pet } }), "object");   // (a pet's own pet left out)
   deepStrictEqual((keepShape("model", { ...m, pet: { ...pet, pet } }) as Record<string, Record<string, unknown>>).pet.pet, undefined);
   strictEqual(typeof keepShape("model", { ...m, pet: { v: [1] } }), "string");
+});
+
+test("a motion is a model with its frames; its name (11/15/2026)", () => {
+  const frame = Buffer.alloc(18).toString("base64");
+  const m = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100], frames: { fps: 12.5, v: [frame] } };
+  deepStrictEqual(keepShape("motion", m), m);
+  strictEqual(typeof keepShape("motion", { ...m, frames: undefined }), "string");
+  strictEqual(MOTION_NAME.test("idle"), true);
+  strictEqual(MOTION_NAME.test("dance 2"), true);
+  strictEqual(MOTION_NAME.test("Dance"), false);   // (the relay lowers it first)
+  strictEqual(MOTION_NAME.test("x".repeat(25)), false);
+});
+
+test("the encounter: a boss's name and its model (11/15/2026)", () => {
+  const model = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100] };
+  deepStrictEqual(keepShape("encounter", { name: "Vorkath", model, x: 1 }), { name: "Vorkath", model });
+  strictEqual(typeof keepShape("encounter", { name: "<b>", model }), "string");
+  strictEqual(typeof keepShape("encounter", { name: "Vorkath" }), "string");
 });
 
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {

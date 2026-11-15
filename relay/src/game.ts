@@ -106,6 +106,10 @@ export function gameFields(g: unknown): Fields {
   // completed at each level, 1 to 8, then the waves past 8, as the Delve Calculator plugin reads it; null, not read yet
   if (g.delve === null) out.delve = null;
   else if (Array.isArray(g.delve) && g.delve.length === 9 && g.delve.every((x) => whole(x) !== undefined)) out.delve = g.delve as number[];
+  // (11/15/2026, the live view: the animation they're doing now, its id or -1, with the gear it's in; null, none)
+  if (g.anim === null) out.anim = null;
+  else if (Array.isArray(g.anim) && g.anim.length === 2 && Number.isInteger(g.anim[0]) && (g.anim[0] as number) >= -1 && (g.anim[0] as number) < 1_000_000
+           && typeof g.anim[1] === "string" && /^[0-9a-f]{1,16}$/.test(g.anim[1])) out.anim = [g.anim[0], g.anim[1]];
   const p = g.prayers;
   if (Array.isArray(p) && p.length <= 64 && p.every((x) => typeof x === "string")) out.prayers = p.map((x) => oneLine(x, 40));
   if (isObj(g.items)) {
