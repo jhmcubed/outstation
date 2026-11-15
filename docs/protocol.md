@@ -218,13 +218,40 @@ the player logged in; the answer is a station key like any other, which the plug
 - **At most 3 a day from one address, 200 a day in all**, so names can't be taken in bulk. Only claims that take a
   name count. The address is kept as a hash, a day at most.
 - **Unproven.** Nothing the plugin sends proves the player is who they say: the plugin is open source and anyone can
-  send what it sends. So a claimed channel is marked unproven, and the page says so beside the name (GET /proof). A
-  key from the keeper or an invite (someone vouching) clears it: "vouched". Proving it from the game itself (the
-  experience the plugin reports live, found on the official hiscores after logging out) is the next step.
+  send what it sends. So a claimed channel is marked unproven, and the page says so beside the name (GET /proof), till
+  it's proven from the game itself (below, "Proving a name"): "proven". A key from the keeper or an invite (someone
+  vouching) clears it too: "vouched".
 - **account**: the account hash RuneLite gives the plugin (`client.getAccountHash()`), as digits. The relay keeps only
   a hash of it, for that proof; it's never shown or sent back.
 - Like an invite's, the channel isn't on the open outstations' list till its key's first used.
 - relay.py: the same, from its own side only (its public side refuses every POST); GET /proof from either.
+
+## Proving a name (11/15/2026)
+
+An unproven page (a claim's, above) proves itself while its player plays, with nothing for them to do but gain some
+experience and log out (relay/src/witness.ts; relay-py/witness.py, the same). What can't be faked is the future: the
+exact experience the plugin reports while they play, before the official hiscores have it.
+
+1. As the plugin's first `skills` come in a session, the relay reads the hiscores (h0).
+2. As they log out (`"off": true`, or the plugin's socket going), it reads them again (h_off) and claims every skill
+   the plugin last reported above both: gained this session, and not public yet as they logged out.
+3. A while after (1, 3, 10 and 30 minutes: Jagex's update comes on logout, and its pages can lag), it reads them once
+   more. A claimed skill found there exactly proves the page: `GET /proof` says "proven" from then on, and the account
+   hash's hash it was claimed with is kept with the proof. Lower than claimed: asked again at the next wait. Higher
+   everywhere: they've played since; no proof this time (the next session tries again).
+
+- **The name** read on the hiscores is the plugin's `name` (the one they're logged in as), and only when it's the page's
+  own as a channel has it: another account's experience never proves a page.
+- **A copy proves nothing.** Someone holding the key who waits for the real player to log out, reads the hiscores and
+  sends what they say is too late: those figures are on the hiscores at h_off, so nothing's claimed.
+- **The sources**: Jagex's `index_lite.json` (`secure.runescape.com/m=hiscore_oldschool/`), each ranked skill's
+  experience (unranked skills, -1, can't prove anything); if it doesn't answer, Wise Old Man's player (its update for
+  the reads after a logout). Each read carries the relay's User-Agent and nothing else; an unproven page is read at
+  most twice a session and four times after.
+- What it can't stop: someone relaying another player's game live, with that player's exact experience showing, and
+  typing it in as it happens. Contrived; the transmission would show someone else's game.
+- Tests: `WITNESS_WAIT_S` (the Worker) and `--witness-wait` (relay.py) make every wait that many seconds; the hiscores
+  and Wise Old Man come from the tests' stand-in (`LOOKUP_UPSTREAM`, `--lookup`). protocol_test's `Proving`.
 
 ## Invites (11/07/2026)
 

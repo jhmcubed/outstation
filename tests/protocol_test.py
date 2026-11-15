@@ -126,6 +126,7 @@ class Upstream(http.server.ThreadingHTTPServer):
 
     def __init__(self):
         self.seen, self.broken, self.day = [], {}, "24h-latest.json"
+        self.hiscores = {}    # (proving a name, 11/15/2026: a player's name -> {skill: xp}, as Jagex's index_lite.json)
         self.lock = threading.Lock()
         super().__init__(("127.0.0.1", 0), UpstreamHandler)
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -153,6 +154,21 @@ class UpstreamHandler(http.server.BaseHTTPRequestHandler):
                      "/api/v2/osrs/24h?timestamp=%d" % (DAY_S - 86400): "24h-before.json",
                      "/api/v2/osrs/24h?timestamp=%d" % DAY_S: "24h-latest.json"}
         name = files.get(self.path)
+        if self.path.startswith("/m=hiscore_oldschool/index_lite.json?player="):
+            with up.lock:
+                xp = up.hiscores.get(urllib.parse.unquote(self.path.split("=", 2)[2]))
+            if xp is None:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps({"skills": [{"id": 0, "name": "Overall", "rank": 1, "level": 1, "xp": sum(xp.values())}]
+                              + [{"id": i + 1, "name": k, "rank": 1, "level": 1, "xp": v} for i, (k, v) in enumerate(xp.items())]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not name and self.path in LOOKUP_FILES:
             # (the lookups' sources, 11/10/2026: RuneProfile's "no such account" is its 400)
             name = LOOKUP_FILES[self.path]
@@ -194,7 +210,7 @@ def setUpModule():
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
              "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
-             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base,
+             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1",
              "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
@@ -204,7 +220,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base,
+                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base, "--witness-wait", "1",
                                  "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
@@ -2906,6 +2922,13 @@ class Claims(Base):
     from the Plugin Hub with no outstation and no invite. Only a name nobody has, at most three a day from one address,
     and marked unproven (GET /proof) till someone vouches for it."""
 
+    def claim(self, body):
+        """A claim from this test's own place (x-test-from: the relays' test mode only), so the day's limit is its own."""
+        if not hasattr(self, "place"):
+            self.place = secrets.token_hex(6)
+        st, h, out = raw("POST", "/claim", json.dumps(body).encode(), {"Content-Type": "application/json", "x-test-from": self.place})
+        return st, json.loads(out) if out else None
+
     async def given(self, name):
         """A name handed out by the keeper (the Worker), or claimed by its first transmitter (relay.py)."""
         if WORKER:
@@ -2917,7 +2940,7 @@ class Claims(Base):
 
     async def test_a_claim_is_a_station_key_for_a_name_nobody_has_and_unproven(self):
         name = "c" + secrets.token_hex(5)
-        status, got = http("POST", "/claim", {"player": name, "account": "-1234567890123"})
+        status, got = self.claim({"player": name, "account": "-1234567890123"})
         self.assertEqual(status, 200, got)
         self.assertEqual((got["channel"], got["proof"]), (name, "unproven"))
         enc = got["code"][len("outstation1:"):]
@@ -2932,23 +2955,101 @@ class Claims(Base):
         self.clients.append(tx)
         self.assertTrue((await next_of(tx, "relay"))["live"])
         # (the same name again: taken)
-        self.assertEqual(http("POST", "/claim", {"player": name})[0], 409)
+        self.assertEqual(self.claim({"player": name})[0], 409)
         # (a name the keeper handed out, or an invite's: taken, and vouched for)
         other = "c" + secrets.token_hex(5)
         await self.given(other)
-        self.assertEqual(http("POST", "/claim", {"player": other})[0], 409)
+        self.assertEqual(self.claim({"player": other})[0], 409)
         self.assertEqual(json.loads(raw("GET", "/proof/" + other)[2]), {"proof": "vouched"})
         # (nobody's: no proof to read)
         self.assertEqual(raw("GET", "/proof/c" + secrets.token_hex(5))[0], 404)
         # (only a name as a channel has it: lower case, letters and numbers, 12 at most)
         for bad in ("Has Space", "UPPER", "", "x" * 13, 7):
-            self.assertEqual(http("POST", "/claim", {"player": bad})[0], 400, bad)
+            self.assertEqual(self.claim({"player": bad})[0], 400, bad)
         # (three a day from one place: two more take names, the next is refused; a refused claim took nothing)
-        self.assertEqual(http("POST", "/claim", {"player": "c" + secrets.token_hex(5)})[0], 200)
-        self.assertEqual(http("POST", "/claim", {"player": "c" + secrets.token_hex(5)})[0], 200)
+        self.assertEqual(self.claim({"player": "c" + secrets.token_hex(5)})[0], 200)
+        self.assertEqual(self.claim({"player": "c" + secrets.token_hex(5)})[0], 200)
         late = "c" + secrets.token_hex(5)
-        self.assertEqual(http("POST", "/claim", {"player": late})[0], 429)
+        self.assertEqual(self.claim({"player": late})[0], 429)
         self.assertEqual(raw("GET", "/proof/" + late)[0], 404)
+
+
+class Proving(Base):
+    """Proving a name from the game itself (11/15/2026; docs/protocol.md "Proving a name"): a claimed page becomes
+    proven when experience the plugin reported, not yet on the hiscores as they logged out, is found there after. A copy
+    of what's already public proves nothing; nor does another account's name."""
+
+    async def claimed(self):
+        """A page claimed from a place of its own (x-test-from), so the day's limit never touches it."""
+        name = "w" + secrets.token_hex(5)
+        st, h, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                         {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        self.assertEqual(st, 200, out)
+        return name, json.loads(out)["key"]
+
+    async def plugin(self, name, key):
+        g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, key))
+        self.clients.append(g)
+        return g
+
+    def proof(self, name):
+        return json.loads(raw("GET", "/proof/" + name)[2])["proof"]
+
+    def hiscores(self, name, xp):
+        with UPSTREAM.lock:
+            UPSTREAM.hiscores[name] = xp
+
+    async def until_proof(self, name, want, wait=8.0):
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            if self.proof(name) == want:
+                return want
+            await asyncio.sleep(0.3)
+        return self.proof(name)
+
+    async def test_experience_reported_before_the_hiscores_had_it_proves_the_page(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": name, "skills": {"Attack": [10, 10, 1000], "Ranged": [20, 20, 5000]}}}))
+        await self.pause(1.5)                       # (the session's start read)
+        await g.send(json.dumps({"game": {"skills": {"Attack": [10, 10, 1000], "Ranged": [21, 21, 5600]}}}))
+        await self.pause(0.3)
+        await g.send(json.dumps({"game": {"off": True}}))
+        await self.pause(1.0)                       # (read at logout: not there yet)
+        self.assertEqual(self.proof(name), "unproven")
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5600})   # (Jagex's update, after the logout)
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+
+    async def test_a_copy_of_whats_already_public_proves_nothing(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": name, "skills": {"Attack": [10, 10, 1000], "Ranged": [20, 20, 5000]}}}))
+        await self.pause(1.5)
+        # (the real player plays and logs out; the copier waits for the hiscores, then sends what they say)
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5600})
+        await g.send(json.dumps({"game": {"skills": {"Attack": [10, 10, 1000], "Ranged": [21, 21, 5600]}}}))
+        await self.pause(0.3)
+        await g.send(json.dumps({"game": {"off": True}}))
+        await self.pause(4.0)
+        self.assertEqual(self.proof(name), "unproven")
+
+    async def test_another_accounts_name_proves_nothing(self):
+        name, key = await self.claimed()
+        alt = "x" + secrets.token_hex(5)
+        self.hiscores(alt, {"Ranged": 5000})
+        self.hiscores(name, {"Ranged": 9000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": alt, "skills": {"Ranged": [20, 20, 5000]}}}))
+        await self.pause(1.5)
+        await g.send(json.dumps({"game": {"skills": {"Ranged": [21, 21, 5600]}}}))
+        await self.pause(0.3)
+        await g.send(json.dumps({"game": {"off": True}}))
+        await self.pause(0.5)
+        self.hiscores(alt, {"Ranged": 5600})
+        await self.pause(3.0)
+        self.assertEqual(self.proof(name), "unproven")
 
 
 class Invites(Base):

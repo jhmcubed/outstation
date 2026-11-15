@@ -30,6 +30,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
+import { channelForm, claimsOf, judge, readXp, reported, WITNESS_WAITS, type Xp } from "./witness";
+import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
@@ -44,6 +46,7 @@ export interface Env {
   LOOKUPS?: DurableObjectNamespace; // the lookups (lookup.ts, lookups.ts, 11/10/2026): Wise Old Man, RuneProfile and the icons, kept and shared
   WOM_API_KEY?: string; // Wise Old Man's API key (11/11/2026): a secret (`wrangler secret put WOM_API_KEY`), sent only to api.wiseoldman.net (lookup.ts)
   LOOKUP_UPSTREAM?: string; // (tests) the lookups' sources all fetched under this address instead of the real hosts (lookup.ts's want)
+  WITNESS_WAIT_S?: string; // (tests) the wait before the hiscores are asked again after a logout, every time (witness.ts's WITNESS_WAITS)
   RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
@@ -177,6 +180,8 @@ interface Meta {
   // of the account hash the plugin sent with the claim, for the proof to come (never shown, never sent back).
   unproven?: boolean;
   account?: string;
+  // proven from the game itself (11/15/2026, witness.ts): when, and the account hash's hash it was proven with
+  proven?: { at: number; account?: string };
   code: string;
   cap: number; // the channel's own cap on viewers (the desk's {"cap"}): 0 none
   chatId: number;
@@ -302,10 +307,16 @@ export class Channel extends DurableObject<Env> {
   activityAt = 0;
   activityTook = 0;
 
+  // proving the name (11/15/2026; witness.ts): the session's start on the hiscores, and the claims made at logout with
+  // when they're next asked and how often they have been
+  wit: { name?: string; h0?: Xp; claims?: Xp; next?: number; tries?: number } = {};
+  witReading = false;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game"]);
+      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game", "witness"]);
+      this.wit = (got.get("witness") as typeof this.wit) || {};
       this.guess = (got.get("guess") as Guess) || null;
       this.name = (got.get("name") as string) || "";
       this.meta = (got.get("meta") as Meta) || {
@@ -617,7 +628,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "_proof") {
       // (who stands behind the name: "unproven", claimed by the plugin alone; "vouched", a keeper's or an invite's key)
       if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
-      return json({ proof: this.meta.unproven ? "unproven" : "vouched" });
+      return json({ proof: this.meta.proven ? "proven" : this.meta.unproven ? "unproven" : "vouched" });
     }
     if (role === "_status") {
       const live = this.live();
@@ -882,11 +893,13 @@ export class Channel extends DurableObject<Env> {
     try { m = JSON.parse(msg); } catch { return; }
     if (!m || typeof m !== "object" || Array.isArray(m) || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) return;
     const fields = gameFields(m.game);
+    this.witnessGame(fields);
     this.takeWhere(gameWhere(m.game), fields, now);
     this.takeActivity(gameActivity(m.game), fields, now);
     this.takeHere(gameHere(m.game), fields, now);
     this.takeStar(gameStar(m.game), fields);
     const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
+    if (fields.off === true) this.witnessOff(); // (after the message is taken: its last skills with it)
     if (!got) return;
     const line = pyjson({ game: { ...got, at: this.game.at } });
     for (const v of [...this.seated(), ...this.sockets("look"), ...this.sockets("desk")]) this.send(v, line);
@@ -1079,6 +1092,7 @@ export class Channel extends DurableObject<Env> {
       }
     } else if (a.role === "game") {
       if (!this.sockets("game").length) {
+        this.witnessOff(); // (the plugin gone while they were logged in: a logout, as far as the proof goes)
         this.saveGame(); // (the last of it, for a page while the player's away)
         this.dropWhere(); // (following: only while the plugin's connected)
         this.dropActivity(); // (what they're doing, the same)
@@ -1567,6 +1581,7 @@ export class Channel extends DurableObject<Env> {
     const p = this.poll, g = this.guess;
     if (p) due.push(p.open ? p.ends : (p.closed || 0) + this.pollKept());
     if (g && g.result) due.push(g.result.at + this.guessKept());
+    if (this.wit.claims && this.wit.next) due.push(this.wit.next);
     if (due.length) this.ctx.storage.setAlarm(Math.min(...due));
   }
 
@@ -1583,7 +1598,70 @@ export class Channel extends DurableObject<Env> {
       this.saveGuess();
       this.broadcast(pyjson({ guess_gone: g.id }));
     }
+    if (this.wit.claims && this.wit.next && now >= this.wit.next - 5) await this.witnessCheck();
     this.schedule();
+  }
+
+  // proving the name from the game itself (11/15/2026; witness.ts, docs/protocol.md "Proving a name")
+
+  saveWit() { this.ctx.storage.put("witness", this.wit); }
+
+  /** The name the plugin says they're logged in as, if it's this page's own; else null (nothing's proven with it). */
+  witnessName(): string | null {
+    const n = this.game.kept.name;
+    return typeof n === "string" && this.name && channelForm(n) === this.name.toLowerCase() ? n : null;
+  }
+
+  /** A game message, for the proof: the session's start read from the hiscores as its first skills come (a logout,
+   *  "off", makes the claims once the message is taken: fromGame). Only on an unproven page. */
+  witnessGame(fields: Fields) {
+    if (!this.meta.unproven || this.meta.proven || fields.off === true) return;
+    if (!fields.skills || this.wit.h0 || this.witReading) return;
+    // (the name as it'll be once this message is taken: it may come with the skills)
+    const n = typeof fields.name === "string" ? fields.name : this.game.kept.name;
+    if (typeof n !== "string" || channelForm(n) !== this.name.toLowerCase()) return;
+    this.witReading = true;
+    readXp(n, false, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).then((h0) => {
+      if (h0 && Object.keys(h0).length) { this.wit = { ...this.wit, name: n, h0 }; this.saveWit(); }
+    }).catch(() => null).finally(() => { this.witReading = false; });
+  }
+
+  /** They've logged out (or the plugin's gone): what they reported above both the session's start and the hiscores
+   *  now is claimed, and asked of the hiscores again after a while. */
+  async witnessOff() {
+    const h0 = this.wit.h0, name = this.witnessName();
+    if (!this.meta.unproven || this.meta.proven || !h0 || !name || name !== this.wit.name) return;
+    this.wit.h0 = undefined; // (one claim a session: the next login starts again)
+    const said = reported(this.game.kept.skills);
+    const hOff = await readXp(name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
+    const claims = hOff ? claimsOf(h0, said, hOff) : {};
+    this.wit = Object.keys(claims).length ? { name, claims, tries: 0, next: Date.now() + this.witnessWait(0) } : {};
+    this.saveWit();
+    this.schedule();
+  }
+
+  witnessWait(i: number): number {
+    const t = parseFloat(this.env.WITNESS_WAIT_S || "");
+    return t > 0 ? t * 1000 : WITNESS_WAITS[Math.min(i, WITNESS_WAITS.length - 1)];
+  }
+
+  /** The hiscores asked again: a claim found there exactly proves the page; one not there yet is asked again later. */
+  async witnessCheck() {
+    const w = this.wit;
+    if (!w.claims || !w.name) { this.wit = {}; this.saveWit(); return; }
+    const h1 = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
+    const said = h1 ? judge(w.claims, h1) : "wait";
+    if (said === "proven" && this.meta.unproven) {
+      this.meta.proven = { at: Date.now(), ...(this.meta.account ? { account: this.meta.account } : {}) };
+      delete this.meta.unproven;
+      this.saveMeta();
+      this.wit = {};
+    } else if (said === "wait" && (w.tries || 0) + 1 < WITNESS_WAITS.length) {
+      this.wit = { ...w, tries: (w.tries || 0) + 1, next: Date.now() + this.witnessWait((w.tries || 0) + 1) };
+    } else {
+      this.wit = {};
+    }
+    this.saveWit();
   }
 
   // Dink (a fallback: the client normally takes Dink's posts itself and sends reports as the transmitter)
@@ -1763,6 +1841,9 @@ export class Channel extends DurableObject<Env> {
     const bytes = crypto.getRandomValues(new Uint8Array(18));
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);
+    delete this.meta.proven;
+    this.wit = {};
+    this.ctx.storage.delete("witness");
     if (claim) {
       this.meta.unproven = true;
       if (account) this.meta.account = await this.hash("account:" + account);

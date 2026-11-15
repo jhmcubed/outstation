@@ -857,7 +857,8 @@ export default {
       const player = typeof body?.player === "string" ? body.player : "";
       if (!PLAYER.test(player)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
       const account = typeof body?.account === "string" && /^-?[0-9]{1,20}$/.test(body.account) ? body.account : "";
-      const ip = request.headers.get("cf-connecting-ip") || "";
+      // (tests only, with TEST_FORGET: x-test-from stands in for the address, so each test is a place of its own)
+      const ip = (env.TEST_FORGET === "1" && request.headers.get("x-test-from")) || request.headers.get("cf-connecting-ip") || "";
       const from = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("claim:" + ip)))]
         .slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
       const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));

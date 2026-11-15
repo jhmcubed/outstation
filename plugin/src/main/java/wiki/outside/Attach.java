@@ -113,6 +113,12 @@ public final class Attach
 		return base + "/keep/" + enc(channel) + "/" + enc(what) + "?key=" + enc(key);
 	}
 
+	/** Who stands behind the page (11/15/2026): http(s)://…/proof/<channel>, anyone's. */
+	public String proofUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/.*$", "/proof/" + enc(channel));
+	}
+
 	/** The outstation's page on Outside. */
 	public String page()
 	{

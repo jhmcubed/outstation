@@ -198,6 +198,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from forward import DEFAULT as DEFAULT_FORWARD, Forward  # noqa: E402
 import almanac as almanac_sources  # noqa: E402
 import lookup as lookups  # noqa: E402
+import witness  # noqa: E402
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 512 * 1024          # a frame is ~10-30 KB; anything bigger is refused
@@ -1423,6 +1424,11 @@ class Channel:
         # GET /proof says "unproven"; a hash of the account hash the plugin sent, for the proof to come
         self.unproven = False
         self.account = None
+        # proven from the game itself (11/15/2026; witness.py): when, and the session's start and the claims made at
+        # logout, with when they're next asked and how often they have been
+        self.proven = None
+        self.wit = {}
+        self.wit_reading = False
         # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
         # streams and the plugin's going: a page shows the last of it while the player's away)
         self.gamer = None
@@ -1464,16 +1470,74 @@ class Channel:
         if not isinstance(m, dict) or not isinstance(m.get("game"), dict):
             return
         fields = game_fields(m["game"])
+        self.witness_game(fields)
         self.take_where(game_where(m["game"]), fields)
         self.take_activity(game_activity(m["game"]), fields)
         self.take_here(game_here(m["game"]), fields)
         self.take_star(game_star(m["game"]), fields)
         got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
+        if fields.get("off") is True:
+            self.witness_off()              # (after the message is taken: its last skills with it)
         if got is None:
             return
         line = json.dumps({"game": dict(got, at=self.game.at)})
         for v in list(self.viewers) + list(self.lookers) + list(self.desks):
             v.send_nowait(line)
+
+    # proving the name from the game itself (11/15/2026; witness.py, docs/protocol.md "Proving a name"; the Worker's)
+
+    def witness_name(self):
+        n = self.game.kept.get("name")
+        return n if isinstance(n, str) and witness.channel_form(n) == self.name.lower() else None
+
+    def witness_game(self, fields):
+        """The session's start read from the hiscores as its first skills come, on an unproven page."""
+        if not self.unproven or self.proven or fields.get("off") is True:
+            return
+        if "skills" not in fields or self.wit.get("h0") or self.wit_reading:
+            return
+        n = fields.get("name") if isinstance(fields.get("name"), str) else self.game.kept.get("name")
+        if not isinstance(n, str) or witness.channel_form(n) != self.name.lower():
+            return
+        self.wit_reading = True
+
+        async def read():
+            try:
+                h0 = await witness.read_xp(n, False)
+                if h0:
+                    self.wit = dict(self.wit, name=n, h0=h0)
+            finally:
+                self.wit_reading = False
+        asyncio.ensure_future(read())
+
+    def witness_off(self):
+        """Logged out (or the plugin's gone): what they reported above the session's start and the hiscores now is
+        claimed, and asked of the hiscores again after a while."""
+        h0, name = self.wit.get("h0"), self.witness_name()
+        if not self.unproven or self.proven or not h0 or not name or name != self.wit.get("name"):
+            return
+        self.wit["h0"] = None               # (one claim a session)
+        said = witness.reported(self.game.kept.get("skills"))
+
+        async def claim():
+            h_off = await witness.read_xp(name, True)
+            claims = witness.claims_of(h0, said, h_off) if h_off else {}
+            self.wit = {}
+            if not claims:
+                return
+            for i in range(len(witness.WAITS)):
+                await asyncio.sleep(witness.wait_s(i))
+                if not self.unproven or self.proven:
+                    return
+                h1 = await witness.read_xp(name, True)
+                said_now = witness.judge(claims, h1) if h1 else "wait"
+                if said_now == "proven":
+                    self.proven = {"at": int(time.time() * 1000), "account": self.account}
+                    self.unproven = False
+                    return
+                if said_now == "no":
+                    return
+        asyncio.ensure_future(claim())
 
     def take_where(self, w, fields):
         """Following (game_where): a message's "where" taken (one every WHERE_EVERY_S at most; more are ignored), or the
@@ -2472,14 +2536,16 @@ class Relay:
             return
         if len(path) == 1 and path[0] == "claim" and not key:
             peer = writer.get_extra_info("peername")
-            await self.claim(reader, writer, method, headers, peer[0] if peer else "")
+            # (tests only, with --test-forget: x-test-from stands in for the address, as on the Worker)
+            frm = headers.get("x-test-from") if self.test_forget and headers.get("x-test-from") else (peer[0] if peer else "")
+            await self.claim_name(reader, writer, method, headers, frm)
             return
         if len(path) == 2 and path[0] == "proof" and not key and method in ("GET", "HEAD"):
             ch = self.channels.get(path[1])
             if ch is None or ch.key is None:
                 await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
             else:
-                await self.plain(writer, "200 OK", {"proof": "unproven" if ch.unproven else "vouched"})
+                await self.plain(writer, "200 OK", {"proof": "proven" if ch.proven else "unproven" if ch.unproven else "vouched"})
             return
         if settling:
             await self.settling_gone(reader, writer, headers)
@@ -3008,6 +3074,7 @@ class Relay:
         finally:
             if ch.gamer is sock:
                 ch.gamer = None
+                ch.witness_off()             # (the plugin gone while they were logged in: a logout, for the proof)
                 ch.drop_where()              # (following: only while the plugin's connected)
                 ch.drop_activity()           # (what they're doing, the same)
                 ch.drop_here()               # (the exact path, the same)
@@ -3441,7 +3508,7 @@ class Relay:
         finally:
             writer.close()
 
-    async def claim(self, reader, writer, method, headers, peer):
+    async def claim_name(self, reader, writer, method, headers, peer):
         """Claiming a name (11/15/2026; docs/protocol.md "Claiming a name"; the Worker's /claim, the same): the Outside
         plugin's own channel, for a player with no outstation and no invite.
             POST /claim  {"player", "account"?}  {"channel", "key", "code", "proof": "unproven"}
@@ -3493,6 +3560,8 @@ class Relay:
         other.by = None
         other.pending = True          # (not taken up till its key's used, as an invite's)
         other.unproven = True
+        other.proven = None
+        other.wit = {}
         other.account = hashlib.sha256(("account:" + account).encode()).hexdigest() if account else None
         self.claims.append((frm, now))
         self.log("claim     %s" % player)
@@ -4261,9 +4330,14 @@ def main(argv=None):
     ap.add_argument("--lookup", default="on",
                     help="the lookups (GET /lookup/..., /icon/...): on (Wise Old Man, RuneProfile and the icons' hosts, "
                          "asked as pages read them and kept), off, or an address to fetch them all under instead (tests)")
+    ap.add_argument("--witness-wait", type=float, default=0,
+                    help="(tests) seconds before the hiscores are asked again after a logout, every time (witness.py's WAITS)")
     ap.add_argument("--test-forget", action="store_true",
                     help="answer POST /test/forget, as the Worker does for its tests (nothing is forgotten here)")
     a = ap.parse_args(argv)
+    # (proving a name: the hiscores and Wise Old Man under --lookup's address in tests, the real hosts otherwise)
+    witness.UPSTREAM = a.lookup if a.lookup not in ("on", "off") else None
+    witness.WAIT_S = a.witness_wait or None
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
         forward = Forward.load(a.forward)

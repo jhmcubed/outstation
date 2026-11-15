@@ -208,6 +208,7 @@ public class OutsidePlugin extends Plugin
 		if (a != null)
 		{
 			readMotions();
+			readProof();
 		}
 		connect();
 	}
@@ -235,6 +236,7 @@ public class OutsidePlugin extends Plugin
 			Attach a = Attach.parse(config.stationKey(), gson);
 			panel.who(a == null ? null : a.getChannel());
 			readMotions();
+			readProof();
 		}
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
@@ -266,6 +268,10 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged e)
 	{
+		if (e.getGameState() == GameState.LOGGED_IN)
+		{
+			readProof();   // (proven since the last logout? the side tab says so)
+		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			// (logged out: the relay drops the area and the activity with the rest; next time, the two minutes start
@@ -1138,6 +1144,7 @@ public class OutsidePlugin extends Plugin
 			public void refresh()
 			{
 				readMotions();
+				readProof();
 			}
 
 			@Override
@@ -1278,6 +1285,40 @@ public class OutsidePlugin extends Plugin
 				catch (IOException ex)
 				{
 					panel.claiming(false, "the relay's out of reach: try again in a bit");
+				}
+			}
+		});
+	}
+
+	/** Whether their page is proven theirs, into the side tab (docs/protocol.md "Proving a name"). */
+	private void readProof()
+	{
+		Attach a = Attach.parse(config.stationKey(), gson);
+		if (a == null || panel == null)
+		{
+			if (panel != null)
+			{
+				panel.proof(null);
+			}
+			return;
+		}
+		http.newCall(new Request.Builder().url(a.proofUrl()).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					JsonObject o = res.code() == 200 && res.body() != null ? gson.fromJson(res.body().string(), JsonObject.class) : null;
+					panel.proof(o != null && o.has("proof") ? o.get("proof").getAsString() : null);
+				}
+				catch (IOException | RuntimeException ignored)
+				{
 				}
 			}
 		});

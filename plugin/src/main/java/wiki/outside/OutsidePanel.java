@@ -72,6 +72,7 @@ public class OutsidePanel extends PluginPanel
 	private final JPanel start = new JPanel();
 	private final JButton claim = new JButton("Make my Outside page");
 	private final JLabel claimStatus = new JLabel(" ");
+	private final JLabel proofLine = small(" ");
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -87,6 +88,9 @@ public class OutsidePanel extends PluginPanel
 		col.add(left(title));
 		who.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		col.add(left(who));
+		proofLine.setForeground(new Color(0xff, 0x69, 0xb4));
+		proofLine.setVisible(false);
+		col.add(left(proofLine));
 		col.add(Box.createVerticalStrut(8));
 		// (11/15/2026, the plugin first: a player from the Plugin Hub with no outstation and no invite makes their own page
 		// here, under the name they're logged in as; docs/protocol.md "Claiming a name")
@@ -147,6 +151,19 @@ public class OutsidePanel extends PluginPanel
 		{
 			who.setText(channel == null ? "no page yet" : "outside.wiki/" + channel);
 			start.setVisible(channel == null);
+			revalidate();
+		});
+	}
+
+	/** Whether the page is proven theirs (11/15/2026): "unproven" says how it's proven; anything else, nothing. */
+	public void proof(String proof)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			boolean un = "unproven".equals(proof);
+			proofLine.setText(un ? "<html>Your page is marked unproven. Gain any experience, then log out: within a few minutes"
+				+ " the official hiscores show it, and your page is proven yours.</html>" : " ");
+			proofLine.setVisible(un);
 			revalidate();
 		});
 	}
