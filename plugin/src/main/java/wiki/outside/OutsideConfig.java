@@ -255,7 +255,7 @@ public interface OutsideConfig extends Config
 			+ " people) goes with it, and your page draws you standing on it. Never with the live view's own captures.",
 		warning = "On, each time you capture your character, the ground round you then (about five tiles each way) goes"
 			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, and your"
-			+ " Outside page shows it to anyone who opens it: someone who knows the game may tell where you stood.",
+			+ " Outside page shows it to anyone who opens it.",
 		position = 16
 	)
 	default boolean ground()
