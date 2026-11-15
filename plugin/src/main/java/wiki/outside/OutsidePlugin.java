@@ -978,7 +978,7 @@ public class OutsidePlugin extends Plugin
 							list.add(new OutsidePanel.Motion(m.get("name").getAsString(), m.has("frames") ? m.get("frames").getAsInt() : 0));
 						}
 					}
-					panel.showMotions(list, o != null && o.has("first") ? o.get("first").getAsString() : "");
+					panel.showMotions(list, o != null && o.has("first") && !o.get("first").isJsonNull() ? o.get("first").getAsString() : (list.stream().anyMatch(m -> "idle".equals(m.name)) ? "idle" : ""));
 				}
 				catch (IOException | RuntimeException ex)
 				{

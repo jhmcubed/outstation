@@ -1812,7 +1812,8 @@ export class Channel extends DurableObject<Env> {
     const list = (await this.ctx.storage.get<{ name: string; at: number; frames: number }[]>("keep:motions")) || [];
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
-      if (what === "motions") return json({ motions: list, first: (await this.ctx.storage.get<string>("keep:motionsFirst")) || "" });
+      // ("first": null, never chosen: the page plays "idle" if there is one)
+      if (what === "motions") { const first = await this.ctx.storage.get<string>("keep:motionsFirst"); return json({ motions: list, first: first ?? null }); }
       const name = (q.get("name") || "").toLowerCase(), row = list.find((m) => m.name === name);
       const o = row ? await this.env.CLIPS?.get(this.keepKey("motion/" + name)) : null;
       if (!row || !o) return json({ error: "no such motion" }, 404);
