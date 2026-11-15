@@ -56,4 +56,20 @@ public class KeptTest
 		assertEquals("[0,1,2,1,2,3]", m.get("f").toString());                     // (the hidden face left out)
 		assertEquals("[100,-1]", m.get("c").toString());                           // (textured: -1)
 	}
+
+	@Test
+	public void theModelAsTheGameLitItWithItsTextures()
+	{
+		float[] x = {0, 128, 0}, y = {0, 0, 128}, z = {0, 0, 0};
+		int[] a = {0, 0}, b = {1, 1}, c = {2, 2};
+		int[] c1 = {100, 50}, c2 = {200, 60}, c3 = {Kept.FLAT, 70};
+		short[] tex = {-1, 7};
+		JsonObject m = Kept.model(x, y, z, 3, a, b, c, 2, c1, c2, c3, null, new byte[]{0, 127}, tex,
+			new byte[]{0, 2}, new byte[]{0, 0}, new int[]{0}, new int[]{1}, new int[]{2});
+		assertEquals("[100,100,100,50,60,70]", m.get("g").toString());   // (flat: one colour; textured: lightnesses)
+		assertEquals("[255,128]", m.get("a").toString());
+		assertEquals("[0,2]", m.get("p").toString());
+		assertEquals("[-1,7]", m.get("t").toString());
+		assertEquals("[0,0,0,0,0,0,0,0,4096,0,0,4096]", m.get("uv").toString());   // (the texture triangle is the face)
+	}
 }

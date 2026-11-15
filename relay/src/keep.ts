@@ -6,7 +6,10 @@
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
-//     (textured)]}, at most MODEL_VERTICES and MODEL_FACES; the page draws it in its own way
+//     (textured)]}, at most MODEL_VERTICES and MODEL_FACES; the page draws it in its own way. And since 11/15/2026, each
+//     optional: "g" (each face's three corners as the game lit them), "a" (opacities), "p" (draw priorities), "t" and
+//     "uv" (each face's texture and its corners' coordinates times 4096), "tex" (each texture as a PNG in base64, 16 at
+//     most) and "b" (the brightness the player has the game at): docs/protocol.md, "Kept for the page"
 //
 //   POST   /keep/<channel>/<what>?key=<key>     the JSON above (at most KEEP_MOST[what] bytes), KEEP_AN_HOUR an hour
 //   GET    /keep/<channel>/<what>?code=<code>   {"<what>": ..., "at"} (404 none)
@@ -14,7 +17,7 @@
 // A change goes to the page's viewers, lookers and desks as {"kept": {"what", "at"}} (null "at": taken away), so the
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 
-export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 640 * 1024 };
+export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 1536 * 1024 };
 export const KEEP_AN_HOUR = 12;
 export const BANK_SLOTS = 1600, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
 const ID = /^(0|[1-9][0-9]{0,9})$/;
@@ -48,7 +51,27 @@ export function keepShape(what: string, d: unknown): unknown | string {
     const nv = (v as number[]).length / 3;
     if (!ints(f, 0, nv - 1, 3 * MODEL_FACES) || (f as number[]).length % 3) return "f: three vertices for each face";
     if (!ints(c, -1, 65535, MODEL_FACES) || (c as number[]).length !== (f as number[]).length / 3) return "c: a colour for each face";
-    return { v, f, c };
+    // (11/15/2026: the game's own lighting and textures, for the page to draw it as the game does; each optional)
+    const nf = (f as number[]).length / 3, out: Record<string, unknown> = { v, f, c };
+    if (d.g !== undefined) { if (!ints(d.g, -1, 65535, 3 * MODEL_FACES) || (d.g as number[]).length !== 3 * nf) return "g: three lit colours for each face"; out.g = d.g; }
+    if (d.a !== undefined) { if (!ints(d.a, 0, 255, MODEL_FACES) || (d.a as number[]).length !== nf) return "a: an opacity for each face"; out.a = d.a; }
+    if (d.p !== undefined) { if (!ints(d.p, 0, 255, MODEL_FACES) || (d.p as number[]).length !== nf) return "p: a priority for each face"; out.p = d.p; }
+    if (d.t !== undefined || d.uv !== undefined) {
+      if (!ints(d.t, -1, 65535, MODEL_FACES) || (d.t as number[]).length !== nf) return "t: a texture for each face";
+      if (!ints(d.uv, -1_000_000, 1_000_000, 6 * MODEL_FACES) || (d.uv as number[]).length !== 6 * nf) return "uv: six for each face";
+      out.t = d.t; out.uv = d.uv;
+    }
+    if (d.tex !== undefined) {
+      if (!isObj(d.tex) || Object.keys(d.tex).length > 16) return "tex: 16 textures at most";
+      const tex: Record<string, string> = {};
+      for (const [k, b64] of Object.entries(d.tex)) {
+        if (!ID.test(k) || typeof b64 !== "string" || b64.length > 96 * 1024 || !/^[A-Za-z0-9+/=]*$/.test(b64)) return "tex: a PNG in base64 for each texture id";
+        tex[k] = b64;
+      }
+      out.tex = tex;
+    }
+    if (d.b !== undefined) { if (typeof d.b !== "number" || !(d.b >= 0.3 && d.b <= 1.2)) return "b: the game's brightness"; out.b = d.b; }
+    return out;
   }
   return "kept: bank or model";
 }

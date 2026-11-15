@@ -792,10 +792,63 @@ public class OutsidePlugin extends Plugin
 			say("your model isn't there to send yet: try ::outsidemodel in a moment");
 			return;
 		}
+		// (11/15/2026: the game's own lighting and textures too, for the page to draw it as the game does)
 		JsonObject o = Kept.model(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
 			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceCount(),
-			m.getFaceColors1(), m.getFaceColors3(), m.getUnlitFaceColors(), m.getFaceTransparencies(), m.getFaceTextures());
+			m.getFaceColors1(), m.getFaceColors2(), m.getFaceColors3(), m.getUnlitFaceColors(), m.getFaceTransparencies(),
+			m.getFaceTextures(), m.getFaceRenderPriorities(), m.getTextureFaces(), m.getTexIndices1(), m.getTexIndices2(),
+			m.getTexIndices3());
+		// each texture it uses, as the client has it (128 x 128, 0 a see-through texel), a PNG each, and the brightness
+		// the player has the game at (the palette's)
+		if (o.has("t") && client.getTextureProvider() != null)
+		{
+			JsonObject pics = new JsonObject();
+			for (JsonElement e : o.getAsJsonArray("t"))
+			{
+				int id = e.getAsInt();
+				if (id < 0 || pics.has(String.valueOf(id)) || pics.size() >= 16)
+				{
+					continue;
+				}
+				String png = texturePng(id);
+				if (png != null)
+				{
+					pics.addProperty(String.valueOf(id), png);
+				}
+			}
+			o.add("tex", pics);
+		}
+		if (client.getTextureProvider() != null)
+		{
+			o.addProperty("b", Math.round(client.getTextureProvider().getBrightness() * 1000) / 1000.0);
+		}
 		keep("model", o);
+	}
+
+	/** A texture as the client has it, a PNG in base64 (0 a see-through texel), or null. */
+	private String texturePng(int id)
+	{
+		try
+		{
+			int[] px = client.getTextureProvider().load(id);
+			int size = px == null ? 0 : (int) Math.round(Math.sqrt(px.length));
+			if (size == 0 || size * size != px.length)
+			{
+				return null;
+			}
+			java.awt.image.BufferedImage im = new java.awt.image.BufferedImage(size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+			for (int i = 0; i < px.length; i++)
+			{
+				im.setRGB(i % size, i / size, px[i] == 0 ? 0 : 0xff000000 | px[i]);
+			}
+			java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+			javax.imageio.ImageIO.write(im, "png", out);
+			return java.util.Base64.getEncoder().encodeToString(out.toByteArray());
+		}
+		catch (RuntimeException | IOException e)
+		{
+			return null;
+		}
 	}
 
 	/** The whole bank, its tabs and each item's name and price (the client's thread). */
