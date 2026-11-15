@@ -187,16 +187,16 @@ public class OutsidePanel extends PluginPanel
 	}
 
 	/** Whether the page is proven theirs (11/15/2026): "unproven" says how it's proven; anything else, nothing. */
-	public void proof(String proof)
+	public void proof(String proof, String why)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
 			boolean un = "unproven".equals(proof) || "challenging".equals(proof);
 			proofLine.setText("challenging".equals(proof)
-				? "<html><div style='width:155px'>Someone claimed this name first and hasn't proven it. Gain any experience, then log out: when the official"
-				+ " hiscores show it, the page is yours, and their key stops working.</div></html>"
-				: un ? "<html><div style='width:155px'>Your page is marked unproven. Gain any experience, then log out: within a few minutes"
-				+ " the official hiscores show it, and your page is proven yours.</div></html>" : " ");
+				? "<html><div style='width:155px'>Someone claimed this name first and hasn't proven it. Gain any experience, wait a minute,"
+				+ " then log out: when the official hiscores show it, the page is yours, and their key stops working." + whyLine(why) + "</div></html>"
+				: un ? "<html><div style='width:155px'>Your page is marked unproven. Gain any experience, wait a minute, then log out:"
+				+ " within a few minutes the official hiscores show it, and your page is proven yours." + whyLine(why) + "</div></html>" : " ");
 			proofLine.setVisible(un);
 			revalidate();
 		});
@@ -274,6 +274,12 @@ public class OutsidePanel extends PluginPanel
 			r.add(x, BorderLayout.EAST);
 		}
 		return r;
+	}
+
+	/** What the proof last did (the relay's words), under the line. */
+	private static String whyLine(String why)
+	{
+		return why == null || why.isEmpty() ? "" : "<br><br>Last: " + esc(why);
 	}
 
 	private static JLabel heading(String t)

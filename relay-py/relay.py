@@ -1430,7 +1430,6 @@ class Channel:
         self.proven = None
         self.wit = {}
         self.cwit = {}               # each challenger's proof, by its key
-        self.wit_reading = set()
         # taking a name back (11/15/2026): those challenging an unproven holder, each {"key", "at", "account"}, and
         # their plugins' proving sockets by key
         self.challengers = []
@@ -1514,43 +1513,55 @@ class Channel:
         self.wit_off("")
 
     def wit_start(self, party, fields):
-        """A party's first skills a session: the hiscores read as it starts, under the name it says, if it's the page's."""
+        """A party's game message: the name it's logged in as (only the page's own counts) and each skill's experience
+        as it changes; a look is due witness.LOOK after the last change (the Worker's witStart, the same)."""
         if not self.wit_open(party) or fields.get("off") is True:
             return
         w = self.wit_of(party)
-        if "skills" not in fields or w.get("h0") or party in self.wit_reading:
-            return
         n = fields.get("name") if isinstance(fields.get("name"), str) else self.wit_said(party).get("name")
         if not isinstance(n, str) or witness.channel_form(n) != self.name.lower():
             return
-        self.wit_reading.add(party)
+        if w.get("name") != n:
+            w["name"], w["seen"] = n, {}
+        if "skills" not in fields:
+            return
+        seen = w.setdefault("seen", {})
+        if witness.note_said(seen, witness.reported(fields["skills"]), time.time()):
+            w["look_n"] = w.get("look_n", 0) + 1
+            asyncio.ensure_future(self.wit_look(party, w["look_n"]))
 
-        async def read():
-            try:
-                h0 = await witness.read_xp(n, False)
-                if h0 and self.wit_open(party):
-                    self.wit_of(party).update(name=n, h0=h0)
-            finally:
-                self.wit_reading.discard(party)
-        asyncio.ensure_future(read())
+    async def wit_look(self, party, n):
+        """A look, while they're logged in (the last one asked for only): what the hiscores don't show yet is hidden."""
+        await asyncio.sleep(witness.look_s())
+        w = self.wit_of(party)
+        if w.get("look_n") != n or not w.get("name") or not w.get("seen") or not self.wit_open(party):
+            return
+        at = time.time()
+        h = await witness.read_xp(w["name"], True)
+        if h and w.get("seen"):
+            witness.note_look(w["seen"], h, at)
+            hidden = sum(1 for v in w["seen"].values() if v.get("hidden"))
+            w["last"] = ("%d skill%s gained that the hiscores don't have yet: log out, and it's checked" % (hidden, "s" if hidden > 1 else "")
+                         if hidden else "the hiscores already show this experience")
+        else:
+            w["last"] = "the hiscores couldn't be read just now"
 
     def wit_off(self, party):
-        """A party logged out (or its plugin's gone): what it reported above the session's start and the hiscores now
-        is claimed, and asked of the hiscores again after a while."""
-        w, said = self.wit_of(party), self.wit_said(party)
-        h0 = w.get("h0")
-        name = said.get("name") if isinstance(said.get("name"), str) and witness.channel_form(said.get("name")) == self.name.lower() else None
-        if not self.wit_open(party) or not h0 or not name or name != w.get("name"):
+        """A party logged out (or its plugin's gone): its hidden figures are claimed, and asked of the hiscores after a
+        while."""
+        w = self.wit_of(party)
+        if not self.wit_open(party) or not w.get("name") or not w.get("seen"):
             return
-        w["h0"] = None                      # (one claim a session)
-        xp = witness.reported(said.get("skills"))
+        name, claims = w["name"], witness.claims_from(w["seen"])
+        n = len(claims)
+        w["last"] = ("logged out: %d skill%s gained that the hiscores didn't have yet; asking them in a minute" % (n, "s" if n > 1 else "") if n
+                     else "logged out before the experience gained was looked at: next time, wait a minute after your last experience before logging out")
+        w["seen"], w["look_n"] = {}, w.get("look_n", 0) + 1
+        w.pop("name", None)
+        if not claims:
+            return
 
-        async def claim():
-            h_off = await witness.read_xp(name, True)
-            claims = witness.claims_of(h0, xp, h_off) if h_off else {}
-            w.pop("name", None)
-            if not claims:
-                return
+        async def check():
             for i in range(len(witness.WAITS)):
                 await asyncio.sleep(witness.wait_s(i))
                 if not self.wit_open(party):
@@ -1561,8 +1572,11 @@ class Channel:
                     self.wit_proven(party)
                     return
                 if verdict == "no":
+                    self.wit_of(party)["last"] = "the hiscores moved past what was claimed (played elsewhere since?): play, then log out to try again"
                     return
-        asyncio.ensure_future(claim())
+                self.wit_of(party)["last"] = "the hiscores haven't caught up yet; asking again later"
+            self.wit_of(party)["last"] = "the hiscores never showed what was claimed: play, then log out to try again"
+        asyncio.ensure_future(check())
 
     def wit_proven(self, party):
         """A party proven. The holder: the page is theirs, every challenge dropped. A challenger: the name taken back
@@ -2613,7 +2627,10 @@ class Relay:
             if ch is None or ch.key is None:
                 await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
             elif q.get("key") and ch.unproven and any(c["key"] == q.get("key") for c in ch.challengers):
-                await self.plain(writer, "200 OK", {"proof": "challenging"})
+                why = ch.cwit.get(q.get("key"), {}).get("last")
+                await self.plain(writer, "200 OK", dict({"proof": "challenging"}, **({"why": why} if why else {})))
+            elif q.get("key") and ch.unproven and q.get("key") == ch.key and ch.wit.get("last"):
+                await self.plain(writer, "200 OK", {"proof": "unproven", "why": ch.wit["last"]})
             else:
                 await self.plain(writer, "200 OK", {"proof": "proven" if ch.proven else "unproven" if ch.unproven else "vouched"})
             return
@@ -4446,6 +4463,8 @@ def main(argv=None):
     ap.add_argument("--lookup", default="on",
                     help="the lookups (GET /lookup/..., /icon/...): on (Wise Old Man, RuneProfile and the icons' hosts, "
                          "asked as pages read them and kept), off, or an address to fetch them all under instead (tests)")
+    ap.add_argument("--witness-look", type=float, default=0,
+                    help="(tests) seconds before the hiscores are looked at while logged in (witness.py's LOOK)")
     ap.add_argument("--witness-wait", type=float, default=0,
                     help="(tests) seconds before the hiscores are asked again after a logout, every time (witness.py's WAITS)")
     ap.add_argument("--test-forget", action="store_true",
@@ -4454,6 +4473,7 @@ def main(argv=None):
     # (proving a name: the hiscores and Wise Old Man under --lookup's address in tests, the real hosts otherwise)
     witness.UPSTREAM = a.lookup if a.lookup not in ("on", "off") else None
     witness.WAIT_S = a.witness_wait or None
+    witness.LOOK_S = a.witness_look or None
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
         forward = Forward.load(a.forward)

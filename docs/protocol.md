@@ -234,25 +234,35 @@ An unproven page (a claim's, above) proves itself while its player plays, with n
 experience and log out (relay/src/witness.ts; relay-py/witness.py, the same). What can't be faked is the future: the
 exact experience the plugin reports while they play, before the official hiscores have it.
 
-1. As the plugin's first `skills` come in a session, the relay reads the hiscores (h0).
-2. As they log out (`"off": true`, or the plugin's socket going), it reads them again (h_off) and claims every skill
-   the plugin last reported above both: gained this session, and not public yet as they logged out.
-3. A while after (1, 3, 10 and 30 minutes: Jagex's update comes on logout, and its pages can lag), it reads them once
-   more. A claimed skill found there exactly proves the page: `GET /proof` says "proven" from then on, and the account
-   hash's hash it was claimed with is kept with the proof. Lower than claimed: asked again at the next wait. Higher
-   everywhere: they've played since; no proof this time (the next session tries again).
+1. While they're logged in, the hiscores can't have this session's experience (Jagex writes it as they log out). So
+   45 seconds after a skill's experience last changed, the relay looks at the hiscores, and marks **hidden** every
+   skill the plugin last said above what they show.
+2. As they log out (`"off": true`, or the plugin's socket going), the hidden figures are claimed.
+3. A while after (1, 3, 10 and 30 minutes: Jagex's pages can lag), it reads the hiscores again. A claimed skill found
+   there exactly proves the page: `GET /proof` says "proven" from then on, and the account hash's hash it was claimed
+   with is kept with the proof. Lower than claimed: asked again at the next wait. Higher everywhere: they've played
+   since; no proof this time (the next session tries again).
 
+(The first way, 11/15/2026, read the hiscores at the logout itself and kept only what wasn't there yet; on Jace's first
+try his new experience was already public by then, as Jagex's update comes with the logout, so nothing was kept.)
+
+- **Wait a minute before logging out**: experience gained in the last 45 seconds before a logout isn't looked at in
+  time, so it can't be claimed (the side tab says so).
+- **What it last did**: `GET /proof/<channel>?key=<its own key>` adds `"why"`, the proof's last step in words (looked,
+  claimed, waiting for the hiscores, or why nothing was claimed), which the plugin's side tab shows.
 - **The name** read on the hiscores is the plugin's `name` (the one they're logged in as), and only when it's the page's
   own as a channel has it: another account's experience never proves a page.
 - **A copy proves nothing.** Someone holding the key who waits for the real player to log out, reads the hiscores and
-  sends what they say is too late: those figures are on the hiscores at h_off, so nothing's claimed.
+  sends what they say is too late: a look shows those figures on the hiscores already, so they're never hidden.
 - **The sources**: Jagex's `index_lite.json` (`secure.runescape.com/m=hiscore_oldschool/`), each ranked skill's
   experience (unranked skills, -1, can't prove anything); if it doesn't answer, Wise Old Man's player (its update for
-  the reads after a logout). Each read carries the relay's User-Agent and nothing else; an unproven page is read at
-  most twice a session and four times after.
+  every read but a look's). Each read carries the relay's User-Agent and nothing else, and asks Jagex for a page of its
+  own (a cache in front of the hiscores can answer with an older one); an unproven page is read once a look (45 s after
+  experience last changed, so at most about once a minute while they gain it) and four times after a logout.
 - What it can't stop: someone relaying another player's game live, with that player's exact experience showing, and
   typing it in as it happens. Contrived; the transmission would show someone else's game.
-- Tests: `WITNESS_WAIT_S` (the Worker) and `--witness-wait` (relay.py) make every wait that many seconds; the hiscores
+- Tests: `WITNESS_WAIT_S` and `WITNESS_LOOK_S` (the Worker), `--witness-wait` and `--witness-look` (relay.py) make every
+  wait and look that many seconds; the hiscores
   and Wise Old Man come from the tests' stand-in (`LOOKUP_UPSTREAM`, `--lookup`). protocol_test's `Proving`.
 
 ## Taking a name back (11/15/2026)

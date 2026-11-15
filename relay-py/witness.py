@@ -3,19 +3,22 @@
 A page claimed by the Outside plugin alone is unproven: anyone can send what the plugin sends. What can't be faked is
 the future: the exact experience the plugin reports while they play, before the official hiscores have it, found on the
 hiscores after they log out.
-  1. As the plugin's first skills come in a session, the hiscores are read (h0).
-  2. As they log out (the game's "off", or the plugin going), they're read again (h_off), and every skill reported
-     above both is claimed: gained this session, and not public yet as they logged out.
+  1. While they're logged in the hiscores can't have this session's experience (Jagex writes it on logout): LOOK after
+     a skill's experience last changed, they're read (a look), and every figure above what they show is hidden.
+  2. As they log out (the game's "off", or the plugin going), the hidden figures are claimed.
   3. A while after (WAITS), once more: a claimed skill found there exactly proves the page; lower, asked again later.
 The name on the hiscores is the one the plugin says they're logged in as, and it must be the page's own.
 """
 import asyncio
 import json
 import re
+import time
 import urllib.parse
 import urllib.request
 
 WAITS = [60, 180, 600, 1800]       # seconds after a logout the hiscores are asked again (witness.ts's WITNESS_WAITS)
+LOOK = 45                           # seconds after a skill last changed that the hiscores are looked at (WITNESS_LOOK)
+LOOK_S = None                       # (tests) every look this long instead (relay.py's --witness-look)
 HISCORES = "https://secure.runescape.com"
 WOM = "https://api.wiseoldman.net"
 FETCH_TIMEOUT_S = 10
@@ -70,8 +73,30 @@ def reported(skills):
     return out
 
 
-def claims_of(h0, said, h_off):
-    return {k: x for k, x in said.items() if k in h0 and k in h_off and x > h0[k] and x > h_off[k]}
+def note_said(seen, said, now):
+    """What the plugin says, against what was seen ({skill: {"x", "at", "hidden"?}}): a changed figure is new."""
+    changed = False
+    for k, x in said.items():
+        if k in seen and seen[k]["x"] == x:
+            continue
+        seen[k] = {"x": x, "at": now}
+        changed = True
+    return changed
+
+
+def note_look(seen, h, at):
+    """A look: every figure said before it and above what the hiscores show is hidden; one they show isn't."""
+    for k, v in seen.items():
+        if v["at"] <= at and k in h:
+            v["hidden"] = v["x"] > h[k]
+
+
+def claims_from(seen):
+    return {k: v["x"] for k, v in seen.items() if v.get("hidden")}
+
+
+def look_s():
+    return LOOK_S if LOOK_S else LOOK
 
 
 def judge(claims, h1):
@@ -98,7 +123,9 @@ def _get(url, method="GET"):
 def read_xp_now(name, fresh):
     n = urllib.parse.quote(name.replace(" ", " "), safe="")
     try:
-        x = from_hiscores(_get((UPSTREAM or HISCORES) + "/m=hiscore_oldschool/index_lite.json?player=" + n))
+        # (a cache in front of the hiscores can answer with an older page: each read asks for one of its own)
+        bust = "" if UPSTREAM else "&t=%d" % int(time.time() * 1000)
+        x = from_hiscores(_get((UPSTREAM or HISCORES) + "/m=hiscore_oldschool/index_lite.json?player=" + n + bust))
         if x is not None:
             return x
     except Exception:

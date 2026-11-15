@@ -30,7 +30,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
-import { channelForm, claimsOf, judge, readXp, reported, WITNESS_WAITS, type Xp } from "./witness";
+import { channelForm, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
@@ -47,6 +47,7 @@ export interface Env {
   WOM_API_KEY?: string; // Wise Old Man's API key (11/11/2026): a secret (`wrangler secret put WOM_API_KEY`), sent only to api.wiseoldman.net (lookup.ts)
   LOOKUP_UPSTREAM?: string; // (tests) the lookups' sources all fetched under this address instead of the real hosts (lookup.ts's want)
   WITNESS_WAIT_S?: string; // (tests) the wait before the hiscores are asked again after a logout, every time (witness.ts's WITNESS_WAITS)
+  WITNESS_LOOK_S?: string; // (tests) the wait before a look while logged in (witness.ts's WITNESS_LOOK)
   RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
@@ -130,7 +131,12 @@ type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "game" | "prove" 
 
 // a party's proof (witness.ts): the session's start, the claims made at logout, when they're next asked and how often
 // they have been; a challenger's own name and skills as its plugin last said them
-interface Wit { name?: string; h0?: Xp; claims?: Xp; next?: number; tries?: number; said?: { name?: unknown; skills?: unknown } }
+interface Wit {
+  name?: string; seen?: Record<string, Seen>; look?: number; // (this session: each skill as last said, the next look)
+  claims?: Xp; next?: number; tries?: number; // (after a logout: what's claimed, the next ask, how many so far)
+  said?: { name?: unknown; skills?: unknown }; // (a challenger's own name and skills)
+  last?: string; // (what the proof last did, in words, for the plugin's side tab)
+}
 
 interface Flow { sent: number; got: number; at: number }
 
@@ -321,7 +327,6 @@ export class Channel extends DurableObject<Env> {
   // when they're next asked and how often they have been
   wit: Wit = {};
   cwit: Record<string, Wit> = {}; // (each challenger's, by its key's hash)
-  witReading = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -644,8 +649,12 @@ export class Channel extends DurableObject<Env> {
       if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
       const k = q.get("key");
       if (k && this.meta.unproven) {
+        // (to the key's own, what its proof last did, in words: the plugin's side tab says it)
         const h = await this.hash(k);
-        if ((this.meta.challengers || []).some((c) => c.keyHash === h)) return json({ proof: "challenging" });
+        if ((this.meta.challengers || []).some((c) => c.keyHash === h)) {
+          return json({ proof: "challenging", ...(this.cwit[h]?.last ? { why: this.cwit[h].last } : {}) });
+        }
+        if (h === this.meta.keyHash && this.wit.last) return json({ proof: "unproven", why: this.wit.last });
       }
       return json({ proof: this.meta.proven ? "proven" : this.meta.unproven ? "unproven" : "vouched" });
     }
@@ -1658,31 +1667,38 @@ export class Channel extends DurableObject<Env> {
   witnessGame(fields: Fields) { this.witStart("", fields); }
   witnessOff() { this.witOff(""); }
 
-  /** A party's first skills a session: the hiscores read as it starts (h0), under the name it says, if it's the page's. */
+  /** A party's game message: the name it's logged in as (only the page's own counts) and each skill's experience as
+   *  it changes; a look is due WITNESS_LOOK after the last change. */
   witStart(party: string, fields: Fields) {
     if (!this.witOpen(party) || fields.off === true) return;
     const w = this.witOf(party);
-    if (!fields.skills || w.h0 || this.witReading.has(party)) return;
     const n = typeof fields.name === "string" ? fields.name : this.witSaid(party).name;
     if (typeof n !== "string" || channelForm(n) !== this.name.toLowerCase()) return;
-    this.witReading.add(party);
-    readXp(n, false, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).then((h0) => {
-      if (h0 && Object.keys(h0).length && this.witOpen(party)) { Object.assign(this.witOf(party), { name: n, h0 }); this.saveWit(); }
-    }).catch(() => null).finally(() => { this.witReading.delete(party); });
+    if (w.name !== n) { w.name = n; w.seen = {}; }
+    if (!fields.skills) return;
+    const seen = (w.seen ??= {});
+    if (noteSaid(seen, reported(fields.skills), Date.now())) {
+      w.look = Date.now() + this.witnessLook();
+      this.saveWit();
+      this.schedule();
+    }
   }
 
-  /** A party logged out (or its plugin's gone): what it reported above both the session's start and the hiscores now is
-   *  claimed, and asked of the hiscores again after a while. */
+  witnessLook(): number {
+    const t = parseFloat(this.env.WITNESS_LOOK_S || "");
+    return t > 0 ? t * 1000 : WITNESS_LOOK;
+  }
+
+  /** A party logged out (or its plugin's gone): its hidden figures are claimed, and asked of the hiscores after a while. */
   async witOff(party: string) {
-    const w = this.witOf(party), h0 = w.h0, said = this.witSaid(party);
-    const name = typeof said.name === "string" && channelForm(said.name) === this.name.toLowerCase() ? said.name : null;
-    if (!this.witOpen(party) || !h0 || !name || name !== w.name) return;
-    w.h0 = undefined; // (one claim a session: the next login starts again)
-    const xp = reported(said.skills);
-    const hOff = await readXp(name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
-    const claims = hOff ? claimsOf(h0, xp, hOff) : {};
+    const w = this.witOf(party);
+    if (!this.witOpen(party) || !w.name || !w.seen) return;
+    const claims = claimsFrom(w.seen), n = Object.keys(claims).length;
     const keep = party ? { said: w.said } : {};
-    const next: Wit = Object.keys(claims).length ? { ...keep, name, claims, tries: 0, next: Date.now() + this.witnessWait(0) } : keep;
+    const last = n ? `logged out: ${n} skill${n > 1 ? "s" : ""} gained that the hiscores didn't have yet; asking them in a minute`
+      : Object.keys(w.seen).length ? "logged out before the experience gained was looked at: next time, wait a minute after your last experience before logging out"
+      : "logged out with no experience gained this time";
+    const next: Wit = n ? { ...keep, name: w.name, claims, tries: 0, next: Date.now() + this.witnessWait(0), last } : { ...keep, last };
     if (party) { if (this.witOpen(party)) this.cwit[party] = next; } else this.wit = next;
     this.saveWit();
     this.schedule();
@@ -1693,9 +1709,14 @@ export class Channel extends DurableObject<Env> {
     return t > 0 ? t * 1000 : WITNESS_WAITS[Math.min(i, WITNESS_WAITS.length - 1)];
   }
 
-  /** The parties' next asks, for the alarm. */
+  /** The parties' next looks and asks, for the alarm. */
   witDue(): number[] {
-    return [this.wit, ...Object.values(this.cwit)].filter((w) => w.claims && w.next).map((w) => w.next!);
+    const out: number[] = [];
+    for (const w of [this.wit, ...Object.values(this.cwit)]) {
+      if (w.look) out.push(w.look);
+      if (w.claims && w.next) out.push(w.next);
+    }
+    return out;
   }
 
   /** Every party whose ask is due: the hiscores asked again; a claim found there exactly proves it, one not there yet
@@ -1704,20 +1725,37 @@ export class Channel extends DurableObject<Env> {
     const now = Date.now();
     for (const party of ["", ...Object.keys(this.cwit)]) {
       const w = this.witOf(party);
+      if (w.look && now >= w.look - 5 && w.name && w.seen && this.witOpen(party)) {
+        // (a look, while they're logged in: what the hiscores don't show yet is hidden)
+        w.look = undefined;
+        const h = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
+        if (h && w.seen) {
+          noteLook(w.seen, h, now);
+          const hidden = Object.values(w.seen).filter((v) => v.hidden).length;
+          w.last = hidden ? `${hidden} skill${hidden > 1 ? "s" : ""} gained that the hiscores don't have yet: log out, and it's checked`
+            : "the hiscores already show this experience";
+        } else w.last = "the hiscores couldn't be read just now";
+      }
       if (!w.claims || !w.next || now < w.next - 5) continue;
       if (!w.name || !this.witOpen(party)) { this.witClear(party); continue; }
       const h1 = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
       const said = h1 ? judge(w.claims, h1) : "wait";
       if (said === "proven" && this.witOpen(party)) { this.witProven(party); return; }
       if (said === "wait" && (w.tries || 0) + 1 < WITNESS_WAITS.length) {
-        Object.assign(w, { tries: (w.tries || 0) + 1, next: Date.now() + this.witnessWait((w.tries || 0) + 1) });
-      } else this.witClear(party);
+        Object.assign(w, { tries: (w.tries || 0) + 1, next: Date.now() + this.witnessWait((w.tries || 0) + 1),
+                           last: h1 ? "the hiscores haven't caught up yet; asking again later" : "the hiscores couldn't be read; asking again later" });
+      } else {
+        this.witClear(party);
+        this.witOf(party).last = said === "no" ? "the hiscores moved past what was claimed (played elsewhere since?): play, then log out to try again"
+          : "the hiscores never showed what was claimed: play, then log out to try again";
+      }
     }
     this.saveWit();
   }
 
   witClear(party: string) {
-    if (party) { if (this.cwit[party]) this.cwit[party] = { said: this.cwit[party].said }; } else this.wit = {};
+    if (party) { if (this.cwit[party]) this.cwit[party] = { said: this.cwit[party].said, last: this.cwit[party].last }; }
+    else this.wit = { last: this.wit.last };
   }
 
   /** A party proven. The holder: the page is theirs, and every challenge is dropped. A challenger: the name is taken

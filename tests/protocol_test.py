@@ -210,7 +210,7 @@ def setUpModule():
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
              "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
-             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1",
+             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1",
              "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
@@ -220,7 +220,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base, "--witness-wait", "1",
+                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base, "--witness-wait", "1", "--witness-look", "1",
                                  "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
@@ -3017,27 +3017,43 @@ class Proving(Witnessing):
         self.hiscores(name, {"Attack": 1000, "Ranged": 5000})
         g = await self.plugin(name, key)
         await g.send(json.dumps({"game": {"name": name, "skills": {"Attack": [10, 10, 1000], "Ranged": [20, 20, 5000]}}}))
-        await self.pause(1.5)                       # (the session's start read)
+        await asyncio.sleep(1.5)                       # (the session's start read)
         await g.send(json.dumps({"game": {"skills": {"Attack": [10, 10, 1000], "Ranged": [21, 21, 5600]}}}))
-        await self.pause(0.3)
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
         await g.send(json.dumps({"game": {"off": True}}))
-        await self.pause(1.0)                       # (read at logout: not there yet)
+        await asyncio.sleep(0.3)                       # (claimed at logout; asked of the hiscores a while after)
         self.assertEqual(self.proof(name), "unproven")
+        why = json.loads(raw("GET", "/proof/%s?key=%s" % (name, key))[2]).get("why", "")
+        self.assertIn("1 skill gained that the hiscores didn't have yet", why)
         self.hiscores(name, {"Attack": 1000, "Ranged": 5600})   # (Jagex's update, after the logout)
         self.assertEqual(await self.until_proof(name, "proven"), "proven")
+
+    async def test_logging_out_before_the_look_claims_nothing_and_says_so(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Ranged": 5000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": name, "skills": {"Ranged": [20, 20, 5000]}}}))
+        await asyncio.sleep(1.8)
+        await g.send(json.dumps({"game": {"skills": {"Ranged": [21, 21, 5600]}}}))
+        await asyncio.sleep(0.2)                       # (out before the look: Jagex's update comes with the logout)
+        await g.send(json.dumps({"game": {"off": True}}))
+        self.hiscores(name, {"Ranged": 5600})
+        await asyncio.sleep(3.0)
+        self.assertEqual(self.proof(name), "unproven")
+        self.assertIn("wait a minute", json.loads(raw("GET", "/proof/%s?key=%s" % (name, key))[2]).get("why", ""))
 
     async def test_a_copy_of_whats_already_public_proves_nothing(self):
         name, key = await self.claimed()
         self.hiscores(name, {"Attack": 1000, "Ranged": 5000})
         g = await self.plugin(name, key)
         await g.send(json.dumps({"game": {"name": name, "skills": {"Attack": [10, 10, 1000], "Ranged": [20, 20, 5000]}}}))
-        await self.pause(1.5)
+        await asyncio.sleep(1.5)
         # (the real player plays and logs out; the copier waits for the hiscores, then sends what they say)
         self.hiscores(name, {"Attack": 1000, "Ranged": 5600})
         await g.send(json.dumps({"game": {"skills": {"Attack": [10, 10, 1000], "Ranged": [21, 21, 5600]}}}))
-        await self.pause(0.3)
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
         await g.send(json.dumps({"game": {"off": True}}))
-        await self.pause(4.0)
+        await asyncio.sleep(4.0)
         self.assertEqual(self.proof(name), "unproven")
 
     async def test_another_accounts_name_proves_nothing(self):
@@ -3047,13 +3063,13 @@ class Proving(Witnessing):
         self.hiscores(name, {"Ranged": 9000})
         g = await self.plugin(name, key)
         await g.send(json.dumps({"game": {"name": alt, "skills": {"Ranged": [20, 20, 5000]}}}))
-        await self.pause(1.5)
+        await asyncio.sleep(1.5)
         await g.send(json.dumps({"game": {"skills": {"Ranged": [21, 21, 5600]}}}))
-        await self.pause(0.3)
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
         await g.send(json.dumps({"game": {"off": True}}))
-        await self.pause(0.5)
+        await asyncio.sleep(0.5)
         self.hiscores(alt, {"Ranged": 5600})
-        await self.pause(3.0)
+        await asyncio.sleep(3.0)
         self.assertEqual(self.proof(name), "unproven")
 
 
@@ -3066,7 +3082,7 @@ class TakingBack(Witnessing):
         name, held = await self.claimed()                          # (the first to claim it: someone else)
         h = await self.plugin(name, held)
         await h.send(json.dumps({"game": {"name": name, "world": 301, "skills": {"Ranged": [99, 99, 13034431]}}}))
-        await self.pause(0.5)
+        await asyncio.sleep(0.5)
         # (the real player claims it too: a challenger's key)
         st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
                           {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
@@ -3079,13 +3095,13 @@ class TakingBack(Witnessing):
         self.hiscores(name, {"Ranged": 5000})
         c = await self.plugin(name, mine)
         await c.send(json.dumps({"game": {"name": name, "world": 420, "skills": {"Ranged": [80, 80, 5000]}}}))
-        await self.pause(1.5)
+        await asyncio.sleep(1.5)
         await c.send(json.dumps({"game": {"skills": {"Ranged": [81, 81, 5600]}}}))
-        await self.pause(0.3)
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
         page = http("GET", "/game/%s?code=" % name)[1]["game"]
         self.assertEqual((page["world"], page["skills"]["Ranged"][2]), (301, 13034431))
         await c.send(json.dumps({"game": {"off": True}}))
-        await self.pause(1.0)
+        await asyncio.sleep(1.0)
         self.assertEqual(self.proof(name), "unproven")
         self.hiscores(name, {"Ranged": 5600})
         self.assertEqual(await self.until_proof(name, "proven"), "proven")
@@ -3098,7 +3114,7 @@ class TakingBack(Witnessing):
         # (the challenger's key opens the page now, as its holder's)
         again = await self.plugin(name, mine)
         await again.send(json.dumps({"game": {"name": name, "world": 420}}))
-        await self.pause(0.5)
+        await asyncio.sleep(0.5)
         self.assertEqual(http("GET", "/game/%s?code=" % name)[1]["game"]["world"], 420)
         # (proven: no more challenges)
         st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
@@ -3114,11 +3130,11 @@ class TakingBack(Witnessing):
         self.hiscores(name, {"Ranged": 5000})
         h = await self.plugin(name, held)
         await h.send(json.dumps({"game": {"name": name, "skills": {"Ranged": [80, 80, 5000]}}}))
-        await self.pause(1.5)
+        await asyncio.sleep(1.5)
         await h.send(json.dumps({"game": {"skills": {"Ranged": [81, 81, 5600]}}}))
-        await self.pause(0.3)
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
         await h.send(json.dumps({"game": {"off": True}}))
-        await self.pause(1.0)
+        await asyncio.sleep(1.0)
         self.hiscores(name, {"Ranged": 5600})
         self.assertEqual(await self.until_proof(name, "proven"), "proven")
         self.assertEqual(await c.recv_close(), ("close", 4003))

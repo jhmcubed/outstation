@@ -1364,7 +1364,7 @@ public class OutsidePlugin extends Plugin
 		{
 			if (panel != null)
 			{
-				panel.proof(null);
+				panel.proof(null, null);
 			}
 			return;
 		}
@@ -1384,7 +1384,7 @@ public class OutsidePlugin extends Plugin
 					JsonObject o = res.code() == 200 && res.body() != null ? gson.fromJson(res.body().string(), JsonObject.class) : null;
 					String proof = o != null && o.has("proof") ? o.get("proof").getAsString() : null;
 					challenging = "challenging".equals(proof);
-					panel.proof(proof);
+					panel.proof(proof, o != null && o.has("why") ? o.get("why").getAsString() : null);
 				}
 				catch (IOException | RuntimeException ignored)
 				{

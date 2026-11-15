@@ -4,17 +4,52 @@
 // reports while they play, before the official hiscores have it, and found on the hiscores after they log out. Only
 // whoever is playing that account can know it in advance.
 //
-//   1. As the plugin's first skills come in a session, the hiscores are read (h0).
-//   2. As they log out (the game's "off", or the plugin going), the hiscores are read again (hOff), and a claim is made
-//      of every skill they reported above both: gained this session, and not yet public as they logged out. A copy of
-//      what's already on the hiscores (someone waiting for the real player to log out) is never above hOff.
-//   3. A while after (WITNESS_WAITS), the hiscores are read once more: a claimed skill found there exactly proves it.
+//   1. While they're logged in the hiscores can't have this session's experience (Jagex writes it on logout). So
+//      WITNESS_LOOK after a skill's experience last changed, the hiscores are read (a look): every skill the plugin last
+//      said above what they show is marked hidden, its figure not public yet.
+//   2. As they log out (the game's "off", or the plugin going), the hidden figures are claimed. A copy of what's
+//      already on the hiscores (someone waiting for the real player to log out) is never hidden: a look shows it.
+//   3. A while after (WITNESS_WAITS), the hiscores are read again: a claimed skill found there exactly proves it.
 //      Lower: not updated yet, asked again later. Higher everywhere: they've played since; no proof this time.
+// (11/15/2026, Jace's first try on his alt: the first way read the hiscores at the logout itself and kept what wasn't
+// there yet, but Jagex's update comes with the logout, so his new experience was already public and nothing was kept.)
 // The name on the hiscores is the one the plugin says they're logged in as, and it must be the page's own (as a
 // channel has it), or someone could prove another's page with their own account.
 // relay.py's witness_*, the same.
 
 export type Xp = Record<string, number>;
+
+/** How long after a skill's experience last changed the hiscores are looked at, while they're still logged in. */
+export const WITNESS_LOOK = 45_000;
+
+/** A skill as the plugin last said it: its experience, when that came, and whether a look since found it not public. */
+export interface Seen { x: number; at: number; hidden?: boolean }
+
+/** What the plugin says, against what was seen: a changed figure is new (not yet looked at). Whether any changed. */
+export function noteSaid(seen: Record<string, Seen>, said: Xp, now: number): boolean {
+  let changed = false;
+  for (const [k, x] of Object.entries(said)) {
+    if (seen[k]?.x === x) continue;
+    seen[k] = { x, at: now };
+    changed = true;
+  }
+  return changed;
+}
+
+/** A look (the hiscores read at `at`, while they were logged in): every figure said before it and above what the
+ *  hiscores show is hidden; one they show already isn't. */
+export function noteLook(seen: Record<string, Seen>, h: Xp, at: number) {
+  for (const [k, v] of Object.entries(seen)) {
+    if (v.at <= at && h[k] !== undefined) v.hidden = v.x > h[k];
+  }
+}
+
+/** The figures claimed at logout: the hidden ones. */
+export function claimsFrom(seen: Record<string, Seen>): Xp {
+  const out: Xp = {};
+  for (const [k, v] of Object.entries(seen)) if (v.hidden) out[k] = v.x;
+  return out;
+}
 
 /** When the hiscores are asked again after a logout, from it: Jagex's update comes on logout, and its pages can lag. */
 export const WITNESS_WAITS = [60_000, 180_000, 600_000, 1_800_000];
@@ -67,14 +102,6 @@ export function reported(skills: unknown): Xp {
   return out;
 }
 
-/** What's claimed at logout: each skill reported above both the session's start (h0) and the hiscores at logout. */
-export function claimsOf(h0: Xp, said: Xp, hOff: Xp): Xp {
-  const out: Xp = {};
-  for (const [k, x] of Object.entries(said)) {
-    if (h0[k] !== undefined && hOff[k] !== undefined && x > h0[k] && x > hOff[k]) out[k] = x;
-  }
-  return out;
-}
 
 /** The hiscores after against the claims: "proven" (one found exactly), "wait" (some not there yet) or "no". */
 export function judge(claims: Xp, h1: Xp): "proven" | "wait" | "no" {
@@ -92,7 +119,9 @@ export async function readXp(name: string, fresh: boolean, upstream: string | nu
   const n = encodeURIComponent(name.replace(/ /g, " "));
   const headers = { "user-agent": agent, accept: "application/json" };
   try {
-    const r = await fetch((upstream || HISCORES) + "/m=hiscore_oldschool/index_lite.json?player=" + n, { headers });
+    // (a cache in front of the hiscores can answer with an older page: each read asks for one of its own)
+    const r = await fetch((upstream || HISCORES) + "/m=hiscore_oldschool/index_lite.json?player=" + n
+      + (upstream ? "" : "&t=" + Date.now()), { headers: { ...headers, "cache-control": "no-cache" } });
     if (r.ok) {
       const x = fromHiscores(await r.json());
       if (x) return x;
