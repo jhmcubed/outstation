@@ -1850,9 +1850,10 @@ class Channel:
             if summed:
                 # (after the report itself has gone to viewers, below)
                 asyncio.get_event_loop().call_soon(self.tell_summary)
-            if self.array is not None and self.sender is not None and self.listed():
-                # the Array's events (11/08/2026): only while it's live and on the open outstations' list, so a dark
-                # or coded outstation's reports never show (with --delay, as the report reaches viewers)
+            if self.array is not None and (self.sender is not None or self.gamer is not None) and self.listed():
+                # the Array's events (11/08/2026): only while it's live, or its plugin's connected (11/15/2026), and on
+                # the open outstations' list, so a coded outstation's reports, and a dark one's with no plugin, never
+                # show (with --delay, as the report reaches viewers)
                 try:
                     self.array.add(self.name, array_events(report))
                 except (TypeError, ValueError, AttributeError, KeyError):
@@ -2611,7 +2612,7 @@ class Relay:
             await self.clips(reader, writer, method, headers, path, q)
             return
         if method == "POST" and len(path) == 2 and path[0] == "dink":
-            await self.dink(reader, writer, headers, path[1], q.get("key", ""))
+            await self.dink(reader, writer, headers, path[1], q.get("key", ""), q.get("from") == "plugin")
             return
         if len(path) == 2 and path[0] == "invites" and not key:
             await self.invites(reader, writer, method, headers, path[1], q)
@@ -3209,14 +3210,16 @@ class Relay:
         counted under each inviter, [{"by", "n"}] sorted by "by" (the Worker's openPortals, the same). Never the
         invited names, and only under an inviter that's on the list itself, so nothing's said of a hidden outstation.
         "where" (11/08/2026, following; game_where): the square the plugin last said (and its world, with "and my world"
-        on), only while the channel's live and listed, and only if it came within where_fresh_s; else null.
+        on), only while the channel's live or its plugin's connected (11/15/2026) and listed, and only if it came within
+        where_fresh_s; else null.
         "activity" (11/08/2026; game_activity): what they were doing, the same way. Nowhere else."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
                  "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
-                 "where": dict(ch.where) if ch.where is not None and ch.sender is not None
+                 # (while it transmits, or its plugin's connected: 11/15/2026, the plugin first)
+                 "where": dict(ch.where) if ch.where is not None and (ch.sender is not None or ch.gamer is not None)
                           and time.monotonic() - ch.where_at <= self.where_fresh_s else None,
-                 "activity": dict(ch.activity) if ch.activity is not None and ch.sender is not None
+                 "activity": dict(ch.activity) if ch.activity is not None and (ch.sender is not None or ch.gamer is not None)
                              and time.monotonic() - ch.activity_at <= self.where_fresh_s else None}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
@@ -4008,7 +4011,7 @@ class Relay:
         finally:
             writer.close()
 
-    async def dink(self, reader, writer, headers, name, key):
+    async def dink(self, reader, writer, headers, name, key, from_plugin=False):
         async def answer(status):
             writer.write(("HTTP/1.1 %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" % status).encode())
             try:
@@ -4035,6 +4038,10 @@ class Relay:
         elif ch.key != key:
             return await answer("403 Forbidden")
         ch.key_used()
+        if from_plugin and ch.sender is not None:
+            # (the Outside plugin's own reports, 11/15/2026, for a player with no outstation: while it transmits,
+            # Dink's come through it, so the plugin's are dropped and nothing's told twice; the Worker's, the same)
+            return await answer("204 No Content")
         content_type = headers.get("content-type", "")
         payload = dink_payload(content_type, body)
         # (Dink posts each event once to each address it lists: listed twice, every event came twice, to the portal and

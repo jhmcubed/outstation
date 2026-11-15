@@ -94,12 +94,13 @@ public interface OutsideConfig extends Config
 		name = "Follow me on the globe",
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe travels to the rough area"
 			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
-			+ " your outstation's transmitting. In an instance (a raid, a boss room), the area it's opened from. Never in"
+			+ " you're logged in with this plugin (or your outstation's transmitting). In an instance (a raid, a boss room), the area it's opened from. Never in"
 			+ " the Wilderness (whatever \"In the Wilderness too\" says), a PvP area, or on a PvP or Deadman world: there,"
 			+ " what was sent is cleared at once. Ferox Enclave and the PvP minigames are safe.",
 		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
 			+ " your outstation's relay, a server not controlled or verified by the RuneLite developers, at most once a"
-			+ " minute, and anyone who opens outside.wiki's globe can see it while your outstation's transmitting.",
+			+ " minute, and anyone who opens outside.wiki's globe can see it while you're logged in with this plugin or your"
+			+ " outstation's transmitting.",
 		position = 6
 	)
 	default boolean follow()
@@ -114,7 +115,7 @@ public interface OutsideConfig extends Config
 			+ " the square, so the globe can show which world your light's on. Never on a PvP, Deadman or other"
 			+ " dangerous world, and never without following.",
 		warning = "On, the world you were on two minutes ago goes with the rough area (a square of the map about 128"
-			+ " tiles a side), so anyone who opens outside.wiki's globe while your outstation's transmitting can see which"
+			+ " tiles a side), so anyone who opens outside.wiki's globe while you're logged in with this plugin can see which"
 			+ " world and roughly where you were two minutes before.",
 		position = 7
 	)
@@ -128,13 +129,13 @@ public interface OutsideConfig extends Config
 		name = "What I'm doing, on the globe",
 		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe shows what you were doing"
 			+ " two minutes ago, only as one word: skilling (and which skill), a boss, a raid or a minigame (and which),"
-			+ " fighting, or idle. At most once a minute, while your outstation's transmitting. Never in a PvP area or on"
+			+ " fighting, or idle. At most once a minute, while you're logged in with this plugin. Never in a PvP area or on"
 			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe), nor in the Wilderness unless"
 			+ " \"In the Wilderness too\" is on: there, what was sent is cleared at once. It doesn't need following on.",
 		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss, raid or minigame and"
 			+ " which, fighting, or idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
-			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while your outstation's"
-			+ " transmitting.",
+			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while you're logged in with"
+			+ " this plugin.",
 		position = 8
 	)
 	default boolean activity()
@@ -203,6 +204,30 @@ public interface OutsideConfig extends Config
 	default boolean charges()
 	{
 		return true;
+	}
+
+	@ConfigItem(
+		keyName = "reports",
+		name = "Levels, kills, drops and log slots",
+		description = "Your levels as you gain them, kill counts, collection log slots, pets, clue counts and drops worth at"
+			+ " least the amount below, as the game tells you them, for your page's event log and outside.wiki's feed (as"
+			+ " Dink would send them; while your outstation transmits, Dink's go through it instead)",
+		position = 12
+	)
+	default boolean reports()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "reportLoot",
+		name = "Drops worth at least",
+		description = "The least a drop is worth (in coins, at Grand Exchange prices) for it to go on your page",
+		position = 12
+	)
+	default int reportLoot()
+	{
+		return 100_000;
 	}
 
 	@ConfigItem(

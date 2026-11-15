@@ -435,8 +435,9 @@ Wilderness and PvP-area flags are read at sea as anywhere.
   a minute after the last at most, and at once on a new connection). On Cloudflare a channel doesn't sleep while it's
   live (the transmitter's frames, and the desk's upload line each second, keep it awake), which is the only time it's
   shown; one that slept while dark shows `where` `null` from going live till the plugin's next, 3 minutes at worst.
-- It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live and on that list (no
-  watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
+- It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live or its plugin's
+  connected (11/15/2026, the plugin first: a player with only the plugin shows too) and on that list (no watch code,
+  not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
   Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
   desks, the whole state someone just come gets, `GET /game`, the Array's events, the aether or the keeper's list.
 
@@ -504,7 +505,7 @@ channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activi
 - Dropped when the game socket closes, when the plugin sends `"off": true` or a `paused` that's a string, and on
   Cloudflare when the keeper gives the channel a new key or takes it back.
 - Held in memory only, with when it came, never in storage (as `where`: the Directory's stored rows leave it out). Shown
-  only on `GET /channels` (above), while the channel's live and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers or
+  only on `GET /channels` (above), while the channel's live or its plugin's connected (11/15/2026) and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers or
   lookers, `GET /game`, the Array's events, the aether or the keeper's list; the channel's own desks get it, and `where`, only
   as `{"mine"}` (below, "Your year").
 
@@ -774,9 +775,16 @@ never is). A name is one line, 60 characters at most; a number is whole, 0 to 2â
 or that one skill, out; a kill needs its boss and its count). Events are ordered as the reports came, a report's levels
 in the order Dink gave them.
 
-**Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting) and
-**open** (handed out, with no watch code: the same test that puts it on `GET /channels`). A dark outstation's reports,
-and a watch-coded one's, never make an event, then or later. What the relay already refuses or ignores (the wrong key,
+**The plugin's own reports** (11/15/2026, the plugin first): a player with no outstation has no Dink going through one,
+so the Outside plugin posts its own to this route with `&from=plugin`, in Dink's shape (`type`, `content`, `extra`):
+kill counts, collection log slots, pets and clues from the game's messages, levels from the stats, and a monster's
+loot worth the plugin's "Drops worth at least" or more (plugin/src/main/java/wiki/outside/Reports.java). While the
+outstation transmits, the relay drops them (204, nothing kept): Dink's come through it then, and nothing's told twice.
+
+**Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting), or
+its plugin's connected (11/15/2026, the plugin first), and
+**open** (handed out, with no watch code: the same test that puts it on `GET /channels`). A dark outstation's reports
+with no plugin connected, and a watch-coded one's, never make an event, then or later. What the relay already refuses or ignores (the wrong key,
 a kind not in `REPORTS`, the same Dink post twice) makes none either. On the Python relay with `--delay`, a report counts
 as it reaches viewers, so one that comes in the delay's last moments before the outstation goes dark doesn't.
 

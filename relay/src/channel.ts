@@ -471,12 +471,15 @@ export class Channel extends DurableObject<Env> {
     const set = this.meta.keyHash !== null, code = !!this.meta.code, at = Date.now();
     if (set && this.meta.pending) return { channel: this.name, set, code, at, pending: true }; // (only counted: its inviter's)
     if (!set || code) return { channel: this.name, set, code, at }; // (not listed: nothing more to tell)
-    const live = this.live();
+    const live = this.live(), game = this.sockets("game").length > 0;
+    // (the plugin first, 11/15/2026: where they are and what they're doing go on the list while the plugin's connected
+    // too, not only while the outstation transmits; the plugin's own switches and safeguards still decide what comes)
+    const shown = live || game;
     return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
-             doing: this.doing(), game: this.sockets("game").length > 0,
-             ...(live && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
-             ...(live && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}) };
+             doing: this.doing(), game,
+             ...(shown && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
+             ...(shown && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}) };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -518,10 +521,11 @@ export class Channel extends DurableObject<Env> {
   }
 
   /** A field report's events (array.ts) told to the Directory, for the Array's feed (11/08/2026): only while this
-   *  channel's live and listed (handed out, no watch code: on GET /channels), so a dark or coded outstation's reports
-   *  never show. The Directory keeps them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
+   *  channel's live or its plugin's connected (11/15/2026, the plugin first) and listed (handed out, no watch code: on
+   *  GET /channels), so a coded outstation's reports, and a dark one's with no plugin, never show. The Directory keeps
+   *  them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
   tellArray(report: unknown) {
-    if (!this.name || !this.live() || this.meta.keyHash === null || this.meta.code) return;
+    if (!this.name || (!this.live() && !this.sockets("game").length) || this.meta.keyHash === null || this.meta.code) return;
     const events = arrayEvents(report);
     if (!events.length) return;
     this.ctx.waitUntil(this.tellDirectory("/array", JSON.stringify({ channel: this.name, events }))
@@ -673,7 +677,7 @@ export class Channel extends DurableObject<Env> {
       for (const d of this.sockets("desk")) this.send(d, line);
       return new Response(null, { status: 204 });
     }
-    if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
+    if (role === "_dink") return this.dink(request, q.get("key") || "", ip, q.get("from") === "plugin");
     // (an anomaly report's channel and key, checked: index.ts's /reports)
     if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
     // (an outstation joining the aether, aether.ts: its key checked as its desk's would be, and why not if not)
@@ -1812,9 +1816,12 @@ export class Channel extends DurableObject<Env> {
 
   dinkSeen = new Map<string, number>(); // a Dink post -> when: the same one again within 10 s is dropped
 
-  async dink(request: Request, key: string, ip: string): Promise<Response> {
+  // (fromPlugin, 11/15/2026: the Outside plugin's own reports, for a player with no outstation; while the outstation
+  // transmits, Dink's come through it, so the plugin's are dropped and nothing's told twice)
+  async dink(request: Request, key: string, ip: string, fromPlugin = false): Promise<Response> {
     const no = await this.checkKey(key, ip);
     if (no) return new Response(null, { status: 403 });
+    if (fromPlugin && this.live()) return new Response(null, { status: 204 });
     const payload = await dinkPayload(request);
     // (Dink posts each event once to each address it lists: listed twice, every event came twice)
     const now = Date.now(), seen = JSON.stringify(payload);

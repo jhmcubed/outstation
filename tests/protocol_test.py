@@ -1504,6 +1504,22 @@ class ArrayEvents(Base):
         await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})
         await self.none_of_mine()
 
+    async def test_the_plugins_own_reports_show_while_its_connected_and_not_twice_while_live(self):
+        # (11/15/2026, the plugin first: the Outside plugin's own reports (from=plugin) for a player with no outstation;
+        # while the outstation transmits, Dink's come through it, so the plugin's are dropped)
+        g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, self.ch, self.key))
+        self.clients.append(g)
+        await self.pause(2)
+        plugin = lambda p: post("/dink/%s?key=%s&from=plugin" % (self.ch, self.key), json.dumps(p).encode(), "application/json")
+        self.assertEqual(await plugin({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412}}), 204)
+        self.assertEqual(self.what(await self.mine(1)), [{"kind": "kill", "boss": "Vorkath", "kc": 412}])
+        tx = await self.tx()
+        await self.pause(2)
+        self.assertEqual(await plugin({"type": "PET", "content": "", "extra": {"petName": "Vorki"}}), 204)  # (dropped)
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})     # (Dink's)
+        got = self.what(await self.mine(2))
+        self.assertEqual(got, [{"kind": "kill", "boss": "Vorkath", "kc": 412}, {"kind": "level", "skill": "Magic", "level": 99}])
+
     async def test_a_watch_coded_outstations_reports_never_show(self):
         await self.tx("a-code")
         await self.pause(2)
@@ -1993,20 +2009,21 @@ class Following(Base):
         await self.say(g, {"where": where or self.LUMBRIDGE})
         return tx, g
 
-    async def test_a_square_shows_on_the_list_only_while_live(self):
+    async def test_a_square_shows_on_the_list_while_the_plugins_connected_or_live(self):
+        # (11/15/2026, the plugin first: the plugin connected is enough, with no outstation transmitting)
         g = await self.game()
         self.clients.append(g)
         await self.say(g, {"where": self.LUMBRIDGE})
-        self.assertIsNone(await self.where())                      # (held, but not on air: not shown)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)       # (the plugin alone)
         tx = await self.tx()
         await next_of(tx, "relay")
-        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)       # (on air too)
         tx.close()
         await self.pause(2)
-        self.assertIsNone(await self.where())
-        tx = await self.tx()                                       # (on air again within the time: shown again)
-        await next_of(tx, "relay")
-        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)       # (off air, the plugin still there)
+        g.close()
+        await self.pause(2)
+        self.assertIsNone(await self.where())                      # (the plugin gone: dropped)
 
     async def test_it_goes_stale(self):
         await self.live_and_following()
@@ -2021,7 +2038,7 @@ class Following(Base):
         self.assertNotIn(self.ch, [c["channel"] for c in got])
         self.assertNotIn({"x": 1088, "y": 2496}, [c["where"] for c in got])
 
-    async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_only_once_live(self):
+    async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_at_once(self):
         if not WORKER:
             await self.tx()                    # (relay.py: the inviter's handed out once its first transmitter claims it)
             await self.pause(2)
@@ -2032,11 +2049,7 @@ class Following(Base):
         g = await self.game(key=got["key"], channel=a)              # (its key used: taken up)
         self.clients.append(g)
         await self.say(g, {"where": self.LUMBRIDGE})
-        self.assertIsNone(await self.where(a))                      # (listed now, but not live)
-        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, a, got["key"]))
-        self.clients.append(tx)
-        await next_of(tx, "relay")
-        self.assertEqual(await self.where(a), self.LUMBRIDGE)
+        self.assertEqual(await self.where(a), self.LUMBRIDGE)       # (listed now, with the plugin: shown)
 
     async def test_a_bad_square_is_ignored_and_the_rest_of_its_message_still_lands(self):
         tx = await self.tx()
@@ -2242,18 +2255,22 @@ class Activity(Base):
         await self.say(g, {"activity": activity or self.MINING})
         return tx, g
 
-    async def test_it_shows_only_while_live_without_following(self):
+    async def test_it_shows_while_the_plugins_connected_without_following(self):
+        # (11/15/2026, the plugin first: the plugin connected is enough, with no outstation transmitting)
         g = await self.game()
         self.clients.append(g)
         await self.say(g, {"activity": self.MINING})
-        self.assertIsNone(await self.activity())                   # (held, but not on air)
+        r = await self.row()
+        self.assertEqual((r["activity"], r["where"]), (self.MINING, None))   # (the plugin alone)
         tx = await self.tx()
         await next_of(tx, "relay")
-        r = await self.row()
-        self.assertEqual((r["activity"], r["where"]), (self.MINING, None))
+        self.assertEqual(await self.activity(), self.MINING)                  # (on air too)
         tx.close()
         await self.pause(2)
-        self.assertIsNone(await self.activity())
+        self.assertEqual(await self.activity(), self.MINING)                  # (off air, the plugin still there)
+        g.close()
+        await self.pause(2)
+        self.assertIsNone(await self.activity())                              # (the plugin gone: dropped)
 
     async def test_each_shape_it_takes(self):
         for a in ({"kind": "boss", "boss": "Vorkath"}, {"kind": "fighting"}, {"kind": "idle"},

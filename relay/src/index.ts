@@ -413,8 +413,9 @@ export class Directory extends DurableObject<Env> {
     const waits = (r: Listing) => !!r.pending && (given.get(r.channel) ?? null) !== null;
     const rows = names.map((n) => listed.rows.get(n)?.row).filter((r): r is Listing => !!r && r.set);
     const fresh = (parseFloat(this.env.WHERE_FRESH_SECONDS || "") * 1000) || WHERE_FRESH_MS, at = Date.now();
-    const whereOf = (r: Listing) => (r.live && r.where && at - (r.whereAt || 0) <= fresh ? { ...r.where } : null);
-    const activityOf = (r: Listing) => (r.live && r.activity && at - (r.activityAt || 0) <= fresh ? { ...r.activity } : null);
+    // (while it transmits, or its plugin's connected: 11/15/2026, the plugin first)
+    const whereOf = (r: Listing) => ((r.live || r.game) && r.where && at - (r.whereAt || 0) <= fresh ? { ...r.where } : null);
+    const activityOf = (r: Listing) => ((r.live || r.game) && r.activity && at - (r.activityAt || 0) <= fresh ? { ...r.activity } : null);
     const open = rows.filter((r) => !r.code && !waits(r))
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
                      title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game,

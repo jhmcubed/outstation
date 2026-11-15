@@ -49,6 +49,8 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
+import net.runelite.client.events.NpcLootReceived;
+import net.runelite.client.game.ItemStack;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.events.MenuOptionClicked;
@@ -168,6 +170,8 @@ public class OutsidePlugin extends Plugin
 	 *  into his alt, the side tab still said sburb, and the alt's kit would have gone to sburb's page: a key is now this
 	 *  character's own (kept per account), and nothing goes on a key whose page isn't the character logged in. */
 	private volatile String character = null;
+	/** each skill's real level as last seen this session, for the levels' reports */
+	private final java.util.Map<String, Integer> levelsSeen = new java.util.concurrent.ConcurrentHashMap<>();
 	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
 	private volatile boolean challenging = false;
 	private int ticksSinceSent;
@@ -314,6 +318,7 @@ public class OutsidePlugin extends Plugin
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			character = null;
+			levelsSeen.clear();
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
@@ -764,6 +769,10 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onChatMessage(ChatMessage e)
 	{
+		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
+		{
+			report(Reports.fromChat(Text.removeTags(e.getMessage()), myName()));
+		}
 		if (!config.charges() || (e.getType() != ChatMessageType.GAMEMESSAGE && e.getType() != ChatMessageType.SPAM))
 		{
 			return;
@@ -2117,6 +2126,69 @@ public class OutsidePlugin extends Plugin
 		{
 			activity.xp(System.currentTimeMillis(), e.getSkill().getName(), e.getXp());
 		}
+		// (a level gained: its real level above the one last seen this session; the first seen is only remembered)
+		String skill = e.getSkill().getName();
+		Integer was = levelsSeen.put(skill, e.getLevel());
+		if (was != null && e.getLevel() > was && client.getGameState() == GameState.LOGGED_IN)
+		{
+			java.util.Map<String, Integer> one = new java.util.LinkedHashMap<>();
+			one.put(skill, e.getLevel());
+			report(Reports.levels(one, myName()));
+		}
+	}
+
+	/** A monster's loot (RuneLite's own reading of it, as Dink's): worth "Drops worth at least" or more, a report. */
+	@Subscribe
+	public void onNpcLootReceived(NpcLootReceived e)
+	{
+		if (!config.reports() || e.getNpc() == null)
+		{
+			return;
+		}
+		java.util.List<Reports.Item> items = new java.util.ArrayList<>();
+		for (ItemStack s : e.getItems())
+		{
+			int id = itemManager.canonicalize(s.getId());
+			items.add(new Reports.Item(id, itemManager.getItemComposition(id).getName(), s.getQuantity(), itemManager.getItemPrice(id)));
+		}
+		report(Reports.loot(e.getNpc().getName(), items, Math.max(0, config.reportLoot()), myName()));
+	}
+
+	/** The name they're logged in as, for a report's line. */
+	private String myName()
+	{
+		Player me = client.getLocalPlayer();
+		return me == null || me.getName() == null ? "the subject" : me.getName().replace('\u00a0', ' ');
+	}
+
+	/** A report sent to the relay's Dink route (docs/protocol.md "Dink", from=plugin): with "Levels, kills, drops and log
+	 *  slots" on, a key for the character logged in, and never while held somewhere dangerous (the Wilderness, a PvP
+	 *  area or world), as nothing else is sent there. */
+	private void report(JsonObject payload)
+	{
+		Attach a = attach;
+		String c = character;
+		if (payload == null || !config.reports() || !config.send() || paused || a == null || c == null
+			|| !a.getChannel().toLowerCase(java.util.Locale.ROOT).equals(c))
+		{
+			return;
+		}
+		Request req = new Request.Builder().url(a.dinkUrl()).header("User-Agent", "outside-plugin/" + VERSION)
+			.post(RequestBody.create(JSON, gson.toJson(payload))).build();
+		http.newCall(req).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				log.debug("outside: a report didn't reach the relay", ex);
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				r.close();
+			}
+		});
 	}
 
 	/** A hit in their own fight: theirs on an NPC, or one on them (the activity's fighting, and which boss). */

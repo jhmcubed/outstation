@@ -50,20 +50,23 @@ test("a row stored before settling went comes back without its home, and is writ
   ok(!JSON.stringify(stored(l)).includes('"home"'));
 });
 
-test("after a sleep only the missing, the old, and the live with the plugin (once) are asked", () => {
+test("after a sleep only the missing, the old, and those with the plugin (once) are asked", () => {
+  // (11/15/2026, the plugin first: a row with the plugin connected, live or not, is asked as a live one is: it can
+  // carry a place now)
   const now = 100 * MIN, l = new ListedRows();
   l.heard(row("live-game", 1), now - MIN);
   l.heard(row("live-alone", 1, { game: false }), now - MIN);
   l.heard(row("dark", 1, { live: false, open: false, game: true }), now - MIN);
   l.heard(row("live-old", 1, { game: false }), now - LISTING_CHECK_MS - 1);
-  l.heard(row("dark-old", 1, { live: false }), now - LISTING_DARK_MS - 1);
-  l.heard(row("dark-oldish", 1, { live: false }), now - LISTING_CHECK_MS - 1);
-  const names = ["live-game", "live-alone", "dark", "live-old", "dark-old", "dark-oldish", "never"];
-  deepStrictEqual(l.due(names, now), ["live-old", "dark-old", "never"]); // (awake: all heard this wake)
+  l.heard(row("dark-old", 1, { live: false, game: false }), now - LISTING_DARK_MS - 1);
+  l.heard(row("dark-oldish", 1, { live: false, game: false }), now - LISTING_CHECK_MS - 1);
+  l.heard(row("game-oldish", 1, { live: false, game: true }), now - LISTING_CHECK_MS - 1);
+  const names = ["live-game", "live-alone", "dark", "live-old", "dark-old", "dark-oldish", "game-oldish", "never"];
+  deepStrictEqual(l.due(names, now), ["live-old", "dark-old", "game-oldish", "never"]); // (awake: all heard this wake)
   const woke = ListedRows.from(stored(l));
-  deepStrictEqual(woke.due(names, now), ["live-game", "live-old", "dark-old", "never"]);
+  deepStrictEqual(woke.due(names, now), ["live-game", "dark", "live-old", "dark-old", "game-oldish", "never"]);
   woke.heard(row("live-game", 2), now);
-  deepStrictEqual(woke.due(names, now), ["live-old", "dark-old", "never"]); // (once a wake)
+  deepStrictEqual(woke.due(names, now), ["dark", "live-old", "dark-old", "game-oldish", "never"]); // (once a wake)
   deepStrictEqual(woke.rows.get("live-game")!.row.where, { x: 3264, y: 3264, world: 302 }); // (back from the ask)
 });
 
@@ -88,10 +91,10 @@ test("written when what's stored changes, not for a new where alone; and a seen 
   l.heard(row("sburb", 4000, { viewers: 3 }), LISTING_CHECK_MS + 1);
   ok(l.changed());
   l.saved();
-  l.heard(row("sburb", 5000, { live: false, open: false, viewers: 0 }), LISTING_CHECK_MS + 2);
+  l.heard(row("sburb", 5000, { live: false, open: false, viewers: 0, game: false }), LISTING_CHECK_MS + 2);
   l.saved();
-  l.heard(row("sburb", 6000, { live: false, open: false, viewers: 0 }), 3 * LISTING_CHECK_MS);
-  ok(!l.changed()); // (a dark row's check is LISTING_DARK_MS)
+  l.heard(row("sburb", 6000, { live: false, open: false, viewers: 0, game: false }), 3 * LISTING_CHECK_MS);
+  ok(!l.changed()); // (a dark row's check, with no plugin, is LISTING_DARK_MS; with the plugin it's a live one's)
   ok(l.drop("sburb") && l.changed() && !l.drop("sburb"));
   l.saved();
   ok(!l.changed());
