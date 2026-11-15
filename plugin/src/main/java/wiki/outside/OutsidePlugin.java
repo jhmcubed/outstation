@@ -769,11 +769,29 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted e)
 	{
+		if ("outsideforget".equalsIgnoreCase(e.getCommand()))
+		{
+			String name = motionName(e.getArguments());
+			if (name == null || e.getArguments().length == 0)
+			{
+				say("which motion? ::outsideforget and its name");
+				return;
+			}
+			keep("motion", name, null);
+			say("taking the motion \"" + name + "\" off your page");
+			return;
+		}
 		if ("outsidemotion".equalsIgnoreCase(e.getCommand()))
 		{
 			if (config.model())
 			{
-				armMotion();
+				String name = motionName(e.getArguments());
+				if (e.getArguments().length > 0 && name == null)
+				{
+					say("a motion's name: up to 24 letters, numbers, spaces, - or _");
+					return;
+				}
+				armMotion(name);
 			}
 			else
 			{
@@ -890,8 +908,23 @@ public class OutsidePlugin extends Plugin
 	private int motionCount, motionPetCount;
 	private final List<String> motionFrames = new ArrayList<>(), motionPetFrames = new ArrayList<>();
 
-	private void armMotion()
+	/** A motion's name from the command's words (lower case), or null: none given, or not a name the relay takes. */
+	static String motionName(String[] args)
 	{
+		if (args == null || args.length == 0)
+		{
+			return null;
+		}
+		String n = String.join(" ", args).trim().toLowerCase();
+		return n.matches("[a-z0-9_ -]{1,24}") ? n : null;
+	}
+
+	/** the name the motion being recorded goes under (null: "idle" if they stood, "motion" if they did something) */
+	private String motionAs;
+
+	private void armMotion(String name)
+	{
+		motionAs = name;
 		motionArmed = client.getGameCycle();
 		motionStart = -1;
 		say("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
@@ -959,7 +992,10 @@ public class OutsidePlugin extends Plugin
 		JsonObject frames = Kept.frames(motionFrames, 1000.0 / (MOTION_EVERY * 20));
 		JsonObject petFrames = motionPet != null && !motionPetFrames.contains(null) ? Kept.frames(motionPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
 		say("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
-		keep("model", wholeModel(motionBase, motionPet, frames, petFrames));
+		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
+		String name = motionAs != null ? motionAs : motionIdle ? "idle" : "motion";
+		say("it goes on your page as \"" + name + "\"");
+		keep("motion", name, wholeModel(motionBase, motionPet, frames, petFrames));
 	}
 
 	/** A texture as the client has it, a PNG in base64 (0 a see-through texel), or null. */
@@ -1025,12 +1061,18 @@ public class OutsidePlugin extends Plugin
 	/** Sent to the relay's keep (POST; null: DELETE), off the client's thread; a failure said in the chat. */
 	private void keep(String what, JsonObject body)
 	{
+		keep(what, null, body);
+	}
+
+	private void keep(String what, String name, JsonObject body)
+	{
 		Attach a = attach != null ? attach : Attach.parse(config.stationKey(), gson);
 		if (a == null || !config.send())
 		{
 			return;
 		}
-		Request.Builder b = new Request.Builder().url(a.keepUrl(what)).header("User-Agent", "outside-plugin/" + VERSION);
+		String url = a.keepUrl(what) + (name == null ? "" : "&name=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+		Request.Builder b = new Request.Builder().url(url).header("User-Agent", "outside-plugin/" + VERSION);
 		b = body == null ? b.delete() : b.post(RequestBody.create(JSON, gson.toJson(body)));
 		http.newCall(b.build()).enqueue(new Callback()
 		{
@@ -1059,7 +1101,7 @@ public class OutsidePlugin extends Plugin
 				r.close();
 				if (body != null && code == 200)
 				{
-					say("model".equals(what) ? "your model is on your page" : "your bank is on your page");
+					say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your bank is on your page");
 				}
 				else if (body != null && code != 200)
 				{

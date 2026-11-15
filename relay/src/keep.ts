@@ -14,10 +14,16 @@
 //   POST   /keep/<channel>/<what>?key=<key>     the JSON above (at most KEEP_MOST[what] bytes), KEEP_AN_HOUR an hour
 //   GET    /keep/<channel>/<what>?code=<code>   {"<what>": ..., "at"} (404 none)
 //   DELETE /keep/<channel>/<what>?key=<key>     taken away
+//   and since 11/15/2026 the motion library: a motion is a model with its frames (and its pet's), kept under a name
+//   (MOTION_NAME, lower case), MOTIONS_MOST a channel, one of a name replaced:
+//   POST /keep/<channel>/motion?key=&name=   GET /keep/<channel>/motion?name=&code=   DELETE /keep/<channel>/motion?key=&name=
+//   GET /keep/<channel>/motions?code=         {"motions": [{"name", "at", "frames"}]}, oldest first
 // A change goes to the page's viewers, lookers and desks as {"kept": {"what", "at"}} (null "at": taken away), so the
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 
-export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024 };
+export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024 };
+// (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
+export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
 export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
 export const BANK_SLOTS = 1600, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
@@ -47,6 +53,12 @@ export function keepShape(what: string, d: unknown): unknown | string {
     return { items: items.map((s) => [s[0], s[1]]), tabs, names: n };
   }
   if (what === "model") return modelShape(d, true);
+  if (what === "motion") {
+    const m = modelShape(d, true);
+    if (typeof m === "string") return m;
+    if (!(m as Record<string, unknown>).frames) return "a motion has its frames";
+    return m;
+  }
   return "kept: bank or model";
 }
 

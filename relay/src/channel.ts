@@ -33,7 +33,7 @@ import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
-import { KEEP_AN_HOUR, KEEP_MOST, keepShape } from "./keep";
+import { KEEP_AN_HOUR, KEEP_MOST, keepShape, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
 
 export interface Env {
@@ -983,6 +983,10 @@ export class Channel extends DurableObject<Env> {
     this.ctx.storage.delete("game");
     this.ctx.storage.delete(["keep:bank", "keep:model"]); // (the bank and the model kept for the page, keep.ts)
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
+    this.ctx.waitUntil(this.ctx.storage.get<{ name: string }[]>("keep:motions").then((l) => {
+      this.ctx.storage.delete("keep:motions");
+      return l && l.length ? this.env.CLIPS?.delete(l.map((m) => this.keepKey("motion/" + m.name))) : undefined;
+    }));
   }
 
   /** GET /game/<channel>?code= (index.ts): the game state kept, for a page while the outstation's dark, and whether the
@@ -1756,6 +1760,7 @@ export class Channel extends DurableObject<Env> {
 
   async kept(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
     const what = q.get("what") || "";
+    if (what === "motions" || what === "motion") return this.motions(request, q, ip, what);
     if (!(what in KEEP_MOST)) return json({ error: "kept: bank or model" }, 404);
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
@@ -1801,6 +1806,52 @@ export class Channel extends DurableObject<Env> {
   }
 
   keepKey(what: string): string { return `keep/${this.name}/${what}.json`; }
+
+  // the motion library (keep.ts, 11/15/2026): each motion in the bucket under its name, the list in the channel's storage
+  async motions(request: Request, q: URLSearchParams, ip: string, what: string): Promise<Response> {
+    const list = (await this.ctx.storage.get<{ name: string; at: number; frames: number }[]>("keep:motions")) || [];
+    if (request.method === "GET") {
+      if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      if (what === "motions") return json({ motions: list });
+      const name = (q.get("name") || "").toLowerCase(), row = list.find((m) => m.name === name);
+      const o = row ? await this.env.CLIPS?.get(this.keepKey("motion/" + name)) : null;
+      if (!row || !o) return json({ error: "no such motion" }, 404);
+      return new Response('{"motion": ' + (await o.text()) + ', "name": ' + JSON.stringify(name) + ', "at": ' + row.at + "}",
+                          { headers: { "content-type": "application/json", "cache-control": "no-cache", "access-control-allow-origin": "*" } });
+    }
+    if (what !== "motion") return new Response(null, { status: 405 });
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    const name = (q.get("name") || "").trim().toLowerCase();
+    if (!MOTION_NAME.test(name)) return json({ error: "a motion's name: 1 to 24 letters, numbers, spaces, - or _" }, 400);
+    if (!this.env.CLIPS) return json({ error: "this relay doesn't keep motions" }, 503);
+    if (request.method === "DELETE") {
+      if (!list.some((m) => m.name === name)) return json({ error: "no such motion" }, 404);
+      await this.env.CLIPS.delete(this.keepKey("motion/" + name));
+      const rest = list.filter((m) => m.name !== name);
+      await this.ctx.storage.put("keep:motions", rest);
+      this.tellClip({ kept: { what: "motion", name, at: null } });
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const now = Date.now();
+    this.keepUploads = this.keepUploads.filter((t) => now - t < 3_600_000);
+    if (this.keepUploads.length >= KEEP_AN_HOUR * 2) return json({ error: `${KEEP_AN_HOUR} an hour at most: try again later` }, 429);
+    const others = list.filter((m) => m.name !== name);
+    if (others.length >= MOTIONS_MOST) return json({ error: `${MOTIONS_MOST} motions at most: ::outsideforget one first` }, 409);
+    const raw = await request.text();
+    if (raw.length > KEEP_MOST.motion) return json({ error: `at most ${KEEP_MOST.motion} bytes` }, 413);
+    let d: unknown;
+    try { d = JSON.parse(raw); } catch { return json({ error: "not JSON" }, 400); }
+    const shaped = keepShape("motion", d);
+    if (typeof shaped === "string") return json({ error: shaped }, 400);
+    this.keepUploads.push(now);
+    await this.env.CLIPS.put(this.keepKey("motion/" + name), JSON.stringify(shaped), { httpMetadata: { contentType: "application/json" } });
+    const frames = ((shaped as Record<string, { v: unknown[] }>).frames?.v || []).length;
+    await this.ctx.storage.put("keep:motions", [...others, { name, at: now, frames }]);
+    this.tellClip({ kept: { what: "motion", name, at: now } });
+    return json({ what: "motion", name, at: now });
+  }
 
   // the broadcaster's own emotes (emotes.ts): the list in storage, the pictures in the CLIPS bucket
 

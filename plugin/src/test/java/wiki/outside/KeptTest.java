@@ -89,4 +89,13 @@ public class KeptTest
 		JsonObject o = Kept.frames(java.util.Arrays.asList(f, f), 12.5);
 		assertEquals("{\"fps\":12.5,\"v\":[\"" + f + "\",\"" + f + "\"]}", o.toString());
 	}
+
+	@Test
+	public void aMotionsNameFromTheCommand()
+	{
+		assertEquals("dance 2", OutsidePlugin.motionName(new String[]{"Dance", "2"}));
+		assertNull(OutsidePlugin.motionName(new String[]{}));
+		assertNull(OutsidePlugin.motionName(new String[]{"no!"}));
+		assertNull(OutsidePlugin.motionName(new String[]{"aaaaaaaaaaaaaaaaaaaaaaaaa"}));
+	}
 }
