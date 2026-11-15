@@ -982,6 +982,7 @@ export class Channel extends DurableObject<Env> {
     this.game = new GameState();
     this.ctx.storage.delete("game");
     this.ctx.storage.delete(["keep:bank", "keep:model"]); // (the bank and the model kept for the page, keep.ts)
+    this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
   }
 
   /** GET /game/<channel>?code= (index.ts): the game state kept, for a page while the outstation's dark, and whether the
@@ -1758,14 +1759,22 @@ export class Channel extends DurableObject<Env> {
     if (!(what in KEEP_MOST)) return json({ error: "kept: bank or model" }, 404);
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
-      const got = await this.ctx.storage.get<{ data: unknown; at: number }>("keep:" + what);
+      const got = await this.ctx.storage.get<{ data?: unknown; at: number; r2?: boolean }>("keep:" + what);
       if (!got) return json({ error: "nothing kept" }, 404);
+      if (got.r2) {
+        // (a model, with its motion: in the bucket, past what one stored value holds; 11/15/2026)
+        const o = await this.env.CLIPS?.get(this.keepKey(what));
+        if (!o) return json({ error: "nothing kept" }, 404);
+        return new Response('{"' + what + '": ' + (await o.text()) + ', "at": ' + got.at + "}",
+                            { headers: { "content-type": "application/json", "cache-control": "no-cache", "access-control-allow-origin": "*" } });
+      }
       return json({ [what]: got.data, at: got.at });
     }
     const no = await this.checkKey(q.get("key") || "", ip);
     if (no) return json({ error: no[1] }, 403);
     if (request.method === "DELETE") {
       await this.ctx.storage.delete("keep:" + what);
+      await this.env.CLIPS?.delete(this.keepKey(what));
       this.tellClip({ kept: { what, at: null } });
       return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
     }
@@ -1780,10 +1789,18 @@ export class Channel extends DurableObject<Env> {
     const shaped = keepShape(what, d);
     if (typeof shaped === "string") return json({ error: shaped }, 400);
     this.keepUploads.push(now);
-    await this.ctx.storage.put("keep:" + what, { data: shaped, at: now });
+    if (what === "model" && this.env.CLIPS) {
+      await this.env.CLIPS.put(this.keepKey(what), JSON.stringify(shaped), { httpMetadata: { contentType: "application/json" } });
+      await this.ctx.storage.put("keep:" + what, { at: now, r2: true });
+    } else {
+      if (raw.length > 1900 * 1024) return json({ error: "too big for this relay" }, 413);
+      await this.ctx.storage.put("keep:" + what, { data: shaped, at: now });
+    }
     this.tellClip({ kept: { what, at: now } });
     return json({ what, at: now });
   }
+
+  keepKey(what: string): string { return `keep/${this.name}/${what}.json`; }
 
   // the broadcaster's own emotes (emotes.ts): the list in storage, the pictures in the CLIPS bucket
 

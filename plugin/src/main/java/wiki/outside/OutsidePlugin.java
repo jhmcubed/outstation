@@ -769,6 +769,18 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted e)
 	{
+		if ("outsidemotion".equalsIgnoreCase(e.getCommand()))
+		{
+			if (config.model())
+			{
+				armMotion();
+			}
+			else
+			{
+				say("switch on \"My character's model on my page\" in the plugin's settings first");
+			}
+			return;
+		}
 		if ("outsidemodel".equalsIgnoreCase(e.getCommand()))
 		{
 			if (config.model())
@@ -792,18 +804,53 @@ public class OutsidePlugin extends Plugin
 			say("your model isn't there to send yet: try ::outsidemodel in a moment");
 			return;
 		}
+		keep("model", wholeModel(m, petModel(), null, null));
+	}
+
+	/** The pet following them (11/15/2026, Jace: "one thing i would like to have it do is capture the pet"), or null. */
+	private Model petModel()
+	{
+		NPC pet = client.getFollower();
+		return pet == null ? null : pet.getModel();
+	}
+
+	private JsonObject modelJson(Model m)
+	{
 		// (11/15/2026: the game's own lighting and textures too, for the page to draw it as the game does)
-		JsonObject o = Kept.model(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
+		return Kept.model(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
 			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceCount(),
 			m.getFaceColors1(), m.getFaceColors2(), m.getFaceColors3(), m.getUnlitFaceColors(), m.getFaceTransparencies(),
 			m.getFaceTextures(), m.getFaceRenderPriorities(), m.getTextureFaces(), m.getTexIndices1(), m.getTexIndices2(),
 			m.getTexIndices3());
-		// each texture it uses, as the client has it (128 x 128, 0 a see-through texel), a PNG each, and the brightness
-		// the player has the game at (the palette's)
-		if (o.has("t") && client.getTextureProvider() != null)
+	}
+
+	/** The player's model, their pet's beside it (if one's following), each with the frames of a motion if one was
+	 *  recorded, every texture either uses and the brightness the player has the game at (the palette's). */
+	private JsonObject wholeModel(Model m, Model pet, JsonObject frames, JsonObject petFrames)
+	{
+		JsonObject o = modelJson(m);
+		if (frames != null)
 		{
-			JsonObject pics = new JsonObject();
-			for (JsonElement e : o.getAsJsonArray("t"))
+			o.add("frames", frames);
+		}
+		if (pet != null)
+		{
+			JsonObject p = modelJson(pet);
+			if (petFrames != null)
+			{
+				p.add("frames", petFrames);
+			}
+			o.add("pet", p);
+		}
+		// each texture it uses, as the client has it (128 x 128, 0 a see-through texel), a PNG each
+		JsonObject pics = new JsonObject();
+		for (JsonObject part : pet != null ? new JsonObject[]{o, o.getAsJsonObject("pet")} : new JsonObject[]{o})
+		{
+			if (!part.has("t") || client.getTextureProvider() == null)
+			{
+				continue;
+			}
+			for (JsonElement e : part.getAsJsonArray("t"))
 			{
 				int id = e.getAsInt();
 				if (id < 0 || pics.has(String.valueOf(id)) || pics.size() >= 16)
@@ -816,13 +863,93 @@ public class OutsidePlugin extends Plugin
 					pics.addProperty(String.valueOf(id), png);
 				}
 			}
+		}
+		if (pics.size() > 0)
+		{
 			o.add("tex", pics);
 		}
 		if (client.getTextureProvider() != null)
 		{
 			o.addProperty("b", Math.round(client.getTextureProvider().getBrightness() * 1000) / 1000.0);
 		}
-		keep("model", o);
+		return o;
+	}
+
+	// ---- the motion loop (11/15/2026, Jace: "build the pet and the motion loop"): ::outsidemotion gets ready, then
+	// records the next animation they do (an emote, a special attack), from its start to its end, at most MOTION_MOST
+	// frames; nothing begun within MOTION_WAIT, it records their stance standing (its breathing) for MOTION_IDLE. A frame
+	// every MOTION_EVERY client cycles (20 ms each: 12.5 frames a second), the pet's with the player's.
+	private static final int MOTION_EVERY = 4, MOTION_MOST = 50, MOTION_WAIT = 400, MOTION_IDLE = 150;
+	private int motionArmed = -1, motionStart = -1, motionLast;
+	private boolean motionIdle;
+	private Model motionBase, motionPet;
+	private final List<String> motionFrames = new ArrayList<>(), motionPetFrames = new ArrayList<>();
+
+	private void armMotion()
+	{
+		motionArmed = client.getGameCycle();
+		motionStart = -1;
+		say("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
+	}
+
+	@Subscribe
+	public void onClientTick(net.runelite.api.events.ClientTick e)
+	{
+		if (motionArmed < 0)
+		{
+			return;
+		}
+		Player me = client.getLocalPlayer();
+		if (me == null)
+		{
+			motionArmed = -1;
+			return;
+		}
+		int now = client.getGameCycle();
+		if (motionStart < 0)
+		{
+			boolean moving = me.getAnimation() != -1;
+			if (!moving && now - motionArmed < MOTION_WAIT)
+			{
+				return;
+			}
+			motionIdle = !moving;
+			motionStart = now;
+			motionLast = now - MOTION_EVERY;
+			motionFrames.clear();
+			motionPetFrames.clear();
+			motionBase = me.getModel();
+			motionPet = petModel();
+			if (motionBase == null)
+			{
+				motionArmed = -1;
+				return;
+			}
+		}
+		if (now - motionLast < MOTION_EVERY)
+		{
+			return;
+		}
+		motionLast = now;
+		Model m = me.getModel();
+		if (m != null && m.getVerticesCount() == motionBase.getVerticesCount())
+		{
+			motionFrames.add(Kept.frame(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount()));
+			Model p = motionPet == null ? null : petModel();
+			motionPetFrames.add(p != null && p.getVerticesCount() == motionPet.getVerticesCount()
+				? Kept.frame(p.getVerticesX(), p.getVerticesY(), p.getVerticesZ(), p.getVerticesCount()) : null);
+		}
+		boolean done = motionFrames.size() >= MOTION_MOST
+			|| (motionIdle ? now - motionStart >= MOTION_IDLE : me.getAnimation() == -1 && motionFrames.size() > 2);
+		if (!done)
+		{
+			return;
+		}
+		motionArmed = -1;
+		JsonObject frames = Kept.frames(motionFrames, 1000.0 / (MOTION_EVERY * 20));
+		JsonObject petFrames = motionPet != null && !motionPetFrames.contains(null) ? Kept.frames(motionPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
+		say("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
+		keep("model", wholeModel(motionBase, motionPet, frames, petFrames));
 	}
 
 	/** A texture as the client has it, a PNG in base64 (0 a see-through texel), or null. */
