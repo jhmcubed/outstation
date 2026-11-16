@@ -1175,6 +1175,10 @@ export class Channel extends DurableObject<Env> {
     this.seenAt = fields.off === true ? 0 : now;
     this.takePresence(gamePresence(m.game), fields, now);
     this.savePresence();
+    // (the list's "heard from" moves with every post, not only when what Discord shows changes: an hourly post with
+    // the same presence kept them lit past PRESENCE_FRESH_MS only here, and the globe read them as dark. Told at most
+    // once a LISTING_WAIT, and the posts come once a minute at most)
+    this.tellListing();
     const snap = SNAP_FIELDS.some((f) => f in fields);
     if (snap) this.game.snap = now;
     // (the whole plugin's own fields, left from its socket, cleared: SNAP_CLEARS)

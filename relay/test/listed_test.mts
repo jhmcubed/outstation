@@ -100,6 +100,15 @@ test("written when what's stored changes, not for a new where alone; and a seen 
   ok(!l.changed());
 });
 
+test("the Hub's plugin's last post and what Discord shows survive a sleep (11/16/2026: a player read as dark)", () => {
+  const r = { ...row("oranberries", 1000), seenAt: 900, presence: { skill: "Mining", area: null, kind: null }, presenceAt: 900 } as never;
+  const l = new ListedRows();
+  l.heard(r);
+  const back = ListedRows.from(stored(l)).rows.get("oranberries")!.row as unknown as Record<string, unknown>;
+  ok(back.seenAt === 900 && back.presenceAt === 900, "seenAt and presenceAt kept");
+  ok(JSON.stringify(back.presence) === JSON.stringify({ skill: "Mining", area: null, kind: null }), "presence kept");
+});
+
 for (const [name, f] of tests) {
   try { f(); passed++; } catch (e) { console.error("FAIL " + name + "\n", e); process.exitCode = 1; }
 }
