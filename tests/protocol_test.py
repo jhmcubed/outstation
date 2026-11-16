@@ -4345,7 +4345,7 @@ class SettlingGone(Base):
         await next_of(tx, "relay")
         await self.pause(2)
         row = {c["channel"]: c for c in (await asyncio.to_thread(http, "GET", "/channels"))[1]["channels"]}[self.ch]
-        self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "open", "presence", "static",
+        self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "name", "open", "presence", "static",
                                        "title", "viewers", "where"])
         if WORKER:   # (the keeper's list: no home, nor when it changed)
             mine = {c["channel"]: c for c in (await asyncio.to_thread(admin, "GET", "/admin/channels"))[1]}[self.ch]
