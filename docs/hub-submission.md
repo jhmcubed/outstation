@@ -38,3 +38,10 @@ Title: `Add Outside`
 - The "Open your own" card's Hub link (ghillie's `outside-splash/open-panel.js`, `HUB`) checked against the real one.
 - Update 1 (following and the globe): add `globe` to `hub_cut.py`'s SUBMITTED, cut into outside-plugin, merge, and a
   plugin-hub pull request with the new commit; set open-panel.js's `FOLLOW` true once it's on the Hub.
+
+## Sent (11/16/2026)
+
+The file is on jhmcubed/plugin-hub's branch `outside` (ea2f261, from runelite/plugin-hub's master); the pull request
+to runelite/plugin-hub is opened from it with the words above (Jace's press: this repository's session can't write to
+runelite's). After its build: a ✔ beside `build`, and `RuneLite Plugin Hub Checks` saying nothing's needed; changes
+asked for go into outstation's plugin/, cut into outside-plugin, merged, and the new hash pushed to that branch.
