@@ -1780,7 +1780,7 @@ class SnapshotEvents(unittest.TestCase):
     def test_a_first_snapshot_or_a_part_the_last_lacked_says_nothing(self):
         self.assertEqual(relay.snapshot_events({}, {"skills": {"Attack": [99, 99, 1]}, "quests": {"done": ["X"]}}), [])
         self.assertEqual(relay.snapshot_events({"skills": {"Attack": [98, 98, 1]}}, {"skills": {"Attack": [99, 99, 2]}, "quests": {"done": ["X"]}}),
-                         [{"kind": "level", "skill": "Attack", "level": 99}])
+                         [{"kind": "level", "skill": "Attack", "level": 99, "from": "update"}])
 
     def test_a_level_only_going_up_and_never_a_bad_name(self):
         self.assertEqual(relay.snapshot_events({"skills": {"Attack": [60, 60, 1], "Mining": [70, 70, 1]}},
@@ -1789,8 +1789,9 @@ class SnapshotEvents(unittest.TestCase):
     def test_diary_and_combat_tiers_as_they_turn(self):
         p = {"diaries": {"Varrock": [1, 0, 0, 0, 1, 2]}, "combat": {"tiers": [[2, 3], [4, 4], [0, 1], [0, 1], [0, 1], [0, 1]]}}
         n = {"diaries": {"Varrock": [1, 1, 1, 0, 2, 2]}, "combat": {"tiers": [[3, 3], [4, 4], [0, 1], [0, 1], [0, 1], [0, 1]]}}
-        self.assertEqual(relay.snapshot_events(p, n), [{"kind": "diary", "tier": "medium", "area": "Varrock"},
-                                                       {"kind": "diary", "tier": "hard", "area": "Varrock"}, {"kind": "ca", "tier": "easy"}])
+        self.assertEqual(relay.snapshot_events(p, n), [{"kind": "diary", "tier": "medium", "area": "Varrock", "from": "update"},
+                                                       {"kind": "diary", "tier": "hard", "area": "Varrock", "from": "update"},
+                                                       {"kind": "ca", "tier": "easy", "from": "update"}])
 
     def test_at_most_a_few_from_one_snapshot(self):
         done = ["Quest %d" % i for i in range(30)]

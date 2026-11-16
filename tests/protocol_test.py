@@ -2103,9 +2103,10 @@ class Snapshot(Base):
         self.assertEqual(self.post({"game": second})[0], 204)
         await self.pause(2)
         mine = [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in array_since(since) if e["channel"] == self.ch]
-        self.assertEqual(mine, [{"kind": "level", "skill": "Runecraft", "level": 67}, {"kind": "quest", "name": "Dragon Slayer I"},
+        U = {"from": "update"}     # (each marked as worked out from an update)
+        self.assertEqual(mine, [dict(e, **U) for e in [{"kind": "level", "skill": "Runecraft", "level": 67}, {"kind": "quest", "name": "Dragon Slayer I"},
                                 {"kind": "diary", "tier": "medium", "area": "Varrock"}, {"kind": "ca", "tier": "easy"},
-                                {"kind": "clog", "name": "Bandos chaps"}, {"kind": "clog", "count": 102}, {"kind": "slayer", "streak": 5}])
+                                {"kind": "clog", "name": "Bandos chaps"}, {"kind": "clog", "count": 102}, {"kind": "slayer", "streak": 5}]])
         # (the same again: nothing new, nothing said)
         self.assertEqual(self.post({"game": second})[0], 204)
         await self.pause(2)

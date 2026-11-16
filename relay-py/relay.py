@@ -1211,7 +1211,8 @@ def snapshot_events(prev, nxt):
     nl = whole(nxt["slayer"].get("streak")) if isinstance(nxt.get("slayer"), dict) else None
     if pl is not None and nl is not None and nl > pl:
         out.append({"kind": "slayer", "streak": nl})
-    return out[:SNAPSHOT_EVENTS_MOST]
+    # (each marked as worked out from an update: it came as late as the update, and pages say so)
+    return [dict(e, **{"from": "update"}) for e in out[:SNAPSHOT_EVENTS_MOST]]
 
 
 def array_events(report):

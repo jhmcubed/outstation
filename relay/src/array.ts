@@ -97,7 +97,8 @@ export const SNAPSHOT_EVENTS_MOST = 8;
  *  the Hub's plugin has no field reports, only its snapshots, "Update my page" and hourly): what's new against the
  *  last one kept, each only when the last one had that part too (a first snapshot says nothing): a level for each
  *  skill gone up (to its new level), a quest done, a diary tier done, a combat achievements tier done, a slayer task
- *  done (the streak gone up). They come as late as the snapshot (the feed's own time, when it came). */
+ *  done (the streak gone up). They come as late as the snapshot (the feed's own time, when it came), each with
+ *  "from": "update". */
 export function snapshotEvents(prev: Record<string, unknown>, next: Record<string, unknown>): ArrayEvent[] {
   const out: ArrayEvent[] = [];
   const ps = isObj(prev.skills) ? prev.skills : null, ns = isObj(next.skills) ? next.skills : null;
@@ -141,7 +142,8 @@ export function snapshotEvents(prev: Record<string, unknown>, next: Record<strin
   }
   const pl = isObj(prev.slayer) ? whole(prev.slayer.streak) : undefined, nl = isObj(next.slayer) ? whole(next.slayer.streak) : undefined;
   if (pl !== undefined && nl !== undefined && nl > pl) out.push({ kind: "slayer", streak: nl });
-  return out.slice(0, SNAPSHOT_EVENTS_MOST);
+  // (each marked as worked out from an update, 11/16/2026: it came as late as the update, and pages say so)
+  return out.slice(0, SNAPSHOT_EVENTS_MOST).map((e) => ({ ...e, from: "update" }));
 }
 
 /** The feed as the Directory keeps it in storage ("array"): the events, the newest id given, and each channel's times of
