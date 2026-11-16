@@ -80,7 +80,7 @@ public interface OutsideConfig extends Config
 		name = "Quests, diaries and combat achievements",
 		description = "Your quests (done and started) and quest points, each Achievement Diary's tiers and tasks, your combat"
 			+ " achievements' points and tasks by tier, and your collection log's count (and the slots the game's chat says"
-			+ " you've added since the last update)",
+			+ " you've added since the last update), and your kill counts and clue counts as the game's chat last said them",
 		position = 3
 	)
 	default boolean progress()

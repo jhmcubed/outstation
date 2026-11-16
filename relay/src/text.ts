@@ -42,6 +42,12 @@ const number = (v: unknown): number | undefined => {
 // they're never kept, only read here.)
 const WILDERNESS_BOSSES = new Set(["artio", "callisto", "calvar'ion", "chaos elemental", "chaos fanatic", "crazy archaeologist",
   "scorpia", "spindel", "venenatis", "vet'ion", "king black dragon", "revenant"]);
+/** Whether a boss is one of the Wilderness's (by the start of its name, as Dink and the game say it). */
+export function wildernessBoss(name: unknown): boolean {
+  const who = String(name || "").toLowerCase();
+  for (const b of WILDERNESS_BOSSES) if (who.startsWith(b)) return true;
+  return false;
+}
 /** Whether a map region is the Wilderness's, above ground (x 2944-3391, y 3520-3967) or below it (y 9920-10367). */
 export function wildernessRegion(id: unknown): boolean {
   if (typeof id !== "number" || !Number.isInteger(id) || id < 0) return false;
@@ -56,9 +62,7 @@ export function dinkSafe(p: any): boolean {
   if (wildernessRegion(p.regionId) || (extra.location && wildernessRegion(extra.location.regionId))) return false;
   if (p.type === "PLAYER_KILL" || (p.type === "DEATH" && (extra.isPvp || extra.pvp || extra.killerName || extra.pker))) return false;
   if (p.type === "LOOT" && String(extra.category || "").toUpperCase() === "PLAYER") return false;
-  const who = String(extra.boss || extra.source || "").toLowerCase();
-  for (const b of WILDERNESS_BOSSES) if (who.startsWith(b)) return false;
-  return true;
+  return !wildernessBoss(extra.boss || extra.source);
 }
 
 // The numbers a report carries for the portal's readings: only fields that can't name another player. Never "party",

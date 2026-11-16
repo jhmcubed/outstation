@@ -409,6 +409,8 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `diaries` (11/15/2026): `{"<area>": [easy, medium, hard, elite, tasks done, tasks in all]}`, each tier 0 or 1, for the twelve areas by name (`Ardougne`, `Desert`, `Falador`, `Fremennik`, `Kandarin`, `Karamja`, `Kourend & Kebos`, `Lumbridge & Draynor`, `Morytania`, `Varrock`, `Western Provinces`, `Wilderness`; another name is left out), or `null`. Karamja's first three tiers count done at their varbit's 2, the rest at 1 (Dink's rule); the tasks from the game's own diary summary scripts (4072, 4073).
 - `combat` (11/15/2026): `{"points": combat achievement points, "tiers": [[tasks done, points the tier needs] × 6]}`, easy to grandmaster, or `null`.
 - `slayer` (11/15/2026): `{"task": the creature's name or null, "left", "of": the amount given, "area": where the master named or null, "points", "streak"}` (names 80 characters at most), read as RuneLite's slayer plugin reads it, or `null`. No task: `task` and `area` null, `left` and `of` 0, the points and the streak still there.
+- `clog` (11/16/2026): `{"count": slots filled, "max": slots in all, "new": [the names the game's chat said were added since the last update, 8 at most]}`, or `null`.
+- `counts` (11/16/2026): `{"kills": {"<boss>": n}, "clues": {"<tier>": n}}`, the kill counts and clue counts as the game's chat last said each ("Your Vorkath kill count is: 418", "You have completed 152 hard Treasure Trails"; Dink's patterns), kept by the plugin per account; at most 250 bosses, names 60 characters, counts to 10,000,000, the tiers beginner to master; never a Wilderness boss's (the relay drops one). `null`, switched off.
 - `quiver`: `[item id, how many]` or `null`
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
@@ -882,12 +884,16 @@ relay-py's `array_events` and `ArrayFeed`.
 | `"quest"` | a snapshot: a quest in `quests.done` the last one lacked | `name` |
 | `"diary"` | a snapshot: a diary tier done since the last | `tier` (easy, medium, hard or elite), `area` |
 | `"ca"` | a snapshot: a combat achievements tier done since the last | `tier` (easy, medium, hard, elite, master or grandmaster) |
+| `"clog"` | a snapshot: the collection log's count gone up, one for each slot | `name` where the game's chat named it, else `count` (the count it came to) |
+| `"kill"` | a snapshot: a kill count gone up (`counts.kills`) | `boss`, `kc` (the count it came to) |
+| `"clue"` | a snapshot: a clue count gone up (`counts.clues`) | `tier`, `count` |
 | `"slayer"` | a snapshot: the slayer streak gone up (a task done) | `streak` |
 
 A snapshot's events (array.ts's `snapshotEvents`, relay-py's `snapshot_events`) are against the last snapshot kept, each
 part only when that one had it too (a first snapshot says nothing), at most 8 from one, while the plugin's heard from or
 the channel's live, and listed; they come as late as the snapshot (pressed, or hourly), so each carries `"from":
-"update"` and pages say so ("by the last update").
+"update"` and pages say so ("by the last update"). One the feed already holds from that channel, the same in every
+field but the mark (a kill, a level or a clue Dink told as it happened), isn't added again (the feed's `has`).
 
 They're made from the numbers each report carries (its `data`, above in "Dink": what `reportData` / `report_data` keep),
 the same as the stream's summary is, so a report that comes as a Dink post and one that comes over the transmit socket

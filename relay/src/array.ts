@@ -97,7 +97,7 @@ export const SNAPSHOT_EVENTS_MOST = 8;
  *  the Hub's plugin has no field reports, only its snapshots, "Update my page" and hourly): what's new against the
  *  last one kept, each only when the last one had that part too (a first snapshot says nothing): a level for each
  *  skill gone up (to its new level), a quest done, a diary tier done, a combat achievements tier done, a slayer task
- *  done (the streak gone up). They come as late as the snapshot (the feed's own time, when it came), each with
+ *  done (the streak gone up), a kill count or clue count gone up (11/16/2026). They come as late as the snapshot (the feed's own time, when it came), each with
  *  "from": "update". */
 export function snapshotEvents(prev: Record<string, unknown>, next: Record<string, unknown>): ArrayEvent[] {
   const out: ArrayEvent[] = [];
@@ -139,6 +139,19 @@ export function snapshotEvents(prev: Record<string, unknown>, next: Record<strin
   if (po !== undefined && no !== undefined && no > po) {
     const named = isObj(next.clog) && Array.isArray(next.clog.new) ? next.clog.new.map(word).filter((x): x is string => !!x) : [];
     for (let i = 0; i < Math.min(no - po, SNAPSHOT_EVENTS_MOST); i++) out.push(named[i] ? { kind: "clog", name: named[i] } : { kind: "clog", count: po + i + 1 });
+  }
+  // (a kill count or a clue count gone up since the last update: one each, at the count it came to; 11/16/2026)
+  const pk = isObj(prev.counts) ? prev.counts : null, nk = isObj(next.counts) ? next.counts : null;
+  if (pk && nk) {
+    for (const [part, kind, field] of [["kills", "kill", "boss"], ["clues", "clue", "tier"]] as const) {
+      const a = isObj(pk[part]) ? pk[part] : null, b = isObj(nk[part]) ? nk[part] : null;
+      if (!a || !b) continue;
+      for (const k of Object.keys(b)) {
+        const was = whole(a[k]), now = whole(b[k]), name = word(k);
+        if (name && was !== undefined && now !== undefined && now > was)
+          out.push(kind === "kill" ? { kind, boss: name, kc: now } : { kind, tier: name, count: now });
+      }
+    }
   }
   const pl = isObj(prev.slayer) ? whole(prev.slayer.streak) : undefined, nl = isObj(next.slayer) ? whole(next.slayer.streak) : undefined;
   if (pl !== undefined && nl !== undefined && nl > pl) out.push({ kind: "slayer", streak: nl });
@@ -186,6 +199,7 @@ export class ArrayFeed {
     const times = (this.recent.get(channel) || []).filter((t) => now - t < 60_000);
     const added: Kept[] = [];
     for (const e of events) {
+      if (e.from === "update" && this.has(channel, e)) continue; // (Dink already told it as it happened: not again, late)
       if (times.length >= ARRAY_A_MINUTE) break;
       times.push(now);
       this.last = Math.max(now, this.last + 1);
@@ -195,6 +209,18 @@ export class ArrayFeed {
     if (this.events.length > ARRAY_KEPT) this.events.splice(0, this.events.length - ARRAY_KEPT);
     if (times.length) this.recent.set(channel, times);
     return added;
+  }
+
+  /** Whether the feed holds this event from this channel already, whatever its time or mark (11/16/2026: a kill, a
+   *  level or a clue Dink told as it happened, then worked out again from the next update). */
+  has(channel: string, e: ArrayEvent): boolean {
+    const same = (k: Kept) => {
+      for (const [f, v] of Object.entries(e)) if (f !== "from" && k[f] !== v) return false;
+      for (const f of Object.keys(k)) if (!["id", "at", "channel", "from"].includes(f) && !(f in e)) return false;
+      return true;
+    };
+    for (let i = this.events.length - 1; i >= 0; i--) if (this.events[i].channel === channel && same(this.events[i])) return true;
+    return false;
   }
 
   /** The keeper's backfill (arrayBackfill's events, for a channel handed out and listed): each put in its place by

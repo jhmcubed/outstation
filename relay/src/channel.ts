@@ -1211,7 +1211,7 @@ export class Channel extends DurableObject<Env> {
     if (snap) for (const f of SNAP_CLEARS) if (this.game.kept[f] != null) fields[f] = null;
     // (what a snapshot adds to the Array, against the last kept: array.ts's snapshotEvents, 11/16/2026)
     const before: Record<string, unknown> = {};
-    if (snap) for (const f of ["skills", "quests", "diaries", "combat", "slayer", "clog"]) if (this.game.kept[f] != null) before[f] = JSON.parse(JSON.stringify(this.game.kept[f]));
+    if (snap) for (const f of ["skills", "quests", "diaries", "combat", "slayer", "clog", "counts"]) if (this.game.kept[f] != null) before[f] = JSON.parse(JSON.stringify(this.game.kept[f]));
     const got = this.game.apply(fields, now);
     if (snap && fields.off !== true) {
       let news: ReturnType<typeof snapshotEvents> = [];

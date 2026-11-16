@@ -790,6 +790,20 @@ def game_fields(g):
         fresh = [one_line(x, 60) for x in (c.get("new") or [])[:CLOG_NEW_MOST] if isinstance(x, str)] if isinstance(c.get("new"), list) else []
         if count is not None and most is not None and count <= most <= CLOG_MOST:
             out["clog"] = {"count": count, "max": most, "new": [x for x in fresh if x]}
+    # (11/16/2026: kill counts and clue counts as the game's chat last said each; never a Wilderness boss's; game.ts's)
+    if "counts" in g and g["counts"] is None:
+        out["counts"] = None
+    elif isinstance(g.get("counts"), dict) and isinstance(g["counts"].get("kills"), dict) and isinstance(g["counts"].get("clues"), dict):
+        kills, clues = {}, {}
+        for k, v in list(g["counts"]["kills"].items())[:COUNTS_MOST]:
+            boss, n = one_line(k, 60), game_whole(v, COUNT_TOP)
+            if boss and n is not None and not wilderness_boss(boss):
+                kills[boss] = n
+        for k, v in g["counts"]["clues"].items():
+            n = game_whole(v, COUNT_TOP)
+            if k in CLUE_TIERS and n is not None:
+                clues[k] = n
+        out["counts"] = {"kills": kills, "clues": clues}
     # (11/15/2026, the live view: the animation now, its id or -1, with the gear's mark; null, none: game.ts's)
     if "anim" in g and g["anim"] is None:
         out["anim"] = None
@@ -1157,12 +1171,15 @@ DIARY_TIERS = ("easy", "medium", "hard", "elite")
 CA_TIERS = ("easy", "medium", "hard", "elite", "master", "grandmaster")
 SNAPSHOT_EVENTS_MOST = 8
 CLOG_MOST, CLOG_NEW_MOST = 5000, 8
+COUNTS_MOST, COUNT_TOP = 250, 10_000_000
+CLUE_TIERS = ("beginner", "easy", "medium", "hard", "elite", "master")
 
 
 def snapshot_events(prev, nxt):
     """What a snapshot from the Hub's plugin adds to the Array (11/16/2026; the Worker's snapshotEvents, the same): what's
     new against the last one kept, each only when the last one had that part too: a level for each skill gone up, a
-    quest done, a diary tier done, a combat achievements tier done, a slayer task done (the streak gone up)."""
+    quest done, a diary tier done, a combat achievements tier done, a slayer task done (the streak gone up), a kill count or
+    clue count gone up."""
     def whole(v):
         return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 2 ** 53 - 1 else None
     out = []
@@ -1207,6 +1224,16 @@ def snapshot_events(prev, nxt):
         named = [x for x in named if x]
         for i in range(min(no - po, SNAPSHOT_EVENTS_MOST)):
             out.append({"kind": "clog", "name": named[i]} if i < len(named) else {"kind": "clog", "count": po + i + 1})
+    pk, nk = prev.get("counts"), nxt.get("counts")
+    if isinstance(pk, dict) and isinstance(nk, dict):
+        for part, kind, field in (("kills", "kill", "boss"), ("clues", "clue", "tier")):
+            a, b = pk.get(part), nk.get(part)
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                continue
+            for k, v in b.items():
+                was, now, name = whole(a.get(k)), whole(v), array_word(k)
+                if name and was is not None and now is not None and now > was:
+                    out.append({"kind": "kill", "boss": name, "kc": now} if kind == "kill" else {"kind": "clue", "tier": name, "count": now})
     pl = whole(prev["slayer"].get("streak")) if isinstance(prev.get("slayer"), dict) else None
     nl = whole(nxt["slayer"].get("streak")) if isinstance(nxt.get("slayer"), dict) else None
     if pl is not None and nl is not None and nl > pl:
@@ -1341,6 +1368,8 @@ class ArrayFeed:
         times = [t for t in self.recent.get(channel, []) if now - t < 60000]
         added = []
         for e in events:
+            if e.get("from") == "update" and self.has(channel, e):
+                continue  # (Dink already told it as it happened: not again, late)
             if len(times) >= ARRAY_A_MINUTE:
                 break
             times.append(now)
@@ -1350,6 +1379,14 @@ class ArrayFeed:
         if times:
             self.recent[channel] = times
         return added
+
+    def has(self, channel, e):
+        """Whether the feed holds this event from this channel already, whatever its time or mark (the Worker's)."""
+        want = {k: v for k, v in e.items() if k != "from"}
+        for k in reversed(self.events):
+            if k["channel"] == channel and {f: v for f, v in k.items() if f not in ("id", "at", "channel", "from")} == want:
+                return True
+        return False
 
     def backfill(self, channel, lost, now=None):
         """The keeper's backfill (array_backfill's events, for a channel claimed and listed): each put in its place by
@@ -1949,7 +1986,7 @@ class Channel:
                 if self.game.kept.get(f) is not None:
                     fields[f] = None
         # (what a snapshot adds to the Array, against the last kept: snapshot_events, 11/16/2026; the Worker's, the same)
-        before = {f: json.loads(json.dumps(self.game.kept[f])) for f in ("skills", "quests", "diaries", "combat", "slayer", "clog")
+        before = {f: json.loads(json.dumps(self.game.kept[f])) for f in ("skills", "quests", "diaries", "combat", "slayer", "clog", "counts")
                   if snap and self.game.kept.get(f) is not None}
         got = self.game.apply(fields, now)
         if snap and fields.get("off") is not True and self.array is not None and self.listed() \
@@ -4881,8 +4918,13 @@ def dink_safe(p):
         return False
     if p.get("type") == "LOOT" and str(extra.get("category", "")).upper() == "PLAYER":
         return False
-    who = str(extra.get("boss") or extra.get("source") or "").lower()
-    return not any(who.startswith(b) for b in WILDERNESS_BOSSES)
+    return not wilderness_boss(extra.get("boss") or extra.get("source"))
+
+
+def wilderness_boss(name):
+    """Whether a boss is one of the Wilderness's, by the start of its name (the Worker's wildernessBoss)."""
+    who = str(name or "").lower()
+    return any(who.startswith(b) for b in WILDERNESS_BOSSES)
 
 
 def dink_report(p):
