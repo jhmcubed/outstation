@@ -173,7 +173,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
 
 ## For developers
 
-- `build.gradle`: RuneLite's example-plugin template, as the Plugin Hub builds it (`gradle build` runs the tests).
+- `build.gradle`: RuneLite's example-plugin template, as the Plugin Hub builds it (`gradle build` runs the tests); since 11/16/2026 GitHub runs them too on every pull request and on main (`.github/workflows/tests.yml`, its `plugin` job: `gradle test` and `hub_check.py`, then the same for the Hub's version cut by `hub_cut.py` into a scratch folder).
 - `src/main/java/wiki/outside/`:
 <!-- hub:cut live -->
   - `OutsidePlugin.java`: reading the game each tick, the connection to the relay, the snapshot and its posts
