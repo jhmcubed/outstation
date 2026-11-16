@@ -317,6 +317,8 @@ public class OutsidePlugin extends Plugin
 	// hub:end reports
 	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
 	private volatile boolean challenging = false;
+	/** movePage tried this session (a page under the name's old form) */
+	private boolean movedThisSession = false;
 	// hub:cut live
 	private int ticksSinceSent;
 	// hub:end live
@@ -2263,7 +2265,7 @@ public class OutsidePlugin extends Plugin
 	{
 		Attach a = Attach.parse(stationKey(), gson);
 		String c = character;
-		return a != null && c != null && !a.getChannel().toLowerCase(java.util.Locale.ROOT).equals(c) ? null : a;
+		return a != null && c != null && !isOwn(a.getChannel(), c) ? null : a;
 	}
 
 	/** Another character logged in (or the first, once its name is known): the side tab, and the relay on their key. */
@@ -2274,6 +2276,13 @@ public class OutsidePlugin extends Plugin
 		slayerKey = null;
 		slayerSeen = null;
 		Attach any = Attach.parse(stationKey(), gson), a = key();
+		// (a page under the name's old form: moved to the name as it is, once a session)
+		if (a != null && character != null && !a.getChannel().equalsIgnoreCase(character) && !movedThisSession)
+		{
+			movedThisSession = true;
+			long hash = client.getAccountHash();
+			movePage(a, character, hash == -1 ? null : Long.toString(hash));
+		}
 		if (panel != null)
 		{
 			panel.who(a == null ? null : a.getChannel());
@@ -2300,16 +2309,98 @@ public class OutsidePlugin extends Plugin
 		// hub:end live
 	}
 
-	/** A player's name as a channel has it: lower case, the spaces, hyphens and underscores the game treats alike taken
-	 *  out (its names use a no-break space), 1 to 12 letters or numbers; null when it can't be one. */
+	/** A player's name as a channel has it (since 11/16/2026, Jace: "a space and underscored name are the same name in
+	 *  practice, in the game. oranberries and oran berries/oran_berries are not the same"): lower case, each run of the
+	 *  spaces, hyphens and underscores the game treats alike one "_" (its names use a no-break space), none at either
+	 *  end, 1 to 12 long; null when it can't be one. "Oran Berries" is oran_berries; "OranBerries", oranberries. */
 	static String channelName(String shown)
 	{
 		if (shown == null)
 		{
 			return null;
 		}
-		String n = shown.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\u00a0_-]", "");
-		return n.matches("[a-z0-9]{1,12}") ? n : null;
+		String n = shown.toLowerCase(java.util.Locale.ROOT).replaceAll("[\\s\u00a0_-]+", "_").replaceAll("^_+|_+$", "");
+		return n.length() <= 12 && n.matches("[a-z0-9]+(_[a-z0-9]+)*") ? n : null;
+	}
+
+	/** Whether a key's channel is this character's: its own form, or a page made before 11/16/2026 (no "_" in it, the
+	 *  name's spaces taken out), which stays theirs till it's moved (movePage). */
+	static boolean isOwn(String keyChannel, String character)
+	{
+		if (keyChannel == null || character == null)
+		{
+			return false;
+		}
+		String k = keyChannel.toLowerCase(java.util.Locale.ROOT);
+		return k.equals(character) || (k.indexOf('_') < 0 && k.equals(character.replace("_", "")));
+	}
+
+	/** A page made before 11/16/2026 under the name with its spaces taken out (outside.wiki/oranberries for Oran Berries)
+	 *  moved to the name as it is (oran_berries): a page claimed under it (a new key, unproven till the next logout's
+	 *  look, as any claim), the old one taken down with the old key once the new is theirs. Once a session; a name
+	 *  someone else has proven or was vouched (409), or the relay out of reach, leaves the old page as it is. */
+	private void movePage(Attach old, String name, String account)
+	{
+		JsonObject body = new JsonObject();
+		body.addProperty("player", name);
+		if (account != null)
+		{
+			body.addProperty("account", account);
+		}
+		http.newCall(new Request.Builder().url(HOME_RELAY + "/claim").header("User-Agent", "outside-plugin/" + VERSION)
+			.post(RequestBody.create(JSON, gson.toJson(body))).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					JsonObject o = null;
+					try
+					{
+						o = gson.fromJson(res.body() != null ? res.body().string() : "", JsonObject.class);
+					}
+					catch (RuntimeException ignored)
+					{
+					}
+					if (res.code() != 200 || o == null || !o.has("code") || Attach.parse(o.get("code").getAsString(), gson) == null
+						|| (o.has("proof") && "challenging".equals(o.get("proof").getAsString())))
+					{
+						return;
+					}
+					String gone = stationKey();
+					configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "stationKey", o.get("code").getAsString());
+					if (gone != null && gone.trim().equals(config.stationKey().trim()))
+					{
+						configManager.unsetConfiguration(OutsideConfig.GROUP, "stationKey");
+					}
+					syncDue = true;
+					say("your Outside page moved to outside.wiki/" + name + " (your name as the game has it)");
+					http.newCall(new Request.Builder().url(old.takeDownUrl()).header("User-Agent", "outside-plugin/" + VERSION)
+						.delete().build()).enqueue(new Callback()
+					{
+						@Override
+						public void onFailure(Call call, IOException ex)
+						{
+						}
+
+						@Override
+						public void onResponse(Call call, Response r2)
+						{
+							r2.close();
+						}
+					});
+				}
+				catch (IOException ignored)
+				{
+				}
+			}
+		});
 	}
 
 	/** Claims a page for the name (docs/protocol.md "Claiming a name"): the key that comes back goes in the settings,
@@ -3698,7 +3789,7 @@ public class OutsidePlugin extends Plugin
 		Attach a = attach;
 		String c = character;
 		if (payload == null || !config.reports() || !config.send() || paused || a == null || c == null
-			|| !a.getChannel().toLowerCase(java.util.Locale.ROOT).equals(c))
+			|| !isOwn(a.getChannel(), c))
 		{
 			return;
 		}
@@ -3948,7 +4039,7 @@ public class OutsidePlugin extends Plugin
 		WebSocket ws = socket;
 		Attach a = attach;
 		String c = character;
-		if (ws == null || !open || a == null || c == null || !a.getChannel().toLowerCase(java.util.Locale.ROOT).equals(c))
+		if (ws == null || !open || a == null || c == null || !isOwn(a.getChannel(), c))
 		{
 			return false;
 		}

@@ -28,8 +28,22 @@ AGENT = "outstation-relay/1.0 (proving a page's name for outside.wiki; https://g
 
 
 def channel_form(name):
-    """A player's name as a channel has it: lower case, spaces, no-break spaces, - and _ out."""
-    return re.sub(r"[\s _-]", "", name.lower())
+    """A player's name as a channel has it since 11/16/2026: lower case, each run of spaces, no-break spaces, hyphens and
+    underscores (the game takes them as one) one "_", none at either end: "Oran Berries" is oran_berries, and
+    oranberries is someone else (the Worker's channelForm, the same)."""
+    return re.sub(r"[\s\u00a0_-]+", "_", name.lower()).strip("_")
+
+
+def flat_form(name):
+    """The form channels had before 11/16/2026: lower case, every space, no-break space, hyphen and underscore out."""
+    return re.sub(r"[\s\u00a0_-]", "", name.lower())
+
+
+def name_fits(name, channel):
+    """Whether a player's name is this channel's: its form, or (a channel made before 11/16/2026, with no "_" in it) its
+    old flat form, so a page made then still answers to its own player till it moves (the Worker's nameFits)."""
+    c = channel.lower()
+    return channel_form(name) == c or ("_" not in c and flat_form(name) == c)
 
 
 def skill_key(name):

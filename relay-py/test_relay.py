@@ -1753,7 +1753,17 @@ class AetherWords(unittest.TestCase):
         self.assertEqual(n("x" * 20), "x" * 20)
         for bad in ("", "   ", "x" * 21, "moss!", "mos\ts", "moss\u00e9", "moss\u200b", None, 5):
             self.assertEqual(n(bad), "", bad)
-        self.assertEqual(relay.channel_form("Moss Fern"), "mossfern")
+        # (since 11/16/2026 the game's spaces stay, as "_": Moss Fern and MossFern are two players)
+        self.assertEqual(relay.channel_form("Moss Fern"), "moss_fern")
+        self.assertEqual(relay.channel_form("  Moss-_ Fern "), "moss_fern")
+        self.assertEqual(relay.channel_form("MossFern"), "mossfern")
+        import witness
+        self.assertTrue(witness.name_fits("Moss Fern", "moss_fern"))
+        self.assertTrue(witness.name_fits("Moss\u00a0Fern", "mossfern"))      # (a channel made before: its own player)
+        self.assertFalse(witness.name_fits("MossFern", "moss_fern"))
+        self.assertTrue(relay.PLAYER.fullmatch("moss_fern") and relay.PLAYER.fullmatch("sburb"))
+        for bad in ("_moss", "moss_", "moss__fern", "moss fern", "abcdefghijklm"):
+            self.assertIsNone(relay.PLAYER.fullmatch(bad), bad)
 
 
 class AetherRate(unittest.TestCase):

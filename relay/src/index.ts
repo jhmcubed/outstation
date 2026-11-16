@@ -321,8 +321,9 @@ export class Directory extends DurableObject<Env> {
     if (url.pathname === "/taken") {
       // the aether's (11/07/2026, aether.ts): whether a visitor's name, in a channel's form (lower case, no spaces), is
       // a channel handed out's, whatever its case
-      const form = url.searchParams.get("name") || "";
-      return Response.json({ taken: [...(await this.givenNames()).keys()].some((n) => n.toLowerCase() === form) });
+      // (since 11/16/2026 a channel's form keeps the name's spaces as "_"; one made before, without them, counts too)
+      const form = url.searchParams.get("name") || "", flat = form.replace(/_/g, "");
+      return Response.json({ taken: [...(await this.givenNames()).keys()].some((n) => { const l = n.toLowerCase(); return l === form || (l.indexOf("_") < 0 && l === flat); }) });
     }
     if (url.pathname === "/notice") {
       if (request.method === "PUT") {
@@ -841,7 +842,7 @@ export default {
       const answer = await (async (): Promise<Response> => {
         if (request.method === "OPTIONS") return new Response(null, { status: 204 });
         const name = parts[1];
-        if (!PLAYER.test(name)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
+        if (!PLAYER.test(name)) return Response.json({ error: "a player's name: 1 to 12 letters, numbers and _, lower case" }, { status: 400 });
         const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
         const pickup = "&pickup=" + encodeURIComponent(url.searchParams.get("pickup") || "");
         if (request.method === "POST") {
@@ -870,7 +871,7 @@ export default {
       let body: { player?: unknown; account?: unknown } | null = null;
       try { body = JSON.parse(raw); } catch { /* (below) */ }
       const player = typeof body?.player === "string" ? body.player : "";
-      if (!PLAYER.test(player)) return Response.json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, { status: 400 });
+      if (!PLAYER.test(player)) return Response.json({ error: "a player's name: 1 to 12 letters, numbers and _, lower case" }, { status: 400 });
       const account = typeof body?.account === "string" && /^-?[0-9]{1,20}$/.test(body.account) ? body.account : "";
       // (tests only, with TEST_FORGET: x-test-from stands in for the address, so each test is a place of its own)
       const ip = (env.TEST_FORGET === "1" && request.headers.get("x-test-from")) || request.headers.get("cf-connecting-ip") || "";
