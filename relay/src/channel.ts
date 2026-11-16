@@ -28,7 +28,7 @@
 // itself is kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
-import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
+import { attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
@@ -568,7 +568,9 @@ export class Channel extends DurableObject<Env> {
    *  GET /channels), so a coded outstation's reports, and a dark one's with no plugin, never show. The Directory keeps
    *  them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
   tellArray(report: unknown) {
-    if (!this.name || (!this.live() && !this.sockets("game").length) || this.meta.keyHash === null || this.meta.code) return;
+    // (11/16/2026: or the Hub's plugin's heard from, its posts: so Dink posting to the page puts its reports on the
+    // Array, as a connected plugin's do; a dark outstation with no plugin, still never)
+    if (!this.name || (!this.live() && !this.heard()) || this.meta.keyHash === null || this.meta.code) return;
     const events = arrayEvents(report);
     if (!events.length) return;
     this.ctx.waitUntil(this.tellDirectory("/array", JSON.stringify({ channel: this.name, events }))
@@ -1209,7 +1211,7 @@ export class Channel extends DurableObject<Env> {
     if (snap) for (const f of SNAP_CLEARS) if (this.game.kept[f] != null) fields[f] = null;
     // (what a snapshot adds to the Array, against the last kept: array.ts's snapshotEvents, 11/16/2026)
     const before: Record<string, unknown> = {};
-    if (snap) for (const f of ["skills", "quests", "diaries", "combat", "slayer"]) if (this.game.kept[f] != null) before[f] = JSON.parse(JSON.stringify(this.game.kept[f]));
+    if (snap) for (const f of ["skills", "quests", "diaries", "combat", "slayer", "clog"]) if (this.game.kept[f] != null) before[f] = JSON.parse(JSON.stringify(this.game.kept[f]));
     const got = this.game.apply(fields, now);
     if (snap && fields.off !== true) {
       let news: ReturnType<typeof snapshotEvents> = [];
@@ -2064,7 +2066,8 @@ export class Channel extends DurableObject<Env> {
     for (const [k, t] of this.dinkSeen) if (now - t > 10_000) this.dinkSeen.delete(k);
     if (this.dinkSeen.has(seen)) return new Response(null, { status: 204 });
     this.dinkSeen.set(seen, now);
-    const report = dinkReport(payload);
+    // (nothing from the Wilderness or PvP, whatever Dink sends: text.ts's dinkSafe; 11/16/2026)
+    const report = dinkSafe(payload) ? dinkReport(payload) : null;
     if (report) this.deliver(pyjson({ report }));
     this.dinkCounts(payload);
     return new Response(null, { status: 204 });

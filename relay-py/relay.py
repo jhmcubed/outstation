@@ -780,6 +780,16 @@ def game_fields(g):
         area = None if s.get("area") is None and "area" in s else one_line(s["area"], 80) if isinstance(s.get("area"), str) else False
         if all(n is not None for n in nums) and task is not False and area is not False:
             out["slayer"] = {"task": task, "left": nums[0], "of": nums[1], "area": area, "points": nums[2], "streak": nums[3]}
+    # (11/16/2026: the collection log's counter, and the names the game's chat said were added since the last update;
+    # game.ts's, the same)
+    if "clog" in g and g["clog"] is None:
+        out["clog"] = None
+    elif isinstance(g.get("clog"), dict):
+        c = g["clog"]
+        count, most = game_whole(c.get("count")), game_whole(c.get("max"))
+        fresh = [one_line(x, 60) for x in (c.get("new") or [])[:CLOG_NEW_MOST] if isinstance(x, str)] if isinstance(c.get("new"), list) else []
+        if count is not None and most is not None and count <= most <= CLOG_MOST:
+            out["clog"] = {"count": count, "max": most, "new": [x for x in fresh if x]}
     # (11/15/2026, the live view: the animation now, its id or -1, with the gear's mark; null, none: game.ts's)
     if "anim" in g and g["anim"] is None:
         out["anim"] = None
@@ -1146,6 +1156,7 @@ def array_word(v):
 DIARY_TIERS = ("easy", "medium", "hard", "elite")
 CA_TIERS = ("easy", "medium", "hard", "elite", "master", "grandmaster")
 SNAPSHOT_EVENTS_MOST = 8
+CLOG_MOST, CLOG_NEW_MOST = 5000, 8
 
 
 def snapshot_events(prev, nxt):
@@ -1189,6 +1200,13 @@ def snapshot_events(prev, nxt):
                 total, da, db = whole(b[1]), whole(a[0]), whole(b[0])
                 if total and da is not None and db is not None and da < total <= db:
                     out.append({"kind": "ca", "tier": CA_TIERS[i]})
+    po = whole(prev["clog"].get("count")) if isinstance(prev.get("clog"), dict) else None
+    no = whole(nxt["clog"].get("count")) if isinstance(nxt.get("clog"), dict) else None
+    if po is not None and no is not None and no > po:
+        named = [one_line(x, 60) for x in (nxt["clog"].get("new") or []) if isinstance(x, str)]
+        named = [x for x in named if x]
+        for i in range(min(no - po, SNAPSHOT_EVENTS_MOST)):
+            out.append({"kind": "clog", "name": named[i]} if i < len(named) else {"kind": "clog", "count": po + i + 1})
     pl = whole(prev["slayer"].get("streak")) if isinstance(prev.get("slayer"), dict) else None
     nl = whole(nxt["slayer"].get("streak")) if isinstance(nxt.get("slayer"), dict) else None
     if pl is not None and nl is not None and nl > pl:
@@ -1930,7 +1948,7 @@ class Channel:
                 if self.game.kept.get(f) is not None:
                     fields[f] = None
         # (what a snapshot adds to the Array, against the last kept: snapshot_events, 11/16/2026; the Worker's, the same)
-        before = {f: json.loads(json.dumps(self.game.kept[f])) for f in ("skills", "quests", "diaries", "combat", "slayer")
+        before = {f: json.loads(json.dumps(self.game.kept[f])) for f in ("skills", "quests", "diaries", "combat", "slayer", "clog")
                   if snap and self.game.kept.get(f) is not None}
         got = self.game.apply(fields, now)
         if snap and fields.get("off") is not True and self.array is not None and self.listed() \
@@ -2118,7 +2136,9 @@ class Channel:
             if summed:
                 # (after the report itself has gone to viewers, below)
                 asyncio.get_event_loop().call_soon(self.tell_summary)
-            if self.array is not None and (self.sender is not None or self.gamer is not None) and self.listed():
+            # (11/16/2026: or the Hub's plugin's heard from, its posts: so Dink posting to the page puts its reports on
+            # the Array, as a connected plugin's do; a dark outstation with no plugin, still never)
+            if self.array is not None and (self.sender is not None or self.heard(PRESENCE_FRESH_S)) and self.listed():
                 # the Array's events (11/08/2026): only while it's live, or its plugin's connected (11/15/2026), and on
                 # the open outstations' list, so a coded outstation's reports, and a dark one's with no plugin, never
                 # show (with --delay, as the report reaches viewers)
@@ -4513,7 +4533,8 @@ class Relay:
             self.log("forward   %s  %s to Discord" % (name, payload.get("type")))
             asyncio.ensure_future(self.forward.send(body, content_type))
         self.dink_counts(ch, payload)
-        report = dink_report(payload)
+        # (nothing from the Wilderness or PvP, whatever Dink sends: dink_safe; 11/16/2026)
+        report = dink_report(payload) if dink_safe(payload) else None
         if report:
             line = json.dumps({"report": report})
             self.log("report    %s  %s" % (name, report["type"]))
@@ -4830,6 +4851,37 @@ def report_data(kind, extra):
     elif kind == "ACHIEVEMENT_DIARY":
         d = {"area": short(extra.get("area")), "tier": short(extra.get("difficulty"))}
     return {k: v for k, v in d.items() if v is not None and v != {} and v != []}
+
+
+WILDERNESS_BOSSES = ("artio", "callisto", "calvar'ion", "chaos elemental", "chaos fanatic", "crazy archaeologist",
+                     "scorpia", "spindel", "venenatis", "vet'ion", "king black dragon", "revenant")
+
+
+def wilderness_region(rid):
+    """Whether a map region is the Wilderness's, above ground (x 2944-3391, y 3520-3967) or below it (y 9920-10367);
+    the Worker's wildernessRegion, the same."""
+    if not isinstance(rid, int) or isinstance(rid, bool) or rid < 0:
+        return False
+    rx, ry = rid >> 8, rid & 255
+    return 46 <= rx <= 52 and (55 <= ry <= 61 or 155 <= ry <= 161)
+
+
+def dink_safe(p):
+    """Whether a Dink post may reach the page and the Array (11/16/2026; the Worker's dinkSafe): not from the
+    Wilderness (its region, a death's place, a Wilderness boss), not a player kill's or a PvP death's, not loot from a
+    player. Dink sends the world and region with each post by default: only read here, never kept."""
+    if not isinstance(p, dict):
+        return False
+    extra = p.get("extra") if isinstance(p.get("extra"), dict) else {}
+    loc = extra.get("location") if isinstance(extra.get("location"), dict) else {}
+    if wilderness_region(p.get("regionId")) or wilderness_region(loc.get("regionId")):
+        return False
+    if p.get("type") == "PLAYER_KILL" or (p.get("type") == "DEATH" and (extra.get("isPvp") or extra.get("pvp") or extra.get("killerName") or extra.get("pker"))):
+        return False
+    if p.get("type") == "LOOT" and str(extra.get("category", "")).upper() == "PLAYER":
+        return False
+    who = str(extra.get("boss") or extra.get("source") or "").lower()
+    return not any(who.startswith(b) for b in WILDERNESS_BOSSES)
 
 
 def dink_report(p):

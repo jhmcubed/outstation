@@ -198,7 +198,7 @@ public class OutsidePlugin extends Plugin
 	static final long UPDATE_EVERY_MS = 60_000L;
 	/** what a snapshot carries (the rest of read()'s fields are the socket's) */
 	static final String[] SNAP_FIELDS = {"name", "type", "worn", "inv", "bag", "pouch", "seeds", "barrel", "quiver",
-		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve"};   // (delve: update 2, 11/16/2026)
+		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve", "clog"};   // (delve: update 2; clog: the collection log's counter, 11/16/2026)
 
 	@Inject
 	private Client client;
@@ -846,12 +846,22 @@ public class OutsidePlugin extends Plugin
 	private void snapshot(long now)
 	{
 		JsonObject body = snapshotBody(now, true);
+		List<String> named;
+		synchronized (clogNew)
+		{
+			named = new ArrayList<>(clogNew);
+		}
 		panel.snapStatus("updating your page…");
 		post(body, ok ->
 		{
 			if (ok)
 			{
 				snapAt = System.currentTimeMillis();
+				// (the slots named with it: gone with it, so the next update names only newer ones)
+				synchronized (clogNew)
+				{
+					clogNew.removeAll(named);
+				}
 				showSnap();
 			}
 		});
@@ -892,6 +902,46 @@ public class OutsidePlugin extends Plugin
 			}
 		}
 		return body;
+	}
+
+	/** the game's chat line for a new collection log slot (its "Collection log - New addition notification" setting;
+	 *  Dink's CollectionNotifier reads the same line) */
+	private static final java.util.regex.Pattern CLOG_ADDED = java.util.regex.Pattern.compile("^New item added to your collection log: (.+?)\\s*$");
+	/** at most this many slots' names with one update */
+	static final int CLOG_NEW_MOST = 8;
+	/** the slots the chat named since the last update went */
+	private final List<String> clogNew = new ArrayList<>();
+
+	/** The item a chat line says was added to the collection log, or null. */
+	static String clogAdded(String line)
+	{
+		java.util.regex.Matcher m = line == null ? null : CLOG_ADDED.matcher(line);
+		return m != null && m.matches() ? m.group(1).trim() : null;
+	}
+
+	/** The collection log's counter (on the client's thread): {"count", "max", "new": [names]}, or null while the game
+	 *  hasn't said its count. */
+	private JsonObject clogRead()
+	{
+		int count = client.getVarpValue(net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT);
+		int max = client.getVarpValue(net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_MAX);
+		if (count <= 0 || max <= 0 || count > max)
+		{
+			return null;
+		}
+		JsonObject o = new JsonObject();
+		o.addProperty("count", count);
+		o.addProperty("max", max);
+		JsonArray names = new JsonArray();
+		synchronized (clogNew)
+		{
+			for (String n : clogNew)
+			{
+				names.add(n);
+			}
+		}
+		o.add("new", names);
+		return o;
 	}
 
 	/** "Show what's sent" (11/16/2026, update 2: as OSRS Map Companion's "Show what's sent"): exactly what "Update my
@@ -1185,6 +1235,13 @@ public class OutsidePlugin extends Plugin
 			m.put("quests", questsSeen);
 			m.put("diaries", diariesSeen);
 			m.put("combat", Progress.readCombat(client));
+			// (11/16/2026, the collection log's counter: slots filled and in all, as the game keeps them, and the names of
+			// those the game's chat said were added since the last update; nothing till the game has said its count)
+			JsonObject clog = clogRead();
+			if (clog != null)
+			{
+				m.put("clog", clog);
+			}
 		}
 		else
 		{
@@ -1192,6 +1249,7 @@ public class OutsidePlugin extends Plugin
 			m.put("quests", JsonNull.INSTANCE);
 			m.put("diaries", JsonNull.INSTANCE);
 			m.put("combat", JsonNull.INSTANCE);
+			m.put("clog", JsonNull.INSTANCE);
 		}
 		if (config.slayer())
 		{
@@ -1465,6 +1523,18 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onChatMessage(ChatMessage e)
 	{
+		// (a collection log slot the game's chat names, for the next update's counter: clogRead)
+		if ((e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM) && config.progress())
+		{
+			String added = clogAdded(Text.removeTags(e.getMessage()));
+			synchronized (clogNew)
+			{
+				if (added != null && clogNew.size() < CLOG_NEW_MOST && !clogNew.contains(added))
+				{
+					clogNew.add(added);
+				}
+			}
+		}
 		// hub:cut deathbank
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
@@ -2101,6 +2171,26 @@ public class OutsidePlugin extends Plugin
 			public void showSent()
 			{
 				OutsidePlugin.this.showSent();
+			}
+
+			@Override
+			public void copyDink()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					panel.dinkStatus("make your page first");
+					return;
+				}
+				try
+				{
+					java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(a.dinkAddress()), null);
+					panel.dinkStatus("copied: paste it into Dink's Primary Webhook URLs, on its own line");
+				}
+				catch (IllegalStateException | java.awt.HeadlessException ex)
+				{
+					panel.dinkStatus("the clipboard's busy: try again");
+				}
 			}
 
 			@Override

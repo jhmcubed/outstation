@@ -78,8 +78,9 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "progress",
 		name = "Quests, diaries and combat achievements",
-		description = "Your quests (done and started) and quest points, each Achievement Diary's tiers and tasks, and your combat"
-			+ " achievements' points and tasks by tier",
+		description = "Your quests (done and started) and quest points, each Achievement Diary's tiers and tasks, your combat"
+			+ " achievements' points and tasks by tier, and your collection log's count (and the slots the game's chat says"
+			+ " you've added since the last update)",
 		position = 3
 	)
 	default boolean progress()

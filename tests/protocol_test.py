@@ -2083,7 +2083,8 @@ class Snapshot(Base):
                  "quests": {"points": 10, "total": 3, "done": ["Cook's Assistant"], "started": [], "todo": ["Dragon Slayer I"]},
                  "diaries": {"Varrock": [1, 0, 0, 0, 10, 40]},
                  "combat": {"points": 5, "tiers": [[2, 3], [0, 4], [0, 4], [0, 4], [0, 4], [0, 4]]},
-                 "slayer": {"task": "Abyssal demons", "left": 3, "of": 120, "area": None, "points": 10, "streak": 4}}
+                 "slayer": {"task": "Abyssal demons", "left": 3, "of": 120, "area": None, "points": 10, "streak": 4},
+                 "clog": {"count": 100, "max": 1700, "new": []}}
         self.assertEqual(self.post({"game": first})[0], 204)
         await self.pause()
         since = array_read()[2]["next"]
@@ -2093,16 +2094,36 @@ class Snapshot(Base):
         second["diaries"]["Varrock"] = [1, 1, 0, 0, 20, 40]
         second["combat"]["tiers"][0] = [3, 3]
         second["slayer"] = {"task": None, "left": 0, "of": 0, "area": None, "points": 25, "streak": 5}
+        # (two new log slots: one the game's chat named, one it didn't)
+        second["clog"] = {"count": 102, "max": 1700, "new": ["Bandos chaps"]}
         self.assertEqual(self.post({"game": second})[0], 204)
         await self.pause(2)
         mine = [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in array_since(since) if e["channel"] == self.ch]
         self.assertEqual(mine, [{"kind": "level", "skill": "Runecraft", "level": 67}, {"kind": "quest", "name": "Dragon Slayer I"},
                                 {"kind": "diary", "tier": "medium", "area": "Varrock"}, {"kind": "ca", "tier": "easy"},
-                                {"kind": "slayer", "streak": 5}])
+                                {"kind": "clog", "name": "Bandos chaps"}, {"kind": "clog", "count": 102}, {"kind": "slayer", "streak": 5}])
         # (the same again: nothing new, nothing said)
         self.assertEqual(self.post({"game": second})[0], 204)
         await self.pause(2)
-        self.assertEqual(len([e for e in array_since(since) if e["channel"] == self.ch]), 5)
+        self.assertEqual(len([e for e in array_since(since) if e["channel"] == self.ch]), 7)
+
+    async def test_dink_posting_to_the_page_reaches_the_array_but_never_from_the_wilderness(self):
+        # (11/16/2026, Jace: "the counters and the Dink connection": a Hub player's own Dink, set to post to their page,
+        # puts its reports on the Array while their plugin's heard from; nothing from the Wilderness or PvP, whatever
+        # Dink sends, and Dink's world and region are never kept)
+        self.assertEqual(self.post({"game": {"presence": self.WC}})[0], 204)        # (heard from: the Hub's plugin)
+        await self.pause()
+        since = array_read()[2]["next"]
+        dink = lambda p: http("POST", "/dink/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), p)
+        self.assertEqual(dink({"type": "KILL_COUNT", "content": "", "world": 302, "regionId": 9023,
+                               "extra": {"boss": "Vorkath", "count": 418}})[0], 204)
+        self.assertEqual(dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Callisto", "count": 9}})[0], 204)
+        self.assertEqual(dink({"type": "PET", "content": "", "regionId": (48 << 8) | 60, "extra": {"petName": "Callisto cub"}})[0], 204)
+        self.assertEqual(dink({"type": "DEATH", "content": "", "extra": {"isPvp": True, "killerName": "someone"}})[0], 204)
+        await self.pause(2)
+        mine = [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in array_since(since) if e["channel"] == self.ch]
+        self.assertEqual(mine, [{"kind": "kill", "boss": "Vorkath", "kc": 418}])
+        self.assertNotIn("302", json.dumps(array_since(since)))
 
     async def test_the_list_names_them_as_the_game_shows_them(self):
         # (11/16/2026, Jace: "Oran Berries" was on the globe as oranberries: GET /channels carries the plugin's name, a
