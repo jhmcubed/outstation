@@ -54,6 +54,7 @@ import net.runelite.client.events.NpcLootReceived;
 import net.runelite.client.game.ItemStack;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.ScriptCallbackEvent;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.Model;
@@ -67,6 +68,7 @@ import java.io.IOException;
 import java.util.HashSet;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.callback.ClientThread;
@@ -972,17 +974,7 @@ public class OutsidePlugin extends Plugin
 				say(w.equals("on") ? "visitors can talk on your page again" : "visitors' lines on your page go nowhere now");
 				return;
 			}
-			String line = Talk.say(String.join(" ", e.getArguments()), gson);
-			if (line == null)
-			{
-				say("::o and your words, to answer your page's chat");
-				return;
-			}
-			ws.send(line);
-			// (their own line, in the chat box beside the visitors': the relay's echo is the host's, which isn't shown)
-			String me = myName(), words = String.join(" ", e.getArguments()).replaceAll("\\s+", " ").trim();
-			clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.FRIENDSCHAT)
-				.sender("Outside").name(Text.escapeJagex(me == null ? "you" : me)).value(Text.escapeJagex(words)).build()));
+			answerPage(String.join(" ", e.getArguments()));
 			return;
 		}
 		if ("outsideforget".equalsIgnoreCase(e.getCommand()))
@@ -3162,6 +3154,50 @@ public class OutsidePlugin extends Plugin
 				talkEnded(ws);
 			}
 		});
+	}
+
+	/** The player's answer to their page's chat (::o or /o): to the desk, and into the chat box beside the visitors'. */
+	private void answerPage(String words)
+	{
+		WebSocket ws = talkSocket;
+		if (ws == null)
+		{
+			say(config.chat() ? "your page's chat isn't open yet" : "switch on \"The page's chat in my game\" in the plugin's settings first");
+			return;
+		}
+		String line = Talk.say(words, gson);
+		if (line == null)
+		{
+			say("::o or /o and your words, to answer your page's chat");
+			return;
+		}
+		ws.send(line);
+		// (the relay's echo is the host's, which isn't shown)
+		String me = myName(), one = words.replaceAll("\\s+", " ").trim();
+		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.FRIENDSCHAT)
+			.sender("Outside").name(Text.escapeJagex(me == null ? "you" : me)).value(Text.escapeJagex(one)).build()));
+	}
+
+	/**
+	 * /o in the chat box (11/16/2026, Jace: "build ::o, but also include /o"): caught as the chat box's enter is pressed,
+	 * as RuneLite's Twitch plugin catches /t (its onScriptCallbackEvent, "chatDefaultReturn"), and kept from the game, so
+	 * it never reaches the friends chat a / would otherwise send it to; then answered as ::o is.
+	 */
+	@Subscribe
+	public void onScriptCallbackEvent(ScriptCallbackEvent e)
+	{
+		if (!"chatDefaultReturn".equals(e.getEventName()))
+		{
+			return;
+		}
+		String words = Talk.prefixed(client.getVarcStrValue(VarClientID.CHATINPUT));
+		if (words == null)
+		{
+			return;
+		}
+		int[] stack = client.getIntStack();
+		stack[client.getIntStackSize() - 3] = 1; // (keep it from the game)
+		answerPage(words);
 	}
 
 	private synchronized void talkEnded(WebSocket ws)

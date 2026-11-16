@@ -86,10 +86,10 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "chat",
 		name = "The page's chat in my game",
-		description = "What visitors say in your Outside page's chat shows in your game's chat box, and ::o <words> answers"
+		description = "What visitors say in your Outside page's chat shows in your game's chat box, and ::o <words> or /o <words> answers"
 			+ " them (::ochat off stops their lines). Your page shows its chat while this is on, even with nothing transmitting.",
 		warning = "Lines anyone types in your Outside page's chat will show in your game's chat box, under their own chosen"
-			+ " names, and your page will offer a chat while you play. Nothing is sent but what you type after ::o. Switch it on?",
+			+ " names, and your page will offer a chat while you play. Nothing is sent but what you type after ::o or /o. Switch it on?",
 		position = 12
 	)
 	default boolean chat()

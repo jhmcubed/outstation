@@ -9,7 +9,7 @@ import com.google.gson.JsonObject;
  * the chat", the ghillie repository's claude/outstation.md): with "The page's chat in my game" on, the plugin opens a
  * desk socket of its own on the relay (/desk/<channel>?key=…&name=…&talk=1, docs/protocol.md "The desk"), the one the
  * outstation's chat window opens. What visitors say on the player's Outside page shows in the game's chat box, as
- * RuneLite's own Twitch plugin shows Twitch's; `::o <words>` answers them as the page's host; `::ochat off` / `on`
+ * RuneLite's own Twitch plugin shows Twitch's; `::o <words>` or `/o <words>` answers them as the page's host; `::ochat off` / `on`
  * stops and starts visitors' lines (the desk's chat_on). The relay's status line says "talk" while it's open, and the
  * page shows its chat while nothing's transmitting. Kept apart from RuneLite so it's tested.
  */
@@ -84,6 +84,21 @@ final class Talk
 		JsonObject m = new JsonObject();
 		m.addProperty("say", one.length() > SAY_MAX ? one.substring(0, SAY_MAX) : one);
 		return gson.toJson(m);
+	}
+
+	/** The words after /o at the chat box's start (any case; "/o" with nothing after it gives ""), or null when it isn't. */
+	static String prefixed(String typed)
+	{
+		if (typed == null)
+		{
+			return null;
+		}
+		String t = typed.trim();
+		if (t.equalsIgnoreCase("/o"))
+		{
+			return "";
+		}
+		return t.length() > 3 && t.substring(0, 3).equalsIgnoreCase("/o ") ? t.substring(3) : null;
 	}
 
 	/** Visitors' lines on or off (the desk's chat_on). */

@@ -97,7 +97,7 @@ to about 55 (the Outside plugin's own socket, and HTTP reads like GET /channels,
 **The Outside plugin's desk** (11/16/2026): `/desk/<channel>?key=<key>&name=<the player's name>&talk=1`, opened by the
 plugin while its "The page's chat in my game" is on and its game socket is open. It's a desk like any other (it hears
 the chat, says lines as the host, turns visitors' lines off and on with `chat_on`); the plugin shows visitors' lines in
-the game's chat box and sends what the player types after `::o`. While one is open, every status line says
+the game's chat box and sends what the player types after `::o` or `/o`. While one is open, every status line says
 `"talk": true`, and the page shows its chat with nothing transmitting; it going, `false`. A desk without `talk=1` (the
 outstation's chat window) never sets it.
 

@@ -46,4 +46,16 @@ public class TalkTest
 			"{\"relay\":\"https://relay.ghillie.workers.dev\",\"channel\":\"sburb\",\"key\":\"k-123456\"}".getBytes()), gson);
 		assertEquals("wss://relay.ghillie.workers.dev/desk/sburb?key=k-123456&name=Sburb%20Two&talk=1", a.deskUrl("Sburb Two"));
 	}
+
+	@Test
+	public void theSlashPrefix()
+	{
+		assertEquals("thanks all", Talk.prefixed("/o thanks all"));
+		assertEquals("hi", Talk.prefixed("/O hi"));
+		assertEquals("", Talk.prefixed("/o"));
+		assertNull(Talk.prefixed("/ohno"));
+		assertNull(Talk.prefixed("/hello friends"));
+		assertNull(Talk.prefixed("o hi"));
+		assertNull(Talk.prefixed(null));
+	}
 }
