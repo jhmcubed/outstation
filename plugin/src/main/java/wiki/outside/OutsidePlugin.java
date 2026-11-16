@@ -198,7 +198,7 @@ public class OutsidePlugin extends Plugin
 	static final long UPDATE_EVERY_MS = 60_000L;
 	/** what a snapshot carries (the rest of read()'s fields are the socket's) */
 	static final String[] SNAP_FIELDS = {"name", "type", "worn", "inv", "bag", "pouch", "seeds", "barrel", "quiver",
-		"charges", "skills", "quests", "diaries", "combat", "slayer"};
+		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve"};   // (delve: update 2, 11/16/2026)
 
 	@Inject
 	private Client client;
@@ -236,6 +236,8 @@ public class OutsidePlugin extends Plugin
 	private int syncTicks;
 	private volatile boolean syncDue;
 	private volatile long snapAt, updateAt;
+	/** a press of "Update my page" too soon, waiting for the minute (updateNow) */
+	private volatile boolean updateWaiting;
 	private volatile boolean posted;
 	private boolean sceneDue;
 	// hub:cut globe
@@ -551,6 +553,11 @@ public class OutsidePlugin extends Plugin
 			}
 			presence.loggedOut();
 			syncDue = false;   // (the hour's count waits while they're logged out)
+			updateWaiting = false;   // (a press waiting for its minute: logged out, it doesn't go)
+			if (panel != null)
+			{
+				panel.updateWait(0);
+			}
 			// hub:cut globe
 			// (logged out: the relay drops the area and the activity with the rest; next time, the two minutes start
 			// again; the stars not reported yet are forgotten)
@@ -807,6 +814,12 @@ public class OutsidePlugin extends Plugin
 			syncDue = true;
 		}
 		long now = System.currentTimeMillis();
+		// (a press too soon, its minute up: it goes now, as a press would)
+		if (updateWaiting && System.currentTimeMillis() - updateAt >= UPDATE_EVERY_MS)
+		{
+			updateWaiting = false;
+			updateNow();
+		}
 		if (syncDue && !danger)
 		{
 			syncDue = false;
@@ -832,6 +845,23 @@ public class OutsidePlugin extends Plugin
 	 *  price, and what they're doing; posted once. */
 	private void snapshot(long now)
 	{
+		JsonObject body = snapshotBody(now, true);
+		panel.snapStatus("updating your page…");
+		post(body, ok ->
+		{
+			if (ok)
+			{
+				snapAt = System.currentTimeMillis();
+				showSnap();
+			}
+		});
+	}
+
+	/** What a snapshot carries (on the client's thread): what's switched on of read()'s fields (SNAP_FIELDS), every
+	 *  item's name and price, and what they're doing. `taking`: what they're doing counted as sent (a real snapshot);
+	 *  false for "Show what's sent", which only shows it. */
+	JsonObject snapshotBody(long now, boolean taking)
+	{
 		Map<String, JsonElement> m = read();
 		JsonObject body = new JsonObject();
 		for (String f : SNAP_FIELDS)
@@ -856,16 +886,30 @@ public class OutsidePlugin extends Plugin
 		{
 			JsonObject p = presence.now(now, false);
 			body.add("presence", p);
-			presence.took(p, now);
-		}
-		panel.snapStatus("updating your page…");
-		post(body, ok ->
-		{
-			if (ok)
+			if (taking)
 			{
-				snapAt = System.currentTimeMillis();
-				showSnap();
+				presence.took(p, now);
 			}
+		}
+		return body;
+	}
+
+	/** "Show what's sent" (11/16/2026, update 2: as OSRS Map Companion's "Show what's sent"): exactly what "Update my
+	 *  page" would post now, read on the client's thread and shown in a window; nothing's sent. */
+	private void showSent()
+	{
+		clientThread.invokeLater(() ->
+		{
+			Attach a = key();
+			if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
+			{
+				panel.snapStatus("log in first: it shows what this character would send");
+				return;
+			}
+			JsonObject body = snapshotBody(System.currentTimeMillis(), false);
+			String text = gson.newBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(body);
+			String to = a == null ? "your page, once it's made" : "outside.wiki/" + a.getChannel() + " (through " + HOME_RELAY.replaceAll("^https?://", "") + ")";
+			panel.showSent(to, text, config.send());
 		});
 	}
 
@@ -892,7 +936,10 @@ public class OutsidePlugin extends Plugin
 			long now = System.currentTimeMillis();
 			if (now - updateAt < UPDATE_EVERY_MS)
 			{
-				panel.snapStatus("updated a moment ago: once a minute at most");
+				// (a press too soon waits, and goes by itself once the minute's up: onGameTick, updateWaiting)
+				updateWaiting = true;
+				panel.updateWait(updateAt + UPDATE_EVERY_MS);
+				panel.snapStatus("updated a moment ago: this one goes when the minute's up");
 				return;
 			}
 			WorldPoint at = here();
@@ -905,6 +952,8 @@ public class OutsidePlugin extends Plugin
 				return;
 			}
 			updateAt = now;
+			updateWaiting = false;
+			panel.updateWait(0);
 			syncTicks = 0;
 			snapshot(now);
 		});
@@ -2046,6 +2095,12 @@ public class OutsidePlugin extends Plugin
 			public void update()
 			{
 				updateNow();
+			}
+
+			@Override
+			public void showSent()
+			{
+				OutsidePlugin.this.showSent();
 			}
 
 			@Override

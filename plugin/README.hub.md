@@ -7,7 +7,7 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 1. Install **Outside** from the Plugin Hub (RuneLite's wrench icon, then Plugin Hub).
 2. Log in, open the **Outside** side tab (a lime ✼) and press **Make my Outside page**. Your page is made under the name you're logged in as, at outside.wiki/<your name>, and its key is saved in the plugin's settings for you. Its first update goes as it's made.
 3. Prove the name is yours. Until then, the page marks it **unproven**. Gain any experience, press **Update my page**, wait a minute, then log out: within a few minutes the official hiscores confirm it. The side tab says whether it's proven.
-4. From then on, press **Update my page** whenever you want your page to show what you have now (once a minute at most). It also updates by itself every hour you're logged in. Your page says when it was last updated.
+4. From then on, press **Update my page** whenever you want your page to show what you have now (once a minute at most: pressed sooner, the button counts down and it goes by itself when the minute's up). It also updates by itself every hour you're logged in. Your page says when it was last updated.
 
 **More than one character:** each has its own page and key. Logging into another character shows that one's page in the side tab, or the button to make one. An alt never shows on a main's page.
 
@@ -17,13 +17,14 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 
 - Whose page it is, **Open my page**, **Make my Outside page**, and whether it's proven yours.
 - **Update my page**, and when it was last updated. **Refresh** asks again whether it's proven.
+- **Show what's sent:** exactly what Update my page would send now, every field of it, in a window. Nothing is sent by opening it.
 - **Who sees it:** whether your page is open to anyone (and on outside.wiki's globe while you play) or friends only. **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (it asks first: everything on the page goes and the name is free again).
 - **Your page's chat:** visitors can leave lines on your page. **Tend my page's chat** opens your page in your browser with **take back** and **ban** beside each visitor's line, and who you've banned (with **unban**). The link works for 12 hours, only in that browser, and can do nothing else.
 
 ## Settings
 
 - **Send to my Outside page:** the main switch. Off, nothing is sent, and what it sent comes off your page.
-- **Worn and carried**, **Skills**, **Quests, diaries and combat achievements**, **My slayer task**, **Item charges**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
+- **Worn and carried**, **Skills**, **Quests, diaries and combat achievements**, **My slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
 
 ## What it sends, and only that
 
@@ -39,6 +40,7 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 - **quests, diaries and combat achievements:** your quest points and which quests you've done or started, each Achievement Diary area's tiers and tasks done, and your combat achievement points and tasks done in each tier
 - **my slayer task:** the monster, how many are left of how many, the area if your master named one, your slayer points and your task streak
 - **item charges:** each worn or carried item's charges, as the game tells you them in its chat when you check one or as it's used
+- **Doom of Mokhaiotl delves:** when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level (as the Delve Calculator plugin reads it)
 - that you've logged out
 
 **What I'm doing, as Discord shows it** (sent as it changes, once a minute at most, and with each update): only what RuneLite's own Discord plugin puts in your Discord status: the skill you're training, and the area you're in by its name (a boss, a city, a dungeon, a minigame, a raid or a region), with one fixed point of that area so the globe can light you there. Never your exact tile or your world.
