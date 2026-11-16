@@ -2,6 +2,9 @@ package wiki.outside;
 
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /** The relay's addresses made from a station key (11/15/2026: your year's routes and the plugin's own reports). */
 public class AttachTest
@@ -31,4 +34,35 @@ public class AttachTest
 		assertEquals("https://outside.wiki/jhmcubed?code=a-b_c", a.page("a-b_c"));
 		assertEquals("https://outside.wiki/jhmcubed", a.page(""));
 	}
+
+	@Test
+	public void onlyTheOutsideRelay()
+	{
+		assertTrue(Attach.isHome("https://relay.ghillie.workers.dev"));
+		assertTrue(Attach.isHome("wss://relay.ghillie.workers.dev/"));
+		assertTrue(Attach.isHome("relay.ghillie.workers.dev"));
+		assertFalse(Attach.isHome("https://relay.ghillie.workers.dev.evil.example"));
+		assertFalse(Attach.isHome("https://evil.example/relay.ghillie.workers.dev"));
+		assertFalse(Attach.isHome("https://relay.ghillie.workers.dev:8443"));
+		assertFalse(Attach.isHome("https://user@relay.ghillie.workers.dev"));
+		assertFalse(Attach.isHome("http://relay.ghillie.workers.dev"));
+		assertFalse(Attach.isHome("http://127.0.0.1:8787"));
+		assertFalse(Attach.isHome(null));
+	}
+
+	// hub:only @Test
+	// hub:only public void theHubsVersionTakesNoOtherRelay()
+	// hub:only {
+	// hub:only 	com.google.gson.Gson gson = new com.google.gson.Gson();
+	// hub:only 	assertNull(Attach.parse(key("https://evil.example"), gson));
+	// hub:only 	Attach a = Attach.parse(key("wss://relay.ghillie.workers.dev"), gson);
+	// hub:only 	assertEquals(Attach.HOME, a.getRelay());
+	// hub:only 	assertEquals("https://relay.ghillie.workers.dev/proof/jhmcubed", a.proofUrl());
+	// hub:only }
+	// hub:only
+	// hub:only private static String key(String relay)
+	// hub:only {
+	// hub:only 	String json = "{\"relay\":\"" + relay + "\",\"channel\":\"jhmcubed\",\"key\":\"k3y-k3y-k3y\"}";
+	// hub:only 	return "outstation1:" + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+	// hub:only }
 }
