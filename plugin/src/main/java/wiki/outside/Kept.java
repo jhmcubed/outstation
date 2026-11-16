@@ -21,6 +21,9 @@ import java.util.regex.Pattern;
 // hub:cut bank
  * <li>the bank, as the relay keeps it;</li>
 // hub:end bank
+// hub:cut deathbank
+ * <li>the deathbank (the Item Retrieval Service's), as the relay keeps it;</li>
+// hub:end deathbank
 // hub:cut model
  * <li>the character's model, as the page draws it;</li>
 // hub:end model
@@ -120,6 +123,160 @@ public final class Kept
 		return o;
 	}
 	// hub:end bank
+
+	// hub:cut deathbank
+	// ---- the deathbank (11/16/2026, Jace: "show an open Deathbank like the Hespori deathbank on someone's profile"):
+	// what the game's Item Retrieval Service holds for them after a death in an instance (Hespori, Zulrah, Vorkath...),
+	// read when they look in it (its window fills the game's GRAVESTONE inventory while the gravestone's own window
+	// isn't open), and which one it is by the varp IF1 the window sets, a locked and an unlocked value each (locked: its
+	// fee unpaid). The values are Dude, Where's My Stuff's (github.com/Thource/dude-wheres-my-stuff, its DeathbankType;
+	// BSD 2-Clause, Copyright 2022 Thource), the ones it marks confirmed and the rest as it has them.
+
+	/** Each deathbank: its name, its locked and its unlocked IF1 values, the place the game's line names it by ("You have
+	 *  items stored in an item retrieval service...", spaces taken out; null, none known) and the regions it's made
+	 *  from a death in (RuneLite's Discord plugin's, as Presence has them; none for the quests'). */
+	static final Object[][] DEATHBANKS = {
+		{"Volcanic Mine", 1, 2, "FossilIsland", new int[]{15263, 15262}},
+		{"Grotesque Guardians", 3, 4, null, new int[]{6727}},
+		{"Vorkath", 5, 6, "Rellekka", new int[]{9023}},
+		{"Dragon Slayer II", 7, 8, null, new int[]{}},
+		{"A Taste of Hope", 9, 10, null, new int[]{}},
+		{"Theatre of Blood", 11, 12, "TheatreofBlood", new int[]{12611, 12612, 12613, 12867, 12869, 13122, 13123, 13125, 13379}},
+		{"Alchemical Hydra", 13, 14, "KaruulmSlayerDungeon", new int[]{5536}},
+		{"Hespori", 15, 16, "FarmingGuild", new int[]{5021}},
+		{"The Mimic", 17, 18, null, new int[]{}},
+		{"Song of the Elves", 19, 20, "elvenrebel", new int[]{}},
+		{"Song of the Elves", 21, 22, "elvenrebel", new int[]{}},
+		{"The Fremennik Exiles", 23, 24, null, new int[]{}},
+		{"The Nightmare", 25, 26, "Shura", new int[]{15515}},
+		{"Phosani's Nightmare", 27, 28, "SisterSenga", new int[]{}},
+		{"Hallowed Sepulchre", 29, 30, null, new int[]{8797, 9051, 9052, 9053, 9054, 9309, 9563, 9565, 9821, 10074, 10075, 10077}},
+		{"Sins of the Father", 31, 32, null, new int[]{}},
+		{"Zulrah", 33, 0, "Zul-Andra", new int[]{9007}},
+		{"Nex", 36, 37, null, new int[]{11601}},
+	};
+
+	/** The game's line after a death that made a deathbank (the start of it). */
+	public static final String DEATHBANK_LINE = "You have items stored in an item retrieval service";
+
+	/** Which deathbank a death made: by the place the game's line names, else by the region they died in, else "Unknown". */
+	public static String deathbankAt(String line, int region)
+	{
+		String flat = line == null ? "" : line.replace(" ", "");
+		for (Object[] d : DEATHBANKS)
+		{
+			if (d[3] != null && flat.contains((String) d[3]))
+			{
+				return (String) d[0];
+			}
+		}
+		for (Object[] d : DEATHBANKS)
+		{
+			for (int r : (int[]) d[4])
+			{
+				if (r == region)
+				{
+					return (String) d[0];
+				}
+			}
+		}
+		return "Unknown";
+	}
+
+	/** What a death took (11/16/2026, Jace: "make it fill in the moment they die too"): what they carried and wore as they
+	 *  fell, less what they still have once they're back (the items kept on death), as {ids, how many}, in the order
+	 *  they were carried. */
+	public static int[][] lost(int[] beforeIds, int[] beforeQs, int[] afterIds, int[] afterQs)
+	{
+		Map<Integer, Long> left = new java.util.LinkedHashMap<>();
+		for (int i = 0; i < beforeIds.length && i < beforeQs.length; i++)
+		{
+			if (beforeIds[i] > 0 && beforeQs[i] > 0)
+			{
+				left.merge(beforeIds[i], (long) beforeQs[i], Long::sum);
+			}
+		}
+		for (int i = 0; i < afterIds.length && i < afterQs.length; i++)
+		{
+			if (afterIds[i] > 0 && afterQs[i] > 0 && left.containsKey(afterIds[i]))
+			{
+				left.merge(afterIds[i], (long) -afterQs[i], Long::sum);
+			}
+		}
+		left.values().removeIf(n -> n <= 0);
+		int[][] out = new int[2][left.size()];
+		int k = 0;
+		for (Map.Entry<Integer, Long> e : left.entrySet())
+		{
+			out[0][k] = e.getKey();
+			out[1][k++] = (int) Math.min(Integer.MAX_VALUE, e.getValue());
+		}
+		return out;
+	}
+
+	/** {where, locked} for the IF1 value the retrieval window set, {"Unknown", false} for one not on the list, or null
+	 *  (-1) when no deathbank's window is open. */
+	public static Object[] deathbankWhere(int if1)
+	{
+		if (if1 < 0)
+		{
+			return null;
+		}
+		for (Object[] d : DEATHBANKS)
+		{
+			if ((int) d[1] == if1)
+			{
+				return new Object[]{d[0], true};
+			}
+			if ((int) d[2] == if1)
+			{
+				return new Object[]{d[0], false};
+			}
+		}
+		return new Object[]{"Unknown", false};
+	}
+
+	/** {"where", "locked", "items", "names"} as the relay keeps it, or null when it's empty (taken off the page); "from":
+	 *  "death" when it's worked out at the death (lost), not read from its window. */
+	public static JsonObject deathbank(String where, boolean locked, int[] ids, int[] quantities, Map<Integer, Object[]> names)
+	{
+		return deathbank(where, locked, ids, quantities, names, false);
+	}
+
+	public static JsonObject deathbank(String where, boolean locked, int[] ids, int[] quantities, Map<Integer, Object[]> names, boolean atDeath)
+	{
+		JsonArray items = new JsonArray();
+		for (int i = 0; i < ids.length && i < quantities.length; i++)
+		{
+			if (ids[i] > 0 && quantities[i] > 0)
+			{
+				items.add(Kit.pair(ids[i], quantities[i]));
+			}
+		}
+		if (items.size() == 0)
+		{
+			return null;
+		}
+		JsonObject o = new JsonObject();
+		o.addProperty("where", where);
+		o.addProperty("locked", locked);
+		o.add("items", items);
+		JsonObject nm = new JsonObject();
+		for (Map.Entry<Integer, Object[]> e : names.entrySet())
+		{
+			JsonArray np = new JsonArray();
+			np.add((String) e.getValue()[0]);
+			np.add(Math.max(0, ((Number) e.getValue()[1]).longValue()));
+			nm.add(String.valueOf(e.getKey()), np);
+		}
+		o.add("names", nm);
+		if (atDeath)
+		{
+			o.addProperty("from", "death");
+		}
+		return o;
+	}
+	// hub:end deathbank
 
 	// hub:cut model
 	// ---- the model (Jace: "upload a captured model of their character onto their profile page just as RuneProfile

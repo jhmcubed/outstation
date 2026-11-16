@@ -53,6 +53,55 @@ public class KeptTest
 	// hub:end bank
 
 	// hub:cut model
+	// hub:cut deathbank
+	@Test
+	public void theDeathbankWhereAndWhetherLocked()
+	{
+		assertEquals("Hespori", Kept.deathbankWhere(15)[0]);
+		assertEquals(true, Kept.deathbankWhere(15)[1]);
+		assertEquals(false, Kept.deathbankWhere(16)[1]);
+		// (Zulrah's unlocked value is 0; -1 is no deathbank's window)
+		assertEquals("Zulrah", Kept.deathbankWhere(0)[0]);
+		assertNull(Kept.deathbankWhere(-1));
+		assertEquals("Unknown", Kept.deathbankWhere(999)[0]);
+	}
+
+	@Test
+	public void theDeathbankItsItemsAndEmptiedNone()
+	{
+		Map<Integer, Object[]> names = new LinkedHashMap<>();
+		names.put(4151, new Object[]{"Abyssal whip", 1_500_000L});
+		JsonObject d = Kept.deathbank("Hespori", true, new int[]{4151, -1, 995}, new int[]{1, 0, 25000}, names);
+		assertEquals("{\"where\":\"Hespori\",\"locked\":true,\"items\":[[4151,1],[995,25000]],\"names\":{\"4151\":[\"Abyssal whip\",1500000]}}", d.toString());
+		assertNull(Kept.deathbank("Hespori", false, new int[]{-1, -1}, new int[]{0, 0}, names));
+	}
+
+	@Test
+	public void theDeathbankAtADeathByTheGamesLineOrTheRegion()
+	{
+		assertEquals("Hespori", Kept.deathbankAt("You have items stored in an item retrieval service. Speak to Arno at the Farming Guild.", -1));
+		assertEquals("Phosani's Nightmare", Kept.deathbankAt("... Sister Senga ...", 15515));
+		assertEquals("Grotesque Guardians", Kept.deathbankAt(Kept.DEATHBANK_LINE + ".", 6727));
+		assertEquals("Unknown", Kept.deathbankAt(Kept.DEATHBANK_LINE + ".", 12850));
+	}
+
+	@Test
+	public void whatADeathTookLessWhatWasKept()
+	{
+		// (a whip, a defender and a fire cape kept; the sharks, the coins and a second ring went)
+		int[][] lost = Kept.lost(
+			new int[]{4151, 385, 385, 995, 12954, 6570, 2550, 2550, -1},
+			new int[]{1, 1, 1, 30000, 1, 1, 1, 1, 0},
+			new int[]{4151, 12954, 6570, 2550, -1},
+			new int[]{1, 1, 1, 1, 0});
+		assertEquals("[385, 995, 2550]", java.util.Arrays.toString(lost[0]));
+		assertEquals("[2, 30000, 1]", java.util.Arrays.toString(lost[1]));
+		JsonObject d = Kept.deathbank("Hespori", true, lost[0], lost[1], new LinkedHashMap<>(), true);
+		assertEquals("death", d.get("from").getAsString());
+		assertFalse(Kept.deathbank("Hespori", true, lost[0], lost[1], new LinkedHashMap<>()).has("from"));
+	}
+	// hub:end deathbank
+
 	@Test
 	public void theModelLeavesOutWhatTheGameNeverDraws()
 	{
