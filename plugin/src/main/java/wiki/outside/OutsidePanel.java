@@ -4,59 +4,85 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.Font;
 import java.awt.GridLayout;
+// hub:cut model,talk
 import java.util.List;
-import java.util.function.Consumer;
+// hub:end model,talk
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+// hub:cut model
 import javax.swing.ButtonGroup;
+// hub:end model
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+// hub:cut model
 import javax.swing.JRadioButton;
+// hub:end model
+// hub:cut model,talk
 import javax.swing.JTextField;
+// hub:end model,talk
 import javax.swing.SwingUtilities;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
 
 /**
- * The plugin's side tab (11/15/2026, Jace: "can you add the ::outsidemodel and ::outsidemotion commands as buttons… you
- * could also combine the two commands into one button"; RuneProfile's side tab as the pattern): whose page it is and a
- * way to open it; one button that captures the character (the next emote done within 8 seconds, else them and their
- * pet standing), with a name for it; the motions on their page, which one it shows first, and taking one away; taking
- * their model off their page. Everything it does goes through the plugin (OutsidePlugin's panel hooks); this only draws.
+ * The plugin's side tab (11/15/2026). It shows:
+ * <ul>
+ * <li>whose page it is and a way to open it; making a page for the character logged in, and proving it theirs;</li>
+ * <li>the station key, copied for the outstation program;</li>
+// hub:cut model
+ * <li>capturing the character (the next emote done within 8 seconds, else them and their pet standing), the motions
+ * on their page, which one it shows first, taking one away, and taking their model off their page;</li>
+// hub:end model
+// hub:cut year
+ * <li>opening their year;</li>
+// hub:end year
+// hub:cut talk
+ * <li>their emotes;</li>
+// hub:end talk
+ * </ul>
+ * Everything it does goes through the plugin (OutsidePlugin's panel hooks); this only draws.
  */
 public class OutsidePanel extends PluginPanel
 {
 	/** what the panel asks the plugin to do */
 	public interface Hooks
 	{
+		// hub:cut model
 		void capture(String name);
+		// hub:end model
 
 		void refresh();
 
+		// hub:cut model
 		void first(String name);
 
 		void forget(String name);
 
 		void removeModel();
+		// hub:end model
 
 		void openPage();
 
 		void claim();
 
+		// hub:cut year
 		void openYear();
+		// hub:end year
 
 		void copyKey();
 
+		// hub:cut talk
 		void addEmote(String name);
 
 		void removeEmote(String name);
+		// hub:end talk
 	}
 
+	// hub:cut model
 	/** a motion on their page, as the relay lists it */
 	public static final class Motion
 	{
@@ -69,25 +95,32 @@ public class OutsidePanel extends PluginPanel
 			this.frames = frames;
 		}
 	}
+	// hub:end model
 
 	private static final Color LIME = new Color(0xb9, 0xff, 0x00);
 	private final Hooks hooks;
 	private final JLabel who = new JLabel(" ");
 	private final JLabel status = new JLabel(" ");
+	// hub:cut model
 	private final JTextField name = new JTextField();
 	private final JButton capture = new JButton("Capture my character");
 	private final JPanel motions = new JPanel();
+	// hub:end model
 	private final JPanel start = new JPanel();
 	private final JPanel page = new JPanel();
 	private final JButton claim = new JButton("Make my Outside page");
 	private final JLabel claimStatus = new JLabel(" ");
 	private final JLabel proofLine = small(" ");
 	private final JLabel otherLine = small(" ");
+	// hub:cut year
 	private final JLabel yearStatus = small(" ");
+	// hub:end year
 	private final JLabel keyStatus = small(" ");
+	// hub:cut talk
 	private final JTextField emoteName = new JTextField();
 	private final JPanel emotes = new JPanel();
 	private final JLabel emoteStatus = small(" ");
+	// hub:end talk
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -128,6 +161,7 @@ public class OutsidePanel extends PluginPanel
 		page.add(wide(button("Open my page", hooks::openPage)));
 		page.add(Box.createVerticalStrut(14));
 
+		// hub:cut model
 		page.add(left(heading("Your character")));
 		page.add(left(small("<html><div style='width:155px'>Press capture, then do an emote within 8 seconds: it's recorded from its start to its end, your pet's"
 			+ " with it. Do nothing, and it records you and your pet standing. Your page shows it, and keeps it under its name.</div></html>")));
@@ -159,6 +193,12 @@ public class OutsidePanel extends PluginPanel
 		page.add(Box.createVerticalStrut(14));
 		page.add(wide(button("Take my model off my page", hooks::removeModel)));
 		page.add(Box.createVerticalStrut(14));
+		// hub:end model
+		// hub:only status.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		// hub:only page.add(left(status));
+		// hub:only page.add(wide(button("Refresh", hooks::refresh)));
+		// hub:only page.add(Box.createVerticalStrut(14));
+		// hub:cut year
 		// (11/15/2026: your year, kept by this plugin; docs/record.md)
 		page.add(left(heading("Your year")));
 		page.add(left(small("<html><div style='width:155px'>Where you've been, what you did and what you found, kept on this PC"
@@ -169,6 +209,8 @@ public class OutsidePanel extends PluginPanel
 		page.add(left(yearStatus));
 
 		page.add(Box.createVerticalStrut(14));
+		// hub:end year
+		// hub:cut talk
 		// (11/16/2026: the page chat's emotes, from here as from the outstation's settings; Emotes)
 		page.add(left(heading("Your emotes")));
 		page.add(left(small("<html><div style='width:155px'>Pictures your page's chat shows for :name:. Copy a picture"
@@ -188,6 +230,7 @@ public class OutsidePanel extends PluginPanel
 		emotes.setLayout(new GridLayout(0, 1, 0, 4));
 		page.add(emotes);
 		page.add(Box.createVerticalStrut(14));
+		// hub:end talk
 		// (11/15/2026, "Open your own" led by the plugin: an outstation transmits to the same page with the same key, and a
 		// key made here is kept with the account, not in the settings, so this is how it's handed over)
 		page.add(left(heading("A transmission")));
@@ -203,7 +246,9 @@ public class OutsidePanel extends PluginPanel
 		col.add(page);
 
 		add(col, BorderLayout.NORTH);
+		// hub:cut model
 		showMotions(null, "");
+		// hub:end model
 	}
 
 	/** Whose page it is (their channel), or that there's no key yet. */
@@ -220,13 +265,16 @@ public class OutsidePanel extends PluginPanel
 				// (another page, or none: what the last one said goes)
 				status.setText(" ");
 				claimStatus.setText(" ");
+				// hub:cut model
 				motions.removeAll();
 				motions.add(small("(not read yet)"));
+				// hub:end model
 			}
 			revalidate();
 		});
 	}
 
+	// hub:cut talk
 	/** The page's emotes by name (null: not read), each with its ✕. */
 	public void showEmotes(List<String> names)
 	{
@@ -261,7 +309,10 @@ public class OutsidePanel extends PluginPanel
 			emotes.repaint();
 		});
 	}
+	// hub:end talk
 
+
+	// hub:cut talk
 	/** A line under the paste button; a done one clears the name. */
 	public void emoteStatus(String words, boolean done)
 	{
@@ -274,6 +325,8 @@ public class OutsidePanel extends PluginPanel
 			}
 		});
 	}
+	// hub:end talk
+
 
 	/** A line under "Copy my station key". */
 	public void keyStatus(String words)
@@ -281,11 +334,14 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() -> keyStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
+	// hub:cut year
 	/** A line under "Open my year". */
 	public void yearStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> yearStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
+	// hub:end year
+
 
 	/** When the key in the settings is another character's (its page), and who's logged in: said under the button. */
 	public void otherKey(String theirs, String me)
@@ -332,6 +388,7 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() -> status.setText("<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
+	// hub:cut model
 	/** While a capture runs, the button waits. */
 	public void capturing(boolean on)
 	{
@@ -341,7 +398,10 @@ public class OutsidePanel extends PluginPanel
 			capture.setText(on ? "Recording…" : "Capture my character");
 		});
 	}
+	// hub:end model
 
+
+	// hub:cut model
 	/** The motions on their page (null: not read), the one shown first ("" the still model). */
 	public void showMotions(List<Motion> list, String first)
 	{
@@ -365,7 +425,10 @@ public class OutsidePanel extends PluginPanel
 			motions.repaint();
 		});
 	}
+	// hub:end model
 
+
+	// hub:cut model
 	private JPanel row(String n, int frames, boolean isFirst, ButtonGroup group)
 	{
 		JPanel r = new JPanel(new BorderLayout(4, 0));
@@ -388,6 +451,8 @@ public class OutsidePanel extends PluginPanel
 		}
 		return r;
 	}
+	// hub:end model
+
 
 	/** What the proof last did (the relay's words), under the line. */
 	private static String whyLine(String why)

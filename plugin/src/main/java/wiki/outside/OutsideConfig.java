@@ -83,6 +83,7 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 
+	// hub:cut talk
 	@ConfigItem(
 		keyName = "chat",
 		name = "The page's chat in my game",
@@ -96,7 +97,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end talk
 
+	// hub:cut globe
 	@ConfigItem(
 		keyName = "wilderness",
 		name = "In the Wilderness too",
@@ -115,6 +118,7 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end globe
 
 	@ConfigItem(
 		keyName = "vitals",
@@ -127,6 +131,7 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 
+	// hub:cut globe
 	@ConfigItem(
 		keyName = "follow",
 		name = "Follow me on the globe",
@@ -145,7 +150,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end globe
 
+	// hub:cut globe
 	@ConfigItem(
 		keyName = "followWorld",
 		name = "And my world",
@@ -161,7 +168,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end globe
 
+	// hub:cut globe
 	@ConfigItem(
 		keyName = "activity",
 		name = "What I'm doing, on the globe",
@@ -180,7 +189,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end globe
 
+	// hub:cut globe
 	@ConfigItem(
 		keyName = "stars",
 		name = "Shooting stars I find",
@@ -198,7 +209,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end globe
 
+	// hub:cut globe
 	@ConfigItem(
 		keyName = "starsCredit",
 		name = "Name me as a star's finder",
@@ -213,7 +226,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end globe
 
+	// hub:cut year
 	@ConfigItem(
 		keyName = "year",
 		name = "Record my year",
@@ -228,7 +243,9 @@ public interface OutsideConfig extends Config
 	{
 		return true;
 	}
+	// hub:end year
 
+	// hub:cut year
 	@ConfigItem(
 		keyName = "yearCopy",
 		name = "Keep an encrypted copy on the relay",
@@ -244,7 +261,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end year
 
+	// hub:cut year
 	@ConfigItem(
 		keyName = "recordPath",
 		name = "Record my exact path for my year",
@@ -262,6 +281,7 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end year
 
 	@ConfigItem(
 		keyName = "charges",
@@ -299,6 +319,7 @@ public interface OutsideConfig extends Config
 		return 100_000;
 	}
 
+	// hub:cut delve
 	@ConfigItem(
 		keyName = "delve",
 		name = "Doom of Mokhaiotl delves",
@@ -310,7 +331,9 @@ public interface OutsideConfig extends Config
 	{
 		return true;
 	}
+	// hub:end delve
 
+	// hub:cut bank
 	@ConfigItem(
 		keyName = "bank",
 		name = "My bank on my page",
@@ -325,7 +348,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end bank
 
+	// hub:cut model
 	@ConfigItem(
 		keyName = "model",
 		name = "My character's model on my page",
@@ -340,7 +365,9 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end model
 
+	// hub:cut model
 	@ConfigItem(
 		keyName = "ground",
 		name = "The ground under my model",
@@ -356,4 +383,5 @@ public interface OutsideConfig extends Config
 	{
 		return false;
 	}
+	// hub:end model
 }

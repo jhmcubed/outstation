@@ -1,16 +1,30 @@
 package wiki.outside;
 
+// hub:cut model,bank
 import com.google.gson.JsonArray;
+// hub:end model,bank
+// hub:cut model,bank
 import com.google.gson.JsonObject;
+// hub:end model,bank
 import java.util.Locale;
+// hub:cut bank
 import java.util.Map;
+// hub:end bank
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * (11/14/2026) What the plugin reads for the player's page beyond what's worn and carried, kept apart from RuneLite so
- * it's tested: an item's charges from the game's own chat line, the bank as the relay keeps it, and the character's
- * model as the page draws it (the relay's keep.ts has the shapes; docs/protocol.md, "Kept for the page").
+ * What the plugin reads for the player's page beyond what's worn and carried, kept apart from RuneLite so it's tested
+ * (docs/protocol.md, "Kept for the page"):
+ * <ul>
+ * <li>an item's charges, from the game's own chat line;</li>
+// hub:cut bank
+ * <li>the bank, as the relay keeps it;</li>
+// hub:end bank
+// hub:cut model
+ * <li>the character's model, as the page draws it;</li>
+// hub:end model
+ * </ul>
  */
 public final class Kept
 {
@@ -70,6 +84,7 @@ public final class Kept
 		return n.length() >= 5 && message != null && message.toLowerCase(Locale.ROOT).contains(n);
 	}
 
+	// hub:cut bank
 	// ---- the bank (Jace: "an option for people to capture their entire bank, just as the liveloadout twitch
 	// extension/plugin offers"): every slot in the bank's own order, a placeholder as [its item, 0], the tabs' counts
 	// (the game's BANK_TAB_1 to 9; the main tab is what's left), and each item's name and price
@@ -104,7 +119,9 @@ public final class Kept
 		o.add("names", nm);
 		return o;
 	}
+	// hub:end bank
 
+	// hub:cut model
 	// ---- the model (Jace: "upload a captured model of their character onto their profile page just as RuneProfile
 	// does; but we can make ours look cooler and rendered to our liking/in our own style"): only its shape and its
 	// colours, as RuneProfile's exporter reads them (its ModelMeshBuilder, BSD 2-Clause: plugin/README.md, "Credits"),
@@ -457,4 +474,6 @@ public final class Kept
 	{
 		return Math.max(-8192, Math.min(8192, n));
 	}
+	// hub:end model
+
 }

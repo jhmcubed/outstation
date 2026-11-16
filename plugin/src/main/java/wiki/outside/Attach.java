@@ -94,6 +94,7 @@ public final class Attach
 		return base + "/game/" + enc(channel) + "?key=" + enc(key) + "&v=" + enc(version);
 	}
 
+	// hub:cut talk
 	/** The relay's desk socket for the page's chat in the game (11/16/2026): ws(s)://…/desk/<channel>?key=…&name=…&talk=1. */
 	public String deskUrl(String name)
 	{
@@ -101,7 +102,9 @@ public final class Attach
 		String base = game.substring(0, game.indexOf("/game/"));
 		return base + "/desk/" + enc(channel) + "?key=" + enc(key) + "&name=" + enc(name) + "&talk=1";
 	}
+	// hub:end talk
 
+	// hub:cut talk
 	/** The page chat's emotes (11/16/2026): the list (no name: ?code=, as anyone reads it), an upload (a name: ?key=…&name=…). */
 	public String emotesUrl(String name)
 	{
@@ -109,7 +112,9 @@ public final class Attach
 		base = base.substring(0, base.indexOf("/keep/"));
 		return base + "/emotes/" + enc(channel) + (name == null ? "?code=" : "?key=" + enc(key) + "&name=" + enc(name));
 	}
+	// hub:end talk
 
+	// hub:cut talk
 	/** One emote, to take it away: DELETE http(s)://…/emotes/<channel>/<name>?key=…. */
 	public String emoteUrl(String name)
 	{
@@ -117,6 +122,7 @@ public final class Attach
 		base = base.substring(0, base.indexOf("/keep/"));
 		return base + "/emotes/" + enc(channel) + "/" + enc(name) + "?key=" + enc(key);
 	}
+	// hub:end talk
 
 	/** The relay's keep for the page (11/14/2026): http(s)://…/keep/<channel>/<what>?key=… (a bare relay as https://). */
 	public String keepUrl(String what)
@@ -143,11 +149,13 @@ public final class Attach
 		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/dink/" + enc(channel) + "?") + "&from=plugin";
 	}
 
+	// hub:cut year
 	/** Your year's routes (11/15/2026; docs/record.md, "Sync"): http(s)://…/record/<channel>/<tail>?key=…. */
 	public String recordUrl(String tail)
 	{
 		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/record/" + enc(channel) + "/" + enc(tail) + "?");
 	}
+	// hub:end year
 
 	/** Who stands behind the page (11/15/2026): http(s)://…/proof/<channel>, anyone's. */
 	public String proofUrl()
