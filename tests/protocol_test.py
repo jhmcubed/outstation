@@ -3163,6 +3163,19 @@ class Claims(Base):
             self.clients.append(c)
             await next_of(c, "relay")
 
+    async def test_a_name_with_a_space_is_its_own_channel(self):
+        # (11/16/2026, Jace: "oranberries and oran berries/oran_berries are not the same ... can exist at the same time":
+        # a channel keeps the game's spaces as "_", so the two are two pages)
+        h = secrets.token_hex(4)
+        spaced, flat = "c_" + h, "c" + h
+        st, got = self.claim({"player": spaced})
+        self.assertEqual((st, got["channel"]), (200, spaced), got)
+        st, got2 = self.claim({"player": flat})
+        self.assertEqual((st, got2["channel"]), (200, flat), got2)
+        self.assertNotEqual(got["key"], got2["key"])
+        for bad in ("_c" + h, "c" + h + "_", "c__" + h):
+            self.assertEqual(self.claim({"player": bad})[0], 400, bad)
+
     async def test_a_claim_is_a_station_key_for_a_name_nobody_has_and_unproven(self):
         name = "c" + secrets.token_hex(5)
         status, got = self.claim({"player": name, "account": "-1234567890123"})
@@ -3190,7 +3203,7 @@ class Claims(Base):
         self.assertEqual(json.loads(raw("GET", "/proof/" + other)[2]), {"proof": "vouched"})
         # (nobody's: no proof to read)
         self.assertEqual(raw("GET", "/proof/c" + secrets.token_hex(5))[0], 404)
-        # (only a name as a channel has it: lower case, letters and numbers, 12 at most)
+        # (only a name as a channel has it: lower case, letters, numbers and single "_" between them, 12 at most)
         for bad in ("Has Space", "UPPER", "", "x" * 13, 7):
             self.assertEqual(self.claim({"player": bad})[0], 400, bad)
         # (three a day from one place, a challenge counted as a claim: one more takes a name, the next is refused; a

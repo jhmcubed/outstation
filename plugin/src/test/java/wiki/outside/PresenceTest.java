@@ -63,6 +63,15 @@ public class PresenceTest
 	}
 
 	@Test
+	public void aKnownWayInWinsOverThePlaceAboveIt()
+	{
+		// (11/16/2026: the Guardians of the Rift stood in the Murkshore Sea, the place above its temple)
+		assertArrayEquals(new int[]{3104, 3168}, Presence.place(Presence.area(14484, 0)));
+		assertArrayEquals(new int[]{3232, 3104}, Presence.place(Presence.BY_REGION.values().stream().filter(a -> a.name.equals("Kalphite Queen")).findFirst().get()));
+		assertArrayEquals(new int[]{3424, 3488}, Presence.place(Presence.BY_REGION.values().stream().filter(a -> a.name.equals("Temple Trekking")).findFirst().get()));
+	}
+
+	@Test
 	public void theSkillComesFromTheirOwnExperienceAndANewSceneClearsIt()
 	{
 		Presence p = new Presence();

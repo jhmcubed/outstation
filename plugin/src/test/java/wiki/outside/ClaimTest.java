@@ -11,10 +11,13 @@ public class ClaimTest
 	public void aNameAsAChannelHasIt()
 	{
 		assertEquals("sburb", OutsidePlugin.channelName("sburb"));
-		assertEquals("ironman", OutsidePlugin.channelName("Iron Man"));
+		// (since 11/16/2026 the game's spaces stay, as "_": Iron Man and IronMan are two players)
+		assertEquals("iron_man", OutsidePlugin.channelName("Iron Man"));
 		// (the game's names carry a no-break space where a space was typed)
-		assertEquals("ironman", OutsidePlugin.channelName("Iron Man"));
-		assertEquals("zezima99", OutsidePlugin.channelName("Zezima_9-9"));
+		assertEquals("iron_man", OutsidePlugin.channelName("Iron Man"));
+		assertEquals("zezima_9_9", OutsidePlugin.channelName("Zezima_9-9"));
+		assertEquals("ironman", OutsidePlugin.channelName("IronMan"));
+		assertEquals("oran_berries", OutsidePlugin.channelName(" Oran -Berries "));
 		assertEquals("abcdefghijkl", OutsidePlugin.channelName("abcdefghijkl"));
 	}
 
@@ -26,5 +29,16 @@ public class ClaimTest
 		assertNull(OutsidePlugin.channelName("   "));
 		assertNull(OutsidePlugin.channelName("abcdefghijklm"));
 		assertNull(OutsidePlugin.channelName("<img=2>sburb"));
+	}
+
+	@Test
+	public void aKeyIsItsOwnPlayersOrAPageMadeBeforeUnderTheOldForm()
+	{
+		org.junit.Assert.assertTrue(OutsidePlugin.isOwn("oran_berries", "oran_berries"));
+		org.junit.Assert.assertTrue(OutsidePlugin.isOwn("oranberries", "oran_berries"));   // (made before 11/16/2026)
+		org.junit.Assert.assertTrue(OutsidePlugin.isOwn("OranBerries", "oranberries"));
+		org.junit.Assert.assertFalse(OutsidePlugin.isOwn("oran_berries", "oranberries"));
+		org.junit.Assert.assertFalse(OutsidePlugin.isOwn("sburb", "oran_berries"));
+		org.junit.Assert.assertFalse(OutsidePlugin.isOwn(null, "sburb"));
 	}
 }

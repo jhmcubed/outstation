@@ -192,7 +192,7 @@ So a friend needn't email the keeper for a code: their client asks, the keeper a
 
 A friend's client:
 - `POST /requests/<channel>` with `{"player", "note", "pickup"}` asks for a channel.
-  - `channel` is the player's name as the page has it: 1 to 12 letters or numbers, lower case, no spaces.
+  - `channel` is the player's name as the page has it: 1 to 12 long, lower case letters and numbers, each run of the game's spaces, hyphens and underscores one `_` (never two together, nor at either end), since 11/16/2026: "Oran Berries" is `oran_berries`, and `oranberries` is another player. A channel made before then has the spaces taken out (`oranberries` for Oran Berries) and stays its player's (the relays' `nameFits`) till the plugin moves it (its `movePage`).
   - `player` is the name as they typed it, and `note` how the keeper knows them (one line, 200 characters at most).
   - `pickup` is a secret of the client's own, 32 to 128 characters. Only its SHA-256 is kept.
   - Answers: 201 `{"state": "waiting", "given"}`, where `given` says the channel is already handed out (a new code would cut off whoever has it).
@@ -266,7 +266,7 @@ the player logged in; the answer is a station key like any other, which the plug
     POST /claim   {"player": <the name as a channel has it>, "account"?: <the account hash, as digits>}
                   200 {"channel", "key", "code", "proof": "unproven"}, or "challenging" for a name held unproven (below,
                       "Taking a name back")
-                  400 a name that isn't 1 to 12 lower-case letters or numbers; 409 a name proven or vouched for already;
+                  400 a name that isn't a channel's form (above); 409 a name proven or vouched for already;
                   429 past the day's claims; 413 a body over 1 KB
     GET  /proof/<channel>[?key=]   anyone's (CORS *, a minute's cache)   200 {"proof": "unproven" | "proven" | "vouched"}
                   (a challenger's own key: "challenging") / 404
@@ -354,7 +354,7 @@ The numbers:
 - On the Worker, a channel from before 11/07/2026 starts from the months it still keeps (the last four). On the Python relay, the count starts when the channel's claimed, and a restart starts it again, as everything there is in memory.
 
 `POST` hands out a channel for `player`, exactly as the keeper's `POST /admin/channels/<channel>` does: a new key, and `code` the attach code (above, "Handing out channels"), which a friend pastes into the client. `left` is what's left after it.
-- `player` is the channel's name: 1 to 12 letters or numbers, lower case, no spaces (the same as `/requests`).
+- `player` is the channel's name, in a channel's form (the same as `/requests`).
 - An invite is counted only once the new channel has its key, so nothing that fails uses one up. Two posts at once can't both take the last one.
 - The new channel says whose invite it came from (`by`, the inviter's channel name) in `GET /admin/channels` and in `GET /channels`: the register's "established through …'s outstation". A new key from the keeper keeps it.
 - Till its key is first used (taken up), `GET /channels` leaves the new channel out and only counts it under its inviter (`pending`, above, "The open outstations").
@@ -365,7 +365,7 @@ Refused, each with `{"error": "…"}`:
 - 404 `no outstation called that here`: the channel isn't handed out (on the Python relay: nobody's claimed it).
 - 403: the wrong key (`wrong key for this channel`), or a key under 8 characters. On Cloudflare a wrong key counts towards the wrong-key limit (10 a minute from one address), and past it the reason is `too many wrong keys: try again in a minute`, still 403.
 - 429 `5 invites an hour at most: try again later`: past 5 posts an hour from one outstation (`INVITES_AN_HOUR`). Every post with the right key counts, whatever its answer.
-- 400 `a player's name: 1 to 12 letters or numbers, lower case`, or `that's your own outstation` (and `which outstation?` for a channel in the address that can't be one).
+- 400 `a player's name: 1 to 12 letters, numbers and _, lower case`, or `that's your own outstation` (and `which outstation?` for a channel in the address that can't be one).
 - 409 `no invites left: one more every 10 hours on air`.
 - 409 `that name has an outstation already`: the name is handed out (on the Python relay: claimed).
 - 503 `the invite didn't go through: try again` (Cloudflare): the new channel couldn't be made. No invite is used.

@@ -57,9 +57,22 @@ export const WITNESS_WAITS = [60_000, 180_000, 600_000, 1_800_000];
 export const HISCORES = "https://secure.runescape.com";
 export const WOM = "https://api.wiseoldman.net";
 
-/** A player's name as a channel has it (the plugin's channelName): lower case, spaces, no-break spaces, - and _ out. */
+/** A player's name as a channel has it (the plugin's channelName) since 11/16/2026: lower case, each run of spaces,
+ *  no-break spaces, hyphens and underscores (the game takes them as one) one "_", none at either end: "Oran Berries" is
+ *  oran_berries, and oranberries is someone else (11/16/2026, Jace: "a space and underscored name are the same name in practice, in the game. oranberries and oran
+ *  berries/oran_berries are not the same ... can exist at the same time"). */
 export function channelForm(name: string): string {
-  return name.toLowerCase().replace(/[\s _-]/g, "");
+  return name.toLowerCase().replace(/[\s\u00a0_-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+/** The form channels had before 11/16/2026: lower case, every space, no-break space, hyphen and underscore out. */
+export function flatForm(name: string): string {
+  return name.toLowerCase().replace(/[\s\u00a0_-]/g, "");
+}
+/** Whether a player's name is this channel's: its form, or (a channel made before 11/16/2026, with no "_" in it) its
+ *  old flat form, so a page made then still answers to its own player till it moves. */
+export function nameFits(name: string, channel: string): boolean {
+  const c = channel.toLowerCase();
+  return channelForm(name) === c || (c.indexOf("_") < 0 && flatForm(name) === c);
 }
 
 /** A skill's name as both sources agree on it: lower case, Wise Old Man's "runecrafting" as the game's "runecraft". */

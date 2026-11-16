@@ -218,7 +218,7 @@ INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
 # day from one address, and this many a day in all (the Worker's channel.ts, the same)
 CLAIMS_AN_ADDRESS, CLAIMS_A_DAY = 3, 200
 CHALLENGERS, CHALLENGE_DAYS = 5, 7      # taking a name back: challengers at once on one name, how long one's kept
-PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
+PLAYER = re.compile(r"(?=.{1,12}$)[a-z0-9]+(?:_[a-z0-9]+)*")   # a channel invited: a player's name as the page has it (fullmatch; "_" for the game's spaces since 11/16/2026)
 # the game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's socket. A message at most GAME_MESSAGE long, and
 # GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as JSON (a message that would take it past is
 # ignored), its dictionary of item names and prices at most GAME_ITEMS ids (past that, new ones are ignored). The
@@ -1355,8 +1355,8 @@ def aether_name(name):
 
 
 def channel_form(name):
-    """A name as a channel would have it: lower case, no spaces (a visitor's may not be an outstation's, so)."""
-    return name.lower().replace(" ", "")
+    """A name as a channel would have it (a visitor's may not be an outstation's, so): witness.channel_form."""
+    return witness.channel_form(name)
 
 
 def aether_recent(times, now):
@@ -1653,7 +1653,7 @@ class Channel:
             return
         w = self.wit_of(party)
         n = fields.get("name") if isinstance(fields.get("name"), str) else self.wit_said(party).get("name")
-        if not isinstance(n, str) or witness.channel_form(n) != self.name.lower():
+        if not isinstance(n, str) or not witness.name_fits(n, self.name):
             return
         if w.get("name") != n:
             w["name"], w["seen"] = n, {}
@@ -1843,7 +1843,7 @@ class Channel:
         if not isinstance(n, str):
             return None
         n = re.sub(r"[\s\u00a0]+", " ", n).strip()
-        ok = re.fullmatch(r"[A-Za-z0-9 _-]{1,12}", n) and re.sub(r"[ _-]", "", n.lower()) == self.name.lower()
+        ok = re.fullmatch(r"[A-Za-z0-9 _-]{1,12}", n) and witness.name_fits(n, self.name)
         return n if ok else None
 
     def heard(self, fresh_s):
@@ -3607,7 +3607,8 @@ class Relay:
             await sock.close(4033, "banned from the aether")
             return
         form = channel_form(me["name"])
-        if me["from"] == "visitor" and any(ch.key is not None and ch.name.lower() == form for ch in self.channels.values()):
+        if me["from"] == "visitor" and any(ch.key is not None and (ch.name.lower() == form or ("_" not in ch.name and ch.name.lower() == form.replace("_", "")))
+                                           for ch in self.channels.values()):
             await sock.close(4009, "that name belongs to an outstation")
             return
         sock.aether = me
@@ -3918,7 +3919,7 @@ class Relay:
         ch.invite_posts.append(now)
         player = body.get("player")
         if not isinstance(player, str) or not PLAYER.fullmatch(player):
-            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters or numbers, lower case"})
+            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters, numbers and _, lower case"})
         if player == name.lower():
             return await answer("400 Bad Request", {"error": "that's your own outstation"})
         if invite_numbers(ch.seconds_in_all(), ch.invited)["left"] <= 0:
@@ -4051,7 +4052,7 @@ class Relay:
             body = {}
         player = body.get("player")
         if not isinstance(player, str) or not PLAYER.fullmatch(player):
-            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters or numbers, lower case"})
+            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters, numbers and _, lower case"})
         account = body.get("account") if isinstance(body.get("account"), str) and re.fullmatch(r"-?[0-9]{1,20}", body.get("account")) else ""
         now = time.time()
         self.claims = [c for c in getattr(self, "claims", []) if now - c[1] < 86400]

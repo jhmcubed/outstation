@@ -185,10 +185,8 @@ export function aetherName(name: unknown): string {
   return AETHER_NAME.test(s) ? s : "";
 }
 
-/** A name as a channel would have it: lower case, no spaces (a visitor's may not be an outstation's, so). */
-export function channelForm(name: string): string {
-  return name.toLowerCase().replace(/ /g, "");
-}
+/** A name as a channel would have it (a visitor's may not be an outstation's, so): witness.ts's channelForm. */
+export { channelForm } from "./witness";
 
 /** The times (ms, oldest first) of the last lines one socket or one sender put in the aether, kept to the last
  *  minute's AETHER_A_MINUTE. */

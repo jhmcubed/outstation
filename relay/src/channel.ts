@@ -30,7 +30,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
-import { channelForm, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
+import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, GAME_POSTS_A_MINUTE, gamePresence, type Here, HERE_EVERY_MS, type Presence, PRESENCE_FRESH_MS,
@@ -106,7 +106,9 @@ export const CLAIMS_AN_ADDRESS = 3, CLAIMS_A_DAY = 200;
 // taking a name back (11/15/2026): challengers at once on one name, and how long one's kept
 export const CHALLENGERS = 5, CHALLENGE_DAYS = 7;
 // a channel asked for or invited: a player's name as the page has it (lower case, no spaces)
-export const PLAYER = /^[a-z0-9]{1,12}$/;
+// (a player's name as a channel has it: witness.ts's channelForm, "_" for the game's spaces since 11/16/2026, never two
+// together nor at either end)
+export const PLAYER = /^(?=.{1,12}$)[a-z0-9]+(?:_[a-z0-9]+)*$/;
 
 /** An outstation's invites, from its time on air in all (seconds) and the names it's invited (relay.py's
  *  invite_numbers, the same). hours: one decimal, rounded down, so it never says 10.0 before the invite at 10. */
@@ -520,7 +522,7 @@ export class Channel extends DurableObject<Env> {
     const n = this.game.kept.name;
     if (typeof n !== "string") return null;
     const s = n.replace(/[\s\u00a0]+/g, " ").trim();
-    return /^[A-Za-z0-9 _-]{1,12}$/.test(s) && channelForm(s) === this.name.toLowerCase() ? s : null;
+    return /^[A-Za-z0-9 _-]{1,12}$/.test(s) && nameFits(s, this.name) ? s : null;
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -1895,7 +1897,7 @@ export class Channel extends DurableObject<Env> {
     if (!this.witOpen(party) || fields.off === true) return;
     const w = this.witOf(party);
     const n = typeof fields.name === "string" ? fields.name : this.witSaid(party).name;
-    if (typeof n !== "string" || channelForm(n) !== this.name.toLowerCase()) return;
+    if (typeof n !== "string" || !nameFits(n, this.name)) return;
     if (w.name !== n) { w.name = n; w.seen = {}; }
     if (!fields.skills) return;
     const seen = (w.seen ??= {});
@@ -2151,7 +2153,7 @@ export class Channel extends DurableObject<Env> {
     if (this.invitePosts.length >= INVITES_AN_HOUR) return json({ error: `${INVITES_AN_HOUR} invites an hour at most: try again later` }, 429);
     this.invitePosts.push(now);
     const player = typeof body?.player === "string" ? body.player : "";
-    if (!PLAYER.test(player)) return json({ error: "a player's name: 1 to 12 letters or numbers, lower case" }, 400);
+    if (!PLAYER.test(player)) return json({ error: "a player's name: 1 to 12 letters, numbers and _, lower case" }, 400);
     if (player === this.name.toLowerCase()) return json({ error: "that's your own outstation" }, 400);
     if (inviteNumbers(this.secondsInAll(), used()).left - this.inviting.size <= 0) {
       return json({ error: `no invites left: one more every ${INVITE_EVERY_S / 3600} hours on air` }, 409);
