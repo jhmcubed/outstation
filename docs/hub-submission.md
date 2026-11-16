@@ -38,6 +38,11 @@ Title: `Add Outside`
 - The "Open your own" card's Hub link (ghillie's `outside-splash/open-panel.js`, `HUB`) checked against the real one.
 - Update 1 (following and the globe): add `globe` to `hub_cut.py`'s SUBMITTED, cut into outside-plugin, merge, and a
   plugin-hub pull request with the new commit; set open-panel.js's `FOLLOW` true once it's on the Hub.
+  Also in update 1 (11/16/2026, Jace, after a press inside the minute went unnoticed and his page kept a necklace he'd
+  taken off): a press skipped by the once-a-minute limit made obvious, the button saying how many seconds are left
+  until it can update, not only the status line's "updated a moment ago". And (Jace) the delve board for everyone: till
+  then only his page shows its numbers, kept from the whole plugin (a snapshot leaves `delve` as it was; docs/protocol.md,
+  "What a snapshot clears").
 
 ## Sent (11/16/2026)
 

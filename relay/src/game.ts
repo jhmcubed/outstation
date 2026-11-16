@@ -312,6 +312,10 @@ export function gameActivity(g: unknown): Activity | null | undefined {
 // (GameState.snap), for the page's "updated 14 minutes ago".
 export const GAME_POSTS_A_MINUTE = 6;
 export const SNAP_FIELDS = ["worn", "inv", "skills"];
+// What only the whole plugin's socket sends (11/16/2026, Jace: his outstation's orbs and world stayed on his page under
+// the Hub's plugin, which never sends them): a snapshot clears each still kept, as null, so the page drops it. The delve
+// board's numbers stay (his alone, from the whole plugin, till the Hub's plugin sends them for everyone).
+export const SNAP_CLEARS = ["world", "vitals", "prayers"];
 // "presence": what RuneLite's own Discord plugin shows as rich presence, never more: the skill being trained (one of
 // ACTIVITY_SKILLS) and the area by Discord's own name (DiscordGameEventType's: a boss's, a city's, a dungeon's, a
 // minigame's, a raid's or a region's), each or both null ("in game"), and with the area, where the globe stands it:

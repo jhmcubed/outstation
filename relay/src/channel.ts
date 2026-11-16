@@ -34,7 +34,7 @@ import { channelForm, claimsFrom, judge, noteLook, noteSaid, readXp, reported, t
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, GAME_POSTS_A_MINUTE, gamePresence, type Here, HERE_EVERY_MS, type Presence, PRESENCE_FRESH_MS,
-         SNAP_FIELDS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
+         SNAP_CLEARS, SNAP_FIELDS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
 import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
@@ -1119,6 +1119,8 @@ export class Channel extends DurableObject<Env> {
     this.savePresence();
     const snap = SNAP_FIELDS.some((f) => f in fields);
     if (snap) this.game.snap = now;
+    // (the whole plugin's own fields, left from its socket, cleared: SNAP_CLEARS)
+    if (snap) for (const f of SNAP_CLEARS) if (this.game.kept[f] != null) fields[f] = null;
     const got = this.game.apply(fields, now);
     if (fields.off === true) this.witnessOff();
     if (got || snap) {

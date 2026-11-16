@@ -2076,6 +2076,26 @@ class Snapshot(Base):
         self.assertEqual(self.post({"game": {"off": True}})[0], 204)
         self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["snap"], again["snap"])
 
+    async def test_a_snapshot_clears_what_only_the_socket_sends_and_keeps_the_delve_board(self):
+        # (11/16/2026, Jace: the outstation's orbs and world stayed on his page under the Hub's plugin; SNAP_CLEARS)
+        socket = {"world": 369, "vitals": {"hp": [99, 99], "prayer": [99, 99], "run": 100, "spec": 100},
+                  "prayers": ["PIETY"], "delve": [485, 472, 429, 359, 283, 215, 124, 6, 1]}
+        v = await self.watch()
+        await self.pause()
+        self.assertEqual(self.post({"game": socket})[0], 204)             # (not a snapshot: kept as it came)
+        self.assertEqual((await next_of(v, "game"))["vitals"], socket["vitals"])
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.post({"game": self.STATE})[0], 204)
+        got = await next_of(v, "game")
+        self.assertEqual((got["world"], got["vitals"], got["prayers"]), (None, None, None))
+        self.assertNotIn("delve", got)
+        kept = http("GET", "/game/%s?code=" % self.ch)[1]["game"]
+        self.assertEqual((kept["world"], kept["vitals"], kept["prayers"], kept["delve"]), (None, None, None, socket["delve"]))
+        # (and the next snapshot, with nothing left to clear, says nothing of them)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.post({"game": {"skills": self.STATE["skills"]}})[0], 204)
+        self.assertEqual(sorted(await next_of(v, "game")), ["at", "snap"])
+
     async def test_a_wrong_key_a_bad_body_and_too_many_are_refused(self):
         self.assertEqual(self.post({"game": self.STATE})[0], 204)        # (relay.py: this claims the channel)
         self.assertEqual(game_post(self.ch, "wrong-key-" + secrets.token_hex(3), {"game": self.STATE})[0], 403)
