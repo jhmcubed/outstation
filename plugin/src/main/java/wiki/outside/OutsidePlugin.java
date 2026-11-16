@@ -660,6 +660,15 @@ public class OutsidePlugin extends Plugin
 			int amount = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO_AMOUNT);
 			m.put("quiver", ammo > 0 && amount > 0 ? Kit.pair(ammo, amount) : com.google.gson.JsonNull.INSTANCE);
 		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			for (String f : new String[]{"worn", "inv", "bag", "pouch", "seeds", "barrel"})
+			{
+				m.put(f, new JsonArray());
+			}
+			m.put("quiver", JsonNull.INSTANCE);
+		}
 		if (config.items() && config.charges())
 		{
 			// (only the items worn or carried now)
@@ -685,6 +694,11 @@ public class OutsidePlugin extends Plugin
 			}
 			m.put("charges", ch);
 		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("charges", new JsonObject());
+		}
 		// hub:cut model
 		// (the live view, 11/15/2026: the animation they're doing now and the gear it's in)
 		if (config.model() && me != null && liveGear != null)
@@ -694,11 +708,21 @@ public class OutsidePlugin extends Plugin
 			an.add(liveGear);
 			m.put("anim", an);
 		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("anim", JsonNull.INSTANCE);
+		}
 		// hub:end model
 		// hub:cut delve
 		if (config.delve() && delveSeen != null)
 		{
 			m.put("delve", delveSeen);
+		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("delve", JsonNull.INSTANCE);
 		}
 		// hub:end delve
 		if (config.skills())
@@ -718,6 +742,11 @@ public class OutsidePlugin extends Plugin
 				skills.add(s.getName(), v);
 			}
 			m.put("skills", skills);
+		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("skills", new JsonObject());
 		}
 		if (config.progress())
 		{
@@ -777,6 +806,12 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 			m.put("prayers", on);
+		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("vitals", new JsonObject());
+			m.put("prayers", new JsonArray());
 		}
 		return m;
 	}
