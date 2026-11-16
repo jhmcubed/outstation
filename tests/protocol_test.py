@@ -2076,6 +2076,34 @@ class Snapshot(Base):
         self.assertEqual(self.post({"game": {"off": True}})[0], 204)
         self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["snap"], again["snap"])
 
+    async def test_what_a_snapshot_adds_goes_to_the_array(self):
+        # (11/16/2026, Jace: a friend's 67 runecraft never showed: the Hub's plugin has no field reports, only snapshots.
+        # What's new against the last snapshot goes on the Array: levels, quests, diary and combat tiers, a slayer task)
+        first = {"name": "Sburb", "skills": {"Runecraft": [66, 66, 2000000], "Attack": [99, 99, 13034431]},
+                 "quests": {"points": 10, "total": 3, "done": ["Cook's Assistant"], "started": [], "todo": ["Dragon Slayer I"]},
+                 "diaries": {"Varrock": [1, 0, 0, 0, 10, 40]},
+                 "combat": {"points": 5, "tiers": [[2, 3], [0, 4], [0, 4], [0, 4], [0, 4], [0, 4]]},
+                 "slayer": {"task": "Abyssal demons", "left": 3, "of": 120, "area": None, "points": 10, "streak": 4}}
+        self.assertEqual(self.post({"game": first})[0], 204)
+        await self.pause()
+        since = array_read()[2]["next"]
+        second = json.loads(json.dumps(first))
+        second["skills"]["Runecraft"] = [67, 67, 2200000]
+        second["quests"] = {"points": 12, "total": 3, "done": ["Cook's Assistant", "Dragon Slayer I"], "started": [], "todo": []}
+        second["diaries"]["Varrock"] = [1, 1, 0, 0, 20, 40]
+        second["combat"]["tiers"][0] = [3, 3]
+        second["slayer"] = {"task": None, "left": 0, "of": 0, "area": None, "points": 25, "streak": 5}
+        self.assertEqual(self.post({"game": second})[0], 204)
+        await self.pause(2)
+        mine = [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in array_since(since) if e["channel"] == self.ch]
+        self.assertEqual(mine, [{"kind": "level", "skill": "Runecraft", "level": 67}, {"kind": "quest", "name": "Dragon Slayer I"},
+                                {"kind": "diary", "tier": "medium", "area": "Varrock"}, {"kind": "ca", "tier": "easy"},
+                                {"kind": "slayer", "streak": 5}])
+        # (the same again: nothing new, nothing said)
+        self.assertEqual(self.post({"game": second})[0], 204)
+        await self.pause(2)
+        self.assertEqual(len([e for e in array_since(since) if e["channel"] == self.ch]), 5)
+
     async def test_the_list_names_them_as_the_game_shows_them(self):
         # (11/16/2026, Jace: "Oran Berries" was on the globe as oranberries: GET /channels carries the plugin's name, a
         # no-break space as a space, only when it comes down to the channel; else null)

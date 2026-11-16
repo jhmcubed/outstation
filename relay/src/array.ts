@@ -87,6 +87,56 @@ export function arrayEvents(report: unknown): ArrayEvent[] {
   return [];
 }
 
+// (the diaries' four tiers and the combat achievements' six, as the snapshot lists them: game.ts)
+const DIARY_TIERS = ["easy", "medium", "hard", "elite"];
+const CA_TIERS = ["easy", "medium", "hard", "elite", "master", "grandmaster"];
+// (at most this many from one snapshot: a first full list after a partial one would otherwise read as dozens of news)
+export const SNAPSHOT_EVENTS_MOST = 8;
+
+/** What a snapshot from the Hub's plugin adds to the Array (11/16/2026, Jace: a friend's 67 runecraft never showed;
+ *  the Hub's plugin has no field reports, only its snapshots, "Update my page" and hourly): what's new against the
+ *  last one kept, each only when the last one had that part too (a first snapshot says nothing): a level for each
+ *  skill gone up (to its new level), a quest done, a diary tier done, a combat achievements tier done, a slayer task
+ *  done (the streak gone up). They come as late as the snapshot (the feed's own time, when it came). */
+export function snapshotEvents(prev: Record<string, unknown>, next: Record<string, unknown>): ArrayEvent[] {
+  const out: ArrayEvent[] = [];
+  const ps = isObj(prev.skills) ? prev.skills : null, ns = isObj(next.skills) ? next.skills : null;
+  if (ps && ns) {
+    for (const k of Object.keys(ns)) {
+      const a = ps[k], b = ns[k];
+      const la = Array.isArray(a) ? whole(a[0]) : undefined, lb = Array.isArray(b) ? whole(b[0]) : undefined, skill = word(k);
+      if (skill && SKILL.test(skill) && la !== undefined && lb !== undefined && lb > la && lb <= 126) out.push({ kind: "level", skill, level: lb });
+    }
+  }
+  const pq = isObj(prev.quests) && Array.isArray(prev.quests.done) ? prev.quests.done : null;
+  const nq = isObj(next.quests) && Array.isArray(next.quests.done) ? next.quests.done : null;
+  if (pq && nq) {
+    const had = new Set(pq.map((x) => String(x)));
+    for (const q of nq) { const name = word(q); if (name && !had.has(String(q))) out.push({ kind: "quest", name }); }
+  }
+  const pd = isObj(prev.diaries) ? prev.diaries : null, nd = isObj(next.diaries) ? next.diaries : null;
+  if (pd && nd) {
+    for (const area of Object.keys(nd)) {
+      const a = pd[area], b = nd[area];
+      if (!Array.isArray(a) || !Array.isArray(b)) continue;
+      for (let i = 0; i < 4; i++) if (a[i] === 0 && b[i] === 1) out.push({ kind: "diary", tier: DIARY_TIERS[i], area: word(area) || "" });
+    }
+  }
+  const pc = isObj(prev.combat) && Array.isArray(prev.combat.tiers) ? prev.combat.tiers : null;
+  const nc = isObj(next.combat) && Array.isArray(next.combat.tiers) ? next.combat.tiers : null;
+  if (pc && nc) {
+    for (let i = 0; i < Math.min(6, pc.length, nc.length); i++) {
+      const a = pc[i], b = nc[i];
+      if (!Array.isArray(a) || !Array.isArray(b)) continue;
+      const total = whole(b[1]), da = whole(a[0]), db = whole(b[0]);
+      if (total && da !== undefined && db !== undefined && da < total && db >= total) out.push({ kind: "ca", tier: CA_TIERS[i] });
+    }
+  }
+  const pl = isObj(prev.slayer) ? whole(prev.slayer.streak) : undefined, nl = isObj(next.slayer) ? whole(next.slayer.streak) : undefined;
+  if (pl !== undefined && nl !== undefined && nl > pl) out.push({ kind: "slayer", streak: nl });
+  return out.slice(0, SNAPSHOT_EVENTS_MOST);
+}
+
 /** The feed as the Directory keeps it in storage ("array"): the events, the newest id given, and each channel's times of
  *  the last minute (so ARRAY_A_MINUTE holds across a sleep). One value, so a report that adds to it is one row written. */
 export type SavedFeed = { last: number; events: Kept[]; recent: [string, number[]][] };

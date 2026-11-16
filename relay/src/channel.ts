@@ -35,7 +35,7 @@ import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, GAME_POSTS_A_MINUTE, gamePresence, type Here, HERE_EVERY_MS, type Presence, PRESENCE_FRESH_MS,
          SNAP_CLEARS, SNAP_FIELDS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
-import { arrayEvents } from "./array";
+import { arrayEvents, snapshotEvents } from "./array";
 import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
 
@@ -571,6 +571,14 @@ export class Channel extends DurableObject<Env> {
     if (!this.name || (!this.live() && !this.sockets("game").length) || this.meta.keyHash === null || this.meta.code) return;
     const events = arrayEvents(report);
     if (!events.length) return;
+    this.ctx.waitUntil(this.tellDirectory("/array", JSON.stringify({ channel: this.name, events }))
+      .then(() => undefined, () => undefined)); // (one lost is one less "+1")
+  }
+
+  /** A snapshot's events (snapshotEvents) told to the Directory as a field report's are, while the plugin's heard from
+   *  (the Hub's plugin keeps no socket: its posts) or it's live, and listed (11/16/2026). */
+  tellEvents(events: ReturnType<typeof snapshotEvents>) {
+    if (!events.length || !this.name || (!this.live() && !this.heard()) || this.meta.keyHash === null || this.meta.code) return;
     this.ctx.waitUntil(this.tellDirectory("/array", JSON.stringify({ channel: this.name, events }))
       .then(() => undefined, () => undefined)); // (one lost is one less "+1")
   }
@@ -1199,7 +1207,15 @@ export class Channel extends DurableObject<Env> {
     if (snap) this.game.snap = now;
     // (the whole plugin's own fields, left from its socket, cleared: SNAP_CLEARS)
     if (snap) for (const f of SNAP_CLEARS) if (this.game.kept[f] != null) fields[f] = null;
+    // (what a snapshot adds to the Array, against the last kept: array.ts's snapshotEvents, 11/16/2026)
+    const before: Record<string, unknown> = {};
+    if (snap) for (const f of ["skills", "quests", "diaries", "combat", "slayer"]) if (this.game.kept[f] != null) before[f] = JSON.parse(JSON.stringify(this.game.kept[f]));
     const got = this.game.apply(fields, now);
+    if (snap && fields.off !== true) {
+      let news: ReturnType<typeof snapshotEvents> = [];
+      try { news = snapshotEvents(before, this.game.kept as Record<string, unknown>); } catch { /* not one it can read */ }
+      this.tellEvents(news);
+    }
     if (fields.off === true) this.witnessOff();
     if (got || snap) {
       this.game.line = null;
