@@ -69,3 +69,13 @@ warning=This plugin submits your gear, stats, quests, diaries, slayer task, what
    Pushing that branch updates runelite/plugin-hub#20811 itself (no new pull request), and its build runs again.
 4. A comment on #20811 saying what changed (drafted in ghillie's claude/permissions-review.md, "The snapshot, and the
    reply").
+
+## The reviewer's second answer (11/16/2026)
+
+"Please remove the exe download from the website the plugin directs players to, and don't link to or mention it in the
+README… make the README end-user focused, since it's published on the RuneLite website at the pinned commit… move any
+build instructions into a CONTRIBUTING.md or remove them." Done: outside.wiki shows no outstation.exe (ghillie's
+claude/permissions-review.md, "The Hub's second answer"); the cut's README.md is `plugin/README.hub.md`, for players
+only, and its CONTRIBUTING.md `plugin/CONTRIBUTING.hub.md` (`hub_cut.py`, HUB_FILES). The order above stands, with
+outside-wiki's branch merged (it deploys outside.wiki) before the comment, so the reviewer finds the site already
+changed.

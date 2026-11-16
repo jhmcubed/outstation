@@ -19,6 +19,13 @@ this script writes that repository's tree from here, leaving out the parts not s
         -->
     kept (its comment taken off) while every part it names is out, dropped once one is in.
 
+The Hub's README is its own (11/16/2026, the reviewer on runelite/plugin-hub#20811: "make the README end-user focused,
+since it's published on the RuneLite website at the pinned commit. Remove anything about the plugin not yet being approved
+or the submission process, and move any build instructions into a CONTRIBUTING.md"; and "don't link to or mention [the
+exe] in the README"): README.hub.md becomes the cut's README.md and CONTRIBUTING.hub.md its CONTRIBUTING.md (HUB_FILES);
+this folder's README.md, the whole plugin's developer notes, never goes. Both .hub.md files take the markers too. When an
+update brings a part in, say what it does in README.hub.md, for players, and never name the outstation there.
+
 The Hub's version is the snapshot (11/16/2026, the Hub's answer on runelite/plugin-hub#20811: "An 'Update my page'
 action and an hourly sync should be okay, as should matching Discord activity"; ghillie's claude/outstation.md, "The
 Hub's answer, and the snapshot version"): gear, stats, quests, diaries, combat achievements and the slayer task on
@@ -65,7 +72,9 @@ PART_FILES = {
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
 }
 # never copied: what's built, and what only this repository needs
-SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__"}
+SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__", "README.md"}
+# the cut's own files, written under another name there (this folder's README.md, in SKIP, is the whole plugin's)
+HUB_FILES = {"README.hub.md": "README.md", "CONTRIBUTING.hub.md": "CONTRIBUTING.md"}
 TEXT = (".java", ".md", ".gradle", ".properties", ".py", ".txt", ".json")
 
 CUT = re.compile(r"^\s*(?://|<!--)\s*hub:cut\s+([a-z,]+)\s*(?:-->)?\s*$")
@@ -137,7 +146,8 @@ def write(dest, out):
             rel = os.path.normpath(os.path.join(rel_root, f)).replace(os.sep, "/")
             if f in SKIP or rel in gone:
                 continue
-            src, dst = os.path.join(HERE, rel), os.path.join(dest, rel)
+            src = os.path.join(HERE, rel)
+            dst = os.path.join(dest, HUB_FILES.get(rel, rel))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if f.endswith(TEXT):
                 with open(src, encoding="utf-8") as fh:
