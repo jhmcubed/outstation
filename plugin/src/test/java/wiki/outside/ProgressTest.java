@@ -93,4 +93,12 @@ public class ProgressTest
 		assertEquals(5, q.getAsJsonObject("qp").get("Dragon Slayer II").getAsInt());
 		assertTrue(!q.getAsJsonObject("qp").has("Bear Your Soul"));
 	}
+
+	@Test
+	public void aQuestOfSubquestsHasTheirPoints()
+	{
+		assertEquals(2, Progress.ownOrParts(2, 10));
+		assertEquals(10, Progress.ownOrParts(0, 10));
+		assertEquals(0, Progress.ownOrParts(0, null));
+	}
 }

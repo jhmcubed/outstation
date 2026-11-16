@@ -203,6 +203,12 @@ final class Progress
 		return out;
 	}
 
+	/** A quest's points: its own, or (with none) its subquests' added up. */
+	static int ownOrParts(int own, Integer parts)
+	{
+		return own > 0 ? own : parts == null ? 0 : Math.max(0, parts);
+	}
+
 	/** A field's first value, or null when the row has none. */
 	private static Object field(Client c, int row, int column)
 	{
@@ -270,6 +276,17 @@ final class Progress
 			if (rows != null && !rows.isEmpty())
 			{
 				List<Object[]> sorted = new java.util.ArrayList<>();
+				// (a quest made of subquests has no points of its own: they're its subquests', which the list hides, so
+				// they're added up for it; 11/16/2026, Jace's page said 342/339 for the game's 342/349: Recipe for Disaster's 10)
+				java.util.Map<Integer, Integer> fromParts = new java.util.HashMap<>();
+				for (int row : rows)
+				{
+					Object parent = field(c, row, DBTableID.Quest.COL_PARENT_QUEST);
+					if (parent instanceof Number && !Integer.valueOf(0).equals(intOf(field(c, row, DBTableID.Quest.COL_RELEASE_TYPE), -1)))
+					{
+						fromParts.merge(((Number) parent).intValue(), Math.max(0, intOf(field(c, row, DBTableID.Quest.COL_QUESTPOINTS_OVERRIDE), 0)), Integer::sum);
+					}
+				}
 				for (int row : rows)
 				{
 					if (Integer.valueOf(0).equals(intOf(field(c, row, DBTableID.Quest.COL_RELEASE_TYPE), -1)) || field(c, row, DBTableID.Quest.COL_PARENT_QUEST) != null)
@@ -284,7 +301,7 @@ final class Progress
 					c.runScript(QUEST_STATUS, row);
 					int st = c.getIntStack()[0];
 					Q q = new Q((String) name, st == 2 ? 2 : st == 1 ? 1 : 0, boolOf(field(c, row, DBTableID.Quest.COL_MEMBERS), true),
-						intOf(field(c, row, DBTableID.Quest.COL_TYPE), 0) == 1, Math.max(0, intOf(field(c, row, DBTableID.Quest.COL_QUESTPOINTS_OVERRIDE), 0)));
+						intOf(field(c, row, DBTableID.Quest.COL_TYPE), 0) == 1, ownOrParts(intOf(field(c, row, DBTableID.Quest.COL_QUESTPOINTS_OVERRIDE), 0), fromParts.get(row)));
 					sorted.add(new Object[]{sort instanceof String ? sort : name, q});
 				}
 				sorted.sort((a, b) -> ((String) a[0]).compareToIgnoreCase((String) b[0]));
