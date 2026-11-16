@@ -165,10 +165,10 @@ The relay holds sound half a second (as the capture holds frames back). It lets 
 
 ## Dink
 
-`POST /dink/<channel>?key=<key>`, as Dink posts to a Discord webhook: multipart with `payload_json`, or plain JSON.
+`POST /dink/<channel>?key=<key>`, as Dink posts to a Discord webhook: multipart with `payload_json`, or plain JSON. Since 11/16/2026 the Outside plugin's "Copy my Dink address" gives a Hub player this address (no `&from=`) to paste into Dink's Primary Webhook URLs; their reports reach the page and the Array while the plugin's heard from (its posts) or the channel's live. Whoever posts, nothing from the Wilderness or PvP passes (`dinkSafe`, relay-py's `dink_safe`): a post whose `regionId`, or a death's `location.regionId`, is the Wilderness's (x 2944-3391, y 3520-3967, and below it y 9920-10367), a Wilderness boss's kill or loot (Artio, Callisto, Calvar'ion, the Chaos Elemental and Fanatic, the Crazy archaeologist, Scorpia, Spindel, Venenatis, Vet'ion, the King Black Dragon, revenants), a player kill, a PvP death, or loot from a player. Dink's `world`, `regionId`, `discordUser`, clan names and screenshot are never kept.
 - Only Dink's own kinds pass (`REPORTS` in `relay/src/text.ts` and `relay-py/relay.py`).
 - Screenshots are dropped.
-- A death in PvP loses its text.
+- A death in PvP, a player kill, loot from a player and anything from the Wilderness are dropped (since 11/16/2026; above).
 - Nothing that names another player gets through: trades, chat, player kills.
 
 Each report reaches viewers as `{"report": {"type", "text", "at", "data"}}`: `text` its line (at most 200 characters, Discord's markdown taken out), `data` the numbers the page's readings use (`relay/src/text.ts`'s `reportData`, relay-py's `report_data`: the boss and its count, the levels, the loot's items and value, the collection log's count).

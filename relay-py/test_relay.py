@@ -262,11 +262,18 @@ class Dink(RelayTest):
         for kind in ("PLAYER_KILL", "TRADE", "CHAT", "GROUP_STORAGE"):
             body, ct = multipart({"type": kind, "content": "someone else's name"})
             self.assertEqual(await post(self.port, "/dink/sburb?key=secret-key", body, ct), 204)
+        # (a death in PvP, since 11/16/2026, never passes at all: dink_safe; nor anything from the Wilderness)
         body, ct = multipart({"type": "DEATH", "content": "killed by someone", "extra": {"isPvp": True}})
         await post(self.port, "/dink/sburb?key=secret-key", body, ct)
+        body, ct = multipart({"type": "KILL_COUNT", "content": "Callisto", "extra": {"boss": "Callisto", "count": 3}})
+        await post(self.port, "/dink/sburb?key=secret-key", body, ct)
+        body, ct = multipart({"type": "LEVEL", "content": "a level, deep in the Wilderness", "regionId": (48 << 8) | 60,
+                              "extra": {"levelledSkills": {"Mining": 61}}})
+        await post(self.port, "/dink/sburb?key=secret-key", body, ct)
+        body, ct = multipart({"type": "LEVEL", "content": "a level in Varrock", "regionId": 12853, "extra": {"levelledSkills": {"Mining": 62}}})
+        await post(self.port, "/dink/sburb?key=secret-key", body, ct)
         kind, line = await v.recv_data()
-        r = json.loads(line)["report"]
-        self.assertEqual((r["type"], r["text"]), ("DEATH", ""))
+        self.assertEqual(json.loads(line)["report"]["text"], "a level in Varrock")
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.3)
 

@@ -41,4 +41,13 @@ public class ClaimTest
 		org.junit.Assert.assertFalse(OutsidePlugin.isOwn("sburb", "oran_berries"));
 		org.junit.Assert.assertFalse(OutsidePlugin.isOwn(null, "sburb"));
 	}
+
+	@Test
+	public void theGamesLineForANewLogSlot()
+	{
+		assertEquals("Bandos chaps", OutsidePlugin.clogAdded("New item added to your collection log: Bandos chaps"));
+		assertNull(OutsidePlugin.clogAdded("New item added to your collection log:"));
+		assertNull(OutsidePlugin.clogAdded("You have a funny feeling like you're being followed."));
+		assertNull(OutsidePlugin.clogAdded(null));
+	}
 }

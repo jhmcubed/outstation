@@ -36,6 +36,31 @@ const number = (v: unknown): number | undefined => {
   return Number.isFinite(n) ? Math.trunc(n) : undefined;
 };
 
+// (11/16/2026, Dink posting straight to a player's page, the Hub's plugin's way to field reports: nothing that says or
+// gives away that they're in the Wilderness, or that names or comes from another player, reaches the page or the Array,
+// whatever Dink was set to send. Dink sends the world and the map region with each post by default ("includeLocation"):
+// they're never kept, only read here.)
+const WILDERNESS_BOSSES = new Set(["artio", "callisto", "calvar'ion", "chaos elemental", "chaos fanatic", "crazy archaeologist",
+  "scorpia", "spindel", "venenatis", "vet'ion", "king black dragon", "revenant"]);
+/** Whether a map region is the Wilderness's, above ground (x 2944-3391, y 3520-3967) or below it (y 9920-10367). */
+export function wildernessRegion(id: unknown): boolean {
+  if (typeof id !== "number" || !Number.isInteger(id) || id < 0) return false;
+  const rx = id >> 8, ry = id & 255;
+  return rx >= 46 && rx <= 52 && ((ry >= 55 && ry <= 61) || (ry >= 155 && ry <= 161));
+}
+/** Whether a Dink post may reach the page and the Array: not from the Wilderness (its region, a death's place, a
+ *  Wilderness boss), not a player kill's or a PvP death's, not loot from a player. */
+export function dinkSafe(p: any): boolean {
+  if (!p || typeof p !== "object") return false;
+  const extra = p.extra && typeof p.extra === "object" ? p.extra : {};
+  if (wildernessRegion(p.regionId) || (extra.location && wildernessRegion(extra.location.regionId))) return false;
+  if (p.type === "PLAYER_KILL" || (p.type === "DEATH" && (extra.isPvp || extra.pvp || extra.killerName || extra.pker))) return false;
+  if (p.type === "LOOT" && String(extra.category || "").toUpperCase() === "PLAYER") return false;
+  const who = String(extra.boss || extra.source || "").toLowerCase();
+  for (const b of WILDERNESS_BOSSES) if (who.startsWith(b)) return false;
+  return true;
+}
+
 // The numbers a report carries for the portal's readings: only fields that can't name another player. Never "party",
 // a player kill's source, or a dropper. (relay-py's report_data, the same.)
 export function reportData(kind: string, extra: any): Record<string, unknown> {

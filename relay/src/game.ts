@@ -34,6 +34,8 @@ export type Fields = Record<string, unknown> & { items?: Record<string, Item> };
 export const DIARY_AREAS = ["Ardougne", "Desert", "Falador", "Fremennik", "Kandarin", "Karamja", "Kourend & Kebos",
   "Lumbridge & Draynor", "Morytania", "Varrock", "Western Provinces", "Wilderness"];
 const NAMES_MOST = 400;
+// (the collection log: its slots at most, and its newly added names with one update at most)
+export const CLOG_MOST = 5000, CLOG_NEW_MOST = 8;
 const names = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.length <= NAMES_MOST && v.every((x) => typeof x === "string") ? v.map((x) => oneLine(x, 80)) : undefined;
 
@@ -157,6 +159,14 @@ export function gameFields(g: unknown): Fields {
     const area = s.area === null ? null : typeof s.area === "string" ? oneLine(s.area, 80) : undefined;
     if (left !== undefined && of !== undefined && points !== undefined && streak !== undefined && task !== undefined && area !== undefined)
       out.slayer = { task, left, of, area, points, streak };
+  }
+  // (11/16/2026: the collection log's counter, slots filled and in all, and the names of those the game's chat said were
+  // added since the last update, CLOG_NEW_MOST at most; null, switched off)
+  if (g.clog === null) out.clog = null;
+  else if (isObj(g.clog)) {
+    const count = whole(g.clog.count, CLOG_MOST), max = whole(g.clog.max, CLOG_MOST);
+    const fresh = Array.isArray(g.clog.new) ? g.clog.new.filter((x): x is string => typeof x === "string").slice(0, CLOG_NEW_MOST).map((x) => oneLine(x, 60)).filter(Boolean) : [];
+    if (count !== undefined && max !== undefined && count <= max) out.clog = { count, max, new: fresh };
   }
   // (11/15/2026, the live view: the animation they're doing now, its id or -1, with the gear it's in; null, none)
   if (g.anim === null) out.anim = null;

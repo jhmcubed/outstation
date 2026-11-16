@@ -132,6 +132,13 @@ export function snapshotEvents(prev: Record<string, unknown>, next: Record<strin
       if (total && da !== undefined && db !== undefined && da < total && db >= total) out.push({ kind: "ca", tier: CA_TIERS[i] });
     }
   }
+  // (the collection log's count gone up: a slot each, named where the game's chat named it, else with the count it
+  // came to; 11/16/2026)
+  const po = isObj(prev.clog) ? whole(prev.clog.count) : undefined, no = isObj(next.clog) ? whole(next.clog.count) : undefined;
+  if (po !== undefined && no !== undefined && no > po) {
+    const named = isObj(next.clog) && Array.isArray(next.clog.new) ? next.clog.new.map(word).filter((x): x is string => !!x) : [];
+    for (let i = 0; i < Math.min(no - po, SNAPSHOT_EVENTS_MOST); i++) out.push(named[i] ? { kind: "clog", name: named[i] } : { kind: "clog", count: po + i + 1 });
+  }
   const pl = isObj(prev.slayer) ? whole(prev.slayer.streak) : undefined, nl = isObj(next.slayer) ? whole(next.slayer.streak) : undefined;
   if (pl !== undefined && nl !== undefined && nl > pl) out.push({ kind: "slayer", streak: nl });
   return out.slice(0, SNAPSHOT_EVENTS_MOST);

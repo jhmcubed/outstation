@@ -85,6 +85,9 @@ public class OutsidePanel extends PluginPanel
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
 		void showSent();
 
+		/** "Copy my Dink address": the page's address for the Dink plugin's webhooks, to the clipboard. */
+		void copyDink();
+
 		void friendsOnly(boolean on);
 
 		void copyFriendsLink();
@@ -144,6 +147,7 @@ public class OutsidePanel extends PluginPanel
 	// (11/16/2026, Jace, after a press inside the minute went unnoticed and his page kept a necklace he'd taken off: a press
 	// too soon waits, and the button counts the seconds down till it goes by itself)
 	private JButton updateButton;
+	private final JLabel dinkStatus = small(" ");
 	private volatile long updateWaits;
 	private final javax.swing.Timer updateClock = new javax.swing.Timer(250, e -> updateCount());
 	// (11/16/2026, the permissions review: who sees the page, and taking it down, with the plugin alone)
@@ -210,6 +214,15 @@ public class OutsidePanel extends PluginPanel
 			+ " it, and by themselves every hour you're logged in; never from the Wilderness or a PvP world.</div></html>")));
 		page.add(Box.createVerticalStrut(4));
 		page.add(wide(button("Show what's sent", () -> hooks.showSent())));
+		// (11/16/2026: field reports through the Dink plugin, if they use it: only an address to paste, nothing sent)
+		page.add(Box.createVerticalStrut(10));
+		page.add(wide(button("Copy my Dink address", () -> hooks.copyDink())));
+		dinkStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(dinkStatus));
+		page.add(left(small("<html><div style='width:155px'>Use the Dink plugin? Paste this on its own line in Dink's Primary"
+			+ " Webhook URLs: the notifications you switch on in Dink then show on your page and the globe as field reports."
+			+ " Nothing from the Wilderness or PvP is ever shown, and Dink's world and location aren't kept. The address"
+			+ " holds your page's key: keep it to yourself.</div></html>")));
 		snapClock.start();
 		page.add(Box.createVerticalStrut(14));
 
@@ -514,6 +527,12 @@ public class OutsidePanel extends PluginPanel
 				snapStatus.setText(" ");
 			}
 		});
+	}
+
+	/** A line under "Copy my Dink address". */
+	public void dinkStatus(String words)
+	{
+		SwingUtilities.invokeLater(() -> dinkStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
 	/** "Show what's sent": the snapshot as it would go now, its every field, in a window of its own (nothing's sent). */
