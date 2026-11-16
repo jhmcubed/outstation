@@ -1766,6 +1766,30 @@ class AetherWords(unittest.TestCase):
             self.assertIsNone(relay.PLAYER.fullmatch(bad), bad)
 
 
+class SnapshotEvents(unittest.TestCase):
+    """What a snapshot adds to the Array (11/16/2026; relay.snapshot_events, the Worker's snapshotEvents, the same; the
+    shared suite's Snapshot tests the feed on both relays)."""
+
+    def test_a_first_snapshot_or_a_part_the_last_lacked_says_nothing(self):
+        self.assertEqual(relay.snapshot_events({}, {"skills": {"Attack": [99, 99, 1]}, "quests": {"done": ["X"]}}), [])
+        self.assertEqual(relay.snapshot_events({"skills": {"Attack": [98, 98, 1]}}, {"skills": {"Attack": [99, 99, 2]}, "quests": {"done": ["X"]}}),
+                         [{"kind": "level", "skill": "Attack", "level": 99}])
+
+    def test_a_level_only_going_up_and_never_a_bad_name(self):
+        self.assertEqual(relay.snapshot_events({"skills": {"Attack": [60, 60, 1], "Mining": [70, 70, 1]}},
+                                               {"skills": {"Attack": [59, 59, 1], "Mining": [70, 70, 1], "Sailing": [5, 5, 1], "<b>x</b>": [9, 9, 1]}}), [])
+
+    def test_diary_and_combat_tiers_as_they_turn(self):
+        p = {"diaries": {"Varrock": [1, 0, 0, 0, 1, 2]}, "combat": {"tiers": [[2, 3], [4, 4], [0, 1], [0, 1], [0, 1], [0, 1]]}}
+        n = {"diaries": {"Varrock": [1, 1, 1, 0, 2, 2]}, "combat": {"tiers": [[3, 3], [4, 4], [0, 1], [0, 1], [0, 1], [0, 1]]}}
+        self.assertEqual(relay.snapshot_events(p, n), [{"kind": "diary", "tier": "medium", "area": "Varrock"},
+                                                       {"kind": "diary", "tier": "hard", "area": "Varrock"}, {"kind": "ca", "tier": "easy"}])
+
+    def test_at_most_a_few_from_one_snapshot(self):
+        done = ["Quest %d" % i for i in range(30)]
+        self.assertEqual(len(relay.snapshot_events({"quests": {"done": []}}, {"quests": {"done": done}})), relay.SNAPSHOT_EVENTS_MOST)
+
+
 class AetherRate(unittest.TestCase):
     """The aether's rate (relay.aether_wait and aether_recent; the Worker's aetherWait and aetherRecent, the same): a line
     every 2 s and 15 a minute from someone at most, and how long to wait past that."""

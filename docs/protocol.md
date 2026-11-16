@@ -878,6 +878,15 @@ relay-py's `array_events` and `ArrayFeed`.
 | `"loot"` | a `LOOT` report whose drop is worth 1,000,000 coins or more in all (less isn't one) | `name` (the drop's best item, by quantity × price; the first, in a tie), `value` (the drop's whole value) |
 | `"clog"` | a `COLLECTION` report (a new collection log slot) | `name` (the item), if given |
 | `"clue"` | a `CLUE` report | `tier`, `count` (how many of that tier), each if given |
+| `"level"` | a snapshot (11/16/2026: the Hub's plugin's, `POST /game` with skills): one for each skill gone up since the last snapshot | `skill`, `level` (its new level) |
+| `"quest"` | a snapshot: a quest in `quests.done` the last one lacked | `name` |
+| `"diary"` | a snapshot: a diary tier done since the last | `tier` (easy, medium, hard or elite), `area` |
+| `"ca"` | a snapshot: a combat achievements tier done since the last | `tier` (easy, medium, hard, elite, master or grandmaster) |
+| `"slayer"` | a snapshot: the slayer streak gone up (a task done) | `streak` |
+
+A snapshot's events (array.ts's `snapshotEvents`, relay-py's `snapshot_events`) are against the last snapshot kept, each
+part only when that one had it too (a first snapshot says nothing), at most 8 from one, while the plugin's heard from or
+the channel's live, and listed; they come as late as the snapshot (pressed, or hourly).
 
 They're made from the numbers each report carries (its `data`, above in "Dink": what `reportData` / `report_data` keep),
 the same as the stream's summary is, so a report that comes as a Dink post and one that comes over the transmit socket

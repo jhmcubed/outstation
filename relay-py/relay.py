@@ -1143,6 +1143,59 @@ def array_word(v):
     return one_line(v, ARRAY_WORD) or None
 
 
+DIARY_TIERS = ("easy", "medium", "hard", "elite")
+CA_TIERS = ("easy", "medium", "hard", "elite", "master", "grandmaster")
+SNAPSHOT_EVENTS_MOST = 8
+
+
+def snapshot_events(prev, nxt):
+    """What a snapshot from the Hub's plugin adds to the Array (11/16/2026; the Worker's snapshotEvents, the same): what's
+    new against the last one kept, each only when the last one had that part too: a level for each skill gone up, a
+    quest done, a diary tier done, a combat achievements tier done, a slayer task done (the streak gone up)."""
+    def whole(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 2 ** 53 - 1 else None
+    out = []
+    ps, ns = prev.get("skills"), nxt.get("skills")
+    if isinstance(ps, dict) and isinstance(ns, dict):
+        for k, b in ns.items():
+            a = ps.get(k)
+            la = whole(a[0]) if isinstance(a, list) and a else None
+            lb = whole(b[0]) if isinstance(b, list) and b else None
+            skill = one_line(k, 60)
+            if skill and GAME_SKILL.fullmatch(skill) and la is not None and lb is not None and la < lb <= 126:
+                out.append({"kind": "level", "skill": skill, "level": lb})
+    pq = prev.get("quests", {}).get("done") if isinstance(prev.get("quests"), dict) else None
+    nq = nxt.get("quests", {}).get("done") if isinstance(nxt.get("quests"), dict) else None
+    if isinstance(pq, list) and isinstance(nq, list):
+        had = set(str(x) for x in pq)
+        for q in nq:
+            name = one_line(q, 60) if isinstance(q, str) else ""
+            if name and str(q) not in had:
+                out.append({"kind": "quest", "name": name})
+    pd, nd = prev.get("diaries"), nxt.get("diaries")
+    if isinstance(pd, dict) and isinstance(nd, dict):
+        for area, b in nd.items():
+            a = pd.get(area)
+            if isinstance(a, list) and isinstance(b, list):
+                for i in range(4):
+                    if i < len(a) and i < len(b) and a[i] == 0 and b[i] == 1:
+                        out.append({"kind": "diary", "tier": DIARY_TIERS[i], "area": one_line(area, 60)})
+    pc = prev.get("combat", {}).get("tiers") if isinstance(prev.get("combat"), dict) else None
+    nc = nxt.get("combat", {}).get("tiers") if isinstance(nxt.get("combat"), dict) else None
+    if isinstance(pc, list) and isinstance(nc, list):
+        for i in range(min(6, len(pc), len(nc))):
+            a, b = pc[i], nc[i]
+            if isinstance(a, list) and isinstance(b, list) and len(a) == 2 and len(b) == 2:
+                total, da, db = whole(b[1]), whole(a[0]), whole(b[0])
+                if total and da is not None and db is not None and da < total <= db:
+                    out.append({"kind": "ca", "tier": CA_TIERS[i]})
+    pl = whole(prev["slayer"].get("streak")) if isinstance(prev.get("slayer"), dict) else None
+    nl = whole(nxt["slayer"].get("streak")) if isinstance(nxt.get("slayer"), dict) else None
+    if pl is not None and nl is not None and nl > pl:
+        out.append({"kind": "slayer", "streak": nl})
+    return out[:SNAPSHOT_EVENTS_MOST]
+
+
 def array_events(report):
     """What one field report adds to the Array's events, each {"kind", ...} (its id, time and channel are the feed's),
     from the report's type and the numbers it carries (its data, as fold reads them): a kill (the boss and its count),
@@ -1876,7 +1929,18 @@ class Channel:
             for f in SNAP_CLEARS:
                 if self.game.kept.get(f) is not None:
                     fields[f] = None
+        # (what a snapshot adds to the Array, against the last kept: snapshot_events, 11/16/2026; the Worker's, the same)
+        before = {f: json.loads(json.dumps(self.game.kept[f])) for f in ("skills", "quests", "diaries", "combat", "slayer")
+                  if snap and self.game.kept.get(f) is not None}
         got = self.game.apply(fields, now)
+        if snap and fields.get("off") is not True and self.array is not None and self.listed() \
+                and (self.sender is not None or self.seen_at is not None):
+            try:
+                news = snapshot_events(before, self.game.kept)
+            except Exception:  # noqa: BLE001 (not one it can read)
+                news = []
+            if news:
+                self.array.add(self.name, news)
         if fields.get("off") is True:
             self.witness_off()
         if got is not None or snap:
