@@ -3,6 +3,10 @@
 //   - "bank" (Jace: "an option for people to capture their entire bank, just as the liveloadout twitch extension/plugin
 //     offers"): {"items": [[id, how many], ...], "tabs": [the count in each of the bank's tabs 1-9], "names": {id:
 //     [name, price]}}, the bank in its own order (the main tab's last, as the game lays it), at most BANK_SLOTS items
+//   - "deathbank" (11/16/2026, Jace: "show an open Deathbank like the Hespori deathbank on someone's profile"): {"where":
+//     the boss or place it's for (the plugin's own list, Hespori, Zulrah, Vorkath...), "locked": true while its fee is
+//     unpaid, "items": [[id, how many], ...], "names": {id: [name, price]}}, as the game showed it when they last looked
+//     in it (the Item Retrieval Service's window), at most DEATHBANK_SLOTS items; taken away when it's emptied
 //   - "encounter" (11/15/2026): the last boss they fought, {"name", "model"}, sent as the fight ends
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
@@ -23,7 +27,7 @@
 // A change goes to the page's viewers, lookers and desks as {"kept": {"what", "at"}} (null "at": taken away), so the
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 
-export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
+export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, deathbank: 64 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
   live: 4 * 1024 * 1024, livemotion: 4 * 1024 * 1024 };
 // (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
 export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
@@ -32,7 +36,7 @@ export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
 export const LIVE_MOST = 24, GEAR = /^[0-9a-f]{1,16}$/, ANIM = /^(idle|[0-9]{1,6})$/;
 export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
-export const BANK_SLOTS = 1600, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
+export const BANK_SLOTS = 1600, DEATHBANK_SLOTS = 200, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
 // (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the model viewer/capturer?"): a
 // still model's effects ("fx": FX_MOST models), a motion's ("frames.fx": FX_MODELS models by key, and each frame's
 // effects there, FX_MOST a frame, each its key and its vertices as a frame's), and the ground round them ("ground": a
@@ -63,6 +67,22 @@ export function keepShape(what: string, d: unknown): unknown | string {
     }
     return { items: items.map((s) => [s[0], s[1]]), tabs, names: n };
   }
+  // (11/16/2026: a deathbank, the Item Retrieval Service's: where, whether its fee's unpaid, its items and their names)
+  if (what === "deathbank") {
+    const items = d.items, names = d.names ?? {};
+    if (typeof d.where !== "string" || !/^[A-Za-z0-9' .,-]{1,40}$/.test(d.where)) return "where: the deathbank's boss or place";
+    if (typeof d.locked !== "boolean") return "locked: true or false";
+    if (!Array.isArray(items) || !items.length || items.length > DEATHBANK_SLOTS) return "items: 1 to " + DEATHBANK_SLOTS;
+    for (const s of items) if (!Array.isArray(s) || s.length !== 2 || !whole(s[0]) || !whole(s[1]) || s[1] < 1) return "items: [id, how many] each";
+    if (!isObj(names)) return "names: an object";
+    const n: Record<string, [string, number]> = {};
+    for (const [k, v] of Object.entries(names).slice(0, DEATHBANK_SLOTS)) {
+      if (ID.test(k) && Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && whole(v[1])) {
+        n[k] = [v[0].replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 60), v[1] as number];
+      }
+    }
+    return { where: d.where, locked: d.locked, items: items.map((s) => [s[0], s[1]]), names: n };
+  }
   if (what === "model") return modelShape(d, true);
   // (11/15/2026: the last boss they fought, "the encounter": its name and its model as the fight ended)
   if (what === "encounter") {
@@ -79,7 +99,7 @@ export function keepShape(what: string, d: unknown): unknown | string {
     if (!(m as Record<string, unknown>).frames) return "a motion has its frames";
     return m;
   }
-  return "kept: bank or model";
+  return "kept: bank, deathbank or model";
 }
 
 /** A model's shape (keep.ts's header): the player's, which may carry its pet's ("pet": a model of its own, with no pet)

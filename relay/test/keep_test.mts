@@ -3,7 +3,7 @@
 //
 //   node test/keep_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { keepShape, BANK_SLOTS, MOTION_NAME } from "../src/keep.ts";
+import { keepShape, BANK_SLOTS, DEATHBANK_SLOTS, MOTION_NAME } from "../src/keep.ts";
 import { emoteKind, EMOTE_NAME } from "../src/emotes.ts";
 
 let passed = 0;
@@ -16,6 +16,16 @@ test("a bank: its items and tabs as they are, names cleaned, anything else left 
   strictEqual(typeof keepShape("bank", { items: Array(BANK_SLOTS + 1).fill([1, 1]) }), "string");
   strictEqual(typeof keepShape("bank", { items: [[1, -1]] }), "string");
   strictEqual(typeof keepShape("bank", { items: [], tabs: Array(10).fill(0) }), "string");
+});
+
+test("a deathbank: where, locked, its items and names as they are, anything else left out", () => {
+  const got = keepShape("deathbank", { where: "Hespori", locked: true, items: [[4151, 1], [995, 25000]], names: { "4151": ["Abyssal whip\t", 1500000] }, extra: 1 });
+  deepStrictEqual(got, { where: "Hespori", locked: true, items: [[4151, 1], [995, 25000]], names: { "4151": ["Abyssal whip ", 1500000] } });
+  strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: true, items: [] }), "string");                       // (an empty one is taken away instead)
+  strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: true, items: Array(DEATHBANK_SLOTS + 1).fill([1, 1]) }), "string");
+  strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: true, items: [[1, 0]] }), "string");                // (no placeholders in a deathbank)
+  strictEqual(typeof keepShape("deathbank", { where: "<b>Hespori</b>", locked: true, items: [[1, 1]] }), "string");
+  strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: "yes", items: [[1, 1]] }), "string");
 });
 
 test("a model: vertices in threes, faces on them, a colour a face", () => {

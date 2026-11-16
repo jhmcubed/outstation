@@ -68,6 +68,9 @@ To Jace's relay on Cloudflare, only while you're logged in, and only when you pr
 <!-- hub:cut bank -->
 - **my bank on my page** (one switch, off to begin with, behind its own warning; 11/14/2026): your whole bank (each item, how many, a placeholder as none, and the tabs' counts), three ticks after you last used it, to your relay's keep for your page (docs/protocol.md, "Kept for the page"); switching it off takes it off your page
 <!-- hub:end bank -->
+<!-- hub:cut deathbank -->
+- **my deathbank on my page** (one switch, off to begin with, behind its own warning; 11/16/2026): when you look in a deathbank (the Item Retrieval Service's, after a death at Hespori, Zulrah, Vorkath, the Nightmare, the Theatre of Blood and the rest), what's in it, which one it is and whether its fee's still unpaid, two ticks after its window last changed, to your relay's keep for your page (docs/protocol.md, "Kept for the page"). The game only shows a deathbank's contents in its window, so your page has it as you last looked; emptied, it comes off your page, and so does switching it off. Which deathbank it is comes from the game's IF1 value as Dude, Where's My Stuff reads it ("Credits")
+<!-- hub:end deathbank -->
 <!-- hub:cut model -->
 - **my character's model on my page** (one switch, off to begin with, behind its own warning; 11/14/2026): your character's 3D model as you look now (its shape and colours, nothing else), when you switch it on and each time you type `::outsidemodel`, for your page to draw, with the pet following you if one is (11/15/2026); and `::outsidemotion <a name>` records the next thing you do (an emote, a special attack: from its start to its end, at most 4 seconds; nothing within 8 seconds, 3 seconds of you standing), your pet's motion with it, and keeps it on your page under that name (with no name, "idle" or "motion"): up to 8, one of the same name replaced, visitors choosing between them; `::outsideforget <a name>` takes one away; switching it off takes it down; and with it on (11/15/2026), the live view: your model in the gear you wear now (a few seconds after it changes, at most every 20 seconds), each animation you do recorded in the background the first time it's seen in that gear (and you standing), and which one you're doing now, so your page can show you as you are; and the last boss you fought, its model as the fight ends (20 seconds after your last hit on it), each boss at most once every 30 minutes, never from the Wilderness, a PvP area or a PvP or Deadman world
   - its effects (11/15/2026): the spot animations on you as it's captured (a special attack's, a teleport's, an emote's), each its own model, and through a recorded motion frame by frame; under the same switch, as they're part of how you look
@@ -143,6 +146,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 <!-- hub:end globe -->
 
+<!-- hub:cut deathbank -->
+Which deathbank is which (`Kept.DEATHBANKS`: each one's locked and unlocked IF1 values) is Dude, Where's My Stuff's (github.com/Thource/dude-wheres-my-stuff, its `DeathbankType`; BSD 2-Clause, Copyright 2022 Thource), as is reading a deathbank's window from the game's GRAVESTONE inventory while the gravestone's own window isn't open. Facts about the game rather than its code, credited all the same.
+
+<!-- hub:end deathbank -->
 Ferox Enclave's bounds (`OutsidePlugin.FEROX`) are the Shortest Path plugin's (github.com/Skretzo/shortest-path, its `WildernessChecker.java`, FEROX_ENCLAVE_1 to 5; BSD 2-Clause), five rectangles of the town inside its barriers: facts about the game's map, credited all the same.
 
 <!-- hub:cut globe -->
@@ -250,7 +257,7 @@ The manifest, `plugins/outside` in runelite/plugin-hub (the Hub builds outside-p
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
 commit=<the full commit hash>
-warning=This plugin submits your gear, stats, quests, diaries, slayer task, kills and drops, your account hash and your IP address, and what else you switch on (your rough location, world, bank, character model, the page's chat), to a 3rd-party server. Your Outside page shows them publicly.
+warning=This plugin submits your gear, stats, quests, diaries, slayer task, kills and drops, your account hash and your IP address, and what else you switch on (your rough location, world, bank, deathbank, character model, the page's chat), to a 3rd-party server. Your Outside page shows them publicly.
 ```
 <!-- hub:end globe,delve,year,model,bank,talk -->
 <!-- hub:else globe,delve,year,model,bank,talk

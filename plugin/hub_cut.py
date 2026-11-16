@@ -42,6 +42,7 @@ The parts left out (SUBMITTED: those in the Hub's version now; add a part's name
   year    your year and its exact path
   model   the character's model, its motions, the live view, the boss fought, effects, the ground
   bank    the bank on the page
+  deathbank the deathbank (the Item Retrieval Service's) on the page, as they last looked in it
   talk    the page's chat in the game (::o, /o) and emotes
 
     python3 plugin/hub_cut.py ../outside-plugin           write the cut there (its .git and build left alone)
@@ -57,7 +58,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "talk"]
+PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk"]
 SUBMITTED = []   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: none yet)
 
 # whole files that belong to a part (paths under this folder)

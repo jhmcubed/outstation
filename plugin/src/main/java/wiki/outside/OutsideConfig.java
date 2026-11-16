@@ -385,6 +385,24 @@ public interface OutsideConfig extends Config
 	}
 	// hub:end bank
 
+	// hub:cut deathbank
+	@ConfigItem(
+		keyName = "deathbank",
+		name = "My deathbank on my page",
+		description = "Off (to begin with). On, when you look in a deathbank (the Item Retrieval Service's, as at"
+			+ " Hespori, Zulrah or Vorkath), what's in it and which one it is go to your Outside page, where anyone"
+			+ " can see them. Emptied, it comes off your page",
+		warning = "On, each time you look in a deathbank, what's in it (every item and how many) and which boss or place"
+			+ " it's for go to the Outside relay, a server not controlled or verified by the RuneLite developers, and"
+			+ " your Outside page shows them to anyone who opens it. Switching it off takes it off your page.",
+		position = 14
+	)
+	default boolean deathbank()
+	{
+		return false;
+	}
+	// hub:end deathbank
+
 	// hub:cut model
 	@ConfigItem(
 		keyName = "model",

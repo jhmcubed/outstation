@@ -2179,7 +2179,7 @@ export class Channel extends DurableObject<Env> {
     const what = q.get("what") || "";
     if (what === "motions" || what === "motion") return this.motions(request, q, ip, what);
     if (what === "live" || what === "livemotion" || what === "livemotions") return this.liveKeep(request, q, ip, what);
-    if (!(what in KEEP_MOST)) return json({ error: "kept: bank or model" }, 404);
+    if (!(what in KEEP_MOST)) return json({ error: "kept: bank, deathbank or model" }, 404);
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
       const got = await this.ctx.storage.get<{ data?: unknown; at: number; r2?: boolean }>("keep:" + what);

@@ -53,6 +53,30 @@ public class KeptTest
 	// hub:end bank
 
 	// hub:cut model
+	// hub:cut deathbank
+	@Test
+	public void theDeathbankWhereAndWhetherLocked()
+	{
+		assertEquals("Hespori", Kept.deathbankWhere(15)[0]);
+		assertEquals(true, Kept.deathbankWhere(15)[1]);
+		assertEquals(false, Kept.deathbankWhere(16)[1]);
+		// (Zulrah's unlocked value is 0; -1 is no deathbank's window)
+		assertEquals("Zulrah", Kept.deathbankWhere(0)[0]);
+		assertNull(Kept.deathbankWhere(-1));
+		assertEquals("Unknown", Kept.deathbankWhere(999)[0]);
+	}
+
+	@Test
+	public void theDeathbankItsItemsAndEmptiedNone()
+	{
+		Map<Integer, Object[]> names = new LinkedHashMap<>();
+		names.put(4151, new Object[]{"Abyssal whip", 1_500_000L});
+		JsonObject d = Kept.deathbank("Hespori", true, new int[]{4151, -1, 995}, new int[]{1, 0, 25000}, names);
+		assertEquals("{\"where\":\"Hespori\",\"locked\":true,\"items\":[[4151,1],[995,25000]],\"names\":{\"4151\":[\"Abyssal whip\",1500000]}}", d.toString());
+		assertNull(Kept.deathbank("Hespori", false, new int[]{-1, -1}, new int[]{0, 0}, names));
+	}
+	// hub:end deathbank
+
 	@Test
 	public void theModelLeavesOutWhatTheGameNeverDraws()
 	{

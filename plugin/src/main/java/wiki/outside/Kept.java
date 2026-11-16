@@ -21,6 +21,9 @@ import java.util.regex.Pattern;
 // hub:cut bank
  * <li>the bank, as the relay keeps it;</li>
 // hub:end bank
+// hub:cut deathbank
+ * <li>the deathbank (the Item Retrieval Service's), as the relay keeps it;</li>
+// hub:end deathbank
 // hub:cut model
  * <li>the character's model, as the page draws it;</li>
 // hub:end model
@@ -120,6 +123,90 @@ public final class Kept
 		return o;
 	}
 	// hub:end bank
+
+	// hub:cut deathbank
+	// ---- the deathbank (11/16/2026, Jace: "show an open Deathbank like the Hespori deathbank on someone's profile"):
+	// what the game's Item Retrieval Service holds for them after a death in an instance (Hespori, Zulrah, Vorkath...),
+	// read when they look in it (its window fills the game's GRAVESTONE inventory while the gravestone's own window
+	// isn't open), and which one it is by the varp IF1 the window sets, a locked and an unlocked value each (locked: its
+	// fee unpaid). The values are Dude, Where's My Stuff's (github.com/Thource/dude-wheres-my-stuff, its DeathbankType;
+	// BSD 2-Clause, Copyright 2022 Thource), the ones it marks confirmed and the rest as it has them.
+
+	/** Each deathbank's name, its locked and its unlocked IF1 values. */
+	static final Object[][] DEATHBANKS = {
+		{"Volcanic Mine", 1, 2},
+		{"Grotesque Guardians", 3, 4},
+		{"Vorkath", 5, 6},
+		{"Dragon Slayer II", 7, 8},
+		{"A Taste of Hope", 9, 10},
+		{"Theatre of Blood", 11, 12},
+		{"Alchemical Hydra", 13, 14},
+		{"Hespori", 15, 16},
+		{"The Mimic", 17, 18},
+		{"Song of the Elves", 19, 20},
+		{"Song of the Elves", 21, 22},
+		{"The Fremennik Exiles", 23, 24},
+		{"The Nightmare", 25, 26},
+		{"Phosani's Nightmare", 27, 28},
+		{"Hallowed Sepulchre", 29, 30},
+		{"Sins of the Father", 31, 32},
+		{"Zulrah", 33, 0},
+		{"Nex", 36, 37},
+	};
+
+	/** {where, locked} for the IF1 value the retrieval window set, {"Unknown", false} for one not on the list, or null
+	 *  (-1) when no deathbank's window is open. */
+	public static Object[] deathbankWhere(int if1)
+	{
+		if (if1 < 0)
+		{
+			return null;
+		}
+		for (Object[] d : DEATHBANKS)
+		{
+			if ((int) d[1] == if1)
+			{
+				return new Object[]{d[0], true};
+			}
+			if ((int) d[2] == if1)
+			{
+				return new Object[]{d[0], false};
+			}
+		}
+		return new Object[]{"Unknown", false};
+	}
+
+	/** {"where", "locked", "items", "names"} as the relay keeps it, or null when it's empty (taken off the page). */
+	public static JsonObject deathbank(String where, boolean locked, int[] ids, int[] quantities, Map<Integer, Object[]> names)
+	{
+		JsonArray items = new JsonArray();
+		for (int i = 0; i < ids.length && i < quantities.length; i++)
+		{
+			if (ids[i] > 0 && quantities[i] > 0)
+			{
+				items.add(Kit.pair(ids[i], quantities[i]));
+			}
+		}
+		if (items.size() == 0)
+		{
+			return null;
+		}
+		JsonObject o = new JsonObject();
+		o.addProperty("where", where);
+		o.addProperty("locked", locked);
+		o.add("items", items);
+		JsonObject nm = new JsonObject();
+		for (Map.Entry<Integer, Object[]> e : names.entrySet())
+		{
+			JsonArray np = new JsonArray();
+			np.add((String) e.getValue()[0]);
+			np.add(Math.max(0, ((Number) e.getValue()[1]).longValue()));
+			nm.add(String.valueOf(e.getKey()), np);
+		}
+		o.add("names", nm);
+		return o;
+	}
+	// hub:end deathbank
 
 	// hub:cut model
 	// ---- the model (Jace: "upload a captured model of their character onto their profile page just as RuneProfile
