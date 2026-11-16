@@ -175,6 +175,7 @@ mod tests {
         assert!(check_add(&s, "no/slash").is_err());
         assert_eq!(find(&s, "MOSS-FERN").as_deref(), Some("Moss Fern"));
         assert_eq!(page("mossfern"), "https://outside.wiki/mossfern");
+        assert!(crate::win::opens(&page("mossfern")), "a click on a friend's name opens their page");
     }
 
     #[test]
