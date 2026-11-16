@@ -147,8 +147,8 @@ import org.slf4j.LoggerFactory;
  */
 @PluginDescriptor(
 	name = "Outside",
-	description = "Your gear, inventory, looting bag and stats, live on your Outside page",
-	tags = {"outside", "outstation", "loadout", "inventory", "looting bag", "stream", "profile"}
+	description = "Your gear, stats, quests, diaries and slayer task, live on your own page at outside.wiki",
+	tags = {"outside", "outstation", "loadout", "inventory", "profile", "quests", "diaries", "slayer", "stream"}
 )
 public class OutsidePlugin extends Plugin
 {

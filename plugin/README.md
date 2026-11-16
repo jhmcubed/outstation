@@ -146,13 +146,13 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
   - `Sites.java`: the stars' landing sites by name (Shooting Star Info's: "Credits")
 <!-- hub:end globe -->
   - `OutsideConfig.java`: the settings
-- The relay's side: `docs/protocol.md`, "The game".
+- The relay's side: [`docs/protocol.md`](https://github.com/jhmcubed/outstation/blob/main/docs/protocol.md), "The game" (jhmcubed/outstation).
 
 ## For the Hub's review
 
 Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update.
 
-**Precedents** (11/09/2026): [`docs/hub-precedents.md`](../docs/hub-precedents.md) goes through every piece of information this plugin reads or sends and names the Plugin Hub plugins (and RuneLite's own) that already read or send the same, with links to the exact lines, where this plugin is stricter, the Hub's written rules as they stand, and what the Hub requires of the licence and the repository (its own repository, with `runelite-plugin.properties` and a `LICENSE` at the root).
+**Precedents** (11/09/2026): [`docs/hub-precedents.md`](https://github.com/jhmcubed/outstation/blob/main/docs/hub-precedents.md) (jhmcubed/outstation) goes through every piece of information this plugin reads or sends and names the Plugin Hub plugins (and RuneLite's own) that already read or send the same, with links to the exact lines, where this plugin is stricter, the Hub's written rules as they stand, and what the Hub requires of the licence and the repository (its own repository, with `runelite-plugin.properties` and a `LICENSE` at the root).
 
 - **No forbidden features:** no reflection, JNI or JNA, other programs, code downloaded at runtime, `Desktop`/`LinkBrowser.open`, `Thread.sleep`/`interrupt`, `menuAction`, `java.io` files, `KeyboardFocusManager`, or network clients other than OkHttp. RuneLite's own Gson, OkHttp, executor and client thread are injected, never made. The package isn't `net.runelite`.
 - **No new dependencies:** `build=standard`, nothing outside runelite-client.
