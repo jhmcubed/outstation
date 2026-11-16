@@ -45,3 +45,27 @@ The file is on jhmcubed/plugin-hub's branch `outside` (ea2f261, from runelite/pl
 to runelite/plugin-hub is opened from it with the words above (Jace's press: this repository's session can't write to
 runelite's). After its build: a ✔ beside `build`, and `RuneLite Plugin Hub Checks` saying nothing's needed; changes
 asked for go into outstation's plugin/, cut into outside-plugin, merged, and the new hash pushed to that branch.
+
+## The snapshot version (11/16/2026)
+
+The reviewer turned the lean cut down, then reopened #20811 for other reviewers: "An 'Update my page' action and an
+hourly sync should be okay, as should matching Discord activity." The Hub's version is now the snapshot
+(`plugin/hub_cut.py`'s header; docs/protocol.md, "The snapshot"), cut into jhmcubed/outside-plugin on its branch
+`claude/laughing-ride-b0yjzb` (a600302; 31 tests, the Hub check, `hub_cut.py --check` matching).
+
+In this order:
+1. Merge outstation's branch, then `npm run deploy` in `relay/` (the Worker must take `POST /game` before any Hub
+   player posts to it: the live relay answers 405 till then).
+2. Merge outside-plugin's branch into its `main` (the commit the Hub builds should be on `main`).
+3. On jhmcubed/plugin-hub's branch `outside`, `plugins/outside` becomes (the commit: outside-plugin's `main` after
+   the merge, `git rev-parse HEAD` there, the full 40 characters):
+
+```
+repository=https://github.com/jhmcubed/outside-plugin.git
+commit=<outside-plugin main's full hash>
+warning=This plugin submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it), your account hash and your IP address to a 3rd-party server when you press Update my page, and hourly. Your Outside page shows them publicly.
+```
+
+   Pushing that branch updates runelite/plugin-hub#20811 itself (no new pull request), and its build runs again.
+4. A comment on #20811 saying what changed (drafted in ghillie's claude/permissions-review.md, "The snapshot, and the
+   reply").
