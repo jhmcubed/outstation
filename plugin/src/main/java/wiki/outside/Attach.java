@@ -166,7 +166,8 @@ public final class Attach
 	/** The outstation's page on Outside. */
 	public String page()
 	{
-		return "https://ghillie.wiki/outside?player=" + enc(channel);
+		// (11/16/2026: outside.wiki/<name>, as Open my page opens it; it was ghillie.wiki/outside?player=)
+		return "https://outside.wiki/" + enc(channel);
 	}
 
 	private static String enc(String s)

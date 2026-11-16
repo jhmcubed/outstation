@@ -3226,7 +3226,7 @@ public class OutsidePlugin extends Plugin
 				{
 					toldConnected = true;
 					say(challenging ? "your claim on outside.wiki/" + attach.getChannel() + " is being proven: gain any experience, then log out"
-						: "your outstation (" + attach.getChannel() + ") is receiving what you wear and carry: " + attach.page());
+						: "your Outside page is live: " + attach.page().replaceFirst("^https://", ""));
 				}
 			}
 
