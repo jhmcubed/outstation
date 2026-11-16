@@ -126,6 +126,7 @@ class Upstream(http.server.ThreadingHTTPServer):
 
     def __init__(self):
         self.seen, self.broken, self.day = [], {}, "24h-latest.json"
+        self.hiscores = {}    # (proving a name, 11/15/2026: a player's name -> {skill: xp}, as Jagex's index_lite.json)
         self.lock = threading.Lock()
         super().__init__(("127.0.0.1", 0), UpstreamHandler)
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -153,6 +154,21 @@ class UpstreamHandler(http.server.BaseHTTPRequestHandler):
                      "/api/v2/osrs/24h?timestamp=%d" % (DAY_S - 86400): "24h-before.json",
                      "/api/v2/osrs/24h?timestamp=%d" % DAY_S: "24h-latest.json"}
         name = files.get(self.path)
+        if self.path.startswith("/m=hiscore_oldschool/index_lite.json?player="):
+            with up.lock:
+                xp = up.hiscores.get(urllib.parse.unquote(self.path.split("=", 2)[2]))
+            if xp is None:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps({"skills": [{"id": 0, "name": "Overall", "rank": 1, "level": 1, "xp": sum(xp.values())}]
+                              + [{"id": i + 1, "name": k, "rank": 1, "level": 1, "xp": v} for i, (k, v) in enumerate(xp.items())]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not name and self.path in LOOKUP_FILES:
             # (the lookups' sources, 11/10/2026: RuneProfile's "no such account" is its 400)
             name = LOOKUP_FILES[self.path]
@@ -194,7 +210,7 @@ def setUpModule():
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
              "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
              "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
-             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base,
+             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1",
              "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
             cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
@@ -204,7 +220,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base,
+                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base, "--witness-wait", "1", "--witness-look", "1",
                                  "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 start_new_session=sys.platform != "win32")
@@ -1488,6 +1504,22 @@ class ArrayEvents(Base):
         await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})
         await self.none_of_mine()
 
+    async def test_the_plugins_own_reports_show_while_its_connected_and_not_twice_while_live(self):
+        # (11/15/2026, the plugin first: the Outside plugin's own reports (from=plugin) for a player with no outstation;
+        # while the outstation transmits, Dink's come through it, so the plugin's are dropped)
+        g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, self.ch, self.key))
+        self.clients.append(g)
+        await self.pause(2)
+        plugin = lambda p: post("/dink/%s?key=%s&from=plugin" % (self.ch, self.key), json.dumps(p).encode(), "application/json")
+        self.assertEqual(await plugin({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 412}}), 204)
+        self.assertEqual(self.what(await self.mine(1)), [{"kind": "kill", "boss": "Vorkath", "kc": 412}])
+        tx = await self.tx()
+        await self.pause(2)
+        self.assertEqual(await plugin({"type": "PET", "content": "", "extra": {"petName": "Vorki"}}), 204)  # (dropped)
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})     # (Dink's)
+        got = self.what(await self.mine(2))
+        self.assertEqual(got, [{"kind": "kill", "boss": "Vorkath", "kc": 412}, {"kind": "level", "skill": "Magic", "level": 99}])
+
     async def test_a_watch_coded_outstations_reports_never_show(self):
         await self.tx("a-code")
         await self.pause(2)
@@ -1844,6 +1876,54 @@ class Game(Base):
         with self.assertRaises(asyncio.TimeoutError):
             await next_of(v, "game", timeout=0.5)
 
+    async def test_quests_diaries_combat_achievements_and_slayer_pass_cleaned_and_null_takes_them_off(self):
+        # (11/15/2026: the plugin's Progress.java; an unknown diary area, a tier past 1 and a slayer without its task's
+        # field are left out; null for each takes it off the page)
+        g = await self.game()
+        v = await self.watch()
+        await self.pause()
+        sent = {"quests": {"points": 201, "total": 216, "done": ["Cook's Assistant", "Dragon\nSlayer I"], "started": ["Desert Treasure II"], "todo": ["Sins of the Father"],
+                           "free": ["Cook's Assistant", "Dragon\nSlayer I"], "mini": [], "qp": {"Cook's Assistant": 1, "Dragon Slayer I": 2, "bad": -1}},
+                "diaries": {"Varrock": [1, 1, 0, 0, 30, 42], "Karamja": [1, 2, 0, 0, 1, 1], "Narnia": [1, 1, 1, 1, 9, 9]},
+                "combat": {"points": 1234, "tiers": [[33, 33], [41, 115], [30, 304], [12, 820], [2, 1465], [0, 2005]]},
+                "slayer": {"task": "Abyssal demons", "left": 87, "of": 180, "area": "Catacombs of Kourend", "points": 1450, "streak": 312}}
+        await g.send(json.dumps({"game": sent}))
+        got = await next_of(v, "game")
+        self.assertEqual(got["quests"]["done"], ["Cook's Assistant", "Dragon Slayer I"])
+        self.assertEqual((got["quests"]["free"], got["quests"]["mini"], got["quests"]["qp"]),
+                         (["Cook's Assistant", "Dragon Slayer I"], [], {"Cook's Assistant": 1, "Dragon Slayer I": 2}))
+        self.assertEqual(got["diaries"], {"Varrock": [1, 1, 0, 0, 30, 42]})
+        self.assertEqual(got["combat"], sent["combat"])
+        self.assertEqual(got["slayer"], sent["slayer"])
+        await g.send(json.dumps({"game": {"slayer": {"task": None, "left": 0, "of": 0, "area": None, "points": 1450, "streak": 313}}}))
+        self.assertIsNone((await next_of(v, "game"))["slayer"]["task"])
+        await g.send(json.dumps({"game": {"quests": None, "diaries": None, "combat": None, "slayer": None}}))
+        got = await next_of(v, "game")
+        self.assertEqual([got[k] for k in ("quests", "diaries", "combat", "slayer")], [None] * 4)
+        self.assertIsNone(self.read()[1]["game"]["quests"])
+
+    async def test_a_desk_saying_talk_lights_the_status_lines_talk_and_its_going_puts_it_out(self):
+        # (11/16/2026: the Outside plugin's chat in the game: a desk that says &talk=1 makes "talk" true for every
+        # viewer, dark or not, and only that one; an ordinary desk (the outstation's chat window) changes nothing)
+        v = await self.watch()
+        self.assertFalse((await next_of(v, "relay"))["talk"])
+        plain = await self.desk(name="window")
+        await self.pause()
+        talker = await self.connect("desk", "key=%s&name=%s&talk=1" % (self.key, self.ch))
+        while not (await next_of(v, "relay"))["talk"]:
+            pass
+        await v.send(json.dumps({"hello": {"name": "visitor", "device": "d" * 16}}))
+        await v.send(json.dumps({"say": "hello from the page"}))
+        got = await next_of(talker, "chat")
+        self.assertEqual(got["text"], "hello from the page")         # (heard by the plugin's desk while dark)
+        await talker.send(json.dumps({"say": "hi, from the game"}))
+        while (await next_of(v, "chat"))["text"] != "hi, from the game":
+            pass
+        talker.close()
+        while (await next_of(v, "relay"))["talk"]:
+            pass
+        plain.close()
+
     async def test_a_second_game_socket_replaces_the_first(self):
         old = await self.game()
         await self.pause()
@@ -1977,20 +2057,21 @@ class Following(Base):
         await self.say(g, {"where": where or self.LUMBRIDGE})
         return tx, g
 
-    async def test_a_square_shows_on_the_list_only_while_live(self):
+    async def test_a_square_shows_on_the_list_while_the_plugins_connected_or_live(self):
+        # (11/15/2026, the plugin first: the plugin connected is enough, with no outstation transmitting)
         g = await self.game()
         self.clients.append(g)
         await self.say(g, {"where": self.LUMBRIDGE})
-        self.assertIsNone(await self.where())                      # (held, but not on air: not shown)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)       # (the plugin alone)
         tx = await self.tx()
         await next_of(tx, "relay")
-        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)       # (on air too)
         tx.close()
         await self.pause(2)
-        self.assertIsNone(await self.where())
-        tx = await self.tx()                                       # (on air again within the time: shown again)
-        await next_of(tx, "relay")
-        self.assertEqual(await self.where(), self.LUMBRIDGE)
+        self.assertEqual(await self.where(), self.LUMBRIDGE)       # (off air, the plugin still there)
+        g.close()
+        await self.pause(2)
+        self.assertIsNone(await self.where())                      # (the plugin gone: dropped)
 
     async def test_it_goes_stale(self):
         await self.live_and_following()
@@ -2005,7 +2086,7 @@ class Following(Base):
         self.assertNotIn(self.ch, [c["channel"] for c in got])
         self.assertNotIn({"x": 1088, "y": 2496}, [c["where"] for c in got])
 
-    async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_only_once_live(self):
+    async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_at_once(self):
         if not WORKER:
             await self.tx()                    # (relay.py: the inviter's handed out once its first transmitter claims it)
             await self.pause(2)
@@ -2016,11 +2097,7 @@ class Following(Base):
         g = await self.game(key=got["key"], channel=a)              # (its key used: taken up)
         self.clients.append(g)
         await self.say(g, {"where": self.LUMBRIDGE})
-        self.assertIsNone(await self.where(a))                      # (listed now, but not live)
-        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, a, got["key"]))
-        self.clients.append(tx)
-        await next_of(tx, "relay")
-        self.assertEqual(await self.where(a), self.LUMBRIDGE)
+        self.assertEqual(await self.where(a), self.LUMBRIDGE)       # (listed now, with the plugin: shown)
 
     async def test_a_bad_square_is_ignored_and_the_rest_of_its_message_still_lands(self):
         tx = await self.tx()
@@ -2226,18 +2303,22 @@ class Activity(Base):
         await self.say(g, {"activity": activity or self.MINING})
         return tx, g
 
-    async def test_it_shows_only_while_live_without_following(self):
+    async def test_it_shows_while_the_plugins_connected_without_following(self):
+        # (11/15/2026, the plugin first: the plugin connected is enough, with no outstation transmitting)
         g = await self.game()
         self.clients.append(g)
         await self.say(g, {"activity": self.MINING})
-        self.assertIsNone(await self.activity())                   # (held, but not on air)
+        r = await self.row()
+        self.assertEqual((r["activity"], r["where"]), (self.MINING, None))   # (the plugin alone)
         tx = await self.tx()
         await next_of(tx, "relay")
-        r = await self.row()
-        self.assertEqual((r["activity"], r["where"]), (self.MINING, None))
+        self.assertEqual(await self.activity(), self.MINING)                  # (on air too)
         tx.close()
         await self.pause(2)
-        self.assertIsNone(await self.activity())
+        self.assertEqual(await self.activity(), self.MINING)                  # (off air, the plugin still there)
+        g.close()
+        await self.pause(2)
+        self.assertIsNone(await self.activity())                              # (the plugin gone: dropped)
 
     async def test_each_shape_it_takes(self):
         for a in ({"kind": "boss", "boss": "Vorkath"}, {"kind": "fighting"}, {"kind": "idle"},
@@ -2901,6 +2982,230 @@ async def nothing_game(c, wait=0.5):
         return None
 
 
+class Claims(Base):
+    """Claiming a name (11/15/2026; docs/protocol.md "Claiming a name"): the Outside plugin's own channel, for a player
+    from the Plugin Hub with no outstation and no invite. Only a name nobody has, at most three a day from one address,
+    and marked unproven (GET /proof) till someone vouches for it."""
+
+    def claim(self, body):
+        """A claim from this test's own place (x-test-from: the relays' test mode only), so the day's limit is its own."""
+        if not hasattr(self, "place"):
+            self.place = secrets.token_hex(6)
+        st, h, out = raw("POST", "/claim", json.dumps(body).encode(), {"Content-Type": "application/json", "x-test-from": self.place})
+        return st, json.loads(out) if out else None
+
+    async def given(self, name):
+        """A name handed out by the keeper (the Worker), or claimed by its first transmitter (relay.py)."""
+        if WORKER:
+            self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
+        else:
+            c = await Client().open("%s/transmit/%s?key=its-own-key-%s" % (RELAY, name, secrets.token_hex(3)))
+            self.clients.append(c)
+            await next_of(c, "relay")
+
+    async def test_a_claim_is_a_station_key_for_a_name_nobody_has_and_unproven(self):
+        name = "c" + secrets.token_hex(5)
+        status, got = self.claim({"player": name, "account": "-1234567890123"})
+        self.assertEqual(status, 200, got)
+        self.assertEqual((got["channel"], got["proof"]), (name, "unproven"))
+        enc = got["code"][len("outstation1:"):]
+        self.assertTrue(got["code"].startswith("outstation1:"))
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(enc + "=" * (-len(enc) % 4))), {"relay": RELAY, "channel": name, "key": got["key"]})
+        # (the page's mark: anyone may read it)
+        st, h, body = raw("GET", "/proof/" + name)
+        self.assertEqual((st, json.loads(body)), (200, {"proof": "unproven"}))
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+        # (its key works as any other: here, transmitting)
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, got["key"]))
+        self.clients.append(tx)
+        self.assertTrue((await next_of(tx, "relay"))["live"])
+        # (the same name again, while it's unproven: a challenger's key, its own; docs/protocol.md "Taking a name back")
+        st, again = self.claim({"player": name})
+        self.assertEqual((st, again["proof"]), (200, "challenging"))
+        self.assertNotEqual(again["key"], got["key"])
+        # (a name the keeper handed out, or an invite's: taken, and vouched for)
+        other = "c" + secrets.token_hex(5)
+        await self.given(other)
+        self.assertEqual(self.claim({"player": other})[0], 409)
+        self.assertEqual(json.loads(raw("GET", "/proof/" + other)[2]), {"proof": "vouched"})
+        # (nobody's: no proof to read)
+        self.assertEqual(raw("GET", "/proof/c" + secrets.token_hex(5))[0], 404)
+        # (only a name as a channel has it: lower case, letters and numbers, 12 at most)
+        for bad in ("Has Space", "UPPER", "", "x" * 13, 7):
+            self.assertEqual(self.claim({"player": bad})[0], 400, bad)
+        # (three a day from one place, a challenge counted as a claim: one more takes a name, the next is refused; a
+        # refused claim took nothing)
+        self.assertEqual(self.claim({"player": "c" + secrets.token_hex(5)})[0], 200)
+        late = "c" + secrets.token_hex(5)
+        self.assertEqual(self.claim({"player": late})[0], 429)
+        self.assertEqual(raw("GET", "/proof/" + late)[0], 404)
+
+
+class Witnessing(Base):
+    """(Proving's and TakingBack's helpers: a claimed page, its plugin, its proof and the hiscores' stand-in)"""
+
+    async def claimed(self):
+        """A page claimed from a place of its own (x-test-from), so the day's limit never touches it."""
+        name = "w" + secrets.token_hex(5)
+        st, h, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                         {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        self.assertEqual(st, 200, out)
+        return name, json.loads(out)["key"]
+
+    async def plugin(self, name, key):
+        g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, key))
+        self.clients.append(g)
+        return g
+
+    def proof(self, name):
+        return json.loads(raw("GET", "/proof/" + name)[2])["proof"]
+
+    def hiscores(self, name, xp):
+        with UPSTREAM.lock:
+            UPSTREAM.hiscores[name] = xp
+
+    async def until_proof(self, name, want, wait=8.0):
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            if self.proof(name) == want:
+                return want
+            await asyncio.sleep(0.3)
+        return self.proof(name)
+
+class Proving(Witnessing):
+    """Proving a name from the game itself (11/15/2026; docs/protocol.md "Proving a name"): a claimed page becomes
+    proven when experience the plugin reported, not yet on the hiscores as they logged out, is found there after. A copy
+    of what's already public proves nothing; nor does another account's name."""
+
+    async def test_experience_reported_before_the_hiscores_had_it_proves_the_page(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": name, "skills": {"Attack": [10, 10, 1000], "Ranged": [20, 20, 5000]}}}))
+        await asyncio.sleep(1.5)                       # (the session's start read)
+        await g.send(json.dumps({"game": {"skills": {"Attack": [10, 10, 1000], "Ranged": [21, 21, 5600]}}}))
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
+        await g.send(json.dumps({"game": {"off": True}}))
+        await asyncio.sleep(0.3)                       # (claimed at logout; asked of the hiscores a while after)
+        self.assertEqual(self.proof(name), "unproven")
+        why = json.loads(raw("GET", "/proof/%s?key=%s" % (name, key))[2]).get("why", "")
+        self.assertIn("1 skill gained that the hiscores didn't have yet", why)
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5600})   # (Jagex's update, after the logout)
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+
+    async def test_logging_out_before_the_look_claims_nothing_and_says_so(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Ranged": 5000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": name, "skills": {"Ranged": [20, 20, 5000]}}}))
+        await asyncio.sleep(1.8)
+        await g.send(json.dumps({"game": {"skills": {"Ranged": [21, 21, 5600]}}}))
+        await asyncio.sleep(0.2)                       # (out before the look: Jagex's update comes with the logout)
+        await g.send(json.dumps({"game": {"off": True}}))
+        self.hiscores(name, {"Ranged": 5600})
+        await asyncio.sleep(3.0)
+        self.assertEqual(self.proof(name), "unproven")
+        self.assertIn("wait a minute", json.loads(raw("GET", "/proof/%s?key=%s" % (name, key))[2]).get("why", ""))
+
+    async def test_a_copy_of_whats_already_public_proves_nothing(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": name, "skills": {"Attack": [10, 10, 1000], "Ranged": [20, 20, 5000]}}}))
+        await asyncio.sleep(1.5)
+        # (the real player plays and logs out; the copier waits for the hiscores, then sends what they say)
+        self.hiscores(name, {"Attack": 1000, "Ranged": 5600})
+        await g.send(json.dumps({"game": {"skills": {"Attack": [10, 10, 1000], "Ranged": [21, 21, 5600]}}}))
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
+        await g.send(json.dumps({"game": {"off": True}}))
+        await asyncio.sleep(4.0)
+        self.assertEqual(self.proof(name), "unproven")
+
+    async def test_another_accounts_name_proves_nothing(self):
+        name, key = await self.claimed()
+        alt = "x" + secrets.token_hex(5)
+        self.hiscores(alt, {"Ranged": 5000})
+        self.hiscores(name, {"Ranged": 9000})
+        g = await self.plugin(name, key)
+        await g.send(json.dumps({"game": {"name": alt, "skills": {"Ranged": [20, 20, 5000]}}}))
+        await asyncio.sleep(1.5)
+        await g.send(json.dumps({"game": {"skills": {"Ranged": [21, 21, 5600]}}}))
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
+        await g.send(json.dumps({"game": {"off": True}}))
+        await asyncio.sleep(0.5)
+        self.hiscores(alt, {"Ranged": 5600})
+        await asyncio.sleep(3.0)
+        self.assertEqual(self.proof(name), "unproven")
+
+
+class TakingBack(Witnessing):
+    """Taking a name back (11/15/2026; docs/protocol.md "Taking a name back"): a claim on a name held unproven gives a
+    challenger's key, whose plugin proves itself off the page; proven, its key becomes the page's and the holder's
+    stops working."""
+
+    async def test_a_proven_challenger_takes_the_name_and_the_holders_key_stops(self):
+        name, held = await self.claimed()                          # (the first to claim it: someone else)
+        h = await self.plugin(name, held)
+        await h.send(json.dumps({"game": {"name": name, "world": 301, "skills": {"Ranged": [99, 99, 13034431]}}}))
+        await asyncio.sleep(0.5)
+        # (the real player claims it too: a challenger's key)
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        got = json.loads(out)
+        self.assertEqual((st, got["channel"], got["proof"]), (200, name, "challenging"))
+        mine = got["key"]
+        self.assertEqual(json.loads(raw("GET", "/proof/%s?key=%s" % (name, mine))[2])["proof"], "challenging")
+        self.assertEqual(self.proof(name), "unproven")
+        # (its plugin proves itself; nothing it sends reaches the page)
+        self.hiscores(name, {"Ranged": 5000})
+        c = await self.plugin(name, mine)
+        await c.send(json.dumps({"game": {"name": name, "world": 420, "skills": {"Ranged": [80, 80, 5000]}}}))
+        await asyncio.sleep(1.5)
+        await c.send(json.dumps({"game": {"skills": {"Ranged": [81, 81, 5600]}}}))
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
+        page = http("GET", "/game/%s?code=" % name)[1]["game"]
+        self.assertEqual((page["world"], page["skills"]["Ranged"][2]), (301, 13034431))
+        await c.send(json.dumps({"game": {"off": True}}))
+        await asyncio.sleep(1.0)
+        self.assertEqual(self.proof(name), "unproven")
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        # (the challenger's plugin is told to come again; the holder's is shut out, its key no longer opens the page)
+        self.assertEqual(await c.recv_close(), ("close", 4012))
+        self.assertEqual(await h.recv_close(), ("close", 4003))
+        late = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, held))
+        self.clients.append(late)
+        self.assertEqual(await late.recv_close(), ("close", 4003))
+        # (the challenger's key opens the page now, as its holder's)
+        again = await self.plugin(name, mine)
+        await again.send(json.dumps({"game": {"name": name, "world": 420}}))
+        await asyncio.sleep(0.5)
+        self.assertEqual(http("GET", "/game/%s?code=" % name)[1]["game"]["world"], 420)
+        # (proven: no more challenges)
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        self.assertEqual(st, 409)
+
+    async def test_the_holder_proving_it_ends_the_challenges(self):
+        name, held = await self.claimed()
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        mine = json.loads(out)["key"]
+        c = await self.plugin(name, mine)
+        self.hiscores(name, {"Ranged": 5000})
+        h = await self.plugin(name, held)
+        await h.send(json.dumps({"game": {"name": name, "skills": {"Ranged": [80, 80, 5000]}}}))
+        await asyncio.sleep(1.5)
+        await h.send(json.dumps({"game": {"skills": {"Ranged": [81, 81, 5600]}}}))
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
+        await h.send(json.dumps({"game": {"off": True}}))
+        await asyncio.sleep(1.0)
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        self.assertEqual(await c.recv_close(), ("close", 4003))
+        self.assertEqual(json.loads(raw("GET", "/proof/%s?key=%s" % (name, mine))[2])["proof"], "proven")
+
+
 class Invites(Base):
     """An outstation's invites (11/07/2026): it hands out channels of its own, three to begin with and one more every 10
     hours on air (the earning is relay-py/test_relay.py's: ten hours on air can't be waited for here). An invite's code
@@ -3464,6 +3769,43 @@ class YourYear(Base):
         self.assertEqual(self.year("DELETE", token=write)[0], 204)
         self.assertEqual(self.year("GET")[0], 404)
         self.assertEqual(self.year("PUT", {"v": 1})[0], 403)
+
+    async def test_the_brief_is_what_a_page_shows(self):
+        # (11/15/2026, docs/record.md, "The brief": GET /year/<channel>?brief=1, the light summary an Outside page reads)
+        await self.claim()
+        now = int(time.time() * 1000)
+        y = {"v": 1, "tz": "Europe/London", "range": {"from": now - 86400000, "to": now},
+             "totals": {"minutes": 600, "kills": 12},
+             "heat": {"cell": 8, "cells": [[3260, 3268, 10], [3268, 3268, 5, "skilling:Mining"], [3140, 3268, 40],
+                                           [2368, 4416, 7]]},
+             "activities": [{"activity": {"kind": "idle"}, "minutes": 5}, {"activity": {"kind": "fighting"}, "minutes": 50},
+                            {"activity": {"kind": "skilling", "skill": "Mining"}, "minutes": 20},
+                            {"activity": {"kind": "boss", "boss": "Vorkath"}, "minutes": 30},
+                            {"activity": {"kind": "boss", "boss": "Zulrah"}, "minutes": 40},
+                            {"activity": {"kind": "boss", "boss": "Giant Mole"}, "minutes": 1}],
+             "moments": [{"event": {"kind": "level", "skill": "Mining", "level": n}} for n in range(60, 68)],
+             "log": [{"name": "Pet rock"}, {}]}
+        self.assertEqual(self.year("PUT", y, key=self.key)[0], 200)
+        st, h, body = raw("GET", "/year/%s?brief=1" % self.ch)
+        self.assertEqual(st, 200)
+        self.assertEqual(h.get("Access-Control-Allow-Origin"), "*")
+        got = json.loads(body)
+        self.assertTrue(got["brief"])
+        b = got["year"]
+        self.assertEqual(list(b), ["v", "tz", "range", "totals", "parts", "activities", "moments", "log", "heat"])
+        self.assertEqual(b["parts"], ["range", "totals", "heat", "activities", "moments", "log"])
+        self.assertEqual([a["minutes"] for a in b["activities"]], [50, 40, 30, 20, 5])
+        self.assertEqual(len(b["moments"]), 6)
+        self.assertEqual(b["log"], 2)
+        # (8-tile cells summed into their 128-tile squares, most first; Zanaris its one place)
+        self.assertEqual(b["heat"], [[3136, 3264, 40], [3264, 3264, 15], [2368, 4416, 7]])
+        # (both relays answer the same bytes)
+        self.assertIn(b'"heat": [[3136, 3264, 40], [3264, 3264, 15], [2368, 4416, 7]]', body)
+        # (a new post: a new brief; gone with the year)
+        self.assertEqual(self.year("PUT", {"v": 1, "totals": {"days": 3}}, key=self.key)[0], 200)
+        self.assertEqual(json.loads(raw("GET", "/year/%s?brief=1" % self.ch)[2])["year"], {"v": 1, "totals": {"days": 3}, "parts": ["totals"]})
+        self.assertEqual(self.year("DELETE", key=self.key)[0], 204)
+        self.assertEqual(raw("GET", "/year/%s?brief=1" % self.ch)[0], 404)
 
     async def test_days_acts_and_the_time_zone(self):
         # (11/10/2026: the calendar strip's days, an activity on heat cells and paths, the poster's time zone; all

@@ -106,4 +106,15 @@ public class KitTest
 		assertEquals("NORMAL", OutsidePlugin.accountType(0));
 		assertEquals("HARDCORE_IRONMAN", OutsidePlugin.accountType(3));
 	}
+
+	@Test
+	public void theWireKeepsNulls()
+	{
+		// (11/16/2026: a goblin task, no area: RuneLite's Gson dropped "area": null, and the relay refused the field)
+		com.google.gson.JsonObject g = new com.google.gson.JsonObject();
+		g.add("slayer", Progress.slayer("Goblins", 30, 30, null, 0, 0));
+		g.add("where", com.google.gson.JsonNull.INSTANCE);
+		String out = Kit.wire(new com.google.gson.Gson()).toJson(g);
+		org.junit.Assert.assertEquals("{\"slayer\":{\"task\":\"Goblins\",\"left\":30,\"of\":30,\"area\":null,\"points\":0,\"streak\":0},\"where\":null}", out);
+	}
 }

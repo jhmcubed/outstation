@@ -198,6 +198,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from forward import DEFAULT as DEFAULT_FORWARD, Forward  # noqa: E402
 import almanac as almanac_sources  # noqa: E402
 import lookup as lookups  # noqa: E402
+import witness  # noqa: E402
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE = 512 * 1024          # a frame is ~10-30 KB; anything bigger is refused
@@ -213,6 +214,10 @@ DMS_KEPT, DMS_DAYS, DMS_A_MINUTE = 20, 7, 20
 # easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
 # begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (the Worker's, the same)
 INVITES_START, INVITE_EVERY_S, INVITES_AN_HOUR = 3, 36000, 5
+# a channel claimed by the Outside plugin itself (11/15/2026, docs/protocol.md "Claiming a name"): at most this many a
+# day from one address, and this many a day in all (the Worker's channel.ts, the same)
+CLAIMS_AN_ADDRESS, CLAIMS_A_DAY = 3, 200
+CHALLENGERS, CHALLENGE_DAYS = 5, 7      # taking a name back: challengers at once on one name, how long one's kept
 PLAYER = re.compile(r"[a-z0-9]{1,12}")     # a channel invited: a player's name as the page has it (fullmatch)
 # the game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's socket. A message at most GAME_MESSAGE long, and
 # GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as JSON (a message that would take it past is
@@ -655,6 +660,18 @@ def game_slots(v, most):
 CHARGES_MOST = 64   # (game.ts's)
 
 
+# (11/15/2026) the achievement diaries' areas in the plugin's order, and a quest list's most names: game.ts's
+DIARY_AREAS = ["Ardougne", "Desert", "Falador", "Fremennik", "Kandarin", "Karamja", "Kourend & Kebos",
+               "Lumbridge & Draynor", "Morytania", "Varrock", "Western Provinces", "Wilderness"]
+NAMES_MOST = 400
+
+
+def game_names(v):
+    if isinstance(v, list) and len(v) <= NAMES_MOST and all(isinstance(x, str) for x in v):
+        return [one_line(x, 80) for x in v]
+    return None
+
+
 def game_fields(g):
     """A {"game"} message's fields as they're kept: each known field checked and cleaned (its words one line, its numbers
     whole), one that isn't its shape left out, and unknown ones left out. Always in this order, whatever order they
@@ -708,6 +725,55 @@ def game_fields(g):
             if GAME_ID.fullmatch(k) and int(k) <= GAME_INT and n is not None:
                 charges[k] = n
         out["charges"] = charges
+    # (11/15/2026: quests, diaries, combat achievements, the slayer task; the plugin's Progress.java: game.ts's, the same)
+    if "quests" in g and g["quests"] is None:
+        out["quests"] = None
+    elif isinstance(g.get("quests"), dict):
+        q = g["quests"]
+        points, total = game_whole(q.get("points")), game_whole(q.get("total"))
+        done, started, todo = game_names(q.get("done")), game_names(q.get("started")), game_names(q.get("todo"))
+        if points is not None and total is not None and done is not None and started is not None and todo is not None:
+            quests = {"points": points, "total": total, "done": done, "started": started, "todo": todo}
+            # (11/16/2026: grouped as the game's list is: free, mini, each quest's points; game.ts's)
+            free, mini = game_names(q.get("free")), game_names(q.get("mini"))
+            if free is not None:
+                quests["free"] = free
+            if mini is not None:
+                quests["mini"] = mini
+            if isinstance(q.get("qp"), dict) and len(q["qp"]) <= NAMES_MOST:
+                qp = {}
+                for k, v in q["qp"].items():
+                    n = game_whole(v, 1000)
+                    if n is not None:
+                        qp[one_line(k, 80)] = n
+                quests["qp"] = qp
+            out["quests"] = quests
+    if "diaries" in g and g["diaries"] is None:
+        out["diaries"] = None
+    elif isinstance(g.get("diaries"), dict):
+        d = {}
+        for a in DIARY_AREAS:
+            v = g["diaries"].get(a)
+            if isinstance(v, list) and len(v) == 6 and all(game_whole(x, 1 if i < 4 else GAME_INT) is not None for i, x in enumerate(v)):
+                d[a] = [game_whole(x) for x in v]
+        if d:
+            out["diaries"] = d
+    if "combat" in g and g["combat"] is None:
+        out["combat"] = None
+    elif isinstance(g.get("combat"), dict):
+        c = g["combat"]
+        points, t = game_whole(c.get("points")), c.get("tiers")
+        if points is not None and isinstance(t, list) and len(t) == 6 and all(game_pair(x) is not _BAD for x in t):
+            out["combat"] = {"points": points, "tiers": [game_pair(x) for x in t]}
+    if "slayer" in g and g["slayer"] is None:
+        out["slayer"] = None
+    elif isinstance(g.get("slayer"), dict):
+        s = g["slayer"]
+        nums = [game_whole(s.get(k)) for k in ("left", "of", "points", "streak")]
+        task = None if s.get("task") is None and "task" in s else one_line(s["task"], 80) if isinstance(s.get("task"), str) else False
+        area = None if s.get("area") is None and "area" in s else one_line(s["area"], 80) if isinstance(s.get("area"), str) else False
+        if all(n is not None for n in nums) and task is not False and area is not False:
+            out["slayer"] = {"task": task, "left": nums[0], "of": nums[1], "area": area, "points": nums[2], "streak": nums[3]}
     # (11/15/2026, the live view: the animation now, its id or -1, with the gear's mark; null, none: game.ts's)
     if "anim" in g and g["anim"] is None:
         out["anim"] = None
@@ -1416,6 +1482,19 @@ class Channel:
         # it is, GET /channels leaves it out and only counts it under its inviter ("pending"): the inviter typed the
         # name, and the friend hasn't agreed to anything. The first right key, from anything, takes it up (key_used).
         self.pending = False
+        # claimed by the Outside plugin with nobody vouching for it (11/15/2026, docs/protocol.md "Claiming a name"):
+        # GET /proof says "unproven"; a hash of the account hash the plugin sent, for the proof to come
+        self.unproven = False
+        self.account = None
+        # proven from the game itself (11/15/2026; witness.py): when, and the session's start and the claims made at
+        # logout, with when they're next asked and how often they have been
+        self.proven = None
+        self.wit = {}
+        self.cwit = {}               # each challenger's proof, by its key
+        # taking a name back (11/15/2026): those challenging an unproven holder, each {"key", "at", "account"}, and
+        # their plugins' proving sockets by key
+        self.challengers = []
+        self.provers = {}
         # the game (11/07/2026): the Outside plugin's socket, and the state it's sent (kept while the relay runs, through
         # streams and the plugin's going: a page shows the last of it while the player's away)
         self.gamer = None
@@ -1457,16 +1536,151 @@ class Channel:
         if not isinstance(m, dict) or not isinstance(m.get("game"), dict):
             return
         fields = game_fields(m["game"])
+        self.witness_game(fields)
         self.take_where(game_where(m["game"]), fields)
         self.take_activity(game_activity(m["game"]), fields)
         self.take_here(game_here(m["game"]), fields)
         self.take_star(game_star(m["game"]), fields)
         got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
+        if fields.get("off") is True:
+            self.witness_off()              # (after the message is taken: its last skills with it)
         if got is None:
             return
         line = json.dumps({"game": dict(got, at=self.game.at)})
         for v in list(self.viewers) + list(self.lookers) + list(self.desks):
             v.send_nowait(line)
+
+    # proving the name from the game itself (11/15/2026; witness.py, docs/protocol.md "Proving a name"; the Worker's),
+    # for each party: "" the page's holder, or a challenger by its key (docs/protocol.md "Taking a name back"), whose
+    # plugin's messages feed only its own proof
+
+    def wit_of(self, party):
+        return self.cwit.setdefault(party, {}) if party else self.wit
+
+    def wit_said(self, party):
+        if party:
+            return self.cwit.get(party, {}).get("said", {})
+        return {"name": self.game.kept.get("name"), "skills": self.game.kept.get("skills")}
+
+    def wit_open(self, party):
+        if not self.unproven or self.proven:
+            return False
+        return not party or any(c["key"] == party for c in self.challengers)
+
+    def witness_game(self, fields):
+        self.wit_start("", fields)
+
+    def witness_off(self):
+        self.wit_off("")
+
+    def wit_start(self, party, fields):
+        """A party's game message: the name it's logged in as (only the page's own counts) and each skill's experience
+        as it changes; a look is due witness.LOOK after the last change (the Worker's witStart, the same)."""
+        if not self.wit_open(party) or fields.get("off") is True:
+            return
+        w = self.wit_of(party)
+        n = fields.get("name") if isinstance(fields.get("name"), str) else self.wit_said(party).get("name")
+        if not isinstance(n, str) or witness.channel_form(n) != self.name.lower():
+            return
+        if w.get("name") != n:
+            w["name"], w["seen"] = n, {}
+        if "skills" not in fields:
+            return
+        seen = w.setdefault("seen", {})
+        if witness.note_said(seen, witness.reported(fields["skills"]), time.time()):
+            w["look_n"] = w.get("look_n", 0) + 1
+            asyncio.ensure_future(self.wit_look(party, w["look_n"]))
+
+    async def wit_look(self, party, n):
+        """A look, while they're logged in (the last one asked for only): what the hiscores don't show yet is hidden."""
+        await asyncio.sleep(witness.look_s())
+        w = self.wit_of(party)
+        if w.get("look_n") != n or not w.get("name") or not w.get("seen") or not self.wit_open(party):
+            return
+        at = time.time()
+        h = await witness.read_xp(w["name"], True)
+        if h and w.get("seen"):
+            witness.note_look(w["seen"], h, at)
+            hidden = sum(1 for v in w["seen"].values() if v.get("hidden"))
+            w["last"] = ("%d skill%s gained that the hiscores don't have yet: log out, and it's checked" % (hidden, "s" if hidden > 1 else "")
+                         if hidden else "the hiscores already show this experience")
+        else:
+            w["last"] = "the hiscores couldn't be read just now"
+
+    def wit_off(self, party):
+        """A party logged out (or its plugin's gone): its hidden figures are claimed, and asked of the hiscores after a
+        while."""
+        w = self.wit_of(party)
+        if not self.wit_open(party) or not w.get("name") or not w.get("seen"):
+            return
+        name, claims = w["name"], witness.claims_from(w["seen"])
+        n = len(claims)
+        w["last"] = ("logged out: %d skill%s gained that the hiscores didn't have yet; asking them in a minute" % (n, "s" if n > 1 else "") if n
+                     else "logged out before the experience gained was looked at: next time, wait a minute after your last experience before logging out")
+        w["seen"], w["look_n"] = {}, w.get("look_n", 0) + 1
+        w.pop("name", None)
+        if not claims:
+            return
+
+        async def check():
+            for i in range(len(witness.WAITS)):
+                await asyncio.sleep(witness.wait_s(i))
+                if not self.wit_open(party):
+                    return
+                h1 = await witness.read_xp(name, True)
+                verdict = witness.judge(claims, h1) if h1 else "wait"
+                if verdict == "proven":
+                    self.wit_proven(party)
+                    return
+                if verdict == "no":
+                    self.wit_of(party)["last"] = "the hiscores moved past what was claimed (played elsewhere since?): play, then log out to try again"
+                    return
+                self.wit_of(party)["last"] = "the hiscores haven't caught up yet; asking again later"
+            self.wit_of(party)["last"] = "the hiscores never showed what was claimed: play, then log out to try again"
+        asyncio.ensure_future(check())
+
+    def wit_proven(self, party):
+        """A party proven. The holder: the page is theirs, every challenge dropped. A challenger: the name taken back
+        (its key the page's, the holder's stopped, what the holder's plugin sent gone), its plugin told to come again
+        (4012). The Worker's witProven, the same."""
+        ch = next((c for c in self.challengers if c["key"] == party), None) if party else None
+        if party and ch is None:
+            return
+        self.proven = {"at": int(time.time() * 1000), "account": ch["account"] if ch else self.account}
+        self.unproven = False
+        self.challengers = []
+        self.wit, self.cwit = {}, {}
+        provers, self.provers = self.provers, {}
+        if ch:
+            self.key = ch["key"]
+            self.account = ch["account"]
+            for s in [self.sender, self.gamer, self.sounder] + list(self.desks):
+                if s is not None:
+                    asyncio.ensure_future(s.close(4003, "this name was proven by another: its key no longer opens it"))
+            self.game = Game()
+        for k, s in provers.items():
+            asyncio.ensure_future(s.close(4012, "proven: this page is yours now; connect again") if ch and k == party
+                                  else s.close(4003, "this name was proven by another"))
+
+    def take_prove(self, party, msg):
+        """A challenger's plugin's message, for its own proof only: never on the page or to anyone watching."""
+        try:
+            m = json.loads(msg, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return
+        if not isinstance(m, dict) or not isinstance(m.get("game"), dict) or not self.wit_open(party):
+            return
+        fields = game_fields(m["game"])
+        self.wit_start(party, fields)
+        w = self.wit_of(party)
+        said = dict(w.get("said") or {})
+        if isinstance(fields.get("name"), str):
+            said["name"] = fields["name"]
+        if "skills" in fields:
+            said["skills"] = fields["skills"]
+        w["said"] = said
+        if fields.get("off") is True:
+            self.wit_off(party)
 
     def take_where(self, w, fields):
         """Following (game_where): a message's "where" taken (one every WHERE_EVERY_S at most; more are ignored), or the
@@ -1604,6 +1818,9 @@ class Channel:
               "static": self.sender is not None and self.state == "static",
               "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on,     # (set: someone has claimed it; Outside says "no portal here yet" when not)
               "title": self.title, "game": self.gamer is not None,     # (game: the Outside plugin's connected, 11/07/2026)
+              # (talk: a desk that said &talk=1 is open, the Outside plugin's chat in the game: the page's chat shows
+              # while the channel's dark, 11/16/2026)
+              "talk": any(getattr(d, "talk", False) for d in self.desks),
               # (lookers asking for frames, 11/10/2026: with viewers, who's watching, for the transmitter: the Worker's)
               "lookers": sum(1 for v in self.lookers if getattr(v, "look_frames", False))}
         if place:
@@ -1697,9 +1914,10 @@ class Channel:
             if summed:
                 # (after the report itself has gone to viewers, below)
                 asyncio.get_event_loop().call_soon(self.tell_summary)
-            if self.array is not None and self.sender is not None and self.listed():
-                # the Array's events (11/08/2026): only while it's live and on the open outstations' list, so a dark
-                # or coded outstation's reports never show (with --delay, as the report reaches viewers)
+            if self.array is not None and (self.sender is not None or self.gamer is not None) and self.listed():
+                # the Array's events (11/08/2026): only while it's live, or its plugin's connected (11/15/2026), and on
+                # the open outstations' list, so a coded outstation's reports, and a dark one's with no plugin, never
+                # show (with --delay, as the report reaches viewers)
                 try:
                     self.array.add(self.name, array_events(report))
                 except (TypeError, ValueError, AttributeError, KeyError):
@@ -1972,6 +2190,39 @@ def year_step(s, part, now):
         raise YearNo("%s: each step [x, y] or [x, y, t]" % part)
     xy = year_tile(s[0], s[1], part)
     return xy + [year_time(s[2], part, now)] if len(s) == 3 else xy
+
+
+def year_brief(year):
+    """A posted year's brief (11/15/2026, docs/record.md, "The brief"): what an Outside page shows of it without the whole
+    summary: the range, totals and clock as posted, the five activities with the most minutes, the first six moments,
+    the heat summed into 128-tile squares (Zanaris its one place), how many log slots, which parts were posted.
+    GET /year/<channel>?brief=1. record.ts's yearBrief, the same."""
+    out = {"v": 1}
+    for k in ("tz", "range", "totals"):
+        if k in year:
+            out[k] = year[k]
+    out["parts"] = [k for k in YEAR_PARTS if k not in ("v", "tz") and k in year]
+    acts = sorted(year.get("activities") or [], key=lambda a: -a["minutes"])
+    if acts:
+        out["activities"] = acts[:5]
+    if year.get("moments"):
+        out["moments"] = year["moments"][:6]
+    if isinstance(year.get("log"), list):
+        out["log"] = len(year["log"])
+    h = year.get("heat")
+    cells = h if isinstance(h, list) else h.get("cells", []) if isinstance(h, dict) else []
+    total = {}
+    for c in cells:
+        z = c[0] == WHERE_ZANARIS["x"] and c[1] == WHERE_ZANARIS["y"]
+        x = c[0] if z else c[0] // 128 * 128 + 64
+        y = c[1] if z else c[1] // 128 * 128 + 64
+        if (x, y) in total:
+            total[(x, y)][2] += c[2]
+        else:
+            total[(x, y)] = [x, y, c[2]]
+    if total:
+        out["heat"] = sorted(total.values(), key=lambda c: (-c[2], c[0], c[1]))
+    return out
 
 
 def year_summary(body, now=None):
@@ -2297,9 +2548,13 @@ class Records:
             rows.append({"id": i, "at": m["at"], "size": m["size"], "data": base64.b64encode(raw).decode()})
         return {"chunks": rows, "bytes": total, "next": nxt}
 
-    def year_get(self, name):
+    def year_get(self, name, brief=False):
         y = self.read_json(os.path.join(self.folder(name), "year.json"), None)
-        return None if y is None else '{"year": %s, "at": %d}' % (y["text"], y["at"])
+        if y is None:
+            return None
+        if brief:
+            return '{"year": %s, "at": %d, "brief": true}' % (json.dumps(year_brief(json.loads(y["text"]))), y["at"])
+        return '{"year": %s, "at": %d}' % (y["text"], y["at"])
 
     def year_put(self, name, text, now):
         self.write_json(os.path.join(self.folder(name), "year.json"), {"text": text, "at": now})
@@ -2421,10 +2676,28 @@ class Relay:
             await self.clips(reader, writer, method, headers, path, q)
             return
         if method == "POST" and len(path) == 2 and path[0] == "dink":
-            await self.dink(reader, writer, headers, path[1], q.get("key", ""))
+            await self.dink(reader, writer, headers, path[1], q.get("key", ""), q.get("from") == "plugin")
             return
         if len(path) == 2 and path[0] == "invites" and not key:
             await self.invites(reader, writer, method, headers, path[1], q)
+            return
+        if len(path) == 1 and path[0] == "claim" and not key:
+            peer = writer.get_extra_info("peername")
+            # (tests only, with --test-forget: x-test-from stands in for the address, as on the Worker)
+            frm = headers.get("x-test-from") if self.test_forget and headers.get("x-test-from") else (peer[0] if peer else "")
+            await self.claim_name(reader, writer, method, headers, frm)
+            return
+        if len(path) == 2 and path[0] == "proof" and not key and method in ("GET", "HEAD"):
+            ch = self.channels.get(path[1])
+            if ch is None or ch.key is None:
+                await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
+            elif q.get("key") and ch.unproven and any(c["key"] == q.get("key") for c in ch.challengers):
+                why = ch.cwit.get(q.get("key"), {}).get("last")
+                await self.plain(writer, "200 OK", dict({"proof": "challenging"}, **({"why": why} if why else {})))
+            elif q.get("key") and ch.unproven and q.get("key") == ch.key and ch.wit.get("last"):
+                await self.plain(writer, "200 OK", {"proof": "unproven", "why": ch.wit["last"]})
+            else:
+                await self.plain(writer, "200 OK", {"proof": "proven" if ch.proven else "unproven" if ch.unproven else "vouched"})
             return
         if settling:
             await self.settling_gone(reader, writer, headers)
@@ -2499,7 +2772,7 @@ class Relay:
             if role == "transmit":
                 await self.transmit(sock, name, q.get("key", ""), q.get("code", ""))
             elif role == "desk":
-                await self.desk(sock, name, q.get("key", ""), q.get("name", ""))
+                await self.desk(sock, name, q.get("key", ""), q.get("name", ""), q.get("talk") == "1")
             elif role == "sound":
                 await self.sound(sock, name, q.get("key", ""))
             elif role == "game":
@@ -2726,15 +2999,18 @@ class Relay:
         ch.key_used()
         return ch
 
-    async def desk(self, sock, name, key, host_name):
+    async def desk(self, sock, name, key, host_name, talk=False):
         """Jace's chat window: the chat, the poll and the pings in; his lines, polls, hides and blocks out."""
         ch = await self.claim(sock, name, key)
         if ch is None:
             return
         host_name = one_line(host_name, NAME_MAX) or name
         ch.host_names.add(host_name.lower())
+        sock.talk = talk
         ch.desks.add(sock)
         self.log("desk      %s  (%d open)" % (name, len(ch.desks)))
+        if talk:
+            ch.tell_viewers()
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
         if ch.game.kept:
@@ -2758,6 +3034,8 @@ class Relay:
                     self.from_desk(ch, host_name, msg, sock)
         finally:
             ch.desks.discard(sock)
+            if talk:
+                ch.tell_viewers()
 
     def send_dm(self, ch, host_name, dm, sock):
         """A message from this portal to another channel's: to its desks, or held till it opens; the sender told
@@ -2922,7 +3200,14 @@ class Relay:
         """The game (11/07/2026; docs/protocol.md "The game"): the Outside plugin's {"game"} messages into the channel's
         kept state (Channel.take_game), GAME_A_SECOND a second at most and GAME_MESSAGE long at most (the rest
         dropped, with no answer). One at a time: a newer one replaces the older. Its v= is the plugin's own version,
-        which --min-client never looks at. Held back by --delay as everything is."""
+        which --min-client never looks at. Held back by --delay as everything is.
+        A challenger's key (11/15/2026, "Taking a name back") opens a proving socket instead: its messages feed only
+        its own proof."""
+        held = self.channels.get(name)
+        if held is not None and held.unproven and any(c["key"] == key and time.time() - c["at"] < CHALLENGE_DAYS * 86400
+                                                       for c in held.challengers):
+            await self.prove(sock, held, key)
+            return
         ch = await self.claim(sock, name, key)
         if ch is None:
             return
@@ -2953,11 +3238,38 @@ class Relay:
         finally:
             if ch.gamer is sock:
                 ch.gamer = None
+                ch.witness_off()             # (the plugin gone while they were logged in: a logout, for the proof)
                 ch.drop_where()              # (following: only while the plugin's connected)
                 ch.drop_activity()           # (what they're doing, the same)
                 ch.drop_here()               # (the exact path, the same)
                 self.log("no game   %s" % name)
                 ch.tell_viewers()
+
+    async def prove(self, sock, ch, key):
+        """A challenger's plugin: its {"game"} messages for its own proof only (Channel.take_prove), as the game's are
+        limited; one at a time for a challenger."""
+        old = ch.provers.get(key)
+        if old is not None:
+            await old.close(4000, "replaced by a newer game")
+        ch.provers[key] = sock
+        self.log("prove     %s" % ch.name)
+        read = deque()
+        try:
+            while ch.provers.get(key) is sock:
+                msg = await sock.recv()
+                if not isinstance(msg, str):
+                    continue
+                now = time.monotonic()
+                while read and now - read[0] >= 1.0:
+                    read.popleft()
+                if len(read) >= GAME_A_SECOND or len(msg) > GAME_MESSAGE:
+                    continue
+                read.append(now)
+                ch.take_prove(key, msg)
+        finally:
+            if ch.provers.get(key) is sock:
+                del ch.provers[key]
+                ch.wit_off(key)
 
     async def channel_list(self, writer):
         """The open portals (11/05/2026, Jace: "a page ... that shows all active connected public portals"): every channel
@@ -2967,14 +3279,16 @@ class Relay:
         counted under each inviter, [{"by", "n"}] sorted by "by" (the Worker's openPortals, the same). Never the
         invited names, and only under an inviter that's on the list itself, so nothing's said of a hidden outstation.
         "where" (11/08/2026, following; game_where): the square the plugin last said (and its world, with "and my world"
-        on), only while the channel's live and listed, and only if it came within where_fresh_s; else null.
+        on), only while the channel's live or its plugin's connected (11/15/2026) and listed, and only if it came within
+        where_fresh_s; else null.
         "activity" (11/08/2026; game_activity): what they were doing, the same way. Nowhere else."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
                  "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
-                 "where": dict(ch.where) if ch.where is not None and ch.sender is not None
+                 # (while it transmits, or its plugin's connected: 11/15/2026, the plugin first)
+                 "where": dict(ch.where) if ch.where is not None and (ch.sender is not None or ch.gamer is not None)
                           and time.monotonic() - ch.where_at <= self.where_fresh_s else None,
-                 "activity": dict(ch.activity) if ch.activity is not None and ch.sender is not None
+                 "activity": dict(ch.activity) if ch.activity is not None and (ch.sender is not None or ch.gamer is not None)
                              and time.monotonic() - ch.activity_at <= self.where_fresh_s else None}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
@@ -3375,6 +3689,90 @@ class Relay:
         return await answer("200 OK", {"channel": player, "key": new_key, "code": code,
                                        "left": invite_numbers(ch.seconds_in_all(), ch.invited)["left"]})
 
+    async def plain(self, writer, status, body):
+        """A JSON answer anyone's page may read (GET /proof's)."""
+        data = json.dumps(body).encode()
+        writer.write(("HTTP/1.1 %s\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n"
+                      "Cache-Control: public, max-age=60\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+                      % (status, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def claim_name(self, reader, writer, method, headers, peer):
+        """Claiming a name (11/15/2026; docs/protocol.md "Claiming a name"; the Worker's /claim, the same): the Outside
+        plugin's own channel, for a player with no outstation and no invite.
+            POST /claim  {"player", "account"?}  {"channel", "key", "code", "proof": "unproven"}
+        Only a name nobody has; at most CLAIMS_AN_ADDRESS a day from one address and CLAIMS_A_DAY in all (only the
+        claims that take a name count). Marked unproven till someone vouches (a keeper's or an invite's key)."""
+        async def answer(status, body=None):
+            data = json.dumps(body).encode() if body is not None else b""
+            kind = "Content-Type: application/json\r\nCache-Control: no-cache\r\n" if body is not None else ""
+            writer.write(("HTTP/1.1 %s\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n"
+                          % (status, kind, len(data))).encode() + data)
+            try:
+                await writer.drain()
+            finally:
+                writer.close()
+        if method != "POST":
+            return await answer("405 Method Not Allowed")
+        try:
+            raw = await read_body(reader, headers, 1024)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request")
+        if raw is None:
+            return await answer("413 Payload Too Large", {"error": "a claim is a name"})
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        player = body.get("player")
+        if not isinstance(player, str) or not PLAYER.fullmatch(player):
+            return await answer("400 Bad Request", {"error": "a player's name: 1 to 12 letters or numbers, lower case"})
+        account = body.get("account") if isinstance(body.get("account"), str) and re.fullmatch(r"-?[0-9]{1,20}", body.get("account")) else ""
+        now = time.time()
+        self.claims = [c for c in getattr(self, "claims", []) if now - c[1] < 86400]
+        if len(self.claims) >= CLAIMS_A_DAY:
+            return await answer("429 Too Many Requests", {"error": "enough names have been claimed today: try again tomorrow"})
+        frm = hashlib.sha256(("claim:" + (peer or "")).encode()).hexdigest()[:24]
+        if sum(1 for c in self.claims if c[0] == frm) >= CLAIMS_AN_ADDRESS:
+            return await answer("429 Too Many Requests", {"error": "%d names a day at most from one place: try again tomorrow" % CLAIMS_AN_ADDRESS})
+        other = self.channels.get(player)
+        new_key = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")   # (the Worker's mint: 18 random bytes)
+        account_hash = hashlib.sha256(("account:" + account).encode()).hexdigest() if account else None
+        if other is not None and other.key is not None:
+            if not other.unproven or other.proven:
+                return await answer("409 Conflict", {"error": "that name has an outstation already"})
+            # (taking a name back, 11/15/2026: a name held unproven gives a challenger's key, counted as a claim)
+            t = time.time()
+            other.challengers = [c for c in other.challengers if t - c["at"] < CHALLENGE_DAYS * 86400]
+            for gone in other.challengers[:max(0, len(other.challengers) - (CHALLENGERS - 1))]:
+                other.cwit.pop(gone["key"], None)
+            other.challengers = other.challengers[max(0, len(other.challengers) - (CHALLENGERS - 1)):]
+            other.challengers.append({"key": new_key, "at": t, "account": account_hash})
+            self.claims.append((frm, now))
+            self.log("challenge %s" % player)
+            code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
+            return await answer("200 OK", {"channel": player, "key": new_key, "code": code, "proof": "challenging"})
+        if other is None:
+            other = self.channels[player] = Channel(player, new_key, self.array, self.stars)
+        else:
+            other.key = new_key
+            other.tell_viewers()
+        other.by = None
+        other.pending = True          # (not taken up till its key's used, as an invite's)
+        other.unproven = True
+        other.proven = None
+        other.wit, other.cwit, other.challengers = {}, {}, []
+        other.account = account_hash
+        self.claims.append((frm, now))
+        self.log("claim     %s" % player)
+        code = attach_code("ws://" + (headers.get("host") or "127.0.0.1"), player, new_key)
+        return await answer("200 OK", {"channel": player, "key": new_key, "code": code, "proof": "unproven"})
+
     async def settling_gone(self, reader, writer, headers):
         """Settling went on 11/10/2026 (the module's head): anything on /settle/<channel> or /home/<channel> is a 410
         with SETTLING_GONE, which an app built while it was here shows as it is, and a page on another origin can read
@@ -3635,7 +4033,7 @@ class Relay:
             # (a blank after= is none, as on the Worker)
             return await answer("200 OK", rec.listing(name, q.get("data") == "1", q.get("after", ""), now))
         if method == "GET":
-            got = rec.year_get(name)
+            got = rec.year_get(name, q.get("brief") == "1")
             return await answer("200 OK", got) if got is not None else \
                 await answer("404 Not Found", {"error": "no year posted for that outstation"})
         if not station and not rec.token_ok(name, token, "write"):
@@ -3682,7 +4080,7 @@ class Relay:
         finally:
             writer.close()
 
-    async def dink(self, reader, writer, headers, name, key):
+    async def dink(self, reader, writer, headers, name, key, from_plugin=False):
         async def answer(status):
             writer.write(("HTTP/1.1 %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" % status).encode())
             try:
@@ -3709,6 +4107,10 @@ class Relay:
         elif ch.key != key:
             return await answer("403 Forbidden")
         ch.key_used()
+        if from_plugin and ch.sender is not None:
+            # (the Outside plugin's own reports, 11/15/2026, for a player with no outstation: while it transmits,
+            # Dink's come through it, so the plugin's are dropped and nothing's told twice; the Worker's, the same)
+            return await answer("204 No Content")
         content_type = headers.get("content-type", "")
         payload = dink_payload(content_type, body)
         # (Dink posts each event once to each address it lists: listed twice, every event came twice, to the portal and
@@ -4137,9 +4539,17 @@ def main(argv=None):
     ap.add_argument("--lookup", default="on",
                     help="the lookups (GET /lookup/..., /icon/...): on (Wise Old Man, RuneProfile and the icons' hosts, "
                          "asked as pages read them and kept), off, or an address to fetch them all under instead (tests)")
+    ap.add_argument("--witness-look", type=float, default=0,
+                    help="(tests) seconds before the hiscores are looked at while logged in (witness.py's LOOK)")
+    ap.add_argument("--witness-wait", type=float, default=0,
+                    help="(tests) seconds before the hiscores are asked again after a logout, every time (witness.py's WAITS)")
     ap.add_argument("--test-forget", action="store_true",
                     help="answer POST /test/forget, as the Worker does for its tests (nothing is forgotten here)")
     a = ap.parse_args(argv)
+    # (proving a name: the hiscores and Wise Old Man under --lookup's address in tests, the real hosts otherwise)
+    witness.UPSTREAM = a.lookup if a.lookup not in ("on", "off") else None
+    witness.WAIT_S = a.witness_wait or None
+    witness.LOOK_S = a.witness_look or None
     forward = None
     if not a.no_forward and a.forward and os.path.exists(a.forward):
         forward = Forward.load(a.forward)

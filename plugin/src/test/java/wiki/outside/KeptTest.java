@@ -1,8 +1,14 @@
 package wiki.outside;
 
+// hub:cut model,bank
 import com.google.gson.JsonObject;
+// hub:end model,bank
+// hub:cut bank
 import java.util.LinkedHashMap;
+// hub:end bank
+// hub:cut bank
 import java.util.Map;
+// hub:end bank
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -33,6 +39,7 @@ public class KeptTest
 		assertFalse(Kept.about("Your blowpipe has 5 charges.", "Shark"));
 	}
 
+	// hub:cut bank
 	@Test
 	public void theBankItsTabsAndNames()
 	{
@@ -43,7 +50,9 @@ public class KeptTest
 		assertEquals("[2,0,0,0,0,0,0,0,0]", b.get("tabs").toString());
 		assertEquals("{\"995\":[\"Coins\",1]}", b.get("names").toString());
 	}
+	// hub:end bank
 
+	// hub:cut model
 	@Test
 	public void theModelLeavesOutWhatTheGameNeverDraws()
 	{
@@ -144,4 +153,5 @@ public class KeptTest
 		assertEquals("[-1,5]", g.get("t").toString());
 		assertEquals("[0,0,0,0,0,0,0,0,4096,0,0,4096]", g.get("uv").toString());
 	}
+	// hub:end model
 }

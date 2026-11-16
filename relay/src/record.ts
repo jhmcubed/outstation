@@ -108,6 +108,32 @@ function step(s: unknown, part: string, now: number): number[] {
   return s.length === 3 ? [...xy, time(s[2], part, now)] : xy;
 }
 
+/** A posted year's brief (11/15/2026, docs/record.md, "The brief"): what an Outside page shows of it without the whole
+ *  summary (up to 5 MB): the range, totals and clock as posted, the five activities with the most minutes, the first six
+ *  moments, the heat summed into 128-tile squares (Zanaris its one place), how many log slots, and which parts were
+ *  posted. GET /year/<channel>?brief=1. relay.py's year_brief, the same. */
+export function yearBrief(year: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { v: 1 };
+  for (const k of ["tz", "range", "totals"]) if (k in year) out[k] = year[k];
+  out.parts = YEAR_PARTS.filter((k) => k !== "v" && k !== "tz" && k in year);
+  const acts = Array.isArray(year.activities) ? (year.activities as { minutes: number }[]).slice() : [];
+  acts.sort((a, b) => b.minutes - a.minutes);
+  if (acts.length) out.activities = acts.slice(0, 5);
+  if (Array.isArray(year.moments) && year.moments.length) out.moments = year.moments.slice(0, 6);
+  if (Array.isArray(year.log)) out.log = year.log.length;
+  const h = year.heat as unknown;
+  const cells = (Array.isArray(h) ? h : isObj(h) && Array.isArray(h.cells) ? h.cells : []) as number[][];
+  const sum = new Map<string, number[]>();
+  for (const c of cells) {
+    const z = c[0] === WHERE_ZANARIS.x && c[1] === WHERE_ZANARIS.y;
+    const x = z ? c[0] : Math.floor(c[0] / 128) * 128 + 64, y = z ? c[1] : Math.floor(c[1] / 128) * 128 + 64;
+    const k = x + "," + y, got = sum.get(k);
+    if (got) got[2] += c[2]; else sum.set(k, [x, y, c[2]]);
+  }
+  if (sum.size) out.heat = [...sum.values()].sort((a, b) => b[2] - a[2] || a[0] - b[0] || a[1] - b[1]);
+  return out;
+}
+
 /** A public summary checked (docs/record.md, "The public summary"): the summary as it's stored, its parts in their
  *  order, or why not (the part named). relay.py's year_summary, the same. */
 export function yearSummary(body: unknown, now = Date.now()): { year: Record<string, unknown> } | { error: string } {
@@ -396,11 +422,21 @@ export class Records extends DurableObject<RecordEnv> {
     if (what === "year") {
       if (request.method === "GET") {
         const y = await this.ctx.storage.get<{ text: string; at: number }>("year");
-        return y ? answer('{"year": ' + y.text + ', "at": ' + y.at + "}") : no(404, "no year posted for that outstation");
+        if (!y) return no(404, "no year posted for that outstation");
+        if (url.searchParams.get("brief") === "1") {
+          // (made once a post and kept beside it: parsing a 5 MB year on every page view would cost every view)
+          let b = await this.ctx.storage.get<{ text: string; at: number }>("yearbrief");
+          if (!b || b.at !== y.at) {
+            b = { text: pyjson(yearBrief(JSON.parse(y.text))), at: y.at };
+            await this.ctx.storage.put("yearbrief", b);
+          }
+          return answer('{"year": ' + b.text + ', "at": ' + y.at + ', "brief": true}');
+        }
+        return answer('{"year": ' + y.text + ', "at": ' + y.at + "}");
       }
       if (!station && !(await this.tokenOk(bearer(request), "write"))) return no(403, "the station key, or the record key's write token");
       if (request.method === "DELETE") {
-        await this.ctx.storage.delete("year");
+        await this.ctx.storage.delete(["year", "yearbrief"]);
         return answer(null, 204);
       }
       const raw = await request.text();

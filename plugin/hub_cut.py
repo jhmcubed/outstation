@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""The Plugin Hub's Outside, cut from the whole plugin (11/16/2026, Jace: "lean, as the table has it": the first
+submission with what makes a page worth having, the rest brought in as updates, each small enough to read at once).
+
+This folder (outstation's plugin/) stays the one plugin, everything in it. The Hub builds jhmcubed/outside-plugin, and
+this script writes that repository's tree from here, leaving out the parts not submitted yet:
+
+  - whole files, by PART_FILES below;
+  - regions of a file between marker lines, the markers' own lines with them:
+        Java, Gradle:   // hub:cut <part>[,<part>…]       …       // hub:end <part>
+        Markdown:       <!-- hub:cut <part> -->          …       <!-- hub:end <part> -->
+    a region goes when every part it names is out (code two parts share stays while either is in); regions don't nest;
+  - `// hub:only` lines: kept only in the cut, their marker taken off (a line the lean plugin needs in place of a
+    region, e.g. a default), and dropped from nothing else: in the whole plugin they're comments;
+  - Markdown's words for the cut alone, hidden in an HTML comment in the whole plugin's own:
+        <!-- hub:else <part>[,<part>…]
+        …the cut's wording…
+        -->
+    kept (its comment taken off) while every part it names is out, dropped once one is in.
+
+The parts, in the order the updates bring them (SUBMITTED: those in the Hub's version now; add a part's name to it
+when its update is submitted):
+  globe   update 1: following, the world with it, what I'm doing, shooting stars and their finder, "In the Wilderness too"
+  delve   update 2: the Doom of Mokhaiotl's board
+  year    update 3: your year and its exact path
+  model   update 4: the character's model, its motions, the live view, the boss fought, effects, the ground
+  bank    update 5: the bank on the page
+  talk    update 6: the page's chat in the game (::o, /o) and emotes
+
+    python3 plugin/hub_cut.py ../outside-plugin           write the cut there (its .git and build left alone)
+    python3 plugin/hub_cut.py --check ../outside-plugin   say whether it matches; write nothing
+    python3 plugin/hub_cut.py --list                      the parts, what each takes out, and what's submitted
+"""
+import argparse
+import filecmp
+import os
+import re
+import shutil
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PARTS = ["globe", "delve", "year", "model", "bank", "talk"]
+SUBMITTED = []   # (the parts in the Hub's version beyond the first; 11/16/2026: none yet)
+
+# whole files that belong to a part (paths under this folder)
+J = "src/main/java/wiki/outside/"
+T = "src/test/java/wiki/outside/"
+PART_FILES = {
+    "globe": [J + "Follow.java", J + "Behind.java", J + "Activity.java", J + "Stars.java", J + "Sites.java",
+              T + "FollowTest.java", T + "ActivityTest.java", T + "StarsTest.java"],
+    "year": [J + "Record.java", J + "Track.java", T + "RecordTest.java", T + "TrackTest.java", "src/test/resources"],
+    "model": [],
+    "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
+}
+# never copied: what's built, and what only this repository needs
+SKIP = {"build", ".gradle", ".git", "hub_cut.py", "__pycache__"}
+TEXT = (".java", ".md", ".gradle", ".properties", ".py", ".txt", ".json")
+
+CUT = re.compile(r"^\s*(?://|<!--)\s*hub:cut\s+([a-z,]+)\s*(?:-->)?\s*$")
+END = re.compile(r"^\s*(?://|<!--)\s*hub:end\s+([a-z,]+)\s*(?:-->)?\s*$")
+ONLY = re.compile(r"^(\s*)//\s*hub:only\s?(.*)$")
+ELSE = re.compile(r"^\s*<!--\s*hub:else\s+([a-z,]+)\s*$")
+
+
+def out_parts():
+    return [p for p in PARTS if p not in SUBMITTED]
+
+
+def cut_text(text, out, name="?"):
+    """The text with every region naming a part that's out taken away, and the markers of those kept taken off."""
+    lines, keep, open_, else_ = text.split("\n"), [], None, None
+    for n, line in enumerate(lines, 1):
+        if else_ is not None:
+            if line.strip() == "-->":
+                else_ = None
+            elif else_:
+                keep.append(line)
+            continue
+        el = ELSE.match(line)
+        if el:
+            parts = el.group(1).split(",")
+            bad = [p for p in parts if p not in PARTS]
+            if bad:
+                raise SystemExit("%s:%d: no such part %s" % (name, n, bad))
+            else_ = all(p in out for p in parts)
+            continue
+        c, e = CUT.match(line), END.match(line)
+        if c:
+            if open_ is not None:
+                raise SystemExit("%s:%d: a hub:cut inside another (they don't nest)" % (name, n))
+            parts = c.group(1).split(",")
+            bad = [p for p in parts if p not in PARTS]
+            if bad:
+                raise SystemExit("%s:%d: no such part %s" % (name, n, bad))
+            open_ = (parts, all(p in out for p in parts), n)
+            continue
+        if e:
+            if open_ is None or e.group(1).split(",") != open_[0]:
+                raise SystemExit("%s:%d: hub:end %s doesn't close the hub:cut before it" % (name, n, e.group(1)))
+            open_ = None
+            continue
+        if open_ is not None and open_[1]:
+            continue
+        o = ONLY.match(line)
+        keep.append(o.group(1) + o.group(2) if o else line)
+    if open_ is not None:
+        raise SystemExit("%s:%d: a hub:cut never ended" % (name, open_[2]))
+    # (what a cut region leaves behind: two blank lines or more, one)
+    tidy = []
+    for line in keep:
+        if line.strip() == "" and len(tidy) >= 1 and tidy[-1].strip() == "":
+            continue
+        tidy.append(line)
+    return "\n".join(tidy)
+
+
+def gone_files(out):
+    return {f for p in out for f in PART_FILES.get(p, [])}
+
+
+def write(dest, out):
+    gone = gone_files(out)
+    for root, dirs, files in os.walk(HERE):
+        rel_root = os.path.relpath(root, HERE)
+        dirs[:] = [d for d in dirs if d not in SKIP and os.path.normpath(os.path.join(rel_root, d)).replace(os.sep, "/") not in gone]
+        for f in files:
+            rel = os.path.normpath(os.path.join(rel_root, f)).replace(os.sep, "/")
+            if f in SKIP or rel in gone:
+                continue
+            src, dst = os.path.join(HERE, rel), os.path.join(dest, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if f.endswith(TEXT):
+                with open(src, encoding="utf-8") as fh:
+                    text = cut_text(fh.read(), out, rel)
+                with open(dst, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(text)
+            else:
+                shutil.copy2(src, dst)
+
+
+def clear(dest):
+    for f in os.listdir(dest):
+        if f in (".git", "build", ".gradle"):
+            continue
+        p = os.path.join(dest, f)
+        shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+
+
+def same(a, b):
+    c = filecmp.dircmp(a, b, ignore=[".git", "build", ".gradle"])
+    if c.left_only or c.right_only or c.diff_files or c.funny_files:
+        return False
+    return all(same(os.path.join(a, d), os.path.join(b, d)) for d in c.common_dirs)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("dest", nargs="?")
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--list", action="store_true")
+    a = ap.parse_args()
+    out = out_parts()
+    if a.list or not a.dest:
+        print("submitted beyond the first: %s" % (", ".join(SUBMITTED) or "none"))
+        print("left out: %s" % (", ".join(out) or "none"))
+        for p in PARTS:
+            print("  %-6s %s" % (p, ", ".join(os.path.basename(f) for f in PART_FILES.get(p, [])) or "(regions only)"))
+        return
+    if a.check:
+        with tempfile.TemporaryDirectory() as t:
+            write(t, out)
+            ok = same(t, a.dest)
+        print("hub_cut: %s" % ("matches" if ok else "differs from the cut (run it without --check)"))
+        sys.exit(0 if ok else 1)
+    os.makedirs(a.dest, exist_ok=True)
+    clear(a.dest)
+    write(a.dest, out)
+    print("hub_cut: written to %s, leaving out %s" % (a.dest, ", ".join(out) or "nothing"))
+
+
+if __name__ == "__main__":
+    main()

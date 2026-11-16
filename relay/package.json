@@ -9,8 +9,8 @@
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/almanac_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/listed_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/record_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/lookup_test.mts && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/keep_test.mts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261021.1",
+    "@cloudflare/workers-types": "5.20261101.1",
     "typescript": "5.9.3",
-    "wrangler": "4.151.3"
+    "wrangler": "4.156.1"
   }
 }

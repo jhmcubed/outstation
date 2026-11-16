@@ -135,6 +135,30 @@ draws the tiles: a path through them in order, a gap at a `null` or past `HOLD_M
 as finely as the player chooses (11/10/2026): its heat in cells down to 8 tiles, its paths and replay at exact tiles;
 its top places are still squares (below).
 
+## The plugin's record (11/15/2026)
+
+Jace: the plugin first. The Outside plugin keeps the year itself (plugin/src/main/java/wiki/outside/Record.java), in this
+format exactly, so the page reads either the same way:
+
+- **Where:** RuneLite's folder, `.runelite/outside/record/<channel>/`: the month files, `device` and `sent.json`, as the
+  app's. One folder a character (each has its own page).
+- **What:** written from what the plugin itself works out each tick, not from the relay: the place (following's logic,
+  two minutes behind, the same safeguards) and the activity (the same), run apart from the public switches, so the
+  year records with "Follow me on the globe" and "What I'm doing" off; the exact path with "Record my exact path" on;
+  the events from the plugin's own reports (Reports.java: kills, levels, pets, log slots, clues, drops of 1,000,000 or
+  more); the heartbeat as above; nulls on logging out. `t` is the plugin's clock. No `live` lines.
+- **Switches:** "Record my year" (on: this PC only) and "Keep an encrypted copy on the relay" (off, behind a warning;
+  "Open my year" in the side tab asks to switch it on). The record key is made the first time it's needed and kept
+  with the character's account in RuneLite's settings (`recordKey`, "record1:…").
+- **Sync:** as the app's: the tokens registered, then each day whose lines changed (sent.json by line count) sealed and
+  PUT; hourly, on logging out, and before "Open my year".
+- **Viewing:** "Open my year" opens `https://outside.wiki/<channel>/year/mine#k=<the key, base64url>` (outside-wiki's
+  Worker serves the year page there).
+- **Both at once:** with the app open on the same record too, an event can be written by both a moment apart; the
+  page takes the same event within a minute once (year.js's merge).
+- Checked against `tests/fixtures/record/vectors.json` (a copy in `plugin/src/test/resources`): the plugin makes the
+  same keys, tokens and chunk id, opens WebCrypto's sealed chunk, and its own seal opens the same way.
+
 ## Encryption
 
 **The record key:** 32 random bytes, made by the app the first time the relay copy is switched on (ring's system
@@ -354,6 +378,26 @@ The relay stores it as checked (re-written in the order above, so both relays st
 The write token lets the page post or take down the summary without the station key ever reaching the browser; it
 can't touch the encrypted chunks. A GET is any origin's (CORS `*`): it's public by the player's choice, even for an
 outstation with a watch code. "delete everything" takes it down too.
+
+### The brief (11/15/2026)
+
+    GET    /year/<channel>?brief=1                      anyone                                     200 {"year", "at", "brief": true} / 404
+
+What an Outside page shows of a posted year (its "the year" section), without fetching the whole summary (up to 5 MB):
+
+    {
+      "v": 1,
+      "tz", "range", "totals":   as posted, when posted
+      "parts":      the parts posted, in the summary's order (never v or tz)
+      "activities": the five with the most minutes, most first (a tie keeps the posted order)
+      "moments":    the first six, as posted
+      "log":        how many log slots were posted (a number, not the slots)
+      "heat":       [[x, y, minutes], …], the heat's cells summed into 128-tile squares (each square's middle; Zanaris its
+                    one place, 2368, 4416), most minutes first, then by x, then y; no act
+    }
+
+A part not posted is left out. The Worker makes it once a post and keeps it beside the summary (gone with it); relay.py
+makes it on each read. Both answer the same bytes (tests/protocol_test.py's YourYear, `test_the_brief_is_what_a_page_shows`).
 
 ## Delete everything
 

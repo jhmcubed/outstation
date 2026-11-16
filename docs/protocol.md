@@ -68,7 +68,7 @@ to about 55 (the Outside plugin's own socket, and HTTP reads like GET /channels,
 
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game", "lookers"}}` (`lookers`: lookers asking for frames, for the transmitter: "Who's watching", above). `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game", "talk", "lookers"}}` (`talk`, 11/16/2026: a desk that said `&talk=1` is open, the Outside plugin's "The page's chat in my game": the page shows its chat while the channel's dark; below, "The desk") (`lookers`: lookers asking for frames, for the transmitter: "Who's watching", above). `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
 - frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the game state, the chat so far, the poll, the drop guess and the sound's line.
 - `{"game": {...}}`: the player's game state, from the Outside plugin (below, "The game"), once seated.
 - `{"report": {"type", "text", "at", "data"}}`: a field report (from Dink; below, "Dink").
@@ -93,6 +93,13 @@ to about 55 (the Outside plugin's own socket, and HTTP reads like GET /channels,
 **The waiting line:** past the cap, a viewer waits in line, with status lines and the chat but no frames. The first in line takes the first seat that frees.
 
 ## The desk
+
+**The Outside plugin's desk** (11/16/2026): `/desk/<channel>?key=<key>&name=<the player's name>&talk=1`, opened by the
+plugin while its "The page's chat in my game" is on and its game socket is open. It's a desk like any other (it hears
+the chat, says lines as the host, turns visitors' lines off and on with `chat_on`); the plugin shows visitors' lines in
+the game's chat box and sends what the player types after `::o` or `/o`. While one is open, every status line says
+`"talk": true`, and the page shows its chat with nothing transmitting; it going, `false`. A desk without `talk=1` (the
+outstation's chat window) never sets it.
 
 **It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below); and, since 11/10/2026, the player's own `{"mine"}` lines, which no other socket ever gets (below, "Your year"). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 
@@ -201,6 +208,88 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
 
+## Claiming a name (11/15/2026)
+
+The Outside plugin's own channel, for a player who comes from the Plugin Hub with no outstation and no invite (Jace: the
+plugin first; players find the Hub before they'd download an .exe). The plugin's side tab asks for it with the name of
+the player logged in; the answer is a station key like any other, which the plugin keeps in its settings.
+
+    POST /claim   {"player": <the name as a channel has it>, "account"?: <the account hash, as digits>}
+                  200 {"channel", "key", "code", "proof": "unproven"}, or "challenging" for a name held unproven (below,
+                      "Taking a name back")
+                  400 a name that isn't 1 to 12 lower-case letters or numbers; 409 a name proven or vouched for already;
+                  429 past the day's claims; 413 a body over 1 KB
+    GET  /proof/<channel>[?key=]   anyone's (CORS *, a minute's cache)   200 {"proof": "unproven" | "proven" | "vouched"}
+                  (a challenger's own key: "challenging") / 404
+
+- **Only a name nobody has**, or one held unproven (a challenge, below). A name the keeper handed out, an invite's, or
+  a proven one is refused (409). As an invite's, two claims at once can't both take a new name.
+- **At most 3 a day from one address, 200 a day in all**, so names can't be taken in bulk. Only claims that take a
+  name or give a challenge count. The address is kept as a hash, a day at most.
+- **Unproven.** Nothing the plugin sends proves the player is who they say: the plugin is open source and anyone can
+  send what it sends. So a claimed channel is marked unproven, and the page says so beside the name (GET /proof), till
+  it's proven from the game itself (below, "Proving a name"): "proven". A key from the keeper or an invite (someone
+  vouching) clears it too: "vouched".
+- **account**: the account hash RuneLite gives the plugin (`client.getAccountHash()`), as digits. The relay keeps only
+  a hash of it, for that proof; it's never shown or sent back.
+- Like an invite's, the channel isn't on the open outstations' list till its key's first used.
+- relay.py: the same, from its own side only (its public side refuses every POST); GET /proof from either.
+
+## Proving a name (11/15/2026)
+
+An unproven page (a claim's, above) proves itself while its player plays, with nothing for them to do but gain some
+experience and log out (relay/src/witness.ts; relay-py/witness.py, the same). What can't be faked is the future: the
+exact experience the plugin reports while they play, before the official hiscores have it.
+
+1. While they're logged in, the hiscores can't have this session's experience (Jagex writes it as they log out). So
+   45 seconds after a skill's experience last changed, the relay looks at the hiscores, and marks **hidden** every
+   skill the plugin last said above what they show.
+2. As they log out (`"off": true`, or the plugin's socket going), the hidden figures are claimed.
+3. A while after (1, 3, 10 and 30 minutes: Jagex's pages can lag), it reads the hiscores again. A claimed skill found
+   there exactly proves the page: `GET /proof` says "proven" from then on, and the account hash's hash it was claimed
+   with is kept with the proof. Lower than claimed: asked again at the next wait. Higher everywhere: they've played
+   since; no proof this time (the next session tries again).
+
+(The first way, 11/15/2026, read the hiscores at the logout itself and kept only what wasn't there yet; on Jace's first
+try his new experience was already public by then, as Jagex's update comes with the logout, so nothing was kept.)
+
+- **Wait a minute before logging out**: experience gained in the last 45 seconds before a logout isn't looked at in
+  time, so it can't be claimed (the side tab says so).
+- **What it last did**: `GET /proof/<channel>?key=<its own key>` adds `"why"`, the proof's last step in words (looked,
+  claimed, waiting for the hiscores, or why nothing was claimed), which the plugin's side tab shows.
+- **The name** read on the hiscores is the plugin's `name` (the one they're logged in as), and only when it's the page's
+  own as a channel has it: another account's experience never proves a page.
+- **A copy proves nothing.** Someone holding the key who waits for the real player to log out, reads the hiscores and
+  sends what they say is too late: a look shows those figures on the hiscores already, so they're never hidden.
+- **The sources**: Jagex's `index_lite.json` (`secure.runescape.com/m=hiscore_oldschool/`), each ranked skill's
+  experience (unranked skills, -1, can't prove anything); if it doesn't answer, Wise Old Man's player (its update for
+  every read but a look's). Each read carries the relay's User-Agent and nothing else, and asks Jagex for a page of its
+  own (a cache in front of the hiscores can answer with an older one); an unproven page is read once a look (45 s after
+  experience last changed, so at most about once a minute while they gain it) and four times after a logout.
+- What it can't stop: someone relaying another player's game live, with that player's exact experience showing, and
+  typing it in as it happens. Contrived; the transmission would show someone else's game.
+- Tests: `WITNESS_WAIT_S` and `WITNESS_LOOK_S` (the Worker), `--witness-wait` and `--witness-look` (relay.py) make every
+  wait and look that many seconds; the hiscores
+  and Wise Old Man come from the tests' stand-in (`LOOKUP_UPSTREAM`, `--lookup`). protocol_test's `Proving`.
+
+## Taking a name back (11/15/2026)
+
+Jace: "a proven player's claim replaces an unproven holder, and that holder's key stops working". A player can't be
+proven without a key, and the name's key is its holder's, so a claim on a name held unproven gives a **challenger's
+key** of its own (`"proof": "challenging"`), and the challenger proves itself as a holder does ("Proving a name"):
+
+- The challenger's plugin connects to the game's address with its key, as any plugin does, and the relay opens a
+  **proving socket**: its `{"game"}` messages are kept only for its own proof (the name and skills it last said), never
+  on the page, never to anyone watching, and the page's own plugin socket isn't touched. One at a time a challenger.
+- **The challenger proven**: its key becomes the page's; every socket on the holder's key is closed (4003, "this name
+  was proven by another") and its key never opens the page again; what the holder's plugin sent is gone; the page is
+  proven, with the challenger's account hash's hash. The challenger's proving socket is closed with **4012** ("proven:
+  connect again"), and the plugin connects again at once, now as the page's own.
+- **The holder proven first** (it was theirs): every challenge ends; challengers' sockets are closed (4003).
+- At most 5 challengers on a name at once (the oldest goes) and each kept 7 days; a proven or vouched-for name takes
+  none. `GET /proof/<channel>?key=<a challenger's key>` says "challenging", for the plugin's side tab.
+- A squatter gains nothing by challenging: the proof needs the account's own future experience either way.
+
 ## Invites (11/07/2026)
 
 Each outstation hands out a few channels of its own, so a friend can bring a friend without the keeper (Jace: "each of my friends being able to pass out a few keys so that way the platform propagates easier", "people earning more invites through streaming"). Both relays.
@@ -266,6 +355,10 @@ one replaces the older (4000). It hears nothing, and nothing it sends is answere
 - `charges` (11/14/2026): each worn or carried item's charges as the game last told of them in its chat (the item checked, or named in the line), `{"<item id>": n}`, at most 64; the page writes them on the items
 - `anim` (11/15/2026, the live view): `[the animation they're doing now (its id, -1 none), the worn gear's mark (hex)]`, with the model switch on; null while held. The page plays the live motion recorded for it.
 - `delve` (11/14/2026): the board beside the Doom of Mokhaiotl as last read (the Delve Calculator plugin's way: its interface 920, each level's count in child 46 + 3 a level), the delves finished at each level 1 to 8 and then the waves past 8, nine whole numbers; or `null`
+- `quests` (11/15/2026): `{"points": quest points, "total": how many quests RuneLite knows, "done": [names], "started": [names], "todo": [the names not started], "free"?: [the free quests' names], "mini"?: [the miniquests'], "qp"?: {"<name>": its quest points}}` (the last three since 11/16/2026: the plugin reads the game's own quest table, as its quest list shows it: grouped free, members and miniquests, each with its points; a quest neither free nor mini is a members' quest) (the game's quest list, green, yellow and red; at most 400 names a list, 80 characters each), or `null` (switched off: taken off the page). Read on logging in, when the quest points or a diary tier change, and every 5 minutes.
+- `diaries` (11/15/2026): `{"<area>": [easy, medium, hard, elite, tasks done, tasks in all]}`, each tier 0 or 1, for the twelve areas by name (`Ardougne`, `Desert`, `Falador`, `Fremennik`, `Kandarin`, `Karamja`, `Kourend & Kebos`, `Lumbridge & Draynor`, `Morytania`, `Varrock`, `Western Provinces`, `Wilderness`; another name is left out), or `null`. Karamja's first three tiers count done at their varbit's 2, the rest at 1 (Dink's rule); the tasks from the game's own diary summary scripts (4072, 4073).
+- `combat` (11/15/2026): `{"points": combat achievement points, "tiers": [[tasks done, points the tier needs] × 6]}`, easy to grandmaster, or `null`.
+- `slayer` (11/15/2026): `{"task": the creature's name or null, "left", "of": the amount given, "area": where the master named or null, "points", "streak"}` (names 80 characters at most), read as RuneLite's slayer plugin reads it, or `null`. No task: `task` and `area` null, `left` and `of` 0, the points and the streak still there.
 - `quiver`: `[item id, how many]` or `null`
 - `prayers`: the prayers on, by name (at most 64, 40 characters each)
 - `items`: `{"<item id>": [name, Grand Exchange price]}`, merged into the dictionary kept (below)
@@ -353,8 +446,9 @@ Wilderness and PvP-area flags are read at sea as anywhere.
   a minute after the last at most, and at once on a new connection). On Cloudflare a channel doesn't sleep while it's
   live (the transmitter's frames, and the desk's upload line each second, keep it awake), which is the only time it's
   shown; one that slept while dark shows `where` `null` from going live till the plugin's next, 3 minutes at worst.
-- It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live and on that list (no
-  watch code, not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
+- It's shown only in the open outstations' rows (`GET /channels`, above), while the channel's live or its plugin's
+  connected (11/15/2026, the plugin first: a player with only the plugin shows too) and on that list (no watch code,
+  not an invite waiting to be taken up), for 240 seconds after it came (`WHERE_FRESH_SECONDS` on the
   Worker, `--where-fresh-seconds` on the Python relay, shorten it for tests). It never reaches viewers, lookers or
   desks, the whole state someone just come gets, `GET /game`, the Array's events, the aether or the keeper's list.
 
@@ -422,7 +516,7 @@ channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activi
 - Dropped when the game socket closes, when the plugin sends `"off": true` or a `paused` that's a string, and on
   Cloudflare when the keeper gives the channel a new key or takes it back.
 - Held in memory only, with when it came, never in storage (as `where`: the Directory's stored rows leave it out). Shown
-  only on `GET /channels` (above), while the channel's live and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers or
+  only on `GET /channels` (above), while the channel's live or its plugin's connected (11/15/2026) and on that list, for 240 seconds after it came (the same `WHERE_FRESH_SECONDS` / `--where-fresh-seconds`). Never to viewers or
   lookers, `GET /game`, the Array's events, the aether or the keeper's list; the channel's own desks get it, and `where`, only
   as `{"mine"}` (below, "Your year").
 
@@ -484,7 +578,7 @@ Too big for the game's fields, each sent over HTTP by the Outside plugin when th
 
 ## Emotes (11/14/2026)
 
-A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):
+A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes) or, since 11/16/2026, the Outside plugin's side tab (a picture pasted from the clipboard, sent as PNG), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):
 
 - `GET /emotes/<channel>?code=<watch code>`: `{"emotes": [{"name", "id", "ext", "size", "at"}]}`, oldest first.
 - `GET /emotes/<channel>/<id>.<png|jpg|gif>`: the picture, straight from the CLIPS bucket (`emotes/<channel>/<id>.<ext>`), kept a year by browsers.
@@ -692,9 +786,19 @@ never is). A name is one line, 60 characters at most; a number is whole, 0 to 2�
 or that one skill, out; a kill needs its boss and its count). Events are ordered as the reports came, a report's levels
 in the order Dink gave them.
 
-**Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting) and
-**open** (handed out, with no watch code: the same test that puts it on `GET /channels`). A dark outstation's reports,
-and a watch-coded one's, never make an event, then or later. What the relay already refuses or ignores (the wrong key,
+**The plugin's own reports** (11/15/2026, the plugin first): a player with no outstation has no Dink going through one,
+so the Outside plugin posts its own to this route with `&from=plugin`, in Dink's shape (`type`, `content`, `extra`):
+kill counts, collection log slots, pets and clues from the game's messages, levels from the stats, and a monster's
+loot worth the plugin's "Drops worth at least" or more (plugin/src/main/java/wiki/outside/Reports.java); and since
+11/15/2026 diary tiers (`ACHIEVEMENT_DIARY`), combat tasks (`COMBAT_ACHIEVEMENT`) and slayer tasks (`SLAYER`, its two
+lines: the task, then the count and the points) from the game's messages as Dink reads them, and a quest (`QUEST`) when
+the quest list read again finds it done (the first read of a session tells nothing). While the
+outstation transmits, the relay drops them (204, nothing kept): Dink's come through it then, and nothing's told twice.
+
+**Which reports count** (privacy): only those that reach the relay while their channel is **live** (transmitting), or
+its plugin's connected (11/15/2026, the plugin first), and
+**open** (handed out, with no watch code: the same test that puts it on `GET /channels`). A dark outstation's reports
+with no plugin connected, and a watch-coded one's, never make an event, then or later. What the relay already refuses or ignores (the wrong key,
 a kind not in `REPORTS`, the same Dink post twice) makes none either. On the Python relay with `--delay`, a report counts
 as it reaches viewers, so one that comes in the delay's last moments before the outstation goes dark doesn't.
 

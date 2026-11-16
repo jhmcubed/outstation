@@ -108,8 +108,9 @@ export class ListedRows {
     return names.filter((n) => {
       const e = this.rows.get(n);
       if (!e) return true;
-      if (now - e.seen > (e.row.live ? check : check * (LISTING_DARK_MS / LISTING_CHECK_MS))) return true;
-      return !e.heard && !!e.row.live && !!e.row.game;
+      // (a row with the plugin connected is asked as often as a live one: it can carry a place now, 11/15/2026)
+      if (now - e.seen > (e.row.live || e.row.game ? check : check * (LISTING_DARK_MS / LISTING_CHECK_MS))) return true;
+      return !e.heard && !!e.row.game;
     });
   }
 
@@ -119,7 +120,7 @@ export class ListedRows {
     if (this.dropped) return true;
     for (const e of this.rows.values()) {
       if (lineOf(e.row) !== e.line) return true;
-      if (e.seen - e.savedSeen >= (e.row.live ? check : check * (LISTING_DARK_MS / LISTING_CHECK_MS))) return true;
+      if (e.seen - e.savedSeen >= (e.row.live || e.row.game ? check : check * (LISTING_DARK_MS / LISTING_CHECK_MS))) return true;
     }
     return false;
   }

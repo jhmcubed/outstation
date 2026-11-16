@@ -30,6 +30,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { attachCode, dinkReport, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
+import { channelForm, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
+import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
@@ -44,6 +46,8 @@ export interface Env {
   LOOKUPS?: DurableObjectNamespace; // the lookups (lookup.ts, lookups.ts, 11/10/2026): Wise Old Man, RuneProfile and the icons, kept and shared
   WOM_API_KEY?: string; // Wise Old Man's API key (11/11/2026): a secret (`wrangler secret put WOM_API_KEY`), sent only to api.wiseoldman.net (lookup.ts)
   LOOKUP_UPSTREAM?: string; // (tests) the lookups' sources all fetched under this address instead of the real hosts (lookup.ts's want)
+  WITNESS_WAIT_S?: string; // (tests) the wait before the hiscores are asked again after a logout, every time (witness.ts's WITNESS_WAITS)
+  WITNESS_LOOK_S?: string; // (tests) the wait before a look while logged in (witness.ts's WITNESS_LOOK)
   RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
@@ -89,6 +93,11 @@ interface Dm { from: string; name: string; text: string; at: number }
 // easier", "people earning more invites through streaming"): an outstation hands out channels of its own, this many to
 // begin with and one more every INVITE_EVERY_S on air; INVITES_AN_HOUR posts an hour at most (relay.py's, the same)
 export const INVITES_START = 3, INVITE_EVERY_S = 36_000, INVITES_AN_HOUR = 5;
+// a channel claimed by the Outside plugin itself (11/15/2026, docs/protocol.md "Claiming a name"): at most this many a
+// day from one address, and this many a day in all, so names can't be taken in bulk
+export const CLAIMS_AN_ADDRESS = 3, CLAIMS_A_DAY = 200;
+// taking a name back (11/15/2026): challengers at once on one name, and how long one's kept
+export const CHALLENGERS = 5, CHALLENGE_DAYS = 7;
 // a channel asked for or invited: a player's name as the page has it (lower case, no spaces)
 export const PLAYER = /^[a-z0-9]{1,12}$/;
 
@@ -118,7 +127,16 @@ const ACKED_OVER = 5000;
 // up to 18,000 rows written an hour), and as its socket closes
 const GAME_SAVE = 60_000;
 
-type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "game" | "refused";
+type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "game" | "prove" | "refused";
+
+// a party's proof (witness.ts): the session's start, the claims made at logout, when they're next asked and how often
+// they have been; a challenger's own name and skills as its plugin last said them
+interface Wit {
+  name?: string; seen?: Record<string, Seen>; look?: number; // (this session: each skill as last said, the next look)
+  claims?: Xp; next?: number; tries?: number; // (after a logout: what's claimed, the next ask, how many so far)
+  said?: { name?: unknown; skills?: unknown }; // (a challenger's own name and skills)
+  last?: string; // (what the proof last did, in words, for the plugin's side tab)
+}
 
 interface Flow { sent: number; got: number; at: number }
 
@@ -143,9 +161,11 @@ interface Att {
   says?: number[];
   lastPing?: number;
   host?: string; // a desk's name in the chat
+  talk?: boolean; // a desk that said &talk=1: the Outside plugin's chat in the game (11/16/2026)
   lastSignal?: number;
   lookFrames?: boolean; // a looker asking for frames
   lookAt?: number;
+  prover?: string; // a challenger's plugin (11/15/2026): its key's hash
 }
 
 interface Guess {
@@ -169,6 +189,16 @@ interface Poll {
 
 interface Meta {
   keyHash: string | null;
+  // claimed by the Outside plugin from the Plugin Hub (11/15/2026, docs/protocol.md "Claiming a name"), nobody vouching
+  // for it: the page marks the name unproven (GET /proof). A keeper's or an invite's key clears it. `account`: a hash
+  // of the account hash the plugin sent with the claim, for the proof to come (never shown, never sent back).
+  unproven?: boolean;
+  account?: string;
+  // proven from the game itself (11/15/2026, witness.ts): when, and the account hash's hash it was proven with
+  proven?: { at: number; account?: string };
+  // those taking the name back (11/15/2026, docs/protocol.md "Taking a name back"): each a key of its own, opening only
+  // a proving socket, and kept CHALLENGE_DAYS at most, CHALLENGERS at once (the oldest goes)
+  challengers?: { keyHash: string; at: number; account?: string }[];
   code: string;
   cap: number; // the channel's own cap on viewers (the desk's {"cap"}): 0 none
   chatId: number;
@@ -294,10 +324,17 @@ export class Channel extends DurableObject<Env> {
   activityAt = 0;
   activityTook = 0;
 
+  // proving the name (11/15/2026; witness.ts): the session's start on the hiscores, and the claims made at logout with
+  // when they're next asked and how often they have been
+  wit: Wit = {};
+  cwit: Record<string, Wit> = {}; // (each challenger's, by its key's hash)
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game"]);
+      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game", "witness", "cwit"]);
+      this.wit = (got.get("witness") as Wit) || {};
+      this.cwit = (got.get("cwit") as Record<string, Wit>) || {};
       this.guess = (got.get("guess") as Guess) || null;
       this.name = (got.get("name") as string) || "";
       this.meta = (got.get("meta") as Meta) || {
@@ -406,6 +443,9 @@ export class Channel extends DurableObject<Env> {
       chat: !this.meta.chatOff,
       title: this.meta.title || "",
       game: this.sockets("game").length > 0, // (the Outside plugin's connected, 11/07/2026)
+      // (a desk that said &talk=1 is open, the Outside plugin's chat in the game: the page's chat shows while the
+      // channel's dark, 11/16/2026)
+      talk: this.sockets("desk").some((d) => !!this.att(d).talk),
       // (lookers asking for frames (11/10/2026): with viewers, what the transmitter needs to know of who's watching, so
       // with neither it sends a frame now and then and no sound, and with no lookers no small frames: docs/protocol.md
       // "Who's watching")
@@ -435,12 +475,15 @@ export class Channel extends DurableObject<Env> {
     const set = this.meta.keyHash !== null, code = !!this.meta.code, at = Date.now();
     if (set && this.meta.pending) return { channel: this.name, set, code, at, pending: true }; // (only counted: its inviter's)
     if (!set || code) return { channel: this.name, set, code, at }; // (not listed: nothing more to tell)
-    const live = this.live();
+    const live = this.live(), game = this.sockets("game").length > 0;
+    // (the plugin first, 11/15/2026: where they are and what they're doing go on the list while the plugin's connected
+    // too, not only while the outstation transmits; the plugin's own switches and safeguards still decide what comes)
+    const shown = live || game;
     return { channel: this.name, set, code, at, live, open: live && this.meta.state === "open",
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
-             doing: this.doing(), game: this.sockets("game").length > 0,
-             ...(live && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
-             ...(live && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}) };
+             doing: this.doing(), game,
+             ...(shown && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
+             ...(shown && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}) };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -482,10 +525,11 @@ export class Channel extends DurableObject<Env> {
   }
 
   /** A field report's events (array.ts) told to the Directory, for the Array's feed (11/08/2026): only while this
-   *  channel's live and listed (handed out, no watch code: on GET /channels), so a dark or coded outstation's reports
-   *  never show. The Directory keeps them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
+   *  channel's live or its plugin's connected (11/15/2026, the plugin first) and listed (handed out, no watch code: on
+   *  GET /channels), so a coded outstation's reports, and a dark one's with no plugin, never show. The Directory keeps
+   *  them, with their ids, and drops what's past a channel's ARRAY_A_MINUTE. */
   tellArray(report: unknown) {
-    if (!this.name || !this.live() || this.meta.keyHash === null || this.meta.code) return;
+    if (!this.name || (!this.live() && !this.sockets("game").length) || this.meta.keyHash === null || this.meta.code) return;
     const events = arrayEvents(report);
     if (!events.length) return;
     this.ctx.waitUntil(this.tellDirectory("/array", JSON.stringify({ channel: this.name, events }))
@@ -605,7 +649,23 @@ export class Channel extends DurableObject<Env> {
     let [, role] = url.pathname.split("/");
     if (role === "watch" && q.get("look") === "1") role = "look";
 
-    if (role === "_mint") return this.mint(q.get("new") === "1");
+    if (role === "_mint") return this.mint(q.get("new") === "1", q.get("claim") === "1", request.headers.get("x-account") || "");
+    if (role === "_challenge") return this.challenge(request.headers.get("x-account") || "");
+    if (role === "_proof") {
+      // (who stands behind the name: "unproven", claimed by the plugin alone; "vouched", a keeper's or an invite's key;
+      // "proven" from the game itself; and to a challenger's own key, "challenging")
+      if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+      const k = q.get("key");
+      if (k && this.meta.unproven) {
+        // (to the key's own, what its proof last did, in words: the plugin's side tab says it)
+        const h = await this.hash(k);
+        if ((this.meta.challengers || []).some((c) => c.keyHash === h)) {
+          return json({ proof: "challenging", ...(this.cwit[h]?.last ? { why: this.cwit[h].last } : {}) });
+        }
+        if (h === this.meta.keyHash && this.wit.last) return json({ proof: "unproven", why: this.wit.last });
+      }
+      return json({ proof: this.meta.proven ? "proven" : this.meta.unproven ? "unproven" : "vouched" });
+    }
     if (role === "_status") {
       const live = this.live();
       return Response.json({ channel: this.name, set: this.meta.keyHash !== null, code: !!this.meta.code, live,
@@ -621,7 +681,7 @@ export class Channel extends DurableObject<Env> {
       for (const d of this.sockets("desk")) this.send(d, line);
       return new Response(null, { status: 204 });
     }
-    if (role === "_dink") return this.dink(request, q.get("key") || "", ip);
+    if (role === "_dink") return this.dink(request, q.get("key") || "", ip, q.get("from") === "plugin");
     // (an anomaly report's channel and key, checked: index.ts's /reports)
     if (role === "_keyok") return Response.json({ ok: this.meta.keyHash !== null && (await this.checkKey(q.get("key") || "", ip)) === null });
     // (an outstation joining the aether, aether.ts: its key checked as its desk's would be, and why not if not)
@@ -638,13 +698,19 @@ export class Channel extends DurableObject<Env> {
     // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit). The game's v= is the
     // Outside plugin's own version, which MIN_CLIENT never looks at.
     const min = this.env.MIN_CLIENT || "";
-    const no: [number, string] | null = role === "watch" || role === "look" ? null
+    // (a challenger's key on the game's address: a proving socket, its own; 11/15/2026)
+    let prover = "";
+    if (role === "game" && this.meta.unproven && (this.meta.challengers || []).length) {
+      const h = await this.hash(q.get("key") || "");
+      if ((this.meta.challengers || []).some((c) => c.keyHash === h && Date.now() - c.at < CHALLENGE_DAYS * 86_400_000)) { prover = h; role = "prove"; }
+    }
+    const no: [number, string] | null = role === "watch" || role === "look" || role === "prove" ? null
       : role !== "game" && tooOld(q.get("v"), min) ? [4026, `this outstation is too old for the relay: ${min} or newer is needed`]
       : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
-    const a: Att = { role: (no ? "refused" : role) as Role };
+    const a: Att = { role: (no ? "refused" : role) as Role, ...(prover && !no ? { prover } : {}) };
     this.keep(ws, a);
     this.moved();
 
@@ -658,11 +724,14 @@ export class Channel extends DurableObject<Env> {
       if (role === "transmit") {
         this.openTransmit(ws, q.get("code") || "", q.get("v"));
       } else if (role === "desk") {
-        this.openDesk(ws, a, q.get("name") || "");
+        this.openDesk(ws, a, q.get("name") || "", q.get("talk") === "1");
         await this.tellNotice(ws);
         await this.tellDms(ws);
       } else if (role === "game") {
         this.openGame(ws);
+      } else if (role === "prove") {
+        // (one at a time for a challenger, as the game's)
+        for (const old of this.sockets("prove")) if (old !== ws && this.att(old).prover === prover) this.close(old, 4000, "replaced by a newer game");
       } else {
         this.openSound(ws);
       }
@@ -737,10 +806,12 @@ export class Channel extends DurableObject<Env> {
     if (game) this.send(ws, game);
   }
 
-  openDesk(ws: WebSocket, a: Att, hostName: string) {
+  openDesk(ws: WebSocket, a: Att, hostName: string, talk = false) {
     const host = oneLine(hostName, NAME_MAX) || this.name;
     a.host = host;
+    if (talk) a.talk = true;
     this.keep(ws, a);
+    if (talk) this.tellViewers();
     if (!this.meta.hostNames.includes(host.toLowerCase())) {
       this.meta.hostNames.push(host.toLowerCase());
       this.saveMeta();
@@ -869,11 +940,13 @@ export class Channel extends DurableObject<Env> {
     try { m = JSON.parse(msg); } catch { return; }
     if (!m || typeof m !== "object" || Array.isArray(m) || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) return;
     const fields = gameFields(m.game);
+    this.witnessGame(fields);
     this.takeWhere(gameWhere(m.game), fields, now);
     this.takeActivity(gameActivity(m.game), fields, now);
     this.takeHere(gameHere(m.game), fields, now);
     this.takeStar(gameStar(m.game), fields);
     const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
+    if (fields.off === true) this.witnessOff(); // (after the message is taken: its last skills with it)
     if (!got) return;
     const line = pyjson({ game: { ...got, at: this.game.at } });
     for (const v of [...this.seated(), ...this.sockets("look"), ...this.sockets("desk")]) this.send(v, line);
@@ -1021,6 +1094,8 @@ export class Channel extends DurableObject<Env> {
     } else if (a.role === "sound") this.fromSound(msg);
     else if (a.role === "game") {
       if (typeof msg === "string") this.fromGame(ws, msg);
+    } else if (a.role === "prove") {
+      if (typeof msg === "string") this.fromProve(ws, a, msg);
     } else if (a.role === "look" && typeof msg === "string" && msg.length <= VIEWER_TEXT) {
       let m: any;
       try { m = JSON.parse(msg); } catch { return; }
@@ -1057,6 +1132,8 @@ export class Channel extends DurableObject<Env> {
       this.tellViewers();
     } else if (a.role === "look") {
       if (a.lookFrames) this.tellViewers(); // (the transmitter's "lookers": one fewer)
+    } else if (a.role === "desk") {
+      if (a.talk) this.tellViewers(); // (the plugin's chat gone: the page's chat goes with it while dark)
     } else if (a.role === "sound") {
       if (!this.sockets("sound").length) {
         this.soundHeld = [];
@@ -1064,8 +1141,11 @@ export class Channel extends DurableObject<Env> {
         this.saveMeta();
         for (const v of this.seated()) this.send(v, this.meta.soundInfo);
       }
+    } else if (a.role === "prove" && a.prover) {
+      if (!this.sockets("prove").some((o) => o !== ws && this.att(o).prover === a.prover)) this.witOff(a.prover);
     } else if (a.role === "game") {
       if (!this.sockets("game").length) {
+        this.witnessOff(); // (the plugin gone while they were logged in: a logout, as far as the proof goes)
         this.saveGame(); // (the last of it, for a page while the player's away)
         this.dropWhere(); // (following: only while the plugin's connected)
         this.dropActivity(); // (what they're doing, the same)
@@ -1554,6 +1634,7 @@ export class Channel extends DurableObject<Env> {
     const p = this.poll, g = this.guess;
     if (p) due.push(p.open ? p.ends : (p.closed || 0) + this.pollKept());
     if (g && g.result) due.push(g.result.at + this.guessKept());
+    due.push(...this.witDue());
     if (due.length) this.ctx.storage.setAlarm(Math.min(...due));
   }
 
@@ -1570,16 +1651,185 @@ export class Channel extends DurableObject<Env> {
       this.saveGuess();
       this.broadcast(pyjson({ guess_gone: g.id }));
     }
+    if (this.witDue().some((t) => now >= t - 5)) await this.witnessCheck();
     this.schedule();
+  }
+
+  // proving the name from the game itself (11/15/2026; witness.ts, docs/protocol.md "Proving a name"), for each party:
+  // "" the page's holder (what the plugin sends on its key), or a challenger (11/15/2026, "Taking a name back"), by
+  // its key's hash, whose plugin's messages feed only its own proof
+
+  saveWit() { this.ctx.storage.put("witness", this.wit); this.ctx.storage.put("cwit", this.cwit); }
+
+  /** A party's proof state. */
+  witOf(party: string): Wit { return party ? (this.cwit[party] ??= {}) : this.wit; }
+
+  /** A party's name and skills as its plugin last said them: the page's kept state for the holder, else its own. */
+  witSaid(party: string): { name?: unknown; skills?: unknown } {
+    return party ? (this.cwit[party]?.said || {}) : { name: this.game.kept.name, skills: this.game.kept.skills };
+  }
+
+  /** Whether a party's proof is still to be made: the page unproven, and (a challenger) still one. */
+  witOpen(party: string): boolean {
+    if (!this.meta.unproven || this.meta.proven) return false;
+    return !party || (this.meta.challengers || []).some((c) => c.keyHash === party);
+  }
+
+  /** The holder's game message, for the proof (its logout, once the message is taken: fromGame). */
+  witnessGame(fields: Fields) { this.witStart("", fields); }
+  witnessOff() { this.witOff(""); }
+
+  /** A party's game message: the name it's logged in as (only the page's own counts) and each skill's experience as
+   *  it changes; a look is due WITNESS_LOOK after the last change. */
+  witStart(party: string, fields: Fields) {
+    if (!this.witOpen(party) || fields.off === true) return;
+    const w = this.witOf(party);
+    const n = typeof fields.name === "string" ? fields.name : this.witSaid(party).name;
+    if (typeof n !== "string" || channelForm(n) !== this.name.toLowerCase()) return;
+    if (w.name !== n) { w.name = n; w.seen = {}; }
+    if (!fields.skills) return;
+    const seen = (w.seen ??= {});
+    if (noteSaid(seen, reported(fields.skills), Date.now())) {
+      w.look = Date.now() + this.witnessLook();
+      this.saveWit();
+      this.schedule();
+    }
+  }
+
+  witnessLook(): number {
+    const t = parseFloat(this.env.WITNESS_LOOK_S || "");
+    return t > 0 ? t * 1000 : WITNESS_LOOK;
+  }
+
+  /** A party logged out (or its plugin's gone): its hidden figures are claimed, and asked of the hiscores after a while. */
+  async witOff(party: string) {
+    const w = this.witOf(party);
+    if (!this.witOpen(party) || !w.name || !w.seen) return;
+    const claims = claimsFrom(w.seen), n = Object.keys(claims).length;
+    const keep = party ? { said: w.said } : {};
+    const last = n ? `logged out: ${n} skill${n > 1 ? "s" : ""} gained that the hiscores didn't have yet; asking them in a minute`
+      : Object.keys(w.seen).length ? "logged out before the experience gained was looked at: next time, wait a minute after your last experience before logging out"
+      : "logged out with no experience gained this time";
+    const next: Wit = n ? { ...keep, name: w.name, claims, tries: 0, next: Date.now() + this.witnessWait(0), last } : { ...keep, last };
+    if (party) { if (this.witOpen(party)) this.cwit[party] = next; } else this.wit = next;
+    this.saveWit();
+    this.schedule();
+  }
+
+  witnessWait(i: number): number {
+    const t = parseFloat(this.env.WITNESS_WAIT_S || "");
+    return t > 0 ? t * 1000 : WITNESS_WAITS[Math.min(i, WITNESS_WAITS.length - 1)];
+  }
+
+  /** The parties' next looks and asks, for the alarm. */
+  witDue(): number[] {
+    const out: number[] = [];
+    for (const w of [this.wit, ...Object.values(this.cwit)]) {
+      if (w.look) out.push(w.look);
+      if (w.claims && w.next) out.push(w.next);
+    }
+    return out;
+  }
+
+  /** Every party whose ask is due: the hiscores asked again; a claim found there exactly proves it, one not there yet
+   *  is asked again later. */
+  async witnessCheck() {
+    const now = Date.now();
+    for (const party of ["", ...Object.keys(this.cwit)]) {
+      const w = this.witOf(party);
+      if (w.look && now >= w.look - 5 && w.name && w.seen && this.witOpen(party)) {
+        // (a look, while they're logged in: what the hiscores don't show yet is hidden)
+        w.look = undefined;
+        const h = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
+        if (h && w.seen) {
+          noteLook(w.seen, h, now);
+          const hidden = Object.values(w.seen).filter((v) => v.hidden).length;
+          w.last = hidden ? `${hidden} skill${hidden > 1 ? "s" : ""} gained that the hiscores don't have yet: log out, and it's checked`
+            : "the hiscores already show this experience";
+        } else w.last = "the hiscores couldn't be read just now";
+      }
+      if (!w.claims || !w.next || now < w.next - 5) continue;
+      if (!w.name || !this.witOpen(party)) { this.witClear(party); continue; }
+      const h1 = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
+      const said = h1 ? judge(w.claims, h1) : "wait";
+      if (said === "proven" && this.witOpen(party)) { this.witProven(party); return; }
+      if (said === "wait" && (w.tries || 0) + 1 < WITNESS_WAITS.length) {
+        Object.assign(w, { tries: (w.tries || 0) + 1, next: Date.now() + this.witnessWait((w.tries || 0) + 1),
+                           last: h1 ? "the hiscores haven't caught up yet; asking again later" : "the hiscores couldn't be read; asking again later" });
+      } else {
+        this.witClear(party);
+        this.witOf(party).last = said === "no" ? "the hiscores moved past what was claimed (played elsewhere since?): play, then log out to try again"
+          : "the hiscores never showed what was claimed: play, then log out to try again";
+      }
+    }
+    this.saveWit();
+  }
+
+  witClear(party: string) {
+    if (party) { if (this.cwit[party]) this.cwit[party] = { said: this.cwit[party].said, last: this.cwit[party].last }; }
+    else this.wit = { last: this.wit.last };
+  }
+
+  /** A party proven. The holder: the page is theirs, and every challenge is dropped. A challenger: the name is taken
+   *  back (11/15/2026, Jace: "a proven player's claim replaces an unproven holder, and that holder's key stops
+   *  working"): its key becomes the page's, the holder's stops, what the holder's plugin sent goes, and the
+   *  challenger's plugin is told to come again (4012), when its key opens the page as the holder's. */
+  witProven(party: string) {
+    const ch = party ? (this.meta.challengers || []).find((c) => c.keyHash === party) : null;
+    if (party && !ch) return;
+    this.meta.proven = { at: Date.now(), ...((ch ? ch.account : this.meta.account) ? { account: ch ? ch.account : this.meta.account } : {}) };
+    delete this.meta.unproven;
+    delete this.meta.challengers;
+    this.wit = {};
+    this.cwit = {};
+    if (ch) {
+      this.meta.keyHash = ch.keyHash;
+      if (ch.account) this.meta.account = ch.account; else delete this.meta.account;
+      for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
+        for (const ws of this.sockets(role)) this.close(ws, 4003, "this name was proven by another: its key no longer opens it");
+      }
+      this.clearGame();
+      this.offAir();
+    }
+    for (const ws of this.sockets("prove")) {
+      const a = this.att(ws);
+      if (ch && a.prover === party) this.close(ws, 4012, "proven: this page is yours now; connect again");
+      else this.close(ws, 4003, "this name was proven by another");
+    }
+    this.saveMeta();
+    this.saveWit();
+  }
+
+  // a challenger's plugin (11/15/2026; docs/protocol.md "Taking a name back"): its {"game"} messages kept only for its
+  // own proof, never on the page or to anyone watching
+
+  fromProve(ws: WebSocket, a: Att, msg: string) {
+    if (ws.readyState !== OPEN || !a.prover) return;
+    const now = Date.now(), read = (this.gameReads.get(ws) || []).filter((t) => now - t < 1000);
+    this.gameReads.set(ws, read);
+    if (read.length >= GAME_A_SECOND || msg.length > GAME_MESSAGE) return;
+    read.push(now);
+    let m: any;
+    try { m = JSON.parse(msg); } catch { return; }
+    if (!m || typeof m !== "object" || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) return;
+    const fields = gameFields(m.game), party = a.prover;
+    if (!this.witOpen(party)) return;
+    this.witStart(party, fields);
+    const w = this.witOf(party);
+    w.said = { ...(w.said || {}), ...(typeof fields.name === "string" ? { name: fields.name } : {}), ...(fields.skills ? { skills: fields.skills } : {}) };
+    if (fields.off === true) this.witOff(party);
   }
 
   // Dink (a fallback: the client normally takes Dink's posts itself and sends reports as the transmitter)
 
   dinkSeen = new Map<string, number>(); // a Dink post -> when: the same one again within 10 s is dropped
 
-  async dink(request: Request, key: string, ip: string): Promise<Response> {
+  // (fromPlugin, 11/15/2026: the Outside plugin's own reports, for a player with no outstation; while the outstation
+  // transmits, Dink's come through it, so the plugin's are dropped and nothing's told twice)
+  async dink(request: Request, key: string, ip: string, fromPlugin = false): Promise<Response> {
     const no = await this.checkKey(key, ip);
     if (no) return new Response(null, { status: 403 });
+    if (fromPlugin && this.live()) return new Response(null, { status: 204 });
     const payload = await dinkPayload(request);
     // (Dink posts each event once to each address it lists: listed twice, every event came twice)
     const now = Date.now(), seen = JSON.stringify(payload);
@@ -1744,11 +1994,41 @@ export class Channel extends DurableObject<Env> {
   // Jace's admin (index.ts checks the admin token before it reaches here)
 
   // (onlyNew: an invite's, which never takes a channel that has a key already, whatever the Directory says)
-  async mint(onlyNew = false): Promise<Response> {
+  /** Taking a name back (11/15/2026; docs/protocol.md "Taking a name back"): a claim on a name held unproven gives a
+   *  challenger's key, which opens only a proving socket; proven, it becomes the page's (witProven). 409 on a name
+   *  that's proven, vouched for, or nobody's. */
+  async challenge(account: string): Promise<Response> {
+    if (this.meta.keyHash === null || !this.meta.unproven || this.meta.proven) return json({ error: "that name has an outstation already" }, 409);
+    const bytes = crypto.getRandomValues(new Uint8Array(18));
+    const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const now = Date.now(), keyHash = await this.hash(key);
+    const list = (this.meta.challengers || []).filter((c) => now - c.at < CHALLENGE_DAYS * 86_400_000);
+    for (const gone of list.splice(0, Math.max(0, list.length - (CHALLENGERS - 1)))) delete this.cwit[gone.keyHash];
+    list.push({ keyHash, at: now, ...(account ? { account: await this.hash("account:" + account) } : {}) });
+    this.meta.challengers = list;
+    this.saveMeta();
+    this.saveWit();
+    return json({ key });
+  }
+
+  // (claim: the plugin's own, unproven; anything else (the keeper's, an invite's) is vouched for and clears it)
+  async mint(onlyNew = false, claim = false, account = ""): Promise<Response> {
     if (onlyNew && this.meta.keyHash !== null) return json({ error: "that name has an outstation already" }, 409);
     const bytes = crypto.getRandomValues(new Uint8Array(18));
     const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     this.meta.keyHash = await this.hash(key);
+    delete this.meta.proven;
+    delete this.meta.challengers;
+    this.wit = {};
+    this.cwit = {};
+    this.ctx.storage.delete(["witness", "cwit"]);
+    if (claim) {
+      this.meta.unproven = true;
+      if (account) this.meta.account = await this.hash("account:" + account);
+    } else {
+      delete this.meta.unproven;
+      delete this.meta.account;
+    }
     if (onlyNew) this.meta.pending = true; // (an invite's: not taken up till its key's used; the keeper's leaves it as it was)
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {

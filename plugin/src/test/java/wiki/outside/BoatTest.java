@@ -11,7 +11,9 @@ import net.runelite.api.WorldView;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import org.junit.Test;
+// hub:cut globe
 import static org.junit.Assert.assertArrayEquals;
+// hub:end globe
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -95,8 +97,10 @@ public class BoatTest
 		assertEquals(WorldView.TOPLEVEL, on.getWorldView());
 		WorldPoint at = OutsidePlugin.here(client(top), player(deck));
 		assertEquals(new WorldPoint(3180, 2435, 0), at);
+		// hub:cut globe
 		// (and so it goes as the sea's square, by the Great Conch)
 		assertArrayEquals(new int[]{3136, 2496}, Follow.place(at.getX(), at.getY()));
+		// hub:end globe
 	}
 
 	@Test
