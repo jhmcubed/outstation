@@ -82,6 +82,9 @@ public class OutsidePanel extends PluginPanel
 
 		void update();
 
+		/** "Show what's sent": what "Update my page" would send now, in a window. */
+		void showSent();
+
 		void friendsOnly(boolean on);
 
 		void copyFriendsLink();
@@ -138,6 +141,11 @@ public class OutsidePanel extends PluginPanel
 	private final JLabel snapStatus = small(" ");
 	private long snapAt;
 	private final javax.swing.Timer snapClock = new javax.swing.Timer(30_000, e -> snapLine.setText(snapWords(snapAt)));
+	// (11/16/2026, Jace, after a press inside the minute went unnoticed and his page kept a necklace he'd taken off: a press
+	// too soon waits, and the button counts the seconds down till it goes by itself)
+	private JButton updateButton;
+	private volatile long updateWaits;
+	private final javax.swing.Timer updateClock = new javax.swing.Timer(250, e -> updateCount());
 	// (11/16/2026, the permissions review: who sees the page, and taking it down, with the plugin alone)
 	private final JLabel access = small(" ");
 	private final JButton accessButton = new JButton("Make it friends only");
@@ -193,13 +201,15 @@ public class OutsidePanel extends PluginPanel
 		page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
 		page.add(wide(button("Open my page", hooks::openPage)));
 		page.add(Box.createVerticalStrut(6));
-		page.add(wide(button("Update my page", hooks::update)));
+		page.add(wide(updateButton = button("Update my page", hooks::update)));
 		snapLine.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		page.add(left(snapLine));
 		snapStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		page.add(left(snapStatus));
 		page.add(left(small("<html><div style='width:155px'>Your gear, stats, quests, diaries and slayer task go when you press"
 			+ " it, and by themselves every hour you're logged in; never from the Wilderness or a PvP world.</div></html>")));
+		page.add(Box.createVerticalStrut(4));
+		page.add(wide(button("Show what's sent", () -> hooks.showSent())));
 		snapClock.start();
 		page.add(Box.createVerticalStrut(14));
 
@@ -489,6 +499,7 @@ public class OutsidePanel extends PluginPanel
 	public void stop()
 	{
 		snapClock.stop();
+		updateClock.stop();
 	}
 
 	/** When the page was last updated from here (ms; 0: not this session). */
@@ -503,6 +514,57 @@ public class OutsidePanel extends PluginPanel
 				snapStatus.setText(" ");
 			}
 		});
+	}
+
+	/** "Show what's sent": the snapshot as it would go now, its every field, in a window of its own (nothing's sent). */
+	public void showSent(String to, String text, boolean sending)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			javax.swing.JTextArea area = new javax.swing.JTextArea(text);
+			area.setEditable(false);
+			area.setCaretPosition(0);
+			area.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
+			javax.swing.JScrollPane scroll = new javax.swing.JScrollPane(area);
+			scroll.setPreferredSize(new Dimension(460, 420));
+			JPanel box = new JPanel(new BorderLayout(0, 8));
+			box.add(new JLabel("<html><div style='width:420px'>What \"Update my page\" sends now, to " + esc(to) + ", and nothing else"
+				+ " (your connection shows your IP address, as any does). " + (sending ? "" : "Sending is off in the plugin's settings: nothing goes till it's on. ")
+				+ "Nothing's sent by opening this.</div></html>"), BorderLayout.NORTH);
+			box.add(scroll, BorderLayout.CENTER);
+			javax.swing.JOptionPane.showMessageDialog(this, box, "What's sent", javax.swing.JOptionPane.PLAIN_MESSAGE);
+		});
+	}
+
+	/** A press too soon: the update goes by itself at `until` (ms), the button counting down till then; 0, none waiting. */
+	public void updateWait(long until)
+	{
+		updateWaits = until;
+		SwingUtilities.invokeLater(() ->
+		{
+			updateCount();
+			if (until > 0)
+			{
+				updateClock.start();
+			}
+		});
+	}
+
+	/** The button's words: "Update my page", or while a press waits, how long till it goes. */
+	private void updateCount()
+	{
+		long left = updateWaits - System.currentTimeMillis();
+		if (updateButton == null)
+		{
+			return;
+		}
+		if (updateWaits <= 0 || left <= 0)
+		{
+			updateClock.stop();
+			updateButton.setText("Update my page");
+			return;
+		}
+		updateButton.setText("Updating in " + (left + 999) / 1000 + " s");
 	}
 
 	/** A line under "Update my page" (what the last press did). */
