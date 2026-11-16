@@ -2985,6 +2985,9 @@ public class OutsidePlugin extends Plugin
 
 	// ---- the relay ----
 
+	/** RuneLite's Gson, keeping nulls as it writes (Kit.wire): the game socket's messages say "clear this" with them. */
+	private Gson wire;
+
 	private boolean send(JsonObject fields)
 	{
 		WebSocket ws = socket;
@@ -2996,7 +2999,11 @@ public class OutsidePlugin extends Plugin
 		}
 		JsonObject msg = new JsonObject();
 		msg.add("game", fields);
-		return ws.send(gson.toJson(msg));
+		if (wire == null)
+		{
+			wire = Kit.wire(gson);
+		}
+		return ws.send(wire.toJson(msg));
 	}
 
 	private synchronized void connect()

@@ -1,5 +1,6 @@
 package wiki.outside;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
@@ -19,6 +20,17 @@ public class Kit
 	private final Map<String, JsonElement> sent = new LinkedHashMap<>();
 	/** the item ids whose name and price have gone already */
 	private final Set<Integer> named = new TreeSet<>();
+
+	/**
+	 * The writer for the game socket (11/16/2026, Jace: his goblin task never reached his page): RuneLite's Gson, which
+	 * plugins are given, leaves out an object's null members as it writes, so every {"where": null} that clears the
+	 * globe's square, {"slayer": {"area": null…}} and a switched-off part's null had been going as nothing (or as a field
+	 * the relay refuses). The same Gson, with nulls kept; RuneLite's own otherwise untouched.
+	 */
+	static Gson wire(Gson runelite)
+	{
+		return runelite.newBuilder().serializeNulls().create();
+	}
 
 	/** Everything goes again (a new connection, or logging in). */
 	public void forget()
