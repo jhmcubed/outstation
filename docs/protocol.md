@@ -605,6 +605,9 @@ Both relays (`relay/src/channel.ts`'s `postGame`, game.ts's `gamePresence`; rela
   `GET /game` gives it as `"snap"`, the whole state someone just come gets has it beside `"at"`, and each snapshot goes
   on to seated viewers, lookers and desks as `{"game": {...what changed, "at", "snap"}}` even when nothing changed. The
   page says "updated 14 minutes ago" from it while no socket's connected.
+- **What a snapshot clears** (`SNAP_CLEARS`, 11/16/2026): `world`, `vitals` and `prayers`, which only the whole plugin's
+  socket sends, go to `null` with a snapshot when the relay still keeps them, so a page left with the socket's orbs or
+  world drops them. The delve board's numbers (`delve`) stay as last sent.
 - **Answers**: 204 taken; 400 not a `{"game"}` object; 403 a wrong or short key; 413 longer than 64 KB; 429 past 6 posts
   a minute for the channel (`GAME_POSTS_A_MINUTE`; wrong keys don't count), or (Cloudflare) too many wrong keys.
 - **Heard from**: a post (but a logout) marks the plugin heard from for 70 minutes (`PRESENCE_FRESH_MS`; the Worker's

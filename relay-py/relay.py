@@ -910,6 +910,9 @@ def game_activity(g):
 # point for the globe ({"x", "y"}, multiples of PRESENCE_GRID within the main map, or Zanaris's), shown while the plugin's
 # heard from (presence_fresh_s after its last POST, till it logs out) or its socket's connected.
 GAME_POSTS_A_MINUTE, SNAP_FIELDS, PRESENCE_GRID, PRESENCE_FRESH_S = 6, ("worn", "inv", "skills"), 32, 70 * 60
+# What only the whole plugin's socket sends (11/16/2026): a snapshot clears each still kept, as None; the delve board's
+# numbers stay. game.ts's SNAP_CLEARS, the same.
+SNAP_CLEARS = ("world", "vitals", "prayers")
 PRESENCE_KINDS = ("boss", "city", "dungeon", "minigame", "raid", "region")
 AREA_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 '.()&-]{0,47}")       # (fullmatch)
 
@@ -1850,6 +1853,10 @@ class Channel:
         snap = any(f in fields for f in SNAP_FIELDS)
         if snap:
             self.game.snap = now
+            # (the whole plugin's own fields, left from its socket, cleared: SNAP_CLEARS)
+            for f in SNAP_CLEARS:
+                if self.game.kept.get(f) is not None:
+                    fields[f] = None
         got = self.game.apply(fields, now)
         if fields.get("off") is True:
             self.witness_off()
