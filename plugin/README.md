@@ -42,6 +42,14 @@ Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on o
 Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on outside.wiki's globe while you play) or friends only, **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (after a confirmation: everything on the page goes and the name is free again). Under **Your page's chat** (11/16/2026): **Tend my page's chat** makes a token, hands it to the relay with the page's key (`POST /tend/<channel>`) and opens the page with it in the fragment (`outside.wiki/<name>#tend=<token>`): **take back** and **ban** beside each visitor's line, for 12 hours, in that browser (`Tend.java`; outstation's docs/protocol.md, "Tending the page's chat from the page").
 -->
 
+**Update my page** counts down to when it can be pressed again, and the tab shows when it last went (11/16/2026).
+**Show what's sent** opens exactly what Update my page would send now, every field of it, in a window to read before
+sending. **Copy my Dink address** (11/16/2026): if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin,
+this copies your page's address for it, to paste on its own line in Dink's Primary Webhook URLs; what you switch on in
+Dink then shows on your page and outside.wiki's globe as field reports as they happen. This plugin sends nothing for
+it (Dink does); nothing from the Wilderness or PvP is shown, nor anything that names another player, and Dink's world,
+location and screenshot aren't kept. The address holds your page's key.
+
 ## What it sends, and only that
 
 **Making your page** (only when you press Make my Outside page; 11/15/2026): your character's name and your account hash (the number RuneLite gives plugins for your account, as RuneProfile's and Dink's plugins send it), once, to Jace's relay on Cloudflare. The relay keeps only a hash of the account hash, for proving the page is yours, and shows it to nobody (docs/protocol.md, "Claiming a name").
@@ -56,7 +64,7 @@ To Jace's relay on Cloudflare, only while you're logged in, and only when you pr
 -->
 - **worn and carried** (one switch): what's in each equipment slot and inventory slot; the looting bag's contents once you've looked in it; the seed box's and the chugging barrel's once you've opened them (11/14/2026); the rune pouch's runes; Dizana's quiver's ammunition; and each of those items' name and Grand Exchange price, once each
 - **skills** (one switch): each skill's level, boosted level and experience
-- **quests, diaries and combat achievements** (one switch, on; 11/15/2026): your quest points, which quests you've done and which you've started (RuneLite's own quest list), each Achievement Diary area's tiers and how many of its tasks you've done, and your combat achievements' points and tasks done in each tier
+- **quests, diaries and combat achievements** (one switch, on; 11/15/2026): your quest points, which quests you've done and which you've started (RuneLite's own quest list), each Achievement Diary area's tiers and how many of its tasks you've done, and your combat achievements' points and tasks done in each tier; your collection log's count (slots filled and in all, 11/16/2026) with the names of the slots the game's chat said you added since the last update; and your kill counts and clue counts as the game's chat last said each one ("Your Vorkath kill count is: 418", "You have completed 152 hard Treasure Trails"; 11/16/2026), kept on this RuneLite for the account, never a Wilderness boss's
 - **my slayer task** (one switch, on; 11/15/2026): the monster you're assigned, how many are left of how many, the area if your master named one, your slayer points and your task streak, read as RuneLite's own slayer plugin reads them
 <!-- hub:cut live -->
 - **hitpoints, prayer, run and special** (one switch), and which prayers are on

@@ -13,7 +13,7 @@ On this page:
 - [What the relay keeps](#what-the-relay-keeps), and for how long.
 - [Jagex's rules](#jagexs-rules), [checking it yourself](#checking-it-yourself) and [the technical detail](#the-technical-detail).
 
-The window's own words, where this page quotes them: your **station key** is the code that attaches it to your channel; **transmitting** is live and **dark** off air; **observers** are viewers; **the tape** is the replay buffer; **redactions** are masks; **the monitor** is the small view of what went out; **field reports** are Dink's posts.
+The window's own words, where this page quotes them: your **station key** is the code that attaches it to your channel; **static** (the static key, Pause to begin with, which you can change) is what this page calls pausing; **transmitting** is live and **dark** off air; **observers** are viewers; **the tape** is the replay buffer; **redactions** are masks; **the monitor** is the small view of what went out; **field reports** are Dink's posts.
 
 ## In plain words
 
@@ -41,11 +41,11 @@ Everything drawn in RuneLite's game area goes out while you're live. The outstat
 - **Your bank PIN:** press Pause first.
 - **The chat, if you put it there** ("chat in the picture", off to begin with; 11/07/2026): the chat over the game drawn into each frame on your PC, as it sits over the game, so observers and your clips see it. It's your viewers' names and lines, which are in the chat on Outside anyway.
 
-**Windows over RuneLite** (a browser, Discord, the outstation's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The monitor in the outstation's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more. And if the outstation can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
+**Windows over RuneLite** (a browser, Discord, the outstation's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The monitor in the outstation's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more (every choice still falls back to the screen when the window comes back black, so if it does on your PC, put RuneLite where nothing covers it). And if the outstation can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
 
 ## What leaves your PC
 
-This is everything the outstation sends. Before it's attached to a channel (a station key from Jace, or requesting one), it sends only the version check, a request for a station key when you press **request**, an anomaly report when you press its send, and your friends list's look at the open outstations.
+This is everything the outstation sends. Before it's attached to a channel (a station key from Jace, or requesting one), it sends only the version check, a request for a station key when you press **request**, an anomaly report when you press its send, and your friends list's look at the open outstations; and, in "clips only" (dink ▸), Dink's posts and their clips to your own Discord (below, "To your Discord").
 
 **To the relay in your station key, while you're transmitting** (Jace's, on Cloudflare, unless your code names another), and from there to whoever opens your Outside page (anyone with the link, or only those with your watch code if you set one):
 - **The picture:** RuneLite's game area, shrunk (to begin with 384 px wide and 8 frames a second, which measured about half a megabit a second), as JPEG pictures, with your redactions already blacked out. On the shared relay one transmission's pictures go up to 20 Mbit/s at most (the relay sends every observer a copy); a frame past that waits for the next. Once a second, a smaller copy too (192 px wide), for the little live pictures: the outstations page, a friend's peek, your own monitor.
@@ -56,9 +56,10 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - "the game" is RuneLite's own sound.
   - "game + desktop" adds everything else your PC plays: music, videos, a Discord call's voices, Windows' own sounds. It goes as a second track, which viewers can turn down.
   - Never a microphone: the outstation only hears what your PC plays.
-  - The sound carries on through static (Pause). It stops when the picture stops for anything else.
+  - The sound carries on through static (Pause), and while RuneLite's minimised or logged out; only going dark stops it. (The picture stops for those; the sound doesn't, as yet.)
+  - With nobody watching, one picture goes every 10 seconds (so whoever opens your page first sees a recent one) and no sound at all; the rest is kept on your PC for the tape.
 
-**Your year, to the relay,** only with "keep an encrypted copy on the relay" on (off to begin with; 11/10/2026): each day of your record, hourly, when you go dark and when you press "open my year" or "send it now", **encrypted on your PC** before it goes, under a name that says nothing (not the day, not which PC). Once, the two tokens made from your record key that let a page read it and post your public year (never the key). Below, [What the relay keeps](#what-the-relay-keeps), "Your year".
+**Your year, to the relay,** only with "keep an encrypted copy on the relay" on (off to begin with; 11/10/2026): each day of your record, hourly, when you go dark and when you press "open my year" or "send it now", **encrypted on your PC** before it goes, under a name that says nothing (not the day, not which PC). Once each time it opens, the two tokens made from your record key that let a page read it and post your public year (never the key). Below, [What the relay keeps](#what-the-relay-keeps), "Your year".
 
 **To the relay, whenever the outstation's open and attached,** live or not:
 - **The chat window's side:**
@@ -67,17 +68,19 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - your polls and drop guesses
   - your broadcast's title and your cap on viewers
   - whether viewers may chat and ping
-- **Your drops and level-ups,** only if you point Dink at the outstation, and only the kinds your switches let through (dink ▸, "which field reports go out"):
+- **Your field reports,** only if you point Dink at the outstation, and only the kinds your switches let through (dink ▸, "which field reports go out"; all on to begin with): levels and experience milestones, drops, kill counts, the collection log, pets, clues, quests, diaries, combat tasks, slayer tasks, speedruns, deaths, Barbarian Assault gambles, Grand Exchange trades (yours with the exchange, never a trade with another player) and the Leagues':
   - each one's kind and its line ("Lichen Ring has defeated Vorkath with a completion count of 50")
-  - a few numbers for your page's readings: the boss and its count, the levels, the loot's items and their value, the collection log's count
+  - a few numbers for your page's readings: the boss and its count, the levels, the loot's items (their ids, names, how many and value) and what it dropped from, the collection log's count, and the quest's, clue's, slayer task's, diary's or combat task's own fields
   - Nothing else in Dink's post leaves your PC: not the screenshot, not the details Dink adds about your account or your Discord, not a raid party's names, a PvP killer's name or the player a PvP drop came from. The relay checks again as each arrives.
 - **Messages to a friend's outstation** (friends ▸, right-click a name, "message"): your words, with your chat name and channel. They go to their outstation's window only, never on either stream.
+- **The monitor:** a socket to the relay with your channel and watch code, while you're attached, dark too, so the window can show what goes out.
+- **Your emotes,** only those you drop on settings ▸ emotes: each picture and its name, for your page's chat (at most 30, each at most 256 KB).
 - **Your outstation's version,** on every connection, so a relay can turn away one too old for it.
 
 **Clips, to the relay and onto your Outside page,** only with "and put them on my Outside page" on (dink ▸, off to begin with):
-- Only the clips that saved themselves, from what Dink told of: a pet, a new collection log slot, a 99, a drop worth a million or more.
+- Only the clips that saved themselves, from what Dink told of: a pet, a new collection log slot, a 99, a drop worth what you set (a million to begin with).
 - Each one is up to 17 seconds round the moment (12 before, 5 after, as much as the tape holds), at most 768 px wide, with its sound, a still, and up to 20 small frames for the hover.
-- A clip is made from what had already gone out: the same frames, redactions and all, and the same sound. It shows nothing your viewers didn't.
+- A clip is made from the same frames and sound as the transmission, after the same redactions, static and logged-out checks, whether or not they were sent (with nobody watching, most aren't). It shows nothing that couldn't have gone out.
 - Never the clips you save with the clip key: those stay on your PC. So do all clips while the switch is off.
 
 **To Jace's relay, when you report an anomaly or file a requisition** (the pink **report an anomaly** and the **file a requisition** beside it, at the foot of the window), only when you press **send to the listening post**:
@@ -105,7 +108,7 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 **To your Discord,** only if you set the outstation to pass Dink's posts on (dink ▸, "do you use Dink with Discord too?"):
 - each post just as Dink made it, its embed and screenshot included
 - to your own webhook addresses, by the rules taken from your Dink settings, so your Discord gets what it got before
-- and, while you're transmitting with the tape on, the clip of a big moment (a pet, a new log slot, a 99, a big drop) a few seconds later, under that same post and only where it went: a copy of what you transmitted round that moment (up to 17 s, at most 768 px wide, under 8 MB), the same copy your Outside page would get. dink ▸, "and send them to Discord, under Dink's post", turns it off (11/07/2026).
+- and, while you're transmitting with the tape on (or dark with the tape rolling), the clip of a big moment (a pet, a new log slot, a 99, a big drop) a few seconds later, under that same post and only where it went: a copy of what you transmitted round that moment (up to 17 s, at most 768 px wide, under 8 MB), the same copy your Outside page would get. dink ▸, "and send them to Discord, under Dink's post", turns it off (11/07/2026).
 - Nowhere else ever gets a screenshot.
 
 **To GitHub,** once on opening (settings ▸ more turns it off): "is there a newer version?". Nothing about you goes with it.
@@ -155,7 +158,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - press a key or click
 - reach into RuneLite or the game
 - change what the outstation captures or sends
-- open a web page: the outstation opens only ghillie.wiki's pages, this one, and this repository's GitHub forms for a report, and only when you click
+- open a web page: the outstation opens only ghillie.wiki's and outside.wiki's pages (a friend's page, your year), this one, and this repository's GitHub forms for a report, and only when you click
 - start a program, or read your files
 
 **What Jace can and can't do,** as the relay's keeper:
@@ -178,6 +181,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
   - when you paste (Ctrl+V, or a paste button)
   - once on opening, while it isn't attached yet, to see whether a station key is waiting there (anything else on the clipboard is left alone)
   - when you press "read my Dink settings" (Dink's own export)
+- **The pictures you drop on settings ▸ emotes,** only those.
 - **What you type into its own window,** as any program does. While you're changing one of its keys in the settings, it reads the next key pressed in its window.
 
 **It writes, and nowhere else:**
@@ -199,7 +203,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - the ✼ by the clock (the tray). Minimising the window puts it there, and the stream goes on.
 - Windows' own notification when a friend goes live, only with the Start menu shortcut
 
-**It starts nothing** but your browser, on a ghillie.wiki page, this one, or this repository's GitHub form for a report, when you click a link. It doesn't start with Windows, installs nothing, needs no admin, and closing it ends it.
+**It starts nothing** but your browser, on a ghillie.wiki or outside.wiki page, this one, or this repository's GitHub form for a report, when you click a link; and Explorer, to show your clips folder or play a clip, when you click for one. It doesn't start with Windows, installs nothing, needs no admin, and closing it ends it.
 
 **Its four keys are its own while it's open.** Windows hands Pause, Scroll Lock, Insert and End (or the keys you pick) to the outstation wherever you press them, so RuneLite doesn't get them while the outstation's open. If RuneLite or one of its plugins uses one of them, give the outstation another (settings ▸ hotkeys). A key another program already holds says so there.
 
@@ -320,7 +324,7 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
 
 > **The only official download is this repository's [Releases](https://github.com/jhmcubed/outstation/releases) page** (github.com/jhmcubed/outstation). ⊂λ,ｍ⊙ never sends the outstation any other way: a copy passed round in Discord, a DM, a forum or another website isn't ours, whatever it's called and however it looks. Never run an .exe you don't trust. RuneScape players are a favourite target of programs that pretend to be game tools and steal accounts, so before you run any copy, check its SHA-256 against the release's ([SAFETY.md](SAFETY.md), "Checking it yourself"). If someone offers you an outstation from anywhere else, don't open it, and tell the listening post (research@ghillie.wiki).
 
-1. **The code is all here**, under the MIT licence. The client is `client/src`, 27 files. Each one says at its top what it does.
+1. **The code is all here**, under the MIT licence. The client is `client/src`, 34 files. Each one says at its top what it does.
 2. **Releases are built by GitHub, from this code.** Each release lists the commit it was built from and the program's SHA-256. Once the repository is public, each also carries GitHub's build attestation: [GitHub CLI](https://cli.github.com) can confirm the file came from this repository's own build, unchanged:
 
    ```bash
@@ -374,7 +378,7 @@ Everything it touches in Windows and on the network, by file:
   - finding RuneLite's window and its process (window titles, the process list)
   - your network's byte counter (`GetIfTable2`)
   - the clipboard (when you copy or paste with Ctrl+C, X and V or the copy buttons; for the station key, and once on opening while not attached; and Dink's own export, read only when you press "read my Dink settings", with an import for Dink put back in its place)
-  - opening a page in your browser (`ShellExecuteW`), refused for anything but ghillie.wiki's pages, this one and the repository's report forms
+  - opening a page in your browser (`ShellExecuteW`), refused for anything but ghillie.wiki's and outside.wiki's pages, this one and the repository's report forms
   - blinking the outstation's own taskbar button (`FlashWindowEx`)
 - `hotkeys.rs`: `RegisterHotKey` for its four keys (and, while you're changing one in the settings, a press of one of them handed to the window instead of acting).
 - `autolive.rs`: going live by itself when RuneLite's window appears, and ending the stream 30 s after it's gone (both only if you switch them on).
@@ -383,7 +387,13 @@ Everything it touches in Windows and on the network, by file:
 - `dinksetup.rs`: reading Dink's export and writing its import (the clipboard, only when you press the button).
 - `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder; and, for your Outside page, the copy of its own (through a file in your temporary folder, deleted once read).
 - `clipsup.rs`: with "put them on my Outside page" on, that copy sent to your relay, and the list of what's there.
-- `feed.rs`: the monitor, and a friend's peek: a channel watched through the relay as a looker (not counted as watching).
+- `aether.rs`: the aether, one chat room for every outstation and visitor, through the relay, while its window is open.
+- `emotes.rs`: your own emotes: pictures you drop on settings ▸ emotes, sent to the relay for your page's chat.
+- `invites.rs`: a station key made for a friend through the relay, and the invite text to send them.
+- `record.rs`, `recordfmt.rs`: your year on this PC, and its encrypted copy on the relay with that switch on.
+- `chatpic.rs`: the game's chat drawn into the picture, with that switch on. Nothing of Windows or the network.
+- `stuck.rs`: a watch on its own window, so a stall is written in the log.
+- `feed.rs`: the monitor (a socket to the relay with your channel and watch code, while you're attached, dark too), and a friend's peek: a channel watched through the relay as a looker (not counted as watching).
 - `friendlist.rs`: the relay's list of open outstations, read while your list has anyone on it.
 - `ask.rs`: asking for an outstation, and looking for the answer.
 - `report.rs`: an anomaly or a requisition sent to the listening post's relay, only when you press send; the GitHub form's address.

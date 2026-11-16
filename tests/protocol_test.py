@@ -3572,6 +3572,34 @@ class ProvingByPosts(Witnessing):
         self.assertEqual(game_post(name, mine, {"game": {"name": name, "type": "IRONMAN"}})[0], 204)
         self.assertEqual(http("GET", "/game/%s?code=" % name)[1]["game"]["type"], "IRONMAN")
 
+    async def test_the_holders_link_to_tend_the_chat_stops_when_another_proves_it(self):
+        # (11/16/2026, the permissions review's second pass: a token handed in with the holder's key went on hiding
+        # lines and banning on the page for its 12 hours after the name was proven by another)
+        name, held = await self.claimed()
+        token = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        st, h, out = raw("POST", "/tend/%s?key=%s" % (name, urllib.parse.quote(held)), json.dumps({"token": token}).encode(),
+                         {"Content-Type": "application/json"})
+        self.assertEqual(st, 200)
+        t = await Client().open("%s/desk/%s?tend=%s" % (RELAY, name, token))
+        self.clients.append(t)
+        await next_of(t, "relay")
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        mine = json.loads(out)["key"]
+        self.hiscores(name, {"Ranged": 5000})
+        self.assertEqual(game_post(name, mine, {"game": {"name": name, "skills": {"Ranged": [80, 80, 5000]}}})[0], 204)
+        await asyncio.sleep(1.5)
+        game_post(name, mine, {"game": {"skills": {"Ranged": [81, 81, 5600]}}})
+        await asyncio.sleep(1.8)
+        game_post(name, mine, {"game": {"off": True}})
+        await asyncio.sleep(0.5)
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        self.assertEqual(await t.recv_close(timeout=5), ("close", 4003))
+        again = await Client().open("%s/desk/%s?tend=%s" % (RELAY, name, token))
+        self.clients.append(again)
+        self.assertEqual(await again.recv_close(timeout=5), ("close", 4003))
+
 
 class TakingBack(Witnessing):
     """Taking a name back (11/15/2026; docs/protocol.md "Taking a name back"): a claim on a name held unproven gives a

@@ -17,7 +17,7 @@
 //     "uv" (each face's texture and its corners' coordinates times 4096), "tex" (each texture as a PNG in base64, 16 at
 //     most) and "b" (the brightness the player has the game at): docs/protocol.md, "Kept for the page"
 //
-//   POST   /keep/<channel>/<what>?key=<key>     the JSON above (at most KEEP_MOST[what] bytes), KEEP_AN_HOUR an hour
+//   POST   /keep/<channel>/<what>?key=<key>     the JSON above (at most KEEP_MOST[what] bytes), KEEP_AN_HOUR × 2 an hour, all kinds together
 //   GET    /keep/<channel>/<what>?code=<code>   {"<what>": ..., "at"} (404 none)
 //   DELETE /keep/<channel>/<what>?key=<key>     taken away
 //   and since 11/15/2026 the motion library: a motion is a model with its frames (and its pet's), kept under a name
