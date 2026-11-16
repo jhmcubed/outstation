@@ -676,10 +676,13 @@ class Dink(Base):
         for kind in ("PLAYER_KILL", "TRADE", "CHAT", "GROUP_STORAGE"):
             body, ct = multipart({"type": kind, "content": "someone else's name"})
             self.assertEqual(await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct), 204)
+        # (a death in PvP: since 11/16/2026 it never passes at all, dinkSafe; a death elsewhere still does)
         body, ct = multipart({"type": "DEATH", "content": "killed by someone", "extra": {"isPvp": True}})
         await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct)
+        body, ct = multipart({"type": "DEATH", "content": "died to a goblin", "extra": {"isPvp": False}})
+        await post("/dink/%s?key=%s" % (self.ch, self.key), body, ct)
         r = (await next_of(v, "report"))
-        self.assertEqual((r["type"], r["text"]), ("DEATH", ""))
+        self.assertEqual((r["type"], r["text"]), ("DEATH", "died to a goblin"))
         with self.assertRaises(asyncio.TimeoutError):
             await v.recv_data(timeout=0.4)
 
@@ -1240,16 +1243,17 @@ class ReportData(Base):
         self.assertEqual(got[2], {"items": [{"name": "Dragon bones", "quantity": 2, "price": 3000, "id": 536}], "value": 6000,
                                   "source": "Vorkath"})
 
-    async def test_a_player_kills_loot_names_nobody(self):
+    async def test_a_player_kills_loot_never_passes(self):
+        # (since 11/16/2026 a player kill's loot never passes at all, dinkSafe: it named the player, and says where)
         await self.tx()
         v = await self.watch()
         await self.pause()
         await self.dink({"type": "LOOT", "content": "x has looted from SomePlayer", "extra": {"source": "SomePlayer",
                          "category": "PLAYER", "items": [{"name": "Coins", "quantity": 5000, "priceEach": 1}]}})
+        await self.dink({"type": "LOOT", "content": "loot", "extra": {"source": "Vorkath", "category": "NPC",
+                         "items": [{"name": "Coins", "quantity": 7000, "priceEach": 1}]}})
         r = (await next_of(v, "report"))
-        self.assertEqual(r["text"], "")
-        self.assertNotIn("source", r["data"])
-        self.assertEqual(r["data"]["value"], 5000)
+        self.assertEqual(r["data"]["value"], 7000)
 
 
 class Summary(ReportData):
