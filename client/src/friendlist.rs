@@ -27,9 +27,11 @@ pub struct Seen { pub live: bool, pub open: bool, pub static_on: bool, pub viewe
 #[derive(Clone, Debug, PartialEq)]
 pub enum State { Live(Seen), OffAir, NoPortal, Unknown }
 
-/// Their Outside page (where a click on their name goes).
+/// Their Outside page (where a click on their name goes): outside.wiki/<channel>. (Its own constant, not keeper's
+/// SITE: keeper is only in the station's build, and friends' outstations have this list too.)
+pub const SITE: &str = "https://outside.wiki/";
 pub fn page(channel: &str) -> String {
-    format!("{}{}", crate::keeper::SITE, channel)
+    format!("{}{}", SITE, channel)
 }
 
 /// The relay to read the open portals from: the one this portal's attached to, else the listening post's.
