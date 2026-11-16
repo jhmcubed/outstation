@@ -26,6 +26,8 @@ test("a deathbank: where, locked, its items and names as they are, anything else
   strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: true, items: [[1, 0]] }), "string");                // (no placeholders in a deathbank)
   strictEqual(typeof keepShape("deathbank", { where: "<b>Hespori</b>", locked: true, items: [[1, 1]] }), "string");
   strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: "yes", items: [[1, 1]] }), "string");
+  deepStrictEqual(keepShape("deathbank", { where: "Hespori", locked: true, items: [[1, 1]], from: "death" }), { where: "Hespori", locked: true, items: [[1, 1]], names: {}, from: "death" });
+  strictEqual(typeof keepShape("deathbank", { where: "Hespori", locked: true, items: [[1, 1]], from: "window" }), "string");
 });
 
 test("a model: vertices in threes, faces on them, a colour a face", () => {

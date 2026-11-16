@@ -6,7 +6,8 @@
 //   - "deathbank" (11/16/2026, Jace: "show an open Deathbank like the Hespori deathbank on someone's profile"): {"where":
 //     the boss or place it's for (the plugin's own list, Hespori, Zulrah, Vorkath...), "locked": true while its fee is
 //     unpaid, "items": [[id, how many], ...], "names": {id: [name, price]}}, as the game showed it when they last looked
-//     in it (the Item Retrieval Service's window), at most DEATHBANK_SLOTS items; taken away when it's emptied
+//     in it (the Item Retrieval Service's window), at most DEATHBANK_SLOTS items; taken away when it's emptied. Or,
+//     "from": "death", worked out as the death made it (what they carried less what they kept), till they look in it
 //   - "encounter" (11/15/2026): the last boss they fought, {"name", "model"}, sent as the fight ends
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
@@ -81,7 +82,8 @@ export function keepShape(what: string, d: unknown): unknown | string {
         n[k] = [v[0].replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 60), v[1] as number];
       }
     }
-    return { where: d.where, locked: d.locked, items: items.map((s) => [s[0], s[1]]), names: n };
+    if (d.from !== undefined && d.from !== "death") return "from: \"death\" or none";
+    return { where: d.where, locked: d.locked, items: items.map((s) => [s[0], s[1]]), names: n, ...(d.from ? { from: d.from } : {}) };
   }
   if (what === "model") return modelShape(d, true);
   // (11/15/2026: the last boss they fought, "the encounter": its name and its model as the fight ended)

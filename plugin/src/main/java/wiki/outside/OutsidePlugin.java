@@ -78,6 +78,9 @@ import net.runelite.api.events.StatChanged;
 import net.runelite.client.events.NpcLootReceived;
 import net.runelite.client.game.ItemStack;
 // hub:end reports
+// hub:cut deathbank
+import net.runelite.api.events.ActorDeath;
+// hub:end deathbank
 import net.runelite.api.events.ChatMessage;
 // hub:cut model,talk
 import net.runelite.api.events.CommandExecuted;
@@ -339,6 +342,12 @@ public class OutsidePlugin extends Plugin
 	 *  it last changed (a withdrawal of several goes once); the tick it changed, or -1 */
 	private Object[] deathbankSeen;
 	private int deathbankChanged = -1;
+	/** (11/16/2026, Jace: "make it fill in the moment they die too") what they carried and wore as they fell, {ids,
+	 *  how many}, the region they fell in and the tick; the game's line that a deathbank was made, once it comes */
+	private int[][] deathCarried;
+	private int deathRegion = -1;
+	private int deathTick = -1;
+	private String deathLine;
 	// hub:end deathbank
 	private static final MediaType JSON = MediaType.parse("application/json");
 	// hub:cut delve
@@ -635,6 +644,7 @@ public class OutsidePlugin extends Plugin
 		}
 		// hub:end bank
 		// hub:cut deathbank
+		deathbankFromDeath();
 		if (deathbankChanged >= 0 && ticks - deathbankChanged >= 2)
 		{
 			deathbankChanged = -1;
@@ -1377,7 +1387,7 @@ public class OutsidePlugin extends Plugin
 				qs[i] = items[i].getQuantity();
 			}
 			// (no deathbank's window open and nothing in it: emptied as they took the last out)
-			deathbankSeen = where == null ? new Object[]{"", false, new int[0], new int[0]} : new Object[]{where[0], where[1], ids, qs};
+			deathbankSeen = where == null ? new Object[]{"", false, new int[0], new int[0], false} : new Object[]{where[0], where[1], ids, qs, false};
 			deathbankChanged = ticks;
 		}
 		// hub:end deathbank
@@ -1404,6 +1414,12 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onChatMessage(ChatMessage e)
 	{
+		// hub:cut deathbank
+		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
+		{
+			deathbankLine(Text.removeTags(e.getMessage()));
+		}
+		// hub:end deathbank
 		// hub:cut reports
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
@@ -3035,6 +3051,95 @@ public class OutsidePlugin extends Plugin
 	// hub:end bank
 
 	// hub:cut deathbank
+	/** Their own death (11/16/2026): what they carried and wore as they fell, and where. */
+	@Subscribe
+	public void onActorDeath(ActorDeath e)
+	{
+		Player me = client.getLocalPlayer();
+		if (!config.deathbank() || me == null || e.getActor() != me)
+		{
+			return;
+		}
+		List<Item> all = new ArrayList<>();
+		for (int id : new int[]{InventoryID.INV, InventoryID.WORN})
+		{
+			ItemContainer c = client.getItemContainer(id);
+			if (c != null)
+			{
+				java.util.Collections.addAll(all, c.getItems());
+			}
+		}
+		deathCarried = new int[2][all.size()];
+		for (int i = 0; i < all.size(); i++)
+		{
+			deathCarried[0][i] = all.get(i).getId();
+			deathCarried[1][i] = all.get(i).getQuantity();
+		}
+		WorldPoint at = here();
+		deathRegion = at == null ? -1 : at.getRegionID();
+		deathTick = ticks;
+		deathLine = null;
+	}
+
+	/** The game's line that a death made a deathbank: once they're back on their feet, deathbankFromDeath sends it. */
+	private void deathbankLine(String said)
+	{
+		if (deathTick >= 0 && said != null && said.startsWith(Kept.DEATHBANK_LINE))
+		{
+			deathLine = said;
+		}
+	}
+
+	/** Each tick: a death the game said made a deathbank, once they're back (their hitpoints restored, a few ticks on),
+	 *  sent as what it took (Kept.lost), "from" the death; a death with no such line within half an hour, forgotten.
+	 *  Locked (its fee unpaid), but an ultimate ironman's Zulrah's, which has none. */
+	private void deathbankFromDeath()
+	{
+		if (deathTick < 0)
+		{
+			return;
+		}
+		if (!config.deathbank() || ticks - deathTick > 3000)
+		{
+			deathTick = -1;
+			deathCarried = null;
+			deathLine = null;
+			return;
+		}
+		int hp = client.getBoostedSkillLevel(Skill.HITPOINTS);
+		if (deathLine == null || ticks - deathTick < 3 || hp < Math.min(10, client.getRealSkillLevel(Skill.HITPOINTS)))
+		{
+			return;
+		}
+		List<Item> now = new ArrayList<>();
+		for (int id : new int[]{InventoryID.INV, InventoryID.WORN})
+		{
+			ItemContainer c = client.getItemContainer(id);
+			if (c != null)
+			{
+				java.util.Collections.addAll(now, c.getItems());
+			}
+		}
+		int[] ids = new int[now.size()];
+		int[] qs = new int[now.size()];
+		for (int i = 0; i < now.size(); i++)
+		{
+			ids[i] = now.get(i).getId();
+			qs[i] = now.get(i).getQuantity();
+		}
+		int[][] lost = Kept.lost(deathCarried[0], deathCarried[1], ids, qs);
+		String where = Kept.deathbankAt(deathLine, deathRegion);
+		boolean locked = !("Zulrah".equals(where) && client.getVarbitValue(VarbitID.IRONMAN) == 2);
+		deathTick = -1;
+		deathCarried = null;
+		deathLine = null;
+		if (lost[0].length > 0)
+		{
+			deathbankSeen = new Object[]{where, locked, lost[0], lost[1], true};
+			deathbankChanged = ticks;
+		}
+	}
+
 	/** The deathbank as last seen (deathbankSeen), each item's name and price; emptied, taken off the page (the client's thread). */
 	private void sendDeathbank()
 	{
@@ -3054,7 +3159,7 @@ public class OutsidePlugin extends Plugin
 				names.put(id, new Object[]{itemManager.getItemComposition(id).getName(), (long) itemManager.getItemPrice(id)});
 			}
 		}
-		JsonObject body = Kept.deathbank((String) d[0], (boolean) d[1], ids, qs, names);
+		JsonObject body = Kept.deathbank((String) d[0], (boolean) d[1], ids, qs, names, (boolean) d[4]);
 		keep("deathbank", body);
 	}
 	// hub:end deathbank

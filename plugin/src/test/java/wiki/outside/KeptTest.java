@@ -75,6 +75,31 @@ public class KeptTest
 		assertEquals("{\"where\":\"Hespori\",\"locked\":true,\"items\":[[4151,1],[995,25000]],\"names\":{\"4151\":[\"Abyssal whip\",1500000]}}", d.toString());
 		assertNull(Kept.deathbank("Hespori", false, new int[]{-1, -1}, new int[]{0, 0}, names));
 	}
+
+	@Test
+	public void theDeathbankAtADeathByTheGamesLineOrTheRegion()
+	{
+		assertEquals("Hespori", Kept.deathbankAt("You have items stored in an item retrieval service. Speak to Arno at the Farming Guild.", -1));
+		assertEquals("Phosani's Nightmare", Kept.deathbankAt("... Sister Senga ...", 15515));
+		assertEquals("Grotesque Guardians", Kept.deathbankAt(Kept.DEATHBANK_LINE + ".", 6727));
+		assertEquals("Unknown", Kept.deathbankAt(Kept.DEATHBANK_LINE + ".", 12850));
+	}
+
+	@Test
+	public void whatADeathTookLessWhatWasKept()
+	{
+		// (a whip, a defender and a fire cape kept; the sharks, the coins and a second ring went)
+		int[][] lost = Kept.lost(
+			new int[]{4151, 385, 385, 995, 12954, 6570, 2550, 2550, -1},
+			new int[]{1, 1, 1, 30000, 1, 1, 1, 1, 0},
+			new int[]{4151, 12954, 6570, 2550, -1},
+			new int[]{1, 1, 1, 1, 0});
+		assertEquals("[385, 995, 2550]", java.util.Arrays.toString(lost[0]));
+		assertEquals("[2, 30000, 1]", java.util.Arrays.toString(lost[1]));
+		JsonObject d = Kept.deathbank("Hespori", true, lost[0], lost[1], new LinkedHashMap<>(), true);
+		assertEquals("death", d.get("from").getAsString());
+		assertFalse(Kept.deathbank("Hespori", true, lost[0], lost[1], new LinkedHashMap<>()).has("from"));
+	}
 	// hub:end deathbank
 
 	@Test
