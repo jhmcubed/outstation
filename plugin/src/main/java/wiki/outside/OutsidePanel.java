@@ -88,6 +88,8 @@ public class OutsidePanel extends PluginPanel
 
 		void takeDown();
 
+		void tendChat();
+
 		// hub:cut talk
 		void addEmote(String name);
 
@@ -142,6 +144,8 @@ public class OutsidePanel extends PluginPanel
 	private final JPanel friendsLink = new JPanel();
 	private final JLabel accessStatus = small(" ");
 	private boolean friends;
+	// (11/16/2026: the page's chat tended on the page, with the plugin alone)
+	private final JLabel tendStatus = small(" ");
 	// hub:cut talk
 	private final JTextField emoteName = new JTextField();
 	private final JPanel emotes = new JPanel();
@@ -296,6 +300,16 @@ public class OutsidePanel extends PluginPanel
 		accessStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		page.add(left(accessStatus));
 		page.add(Box.createVerticalStrut(14));
+		// (11/16/2026, Jace: "There is currently no way for someone who doesn't have the outstation to remove comments
+		// from people off of their profile": the page opens with a link only this browser has, good for 12 hours)
+		page.add(left(heading("Your page's chat")));
+		page.add(left(small("<html><div style='width:155px'>Visitors can leave lines in your page's chat. Open it from here"
+			+ " to take any of them back, or ban whoever said them. The link works for 12 hours, in the browser it opens in.</div></html>")));
+		page.add(Box.createVerticalStrut(6));
+		page.add(wide(button("Tend my page's chat", hooks::tendChat)));
+		tendStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(tendStatus));
+		page.add(Box.createVerticalStrut(14));
 		page.add(wide(button("Take my page down", () ->
 		{
 			int sure = javax.swing.JOptionPane.showConfirmDialog(this,
@@ -417,6 +431,12 @@ public class OutsidePanel extends PluginPanel
 	public void accessStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> accessStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
+	}
+
+	/** A line under "Tend my page's chat". */
+	public void tendStatus(String words)
+	{
+		SwingUtilities.invokeLater(() -> tendStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
 	// hub:cut live

@@ -3,6 +3,7 @@
 //   ws(s)://<relay>/transmit/<channel>?key=<key>&code=<watch code>     the capture
 //   ws(s)://<relay>/sound/<channel>?key=<key>                          the sound
 //   ws(s)://<relay>/desk/<channel>?key=<key>&name=<name in the chat>   the chat window
+//   ws(s)://<relay>/desk/<channel>?tend=<token>          the page tending its own chat (a token from POST /tend/<channel>)
 //   ws(s)://<relay>/watch/<channel>?code=<watch code>                  a viewer (Outside)
 //   ws(s)://<relay>/game/<channel>?key=<key>&v=<its version>           the Outside plugin: the player's game state (game.ts)
 //   GET <relay>/game/<channel>?code=<watch code>                       the game state kept, and whether the plugin's connected
@@ -914,6 +915,14 @@ export default {
       await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "DELETE" });
       if (env.RECORD) await env.RECORD.get(env.RECORD.idFromName(name)).fetch(new Request("https://record/all", { method: "DELETE", headers: { "x-station": "1" } }));
       return new Response(null, { status: 204 });
+    }
+    // tending the page's chat from the page (11/16/2026): POST /tend/<channel>?key= {"token"} (200 {"until"}); the page then
+    // opens /desk/<channel>?tend=<token> (channel.ts, openTend)
+    if (parts[0] === "tend" && parts.length === 2) {
+      const name = parts[1];
+      if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      return channelStub(env, name).fetch(toChannel(request, name, "/_tend"));
     }
     if (parts[0] === "code" && parts.length === 2) {
       const name = parts[1];

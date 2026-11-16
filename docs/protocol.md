@@ -235,6 +235,28 @@ take a page down. Both relays:
 - The plugin keeps its watch code with the character's account (`watchCode`), made the first time friends only is
   switched on; its side tab copies the friends' link, `outside.wiki/<channel>?code=<code>`.
 
+## Tending the page's chat from the page (11/16/2026)
+
+Jace: "There is currently no way for someone who doesn't have the outstation to remove comments from people off of their
+profile." A player with only the plugin (the Plugin Hub's cut has no desk) tends their page's chat on the page itself.
+Both relays:
+
+    POST /tend/<channel>?key=<key>   {"token": <43 base64url characters>}
+                  200 {"until": ms}: the token is good for 12 hours (only its SHA-256 kept, 4 at once, the oldest going).
+                  400 a bad token; 403 the wrong key; 404 nobody's channel; 405 not POST
+    ws(s)://<relay>/desk/<channel>?tend=<token>
+                  a tending socket. Refused (4003) for a token not handed in, or run out; closed (4003) once it runs out
+                  and it says anything, and when the page is taken down or the channel taken back.
+
+- The plugin makes the token (32 random bytes), hands it in with its key, and opens the player's page with it in the
+  address's fragment (`outside.wiki/<name>#tend=<token>`), which no server ever sees; the page takes it out of the
+  address at once.
+- **It hears** the status line, the chat so far, who's banned (`{"banned"}`), and after that every chat line, every
+  `{"unsay"}` and every change to the bans: nothing else of the channel's (no game, no exact place, no messages, no
+  viewer list).
+- **It sends** only the desk's `{"hide": id}`, `{"block": who}`, `{"unblock": who}`, `{"ban": who}` and
+  `{"unban": who}` (the first of them a message carries); anything else goes nowhere.
+
 ## Claiming a name (11/15/2026)
 
 The Outside plugin's own channel, for a player who comes from the Plugin Hub with no outstation and no invite (Jace: the

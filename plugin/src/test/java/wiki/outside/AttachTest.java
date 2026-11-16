@@ -36,6 +36,15 @@ public class AttachTest
 	}
 
 	@Test
+	public void tendingThePagesChat()
+	{
+		// (11/16/2026: the token handed in by the page's key, and the page opened with it in the fragment)
+		Attach a = new Attach("wss://relay.ghillie.workers.dev", "jhmcubed", "k3y-k3y-k3y");
+		assertEquals("https://relay.ghillie.workers.dev/tend/jhmcubed?key=k3y-k3y-k3y", a.tendUrl());
+		assertEquals("https://outside.wiki/jhmcubed#tend=abc", a.tendPage("abc"));
+	}
+
+	@Test
 	public void onlyTheOutsideRelay()
 	{
 		assertTrue(Attach.isHome("https://relay.ghillie.workers.dev"));

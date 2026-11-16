@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-pub const SITE: &str = "https://ghillie.wiki/outside?player=";
+/// A player's Outside page is this and their channel: outside.wiki/<name> since 11/16/2026 (ghillie.wiki/outside?player=
+/// until then, which now sends people there).
+pub const SITE: &str = "https://outside.wiki/";
 
 pub fn admin_path() -> PathBuf {
     let home = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));

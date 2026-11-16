@@ -2100,6 +2100,46 @@ public class OutsidePlugin extends Plugin
 					}
 				});
 			}
+
+			/** "Tend my page's chat" (11/16/2026; docs/protocol.md "Tending the page's chat from the page"): a token made
+			 *  here, handed to the relay with the page's key, and the page opened with it in the fragment. */
+			@Override
+			public void tendChat()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					panel.tendStatus("log in on a character with a page first");
+					return;
+				}
+				String token = Tend.token(new java.security.SecureRandom());
+				panel.tendStatus("opening your page's chat…");
+				http.newCall(new Request.Builder().url(a.tendUrl())
+					.header("User-Agent", "outside-plugin/" + VERSION)
+					.post(RequestBody.create(JSON, Tend.body(token, gson))).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.tendStatus("the relay's out of reach: try again in a moment");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						try (Response res = r)
+						{
+							if (res.code() != 200)
+							{
+								panel.tendStatus("the relay said no (" + res.code() + ")");
+								return;
+							}
+						}
+						panel.tendStatus("opened in your browser: each visitor's line has take back and ban");
+						net.runelite.client.util.LinkBrowser.browse(a.tendPage(token));
+					}
+				});
+			}
 		};
 	}
 

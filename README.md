@@ -1,6 +1,6 @@
 # ⊂λ,ｍ⊙ outstation
 
-An outstation on your PC, transmitting your RuneLite to your Outside page on [ghillie.wiki](https://ghillie.wiki) (`ghillie.wiki/outside?player=<you>`): a few frames a second of your game, its sound if you want, and a chat with whoever's observing.
+An outstation on your PC, transmitting your RuneLite to your Outside page on [outside.wiki](https://outside.wiki) (`outside.wiki/<you>`): a few frames a second of your game, its sound if you want, and a chat with whoever's observing.
 
 **Being built.** The relay and the outstation both work, tested on one PC. Nothing is released yet.
 
@@ -49,7 +49,7 @@ A real transmission, as observers see it on Outside (sburb at the Giant Mole, 11
    - Once it's attached, the **first-time setup** walks you through the rest a step at a time: Dink and Discord, pointing Dink at the outstation, clips, the Start menu. Each step can be skipped, and settings ▸ more runs it again.
 4. **Check it's ready.** Above the title, the station check ticks what the outstation needs: RuneLite open, logged in, the relay answering, and Dink heard (only if you use Dink). Hover over any of them to see how to fix it.
 5. **Your drops and level-ups under it** (if you use [Dink](https://github.com/pajlads/DinkPlugin)): **dink ▸** goes in three steps (the first-time setup does the same). 1: does Dink post to a Discord of yours? If so, the outstation keeps that going as it is (`::dinkexport all` in RuneLite's chat, **read my Dink settings**, `::dinkimport`). 2: the outstation's address goes in Dink's Primary Webhook URLs, and **no Discord address left there**, or Discord gets every post twice. 3: which field reports go out (**default** is everything).
-6. **Log in, then transmit.** Your outstation is at `ghillie.wiki/outside?player=<your name>`. **go dark** stops it.
+6. **Log in, then transmit.** Your outstation is at `outside.wiki/<your name>`. **go dark** stops it.
 
 **What you wear and carry, live on your page:** the **Outside** plugin for RuneLite ([plugin/README.md](plugin/README.md)) sends your equipment, inventory, looting bag, rune pouch, vitals and skills to your outstation's channel, and your Outside page draws them under your transmission, live while you play and as last seen while you're away. In the plugin's settings, paste your station key: settings ▸ more ▸ **copy my station key** gives it. The station check shows "Outside plugin" ticked while it's connected.
 

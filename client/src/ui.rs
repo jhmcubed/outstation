@@ -2346,7 +2346,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 ui.label(wrapped("no channel: nothing is ever sent anywhere but your own Discord, and only the clips you'd want there.", 16.0, TEXT(), w));
             } else {
                 ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
-                ui.label(wrapped(&format!("your outstation opens on your Outside page: ghillie.wiki/outside?player={}", s.channel), 16.0, TEXT(), w));
+                ui.label(wrapped(&format!("your outstation opens on your Outside page: outside.wiki/{}", s.channel), 16.0, TEXT(), w));
             }
             ui.add_space(8.0);
             ui.label(wrapped(if s.clips_mode() { "clips only: Dink and Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }
@@ -3151,7 +3151,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
                     let _ = app.settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.setup_step = Some(0); });
                     app.attach_note.clear();
                     app.attach_code.clear();
-                    app.note(format!("attached: {} · ghillie.wiki/outside?player={}", channel, channel));
+                    app.note(format!("attached: {} · outside.wiki/{}", channel, channel));
                 }
                 Err(e) => app.attach_note = e,
             }
@@ -3344,7 +3344,7 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
                 });
                 let channel = crate::ask::channel_of(&app.asker.player);
                 match &channel {
-                    Ok(ch) => { ui.label(rich(&format!("your outstation would open at ghillie.wiki/outside?player={}", ch), 14.0, QUIET())); }
+                    Ok(ch) => { ui.label(rich(&format!("your outstation would open at outside.wiki/{}", ch), 14.0, QUIET())); }
                     Err(e) if !app.asker.player.trim().is_empty() => { ui.label(rich(e, 14.0, PINK())); }
                     Err(_) => {}
                 }
@@ -3474,7 +3474,7 @@ impl eframe::App for App {
         }
         let came = self.asked_attached.lock().unwrap().take();
         if let Some(ch) = came {
-            self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at ghillie.wiki/outside?player={}", ch, ch));
+            self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at outside.wiki/{}", ch, ch));
         }
         crate::stuck::at("the frame: the tray");
         self.sync_tray(ctx);

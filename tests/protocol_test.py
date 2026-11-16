@@ -3251,6 +3251,68 @@ class OwnPage(Base):
         self.assertEqual(await again.recv_close(timeout=5), ("close", 4003))
 
 
+class Tending(OwnPage):
+    """The page tending its own chat (11/16/2026, Jace: "There is currently no way for someone who doesn't have the
+    outstation to remove comments from people off of their profile"): the plugin hands the relay a token with its key
+    (POST /tend/<channel>?key= {"token"}), and the page opens /desk/<channel>?tend=<token>, which hears the chat and the
+    bans and may only take lines back, block and ban."""
+
+    def tend(self, name, key, body):
+        st, h, out = raw("POST", "/tend/%s?key=%s" % (name, urllib.parse.quote(key)), json.dumps(body).encode(),
+                         {"Content-Type": "application/json"})
+        return st, json.loads(out) if out else None
+
+    async def test_a_token_tends_the_chat_and_nothing_else(self):
+        name, key = self.claim()
+        token = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        # (refused: the wrong key, a bad token, the wrong method, nobody's channel)
+        self.assertEqual(self.tend(name, "not-its-key", {"token": token})[0], 403)
+        self.assertEqual(self.tend(name, key, {"token": "short"})[0], 400)
+        self.assertEqual(self.tend(name, key, {})[0], 400)
+        self.assertEqual(raw("GET", "/tend/" + name)[0], 405)
+        self.assertEqual(self.tend("o" + secrets.token_hex(5), key, {"token": token})[0], 404)
+        # (a token nobody handed in: the socket's refused)
+        early = await Client().open("%s/desk/%s?tend=%s" % (RELAY, name, token))
+        self.clients.append(early)
+        self.assertEqual(await early.recv_close(timeout=5), ("close", 4003))
+        st, got = self.tend(name, key, {"token": token})
+        self.assertEqual(st, 200)
+        self.assertGreater(got["until"], time.time() * 1000 + 11 * 3600 * 1000)
+        # (a visitor's lines, the page tending them: the chat so far, then each line as it comes)
+        v = await Client().open("%s/watch/%s?code=" % (RELAY, name))
+        self.clients.append(v)
+        await next_of(v, "relay")
+        await v.send(json.dumps({"hello": {"name": "heckler", "device": "d-" + secrets.token_hex(8)}}))
+        await v.send(json.dumps({"say": "first"}))
+        first = await next_of(v, "chat")
+        t = await Client().open("%s/desk/%s?tend=%s" % (RELAY, name, token))
+        self.clients.append(t)
+        await next_of(t, "relay")
+        self.assertEqual((await next_of(t, "chat"))["text"], "first")
+        self.assertEqual(await next_of(t, "banned"), [])
+        await v.send(json.dumps({"say": "second"}))
+        second = await next_of(t, "chat")
+        self.assertEqual(second["text"], "second")
+        self.assertEqual((await next_of(v, "chat"))["text"], "second")
+        # (what only a desk may do goes nowhere: a line as the host, a title)
+        await t.send(json.dumps({"say": "as the host"}))
+        await t.send(json.dumps({"title": "not mine to set"}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(v, "chat", timeout=0.6)
+        # (a line taken back; then the visitor banned, their other line with it, and the list told)
+        await t.send(json.dumps({"hide": first["id"]}))
+        self.assertEqual(await next_of(v, "unsay"), first["id"])
+        self.assertEqual(await next_of(t, "unsay"), first["id"])
+        await t.send(json.dumps({"ban": second["who"]}))
+        self.assertEqual(await next_of(t, "unsay"), second["id"])
+        self.assertEqual(await next_of(t, "banned"), [{"who": second["who"], "name": "heckler"}])
+        await t.send(json.dumps({"unban": second["who"]}))
+        self.assertEqual(await next_of(t, "banned"), [])
+        # (the page taken down: the tending socket goes with it)
+        self.assertEqual(raw("DELETE", "/channels/%s?key=%s" % (name, urllib.parse.quote(key)))[0], 204)
+        self.assertEqual(await t.recv_close(timeout=5), ("close", 4003))
+
+
 class AppHere(Base):
     """The plugin told whether the outstation's app is attached ({"app": bool}, 11/16/2026, the permissions review): the
     exact path goes only while it is. The plugin's own chat desk (&talk=1) isn't the app."""
