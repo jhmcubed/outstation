@@ -52,7 +52,9 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.NPC;
 // hub:end globe,year,model
 import net.runelite.api.Player;
+// hub:cut live
 import net.runelite.api.Prayer;
+// hub:end live
 import net.runelite.api.Skill;
 import net.runelite.api.WorldEntity;
 import net.runelite.api.WorldType;
@@ -72,8 +74,10 @@ import net.runelite.api.events.HitsplatApplied;
 // hub:end globe,year
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
+// hub:cut reports
 import net.runelite.client.events.NpcLootReceived;
 import net.runelite.client.game.ItemStack;
+// hub:end reports
 import net.runelite.api.events.ChatMessage;
 // hub:cut model,talk
 import net.runelite.api.events.CommandExecuted;
@@ -116,18 +120,30 @@ import net.runelite.client.plugins.PluginDescriptor;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+// hub:cut live
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
+// hub:end live
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Outside: the player's own game, live on their Outside page (docs/protocol.md, "The game"), each part behind its own
- * switch: what they wear and carry (with the looting bag, rune pouch, quiver, seed box and chugging barrel), their
- * skills, hitpoints, prayer, run and special and the prayers on, item charges, their quests, diaries, combat
- * achievements and slayer task (Progress), and field reports for their page's event log (Reports). Each game tick only
- * what changed goes (vitals alone every few seconds), each new item's name and price once. Nothing more goes from the
- * Wilderness, a PvP area or world. Never another player's anything, nor anything they type.
+ * Outside: the player's own game on their Outside page, each part behind its own switch: what they wear and carry
+ * (with the looting bag, rune pouch, quiver, seed box and chugging barrel), their skills, item charges, their quests,
+ * diaries, combat achievements and slayer task (Progress).
+ * The snapshot (11/16/2026, the Plugin Hub's answer; docs/protocol.md, "The snapshot"): all of it posted once when
+ * they press "Update my page" in the side tab, and hourly while they're logged in (AUTO_SYNC_MINUTES, as RuneProfile's),
+ * never from the Wilderness, a PvP area or world; and what they're doing as RuneLite's own Discord plugin shows it
+ * (Presence: the skill being trained, the area by Discord's name), as it changes, at most once a minute. Never another
+ * player's anything, nor anything they type.
+// hub:cut live
+ * The whole plugin (developer mode) also keeps a socket: each game tick what changed goes (vitals alone every few
+ * seconds; hitpoints, prayer, run and special and the prayers on), each new item's name and price once, the world;
+ * nothing more from the Wilderness, a PvP area or world (docs/protocol.md, "The game").
+// hub:end live
+// hub:cut reports
+ * Field reports for their page's event log (Reports).
+// hub:end reports
 // hub:cut globe
  * For outside.wiki's globe, each off to begin with: following (Follow), and the world with it; what they're doing
  * (Activity, through Behind); the shooting stars they find (Stars).
@@ -147,21 +163,33 @@ import org.slf4j.LoggerFactory;
  */
 @PluginDescriptor(
 	name = "Outside",
-	description = "Your gear, stats, quests, diaries and slayer task, live on your own page at outside.wiki",
-	tags = {"outside", "outstation", "loadout", "inventory", "profile", "quests", "diaries", "slayer", "stream"}
+	description = "Your gear, stats, quests, diaries and slayer task on your own page at outside.wiki",
+	tags = {"outside", "loadout", "inventory", "profile", "quests", "diaries", "slayer", "discord"}
 )
 public class OutsidePlugin extends Plugin
 {
 	private static final Logger log = LoggerFactory.getLogger(OutsidePlugin.class);
-	static final String VERSION = "0.2.0";
+	static final String VERSION = "0.3.0";
 	/** the relay a page is claimed on when there's no key yet (docs/protocol.md "Claiming a name") */
 	static final String HOME_RELAY = "https://relay.ghillie.workers.dev";
+	// hub:cut live
 	/** vitals alone (run energy draining as you run) go at most this often, in ticks */
 	private static final int VITALS_EVERY = 5;
-	/** quests and diaries read again at least this often, in ticks (5 minutes) */
-	private static final int PROGRESS_EVERY = 500;
 	/** the longest wait between tries to reach the relay, in seconds */
 	private static final int RETRY_MOST = 60;
+	// hub:end live
+	/** quests and diaries read again at least this often, in ticks (5 minutes) */
+	private static final int PROGRESS_EVERY = 500;
+	/** the hourly sync (11/16/2026, the Hub's answer; as RuneProfile's AutoSyncScheduler, AUTO_SYNC_MINUTES = 60): a
+	 *  snapshot after this many minutes logged in since the last, counted in game ticks (100 a minute), so it waits
+	 *  while they're logged out */
+	static final int AUTO_SYNC_MINUTES = 60;
+	static final int SYNC_TICKS = AUTO_SYNC_MINUTES * 100;
+	/** "Update my page" once a minute at most */
+	static final long UPDATE_EVERY_MS = 60_000L;
+	/** what a snapshot carries (the rest of read()'s fields are the socket's) */
+	static final String[] SNAP_FIELDS = {"name", "type", "worn", "inv", "bag", "pouch", "seeds", "barrel", "quiver",
+		"charges", "skills", "quests", "diaries", "combat", "slayer"};
 
 	@Inject
 	private Client client;
@@ -187,8 +215,20 @@ public class OutsidePlugin extends Plugin
 	@Inject
 	private ScheduledExecutorService executor;
 
+	// hub:cut live
 	/** only on the client's thread (the ticks); a new connection asks for everything again through `resend` */
 	private final Kit kit = new Kit();
+	// hub:end live
+	/** what they're doing as Discord shows it (11/16/2026; Presence), the client's thread */
+	private final Presence presence = new Presence();
+	/** the snapshot (11/16/2026): game ticks logged in since the last; one asked for (the button, the hour) and waiting
+	 *  for a tick out of anywhere dangerous; when the last went (ms; 0 none this session); whether anything's been posted
+	 *  this session (so logging out says so); a scene just loaded, its area read on the next tick */
+	private int syncTicks;
+	private volatile boolean syncDue;
+	private volatile long snapAt, updateAt;
+	private volatile boolean posted;
+	private boolean sceneDue;
 	// hub:cut globe
 	/** following, likewise only on the client's thread */
 	private final Follow follow = new Follow();
@@ -217,9 +257,11 @@ public class OutsidePlugin extends Plugin
 	private static final EnumSet<WorldType> RISKY = EnumSet.of(WorldType.PVP, WorldType.DEADMAN, WorldType.HIGH_RISK,
 		WorldType.BOUNTY);
 	// hub:end globe,year,model
+	// hub:cut live
 	private volatile boolean resend;
 	/** sending held while somewhere dangerous (the Wilderness, a PvP area or world: held()), and said so once */
 	private boolean paused;
+	// hub:end live
 	// (quests and diaries, read again when what they depend on changes, or every 5 minutes; the slayer task's names
 	// looked up again when its varps change; 11/15/2026)
 	private JsonObject questsSeen, diariesSeen, slayerSeen;
@@ -232,15 +274,19 @@ public class OutsidePlugin extends Plugin
 	// hub:end talk
 	/** the player's name as the game shows it, from the last tick */
 	private volatile String shownName;
+	// hub:cut reports
 	/** the slayer task the game's just said is done, till its next line gives the count and the points */
 	private String slayerDoneTask;
+	// hub:end reports
+	// hub:cut live
 	private volatile WebSocket socket;
 	private volatile boolean open;
-	/** stopped for good until the key changes (a wrong key, or another RuneLite took over) */
-	private volatile boolean stopped;
 	private Attach attach;
 	private ScheduledFuture<?> retry;
 	private int retryIn = 5;
+	// hub:end live
+	/** stopped for good until the key changes (a wrong key, or another RuneLite took over) */
+	private volatile boolean stopped;
 	/** the character logged in, as a channel has its name (null: not known yet, or logged out). 11/15/2026, Jace: logged
 	 *  into his alt, the side tab still said sburb, and the alt's kit would have gone to sburb's page: a key is now this
 	 *  character's own (kept per account), and nothing goes on a key whose page isn't the character logged in. */
@@ -256,14 +302,20 @@ public class OutsidePlugin extends Plugin
 	private long yearStated = 0;
 	private volatile long yearSynced = 0;
 	// hub:end year
+	// hub:cut reports
 	/** each skill's real level as last seen this session, for the levels' reports */
 	private final java.util.Map<String, Integer> levelsSeen = new java.util.concurrent.ConcurrentHashMap<>();
+	// hub:end reports
 	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
 	private volatile boolean challenging = false;
+	// hub:cut live
 	private int ticksSinceSent;
+	// hub:end live
 	/** the seed box's and the chugging barrel's slots as last sent by the game (onItemContainerChanged), or null */
 	private JsonElement seedsSeen, barrelSeen;
+	// hub:cut live
 	private boolean toldConnected;
+	// hub:end live
 	/** (11/14/2026) each item's charges as the game last told of them, by item id (kept on this RuneLite's profile for
 	 *  the account, so they're known after a restart); the item last checked, and on which tick; the client's thread */
 	private final Map<Integer, Integer> charges = new HashMap<>();
@@ -317,7 +369,9 @@ public class OutsidePlugin extends Plugin
 			// hub:end talk
 			readProof();
 		}
+		// hub:cut live
 		connect();
+		// hub:end live
 	}
 
 	@Override
@@ -328,7 +382,26 @@ public class OutsidePlugin extends Plugin
 			clientToolbar.removeNavigation(navButton);
 			navButton = null;
 		}
+		if (panel != null)
+		{
+			panel.stop();
+		}
+		// (RuneLite closing, or the plugin switched off, while they're logged in: as a logout)
+		if (posted && client.getGameState() == GameState.LOGGED_IN)
+		{
+			post(off(), null);
+		}
+		posted = false;
+		// hub:cut live
 		close("plugin off");
+		// hub:end live
+	}
+
+	private static JsonObject off()
+	{
+		JsonObject o = new JsonObject();
+		o.addProperty("off", true);
+		return o;
 	}
 
 	@Subscribe
@@ -351,6 +424,28 @@ public class OutsidePlugin extends Plugin
 			readProof();
 			readAccess();
 		}
+		if (e.getKey().equals("stationKey"))
+		{
+			stopped = false;
+			snapAt = 0;
+			presence.unsent();
+			showSnap();
+		}
+		// (sending switched off: what's on the page comes off it; the snapshot's parts switched off go with the next)
+		if (e.getKey().equals("send") && !config.send())
+		{
+			post(Kit.cleared(), null);
+			presence.unsent();
+			posted = false;
+		}
+		if (e.getKey().equals("presence") && !config.presence())
+		{
+			JsonObject none = new JsonObject();
+			none.add("presence", JsonNull.INSTANCE);
+			post(none, null);
+			presence.unsent();
+		}
+		// hub:cut live
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
 		{
@@ -364,6 +459,7 @@ public class OutsidePlugin extends Plugin
 			toldConnected = false;
 			connect();
 		}
+		// hub:end live
 		// hub:cut model
 		// (the model: on, it goes now; off, it's taken down. The bank: off, it's taken down; on, it goes next time it's used)
 		if (e.getKey().equals("model"))
@@ -397,7 +493,9 @@ public class OutsidePlugin extends Plugin
 			keep("bank", null);
 		}
 		// hub:end bank
+		// hub:cut live
 		resend = true;
+		// hub:end live
 	}
 
 	@Subscribe
@@ -406,11 +504,27 @@ public class OutsidePlugin extends Plugin
 		if (e.getGameState() == GameState.LOGGED_IN)
 		{
 			readProof();   // (proven since the last logout? the side tab says so)
+			sceneDue = true;   // (a scene loaded: its area, as Discord reads it, on the next tick)
+		}
+		if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING)
+		{
+			// (logged out, or hopping: the area's read again where they land)
+			sceneDue = false;
 		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
+			// (logged out: the snapshot's and what they're doing's, said once if anything went this session)
+			if (posted)
+			{
+				post(off(), null);
+				posted = false;
+			}
+			presence.loggedOut();
+			syncDue = false;   // (the hour's count waits while they're logged out)
+			// hub:cut globe
 			// (logged out: the relay drops the area and the activity with the rest; next time, the two minutes start
 			// again; the stars not reported yet are forgotten)
+			// hub:end globe
 			// hub:cut globe
 			follow.forget();
 			follow.clear();
@@ -445,6 +559,7 @@ public class OutsidePlugin extends Plugin
 			starsWent.clear();
 		}
 		// hub:end globe
+		// hub:cut live
 		if (e.getGameState() == GameState.LOGIN_SCREEN && open)
 		{
 			JsonObject off = new JsonObject();
@@ -452,17 +567,22 @@ public class OutsidePlugin extends Plugin
 			send(off);
 			resend = true;
 		}
+		// hub:end live
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			// hub:cut year
 			yearLogout();
 			// hub:end year
 			character = null;
+			// hub:cut reports
 			levelsSeen.clear();
+			// hub:end reports
 		}
 		else if (e.getGameState() == GameState.LOGGED_IN)
 		{
+			// hub:cut live
 			resend = true;
+			// hub:end live
 			loadKept();
 		}
 	}
@@ -495,6 +615,7 @@ public class OutsidePlugin extends Plugin
 			sendBank();
 		}
 		// hub:end bank
+		// hub:cut live
 		if (open && resend)
 		{
 			resend = false;
@@ -509,6 +630,7 @@ public class OutsidePlugin extends Plugin
 			doing.again();
 			// hub:end globe
 		}
+		// hub:end live
 		// (where they are, read every tick, the relay in reach or not: somewhere dangerous holds things back at once)
 		WorldPoint at = here();
 		int x = at == null ? -1 : at.getX(), y = at == null ? -1 : at.getY(), region = at == null ? -1 : at.getRegionID();
@@ -517,6 +639,8 @@ public class OutsidePlugin extends Plugin
 		// hub:end globe,year,model
 		boolean wild = wilderness(x, y, client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1);
 		boolean pvpArea = pvpArea(x, y, region, client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1);
+		// (the snapshot and what they're doing, 11/16/2026: never from anywhere dangerous, whatever else is switched on)
+		snapTick(held(pvpWorld(), wild, pvpArea), at, me);
 		// hub:cut globe,year,model
 		boolean safe = globeSafe(riskyWorld, wild, pvpArea);
 		long ms = System.currentTimeMillis();
@@ -537,6 +661,7 @@ public class OutsidePlugin extends Plugin
 		liveSafe = safe && !paused;
 		liveGearTick(ms);
 		// hub:end model
+		// hub:cut live
 		if (!open)
 		{
 			return;
@@ -618,6 +743,198 @@ public class OutsidePlugin extends Plugin
 			kit.took(changes);
 			ticksSinceSent = 0;
 		}
+		// hub:end live
+	}
+
+	// ---- the snapshot, and what they're doing as Discord shows it (11/16/2026, the Plugin Hub's answer;
+	// docs/protocol.md, "The snapshot")
+
+	/** Each tick logged in: the area read where a scene just loaded (as Discord reads it), the hour counted, a snapshot
+	 *  asked for sent once they're somewhere safe, and what they're doing sent as it changes (cleared at once somewhere
+	 *  dangerous). */
+	private void snapTick(boolean danger, WorldPoint at, Player me)
+	{
+		if (sceneDue && at != null && me != null)
+		{
+			sceneDue = false;
+			presence.scene(at.getRegionID(), me.getWorldLocation().getPlane());
+		}
+		if (!config.send() || key() == null)
+		{
+			return;
+		}
+		if (++syncTicks >= SYNC_TICKS)
+		{
+			syncTicks = 0;
+			syncDue = true;
+		}
+		long now = System.currentTimeMillis();
+		if (syncDue && !danger)
+		{
+			syncDue = false;
+			syncTicks = 0;
+			snapshot(now);
+			return;
+		}
+		if (!config.presence())
+		{
+			return;
+		}
+		JsonObject p = presence.due(now, danger);
+		if (p != null)
+		{
+			JsonObject body = new JsonObject();
+			body.add("presence", p);
+			presence.took(p, now);
+			post(body, null);
+		}
+	}
+
+	/** The snapshot (on the client's thread): what's switched on of read()'s fields (SNAP_FIELDS), every item's name and
+	 *  price, and what they're doing; posted once. */
+	private void snapshot(long now)
+	{
+		Map<String, JsonElement> m = read();
+		JsonObject body = new JsonObject();
+		for (String f : SNAP_FIELDS)
+		{
+			if (m.containsKey(f))
+			{
+				body.add(f, m.get(f));
+			}
+		}
+		JsonObject items = new JsonObject();
+		for (int id : Kit.ids(m))
+		{
+			JsonArray np = new JsonArray();
+			np.add(itemManager.getItemComposition(id).getName());
+			np.add(itemManager.getItemPrice(id));
+			items.add(String.valueOf(id), np);
+		}
+		body.add("items", items);
+		body.addProperty("off", false);
+		body.addProperty("paused", false);
+		if (config.presence())
+		{
+			JsonObject p = presence.now(now, false);
+			body.add("presence", p);
+			presence.took(p, now);
+		}
+		panel.snapStatus("updating your page…");
+		post(body, ok ->
+		{
+			if (ok)
+			{
+				snapAt = System.currentTimeMillis();
+				showSnap();
+			}
+		});
+	}
+
+	/** "Update my page" (the side tab): a snapshot now, once a minute at most, never from anywhere dangerous. */
+	private void updateNow()
+	{
+		clientThread.invokeLater(() ->
+		{
+			if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
+			{
+				panel.snapStatus("log in first");
+				return;
+			}
+			if (!config.send())
+			{
+				panel.snapStatus("switch on \"Send to my Outside page\" in the plugin's settings first");
+				return;
+			}
+			if (key() == null)
+			{
+				panel.snapStatus("make your page first");
+				return;
+			}
+			long now = System.currentTimeMillis();
+			if (now - updateAt < UPDATE_EVERY_MS)
+			{
+				panel.snapStatus("updated a moment ago: once a minute at most");
+				return;
+			}
+			WorldPoint at = here();
+			int x = at == null ? -1 : at.getX(), y = at == null ? -1 : at.getY(), region = at == null ? -1 : at.getRegionID();
+			if (held(pvpWorld(), wilderness(x, y, client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1),
+				pvpArea(x, y, region, client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1)))
+			{
+				panel.snapStatus("not from here: the Wilderness, a PvP area or world. It goes once you're out.");
+				syncDue = true;
+				return;
+			}
+			updateAt = now;
+			syncTicks = 0;
+			snapshot(now);
+		});
+	}
+
+	/** The side tab's line: when the page was last updated from here. */
+	private void showSnap()
+	{
+		if (panel != null)
+		{
+			panel.snapped(snapAt);
+		}
+	}
+
+	/** Posts {"game": fields} to the relay (POST /game; docs/protocol.md, "The snapshot"), for the character logged in
+	 *  only, with a key for its page; `done` hears whether it was taken. A refused key stops it till the key changes. */
+	private void post(JsonObject fields, java.util.function.Consumer<Boolean> done)
+	{
+		Attach a = key();
+		if (a == null || stopped || (character == null && !fields.has("off")))
+		{
+			if (done != null)
+			{
+				done.accept(false);
+			}
+			return;
+		}
+		posted = posted || !fields.has("off");
+		JsonObject msg = new JsonObject();
+		msg.add("game", fields);
+		Request req = new Request.Builder().url(a.postUrl(VERSION)).header("User-Agent", "outside-plugin/" + VERSION)
+			.post(RequestBody.create(JSON, Kit.wire(gson).toJson(msg))).build();
+		http.newCall(req).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				log.debug("outside: the relay's out of reach", ex);
+				if (done != null)
+				{
+					panel.snapStatus("the relay's out of reach: try again in a bit");
+					done.accept(false);
+				}
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					int code = res.code();
+					if (code == 403)
+					{
+						stopped = true;
+						say(challenging ? "someone else proved this name first, so your claim on it has ended"
+							: "the relay didn't take your station key: paste it again in the plugin's settings");
+					}
+					else if (code == 429 && done != null)
+					{
+						panel.snapStatus("too often: try again in a minute");
+					}
+					if (done != null)
+					{
+						done.accept(code == 204 || code == 200);
+					}
+				}
+			}
+		});
 	}
 
 	/** The game as the relay's fields, from what's switched on. */
@@ -629,7 +946,9 @@ public class OutsidePlugin extends Plugin
 		{
 			m.put("name", new JsonPrimitive(me.getName()));
 		}
+		// hub:cut live
 		m.put("world", new JsonPrimitive(client.getWorld()));
+		// hub:end live
 		m.put("type", new JsonPrimitive(accountType(client.getVarbitValue(VarbitID.IRONMAN))));
 		if (config.items())
 		{
@@ -763,13 +1082,17 @@ public class OutsidePlugin extends Plugin
 			{
 				progressSig = sig;
 				progressAt = ticks;
+				// hub:cut reports
 				JsonObject before = questsSeen;
+				// hub:end reports
 				questsSeen = Progress.readQuests(client);
+				// hub:cut reports
 				// (a quest that's done now and wasn't at the last read, this session: a field report; 11/15/2026)
 				for (String q : Progress.newlyDone(before, questsSeen))
 				{
 					report(Reports.quest(q, questsSeen.getAsJsonArray("done").size(), questsSeen.get("total").getAsInt(), myName()));
 				}
+				// hub:end reports
 				diariesSeen = Progress.readDiaries(client);
 			}
 			m.put("quests", questsSeen);
@@ -797,6 +1120,7 @@ public class OutsidePlugin extends Plugin
 		{
 			m.put("slayer", JsonNull.INSTANCE);
 		}
+		// hub:cut live
 		if (config.vitals())
 		{
 			JsonObject vitals = new JsonObject();
@@ -821,6 +1145,7 @@ public class OutsidePlugin extends Plugin
 			m.put("vitals", new JsonObject());
 			m.put("prayers", new JsonArray());
 		}
+		// hub:end live
 		return m;
 	}
 
@@ -1033,6 +1358,7 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onChatMessage(ChatMessage e)
 	{
+		// hub:cut reports
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
 			String said = Text.removeTags(e.getMessage());
@@ -1053,6 +1379,7 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 		}
+		// hub:end reports
 		if (!config.charges() || (e.getType() != ChatMessageType.GAMEMESSAGE && e.getType() != ChatMessageType.SPAM))
 		{
 			return;
@@ -1629,6 +1956,7 @@ public class OutsidePlugin extends Plugin
 			}
 			// hub:end talk
 
+			// hub:cut live
 			@Override
 			public void copyKey()
 			{
@@ -1647,6 +1975,13 @@ public class OutsidePlugin extends Plugin
 				{
 					panel.keyStatus("the clipboard's busy: try again");
 				}
+			}
+			// hub:end live
+
+			@Override
+			public void update()
+			{
+				updateNow();
 			}
 
 			@Override
@@ -1755,7 +2090,10 @@ public class OutsidePlugin extends Plugin
 							configManager.unsetConfiguration(OutsideConfig.GROUP, "stationKey");
 						}
 						friendsOnly = false;
+						posted = false;   // (nothing more to say to a page that's gone)
+						// hub:cut live
 						close("page taken down");
+						// hub:end live
 						panel.accessStatus(null);
 						panel.who(null);
 						say("your Outside page is taken down");
@@ -1847,13 +2185,17 @@ public class OutsidePlugin extends Plugin
 			readProof();
 			readAccess();
 		}
+		stopped = false;
+		snapAt = 0;
+		showSnap();
+		// hub:cut live
 		if (attach != null && (a == null || !a.getChannel().equals(attach.getChannel())))
 		{
 			close("another character");
 		}
-		stopped = false;
 		toldConnected = false;
 		connect();
+		// hub:end live
 	}
 
 	/** A player's name as a channel has it: lower case, the spaces, hyphens and underscores the game treats alike taken
@@ -1908,12 +2250,14 @@ public class OutsidePlugin extends Plugin
 						boolean back = o.has("proof") && "challenging".equals(o.get("proof").getAsString());
 						challenging = back;
 						configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "stationKey", o.get("code").getAsString());
+						// (its first snapshot, on the next tick somewhere safe: they asked for their page)
+						syncDue = true;
 						if (back)
 						{
 							// (taking a name back: someone else claimed it first and hasn't proven it)
 							panel.claiming(false, "outside.wiki/" + name + " was claimed by someone who hasn't proven it. Gain any experience,"
-								+ " then log out: when the official hiscores show it, the page is yours.");
-							say("you're taking back outside.wiki/" + name + ": gain any experience, then log out");
+								+ " press Update my page, wait a minute, then log out: when the official hiscores show it, the page is yours.");
+							say("you're taking back outside.wiki/" + name + ": gain any experience, press Update my page, wait a minute, then log out");
 						}
 						else
 						{
@@ -2760,6 +3104,9 @@ public class OutsidePlugin extends Plugin
 			activity.xp(System.currentTimeMillis(), e.getSkill().getName(), e.getXp());
 		}
 		// hub:end globe,year
+		// (what they're doing as Discord shows it: their own experience going up, 11/16/2026)
+		presence.experience(e.getSkill().getName(), e.getXp(), System.currentTimeMillis());
+		// hub:cut reports
 		// (a level gained: its real level above the one last seen this session; the first seen is only remembered)
 		String skill = e.getSkill().getName();
 		Integer was = levelsSeen.put(skill, e.getLevel());
@@ -2769,8 +3116,10 @@ public class OutsidePlugin extends Plugin
 			one.put(skill, e.getLevel());
 			report(Reports.levels(one, myName()));
 		}
+		// hub:end reports
 	}
 
+	// hub:cut reports
 	/** A monster's loot (RuneLite's own reading of it, as Dink's): worth "Drops worth at least" or more, a report. */
 	@Subscribe
 	public void onNpcLootReceived(NpcLootReceived e)
@@ -2787,6 +3136,7 @@ public class OutsidePlugin extends Plugin
 		}
 		report(Reports.loot(e.getNpc().getName(), items, Math.max(0, config.reportLoot()), myName()));
 	}
+	// hub:end reports
 
 	// hub:cut year
 	// ---- your year (11/15/2026; Record, docs/record.md)
@@ -3113,6 +3463,7 @@ public class OutsidePlugin extends Plugin
 	}
 	// hub:end year
 
+	// hub:cut reports
 	/** The name they're logged in as, for a report's line. */
 	private String myName()
 	{
@@ -3152,6 +3503,7 @@ public class OutsidePlugin extends Plugin
 			}
 		});
 	}
+	// hub:end reports
 
 	// hub:cut globe,year
 	/** A hit in their own fight: theirs on an NPC, or one on them (the activity's fighting, and which boss). */
@@ -3369,6 +3721,7 @@ public class OutsidePlugin extends Plugin
 		}
 	}
 
+	// hub:cut live
 	// ---- the relay ----
 
 	/** RuneLite's Gson, keeping nulls as it writes (Kit.wire): the game socket's messages say "clear this" with them. */
@@ -3652,6 +4005,7 @@ public class OutsidePlugin extends Plugin
 		}
 	}
 	// hub:end talk
+	// hub:end live
 
 	private void say(String words)
 	{

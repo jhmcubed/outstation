@@ -45,3 +45,37 @@ The file is on jhmcubed/plugin-hub's branch `outside` (ea2f261, from runelite/pl
 to runelite/plugin-hub is opened from it with the words above (Jace's press: this repository's session can't write to
 runelite's). After its build: a ✔ beside `build`, and `RuneLite Plugin Hub Checks` saying nothing's needed; changes
 asked for go into outstation's plugin/, cut into outside-plugin, merged, and the new hash pushed to that branch.
+
+## The snapshot version (11/16/2026)
+
+The reviewer turned the lean cut down, then reopened #20811 for other reviewers: "An 'Update my page' action and an
+hourly sync should be okay, as should matching Discord activity." The Hub's version is now the snapshot
+(`plugin/hub_cut.py`'s header; docs/protocol.md, "The snapshot"), cut into jhmcubed/outside-plugin on its branch
+`claude/laughing-ride-b0yjzb` (a600302; 31 tests, the Hub check, `hub_cut.py --check` matching).
+
+In this order:
+1. Merge outstation's branch, then `npm run deploy` in `relay/` (the Worker must take `POST /game` before any Hub
+   player posts to it: the live relay answers 405 till then).
+2. Merge outside-plugin's branch into its `main` (the commit the Hub builds should be on `main`).
+3. On jhmcubed/plugin-hub's branch `outside`, `plugins/outside` becomes (the commit: outside-plugin's `main` after
+   the merge, `git rev-parse HEAD` there, the full 40 characters):
+
+```
+repository=https://github.com/jhmcubed/outside-plugin.git
+commit=<outside-plugin main's full hash>
+warning=This plugin submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it), your account hash and your IP address to a 3rd-party server when you press Update my page, and hourly. Your Outside page shows them publicly.
+```
+
+   Pushing that branch updates runelite/plugin-hub#20811 itself (no new pull request), and its build runs again.
+4. A comment on #20811 saying what changed (drafted in ghillie's claude/permissions-review.md, "The snapshot, and the
+   reply").
+
+## The reviewer's second answer (11/16/2026)
+
+"Please remove the exe download from the website the plugin directs players to, and don't link to or mention it in the
+README… make the README end-user focused, since it's published on the RuneLite website at the pinned commit… move any
+build instructions into a CONTRIBUTING.md or remove them." Done: outside.wiki shows no outstation.exe (ghillie's
+claude/permissions-review.md, "The Hub's second answer"); the cut's README.md is `plugin/README.hub.md`, for players
+only, and its CONTRIBUTING.md `plugin/CONTRIBUTING.hub.md` (`hub_cut.py`, HUB_FILES). The order above stands, with
+outside-wiki's branch merged (it deploys outside.wiki) before the comment, so the reviewer finds the site already
+changed.

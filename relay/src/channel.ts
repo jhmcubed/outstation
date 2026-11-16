@@ -33,7 +33,8 @@ import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from
 import { channelForm, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
-         GAME_MESSAGE, type Here, HERE_EVERY_MS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
+         GAME_MESSAGE, GAME_POSTS_A_MINUTE, gamePresence, type Here, HERE_EVERY_MS, type Presence, PRESENCE_FRESH_MS,
+         SNAP_FIELDS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents } from "./array";
 import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
@@ -61,6 +62,7 @@ export interface Env {
   CLIPS_MOST?: string; // a channel's clips at most (20)
   CLIPS_DAYS?: string; // and for how long (30 days)
   CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
+  PRESENCE_FRESH_SECONDS?: string; // (tests) how long the Hub's plugin counts as here after its last POST (game.ts's PRESENCE_FRESH_MS: 70 minutes)
   WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" or an "activity" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
   ALMANAC_UPSTREAM?: string; // (tests) the almanac's sources all fetched under this address instead of the real hosts (almanac.ts's urls)
   TEST_FORGET?: string; // (tests) "1": POST /test/forget puts the Directory to sleep (index.ts), to see what its storage brings back;
@@ -148,6 +150,9 @@ export interface Listing {
   pending?: boolean; // (an invite nobody's taken up yet, 11/08/2026: not listed, only counted under its inviter)
   where?: Where; whereAt?: number; // (following, 11/08/2026: only while live, and when it came; the Directory says if it's fresh)
   activity?: Activity; activityAt?: number; // (what they're doing, 11/08/2026: the same)
+  // (what they're doing as Discord shows it, and when it last came; when the Hub's plugin last posted, 11/16/2026: the
+  // Directory says if it's fresh, PRESENCE_FRESH_MS)
+  presence?: Presence; presenceAt?: number; seenAt?: number;
 }
 
 interface Att {
@@ -323,6 +328,14 @@ export class Channel extends DurableObject<Env> {
   activity: Activity | null = null;
   activityAt = 0;
   activityTook = 0;
+  // the snapshot's plugin (11/16/2026; game.ts, gamePresence; docs/protocol.md "The snapshot"): what they're doing as
+  // Discord shows it and when it last came, when the plugin last posted (0 once it's logged out), and each post's time
+  // in the last minute (GAME_POSTS_A_MINUTE; in memory: a sleep forgets, which only loosens it). Saved ("presence"), as
+  // a channel the plugin only posts to sleeps between its posts.
+  presence: Presence | null = null;
+  presenceAt = 0;
+  seenAt = 0;
+  posts: number[] = [];
 
   // proving the name (11/15/2026; witness.ts): the session's start on the hiscores, and the claims made at logout with
   // when they're next asked and how often they have been
@@ -332,7 +345,9 @@ export class Channel extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game", "witness", "cwit"]);
+      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game", "witness", "cwit", "presence"]);
+      const pr = got.get("presence") as { presence: Presence | null; at: number; seen: number } | undefined;
+      if (pr) { this.presence = pr.presence; this.presenceAt = pr.at || 0; this.seenAt = pr.seen || 0; }
       this.wit = (got.get("witness") as Wit) || {};
       this.cwit = (got.get("cwit") as Record<string, Wit>) || {};
       this.guess = (got.get("guess") as Guess) || null;
@@ -350,7 +365,7 @@ export class Channel extends DurableObject<Env> {
       this.chat = (got.get("chat") as [number, string][]) || [];
       this.poll = (got.get("poll") as Poll) || null;
       this.reports = (got.get("reports") as string[]) || [];
-      this.game = new GameState(got.get("game") as { kept: Fields; at: number } | undefined);
+      this.game = new GameState(got.get("game") as { kept: Fields; at: number; snap?: number } | undefined);
     });
   }
 
@@ -483,7 +498,9 @@ export class Channel extends DurableObject<Env> {
              static: live && this.meta.state === "static", viewers: this.seated().length, title: this.meta.title || "",
              doing: this.doing(), game,
              ...(shown && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
-             ...(shown && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}) };
+             ...(shown && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}),
+             ...(this.seenAt ? { seenAt: this.seenAt } : {}),
+             ...(this.presence && (shown || this.seenAt) ? { presence: this.presence, presenceAt: this.presenceAt } : {}) };
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -689,6 +706,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "_dm") return this.takeDm(request);
     if (role === "_invites") return this.invites(request, q, ip);
     if (role === "_game") return this.readGame(q);
+    if (role === "_gamepost") return this.postGame(request, q, ip);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
     if (role === "_keep") return this.kept(request, q, ip);
@@ -955,6 +973,8 @@ export class Channel extends DurableObject<Env> {
     this.witnessGame(fields);
     this.takeWhere(gameWhere(m.game), fields, now);
     this.takeActivity(gameActivity(m.game), fields, now);
+    if (fields.off === true && this.seenAt) { this.seenAt = 0; this.savePresence(); this.tellListing(); } // (logged out)
+    this.takePresence(gamePresence(m.game), fields, now);
     this.takeHere(gameHere(m.game), fields, now);
     this.takeStar(gameStar(m.game), fields);
     const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
@@ -1022,6 +1042,96 @@ export class Channel extends DurableObject<Env> {
     this.tellMine({ activity: null, at: Date.now() });
   }
 
+  /** What they're doing as Discord shows it (game.ts, gamePresence; 11/16/2026): taken whenever it comes (the POSTs are
+   *  limited already), its time refreshed even when it's the same; null, logging out ({"off": true}) or holding for the
+   *  player's safety ({"paused"}) drops it. Saved, with when the plugin last posted. */
+  takePresence(p: Presence | null | undefined, fields: Fields, now: number) {
+    if (fields.off === true || typeof fields.paused === "string" || p === null) return this.dropPresence();
+    if (!p) return;
+    const same = !!this.presence && pyjson(this.presence) === pyjson(p);
+    this.presence = p;
+    this.presenceAt = now;
+    this.savePresence();
+    if (!same) this.tellListing();
+  }
+
+  dropPresence() {
+    if (!this.presence) return;
+    this.presence = null;
+    this.presenceAt = 0;
+    this.savePresence();
+    this.tellListing();
+  }
+
+  savePresence() {
+    this.ctx.storage.put("presence", { presence: this.presence, at: this.presenceAt, seen: this.seenAt });
+  }
+
+  /** Whether the plugin's here, as the page and the globe count it: its socket's connected, or it posted within
+   *  PRESENCE_FRESH_MS and hasn't logged out since. */
+  heard(now = Date.now()): boolean {
+    const fresh = (parseFloat(this.env.PRESENCE_FRESH_SECONDS || "") * 1000) || PRESENCE_FRESH_MS;
+    return this.sockets("game").length > 0 || (!!this.seenAt && now - this.seenAt <= fresh);
+  }
+
+  /** POST /game/<channel>?key= (11/16/2026, the snapshot; docs/protocol.md "The snapshot"): the Hub's plugin, which
+   *  keeps no socket. Its {"game"} taken as a socket's message is (the proof's figures, the fields kept and passed on,
+   *  "presence"), but never "where", "activity", "here" or "star"; one carrying SNAP_FIELDS is a snapshot. A challenger's
+   *  key: only its own proof, as a proving socket's. 204 taken; 400 not a {"game"} object; 403 a wrong key; 413 too
+   *  long; 429 past GAME_POSTS_A_MINUTE a minute, or too many wrong keys. */
+  async postGame(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    const n = parseInt(request.headers.get("content-length") || "0") || 0;
+    if (n > GAME_MESSAGE) return json({ error: "too long" }, 413);
+    const key = q.get("key") || "";
+    let party = "";
+    if (this.meta.unproven && (this.meta.challengers || []).length) {
+      const h = await this.hash(key);
+      if ((this.meta.challengers || []).some((c) => c.keyHash === h && Date.now() - c.at < CHALLENGE_DAYS * 86_400_000)) party = h;
+    }
+    if (!party) {
+      const no = await this.checkKey(key, ip);
+      if (no) return json({ error: no[1] }, no[0] === 4029 ? 429 : 403);
+    }
+    const now = Date.now();
+    this.posts = this.posts.filter((t) => now - t < 60_000);
+    if (this.posts.length >= GAME_POSTS_A_MINUTE) return json({ error: "too often: wait a minute" }, 429);
+    this.posts.push(now);
+    const text = await request.text();
+    if (text.length > GAME_MESSAGE) return json({ error: "too long" }, 413);
+    let m: any;
+    try { m = JSON.parse(text); } catch { m = null; }
+    if (!m || typeof m !== "object" || Array.isArray(m) || !m.game || typeof m.game !== "object" || Array.isArray(m.game)) {
+      return json({ error: "send {\"game\": {...}}" }, 400);
+    }
+    const fields = gameFields(m.game);
+    if (party) {
+      if (this.witOpen(party)) {
+        this.witStart(party, fields);
+        const w = this.witOf(party);
+        w.said = { ...(w.said || {}), ...(typeof fields.name === "string" ? { name: fields.name } : {}), ...(fields.skills ? { skills: fields.skills } : {}) };
+        if (fields.off === true) this.witOff(party);
+      }
+      return new Response(null, { status: 204 });
+    }
+    this.witnessGame(fields);
+    this.seenAt = fields.off === true ? 0 : now;
+    this.takePresence(gamePresence(m.game), fields, now);
+    this.savePresence();
+    const snap = SNAP_FIELDS.some((f) => f in fields);
+    if (snap) this.game.snap = now;
+    const got = this.game.apply(fields, now);
+    if (fields.off === true) this.witnessOff();
+    if (got || snap) {
+      this.game.line = null;
+      const line = pyjson({ game: { ...(got || {}), at: this.game.at, ...(this.game.snap ? { snap: this.game.snap } : {}) } });
+      for (const v of [...this.seated(), ...this.sockets("look"), ...this.sockets("desk")]) this.send(v, line);
+      this.gameDirty = true;
+      this.saveGame(); // (now: the object may sleep before a timer would)
+    }
+    this.tellListing(); // (seenAt moved: the Directory's row says when the plugin was last heard)
+    return new Response(null, { status: 204 });
+  }
+
   /** A shooting star the plugin found (game.ts, gameStar): to the Directory's list (stars.ts), which counts this
    *  channel's reports (STARS_AN_HOUR) and names it as the star's finder only if it's on the open outstations' list
    *  (handed out, no watch code, not an invite waiting). Not from a message that logs out or holds for the player's
@@ -1050,7 +1160,7 @@ export class Channel extends DurableObject<Env> {
     if (!this.gameDirty) return;
     this.gameDirty = false;
     this.gameSavedAt = Date.now();
-    this.ctx.storage.put("game", { kept: this.game.kept, at: this.game.at });
+    this.ctx.storage.put("game", { kept: this.game.kept, at: this.game.at, snap: this.game.snap });
   }
 
   /** Forgotten (a new key from the keeper, or the channel taken back). */
@@ -1061,6 +1171,9 @@ export class Channel extends DurableObject<Env> {
     this.activityTook = 0;
     this.dropHere(); // (the exact path, the same)
     this.hereTook = 0;
+    this.dropPresence(); // (what they're doing as Discord shows it, the same)
+    this.seenAt = 0;
+    this.ctx.storage.delete("presence");
     if (this.gameTimer) clearTimeout(this.gameTimer);
     this.gameTimer = null;
     this.gameDirty = false;
@@ -1084,7 +1197,11 @@ export class Channel extends DurableObject<Env> {
   readGame(q: URLSearchParams): Response {
     if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
     if (this.game.empty) return json({ error: "no game state for that outstation" }, 404);
-    return json({ game: this.game.kept, at: this.game.at, connected: this.sockets("game").length > 0 });
+    const heard = this.heard();
+    return json({ game: this.game.kept, at: this.game.at, connected: this.sockets("game").length > 0,
+                  ...(this.game.snap ? { snap: this.game.snap } : {}),
+                  ...(this.seenAt ? { seen: this.seenAt } : {}),
+                  ...(heard && this.presence ? { presence: this.presence } : {}) });
   }
 
   // messages

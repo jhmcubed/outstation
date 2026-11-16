@@ -358,7 +358,8 @@ viewer page) draws it beside the transmission and the chat: live, and as last kn
 (`relay/src/game.ts` and channel.ts; relay-py's `game_fields`, `Game` and `Relay.game`).
 
     ws(s)://<relay>/game/<channel>?key=<key>&v=<the plugin's version>     the plugin
-    GET <relay>/game/<channel>?code=<watch code>                         the state kept: {"game", "at", "connected"}
+    GET <relay>/game/<channel>?code=<watch code>                         the state kept: {"game", "at", "connected", "snap"?, "seen"?, "presence"?}
+    POST <relay>/game/<channel>?key=<key>&v=<its version>                the Hub's plugin (below, "The snapshot", 11/16/2026)
 
 **The socket.** The same key as transmitting, with the same refusals: 4001 for a key under 8 characters, 4003 for the
 wrong one (on Cloudflare also for a channel nobody handed out), and on Cloudflare 4029 past 10 wrong keys a minute from one
@@ -583,6 +584,52 @@ viewers see anyway, and refuses the socket.
 last of it while the player's away, until the plugin next changes it.
 - On Cloudflare: in memory, and saved in the channel's storage at most once a minute while messages come (the first at once, then a minute after the last save), and when the game socket closes; a channel that's slept starts from what was saved, so a restart of the channel's object while the plugin's sending loses at most that minute. Forgotten when the keeper gives the channel a new key or takes it back.
 - On the Python relay: in memory only, as everything there, while the relay runs. `--delay` holds the game's messages back too.
+
+## The snapshot: the Plugin Hub's plugin (11/16/2026)
+
+RuneLite's Plugin Hub took the live plugin as too much, too often (runelite/plugin-hub#20811: "An 'Update my page'
+action and an hourly sync should be okay, as should matching Discord activity"). Its version keeps no socket: it posts.
+Both relays (`relay/src/channel.ts`'s `postGame`, game.ts's `gamePresence`; relay-py's `Relay.game_post`,
+`Channel.take_post`, `game_presence`).
+
+    POST <relay>/game/<channel>?key=<key>&v=<the plugin's version>      {"game": {...}}
+
+- **When the plugin posts**: when the player presses **Update my page** in the ✼ side tab, hourly while they're logged
+  in (60 minutes of being logged in since the last, as RuneProfile's sync), as `presence` changes (at most once a minute),
+  and as they log out (`{"off": true}`). Never from the Wilderness, a PvP area or a PvP or Deadman world.
+- **The body** is the socket's message (above, "The game"), its fields checked and kept the same way, the proof's
+  figures read from it the same way ("Proving a name"); but a post's `where`, `activity`, `here` and `star` are never
+  taken (only the whole plugin's socket sends those). A challenger's key ("Taking a name back") feeds only its own proof,
+  as a proving socket's does.
+- **A snapshot**: a post that carries `worn`, `inv` or `skills`. The relay keeps when the last one came (`snap`, ms):
+  `GET /game` gives it as `"snap"`, the whole state someone just come gets has it beside `"at"`, and each snapshot goes
+  on to seated viewers, lookers and desks as `{"game": {...what changed, "at", "snap"}}` even when nothing changed. The
+  page says "updated 14 minutes ago" from it while no socket's connected.
+- **Answers**: 204 taken; 400 not a `{"game"}` object; 403 a wrong or short key; 413 longer than 64 KB; 429 past 6 posts
+  a minute for the channel (`GAME_POSTS_A_MINUTE`; wrong keys don't count), or (Cloudflare) too many wrong keys.
+- **Heard from**: a post (but a logout) marks the plugin heard from for 70 minutes (`PRESENCE_FRESH_MS`; the Worker's
+  `PRESENCE_FRESH_SECONDS`, relay.py's `--presence-fresh-seconds`, shorten it for tests); `{"off": true}`, by post or
+  socket, ends it. `GET /channels`'s `game` is true while the socket's connected or the plugin's heard from (so a Hub
+  player shows on the list and the globe), and `GET /game` adds `"seen"` (ms of the last post) while it's heard from.
+
+**What they're doing, as Discord shows it** (`presence`). What RuneLite's own Discord plugin shows as rich presence,
+never more (claude/outstation.md in the ghillie repository, "What RuneLite's Discord plugin shares"):
+
+    {"presence": {"skill": "Woodcutting" | null, "area": "Woodcutting Guild" | null, "kind": "region" | null, "x": 1632, "y": 3488}}
+
+- `skill`: the skill they've been gaining experience in (one of `ACTIVITY_SKILLS`), or null.
+- `area`: the area by the Discord plugin's own name (one line, a letter or digit first, then letters, digits, spaces and
+  `'.()&-`, 48 characters at most), or null; `kind` with it, one of `boss`, `city`, `dungeon`, `minigame`, `raid`,
+  `region` (Discord's own groups), and null without it.
+- `x`, `y`, only with an area, and both: where the globe stands the light, one fixed point of the area (the plugin's
+  `Presence`: the region of it nearest its regions' middle, underground as the place above it; one off the map at its
+  entrance, or none), each a whole number that's a multiple of 32 within the main map's bounds (`WHERE_X`, `WHERE_Y`),
+  or Zanaris's `{"x": 2368, "y": 4416}`.
+- Both null is "in game" (an area not on Discord's list, or anywhere dangerous: the plugin sends nothing more exact).
+  `null` clears it, as do `{"off": true}`, a `paused` string and a new key.
+- Kept with when it came (on Cloudflare in storage too, as a channel only posted to sleeps between posts), and shown as
+  `presence` on `GET /channels` rows and `GET /game` while the plugin's heard from or the channel's live; otherwise null
+  on the list and left out of the read. Taken from the socket too (the whole plugin posts it as the Hub's does).
 
 ## Kept for the page: the bank and the model (11/14/2026)
 

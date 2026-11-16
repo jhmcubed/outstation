@@ -9,7 +9,8 @@ this script writes that repository's tree from here, leaving out the parts not s
   - regions of a file between marker lines, the markers' own lines with them:
         Java, Gradle:   // hub:cut <part>[,<part>…]       …       // hub:end <part>
         Markdown:       <!-- hub:cut <part> -->          …       <!-- hub:end <part> -->
-    a region goes when every part it names is out (code two parts share stays while either is in); regions don't nest;
+    a region goes when every part it names is out (code two parts share stays while either is in); regions nest (since
+    11/16/2026: a line goes when any region round it goes, so the live part can hold the globe's and the year's);
   - `// hub:only` lines: kept only in the cut, their marker taken off (a line the lean plugin needs in place of a
     region, e.g. a default), and dropped from nothing else: in the whole plugin they're comments;
   - Markdown's words for the cut alone, hidden in an HTML comment in the whole plugin's own:
@@ -18,14 +19,30 @@ this script writes that repository's tree from here, leaving out the parts not s
         -->
     kept (its comment taken off) while every part it names is out, dropped once one is in.
 
-The parts, in the order the updates bring them (SUBMITTED: those in the Hub's version now; add a part's name to it
-when its update is submitted):
-  globe   update 1: following, the world with it, what I'm doing, shooting stars and their finder, "In the Wilderness too"
-  delve   update 2: the Doom of Mokhaiotl's board
-  year    update 3: your year and its exact path
-  model   update 4: the character's model, its motions, the live view, the boss fought, effects, the ground
-  bank    update 5: the bank on the page
-  talk    update 6: the page's chat in the game (::o, /o) and emotes
+The Hub's README is its own (11/16/2026, the reviewer on runelite/plugin-hub#20811: "make the README end-user focused,
+since it's published on the RuneLite website at the pinned commit. Remove anything about the plugin not yet being approved
+or the submission process, and move any build instructions into a CONTRIBUTING.md"; and "don't link to or mention [the
+exe] in the README"): README.hub.md becomes the cut's README.md and CONTRIBUTING.hub.md its CONTRIBUTING.md (HUB_FILES);
+this folder's README.md, the whole plugin's developer notes, never goes. Both .hub.md files take the markers too. When an
+update brings a part in, say what it does in README.hub.md, for players, and never name the outstation there.
+
+The Hub's version is the snapshot (11/16/2026, the Hub's answer on runelite/plugin-hub#20811: "An 'Update my page'
+action and an hourly sync should be okay, as should matching Discord activity"; ghillie's claude/outstation.md, "The
+Hub's answer, and the snapshot version"): gear, stats, quests, diaries, combat achievements and the slayer task on
+"Update my page" and hourly, and what they're doing as Discord shows it (Presence), posted; claiming, proving, who sees
+it. The whole plugin (developer mode) keeps everything below as well.
+
+The parts left out (SUBMITTED: those in the Hub's version now; add a part's name to it when its update is submitted):
+  live    never, as things stand: the game socket, the kit and vitals every tick, the world, and every tie to the
+          outstation ({"app"}, "while transmitting", Copy my station key): "Hub plugins can't interface with external
+          programs outside of Hub review". Every part below but reports needs it.
+  reports to ask the reviewers about once the snapshot is in: levels, kills, drops and log slots (Reports, Dink's route)
+  globe   following, the world with it, the two-minutes-late activity, shooting stars, "In the Wilderness too"
+  delve   the Doom of Mokhaiotl's board
+  year    your year and its exact path
+  model   the character's model, its motions, the live view, the boss fought, effects, the ground
+  bank    the bank on the page
+  talk    the page's chat in the game (::o, /o) and emotes
 
     python3 plugin/hub_cut.py ../outside-plugin           write the cut there (its .git and build left alone)
     python3 plugin/hub_cut.py --check ../outside-plugin   say whether it matches; write nothing
@@ -40,8 +57,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARTS = ["globe", "delve", "year", "model", "bank", "talk"]
-SUBMITTED = []   # (the parts in the Hub's version beyond the first; 11/16/2026: none yet)
+PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "talk"]
+SUBMITTED = []   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: none yet)
 
 # whole files that belong to a part (paths under this folder)
 J = "src/main/java/wiki/outside/"
@@ -52,9 +69,12 @@ PART_FILES = {
     "year": [J + "Record.java", J + "Track.java", T + "RecordTest.java", T + "TrackTest.java", "src/test/resources"],
     "model": [],
     "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
+    "reports": [J + "Reports.java", T + "ReportsTest.java"],
 }
 # never copied: what's built, and what only this repository needs
-SKIP = {"build", ".gradle", ".git", "hub_cut.py", "__pycache__"}
+SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__", "README.md"}
+# the cut's own files, written under another name there (this folder's README.md, in SKIP, is the whole plugin's)
+HUB_FILES = {"README.hub.md": "README.md", "CONTRIBUTING.hub.md": "CONTRIBUTING.md"}
 TEXT = (".java", ".md", ".gradle", ".properties", ".py", ".txt", ".json")
 
 CUT = re.compile(r"^\s*(?://|<!--)\s*hub:cut\s+([a-z,]+)\s*(?:-->)?\s*$")
@@ -69,7 +89,7 @@ def out_parts():
 
 def cut_text(text, out, name="?"):
     """The text with every region naming a part that's out taken away, and the markers of those kept taken off."""
-    lines, keep, open_, else_ = text.split("\n"), [], None, None
+    lines, keep, stack, else_ = text.split("\n"), [], [], None
     for n, line in enumerate(lines, 1):
         if else_ is not None:
             if line.strip() == "-->":
@@ -83,29 +103,27 @@ def cut_text(text, out, name="?"):
             bad = [p for p in parts if p not in PARTS]
             if bad:
                 raise SystemExit("%s:%d: no such part %s" % (name, n, bad))
-            else_ = all(p in out for p in parts)
+            else_ = all(p in out for p in parts) and not any(gone for _, gone, _ in stack)
             continue
         c, e = CUT.match(line), END.match(line)
         if c:
-            if open_ is not None:
-                raise SystemExit("%s:%d: a hub:cut inside another (they don't nest)" % (name, n))
             parts = c.group(1).split(",")
             bad = [p for p in parts if p not in PARTS]
             if bad:
                 raise SystemExit("%s:%d: no such part %s" % (name, n, bad))
-            open_ = (parts, all(p in out for p in parts), n)
+            stack.append((parts, all(p in out for p in parts), n))
             continue
         if e:
-            if open_ is None or e.group(1).split(",") != open_[0]:
+            if not stack or e.group(1).split(",") != stack[-1][0]:
                 raise SystemExit("%s:%d: hub:end %s doesn't close the hub:cut before it" % (name, n, e.group(1)))
-            open_ = None
+            stack.pop()
             continue
-        if open_ is not None and open_[1]:
+        if any(gone for _, gone, _ in stack):
             continue
         o = ONLY.match(line)
         keep.append(o.group(1) + o.group(2) if o else line)
-    if open_ is not None:
-        raise SystemExit("%s:%d: a hub:cut never ended" % (name, open_[2]))
+    if stack:
+        raise SystemExit("%s:%d: a hub:cut never ended" % (name, stack[-1][2]))
     # (what a cut region leaves behind: two blank lines or more, one)
     tidy = []
     for line in keep:
@@ -128,7 +146,8 @@ def write(dest, out):
             rel = os.path.normpath(os.path.join(rel_root, f)).replace(os.sep, "/")
             if f in SKIP or rel in gone:
                 continue
-            src, dst = os.path.join(HERE, rel), os.path.join(dest, rel)
+            src = os.path.join(HERE, rel)
+            dst = os.path.join(dest, HUB_FILES.get(rel, rel))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if f.endswith(TEXT):
                 with open(src, encoding="utf-8") as fh:

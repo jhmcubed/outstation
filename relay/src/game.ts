@@ -303,6 +303,53 @@ export function gameActivity(g: unknown): Activity | null | undefined {
   return undefined;
 }
 
+// The snapshot, and what they're doing as Discord shows it (11/16/2026, the Plugin Hub's answer: "An 'Update my page'
+// action and an hourly sync should be okay, as should matching Discord activity"; docs/protocol.md, "The snapshot").
+// The Hub's plugin keeps no socket: it POSTs {"game": {...}} to /game/<channel>?key= when the player presses "Update my
+// page", hourly while logged in, as its "presence" changes, and as they log out. A POST is taken as a socket's message
+// is, but never its "where", "activity", "here" or "star" (only the whole plugin's socket sends those), at most
+// GAME_POSTS_A_MINUTE a minute a channel. One that carries any of SNAP_FIELDS is a snapshot: the channel keeps when
+// (GameState.snap), for the page's "updated 14 minutes ago".
+export const GAME_POSTS_A_MINUTE = 6;
+export const SNAP_FIELDS = ["worn", "inv", "skills"];
+// "presence": what RuneLite's own Discord plugin shows as rich presence, never more: the skill being trained (one of
+// ACTIVITY_SKILLS) and the area by Discord's own name (DiscordGameEventType's: a boss's, a city's, a dungeon's, a
+// minigame's, a raid's or a region's), each or both null ("in game"), and with the area, where the globe stands it:
+// {"x", "y"}, one fixed point of the area (the plugin's Presence.java: the region of it nearest its regions' middle, or
+// its entrance), each a whole number that's a multiple of 32 within the main map's bounds (WHERE_X, WHERE_Y), or
+// Zanaris's (WHERE_ZANARIS). null clears it. Kept with when it last came (also through a sleep) and shown on GET
+// /channels and GET /game while the plugin's heard from (PRESENCE_FRESH_MS after its last POST, till it logs out) or
+// its socket's connected. relay.py's game_presence, the same.
+export const PRESENCE_KINDS = ["boss", "city", "dungeon", "minigame", "raid", "region"];
+export const PRESENCE_FRESH_MS = 70 * 60_000, PRESENCE_GRID = 32;
+export const AREA_NAME = /^[A-Za-z0-9][A-Za-z0-9 '.()&-]{0,47}$/;
+export type Presence = { skill: string | null; area: string | null; kind: string | null; x?: number; y?: number };
+
+/** A message's "presence": exactly {skill, area, kind} (and x, y with an area), as above; null to clear it; undefined
+ *  for anything else (none, or not its shape: ignored, and the rest of the message taken as ever). */
+export function gamePresence(g: unknown): Presence | null | undefined {
+  if (!isObj(g) || !("presence" in g)) return undefined;
+  const p = g.presence;
+  if (p === null) return null;
+  if (!isObj(p)) return undefined;
+  const keys = Object.keys(p).sort().join(",");
+  const at = keys === "area,kind,skill,x,y";
+  if (!at && keys !== "area,kind,skill") return undefined;
+  if (p.skill !== null && !(typeof p.skill === "string" && ACTIVITY_SKILLS.includes(p.skill))) return undefined;
+  if (p.area === null) {
+    if (p.kind !== null || at) return undefined;
+    return { skill: p.skill as string | null, area: null, kind: null };
+  }
+  if (typeof p.area !== "string" || !AREA_NAME.test(p.area)) return undefined;
+  if (typeof p.kind !== "string" || !PRESENCE_KINDS.includes(p.kind)) return undefined;
+  const out: Presence = { skill: p.skill as string | null, area: p.area, kind: p.kind };
+  if (!at) return out;
+  const zanaris = p.x === WHERE_ZANARIS.x && p.y === WHERE_ZANARIS.y;
+  const ok = (v: unknown, [lo, hi]: number[]) => typeof v === "number" && Number.isInteger(v) && v >= lo && v < hi && v % PRESENCE_GRID === 0;
+  if (!zanaris && !(ok(p.x, WHERE_X) && ok(p.y, WHERE_Y))) return undefined;
+  return { ...out, x: p.x as number, y: p.y as number };
+}
+
 // Shooting stars (11/08/2026, Jace's choice for the globe; stars.ts keeps them): the plugin may send "star", a crashed
 // star the player saw two minutes before: its world (WORLD_RANGE), the middle of the 128-tile square of the main map
 // it's in (as "where"'s, Zanaris never), and its tier (1 to 9), or "gone": true once it's mined out; and since
@@ -417,16 +464,18 @@ const itemLen = (i: string, e: Item) => pyjson(i).length + 2 + pyjson(e).length;
 export class GameState {
   kept: Fields = {};
   at = 0; // when it last changed (ms)
+  snap = 0; // when the last snapshot was posted (ms; 11/16/2026, the Hub's plugin), or 0
   lens: Record<string, number> = {}; // each field's length in the kept state's JSON, as '"field": value'
   itemLens = new Map<string, number>(); // each item's, as '"id": [name, price]'
   itemsBody = 0; // those summed
   line: string | null = null; // the whole of it as someone just come gets it, written once a change
 
   /** From what was saved (channel.ts, saveGame), or empty. */
-  constructor(saved?: { kept: Fields; at: number } | null) {
+  constructor(saved?: { kept: Fields; at: number; snap?: number } | null) {
     if (!saved || !isObj(saved.kept)) return;
     this.kept = saved.kept;
     this.at = saved.at || 0;
+    this.snap = saved.snap || 0;
     for (const [k, v] of Object.entries(this.kept)) {
       if (k !== "items") { this.lens[k] = pyjson(k).length + 2 + pyjson(v).length; continue; }
       for (const [i, e] of Object.entries(v as Record<string, Item>)) {
@@ -491,6 +540,6 @@ export class GameState {
    *  there's none. */
   wholeLine(): string | null {
     if (this.empty) return null;
-    return (this.line ??= pyjson({ game: { ...this.kept, at: this.at } }));
+    return (this.line ??= pyjson({ game: { ...this.kept, at: this.at, ...(this.snap ? { snap: this.snap } : {}) } }));
   }
 }
