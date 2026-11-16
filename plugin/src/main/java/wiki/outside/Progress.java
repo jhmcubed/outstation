@@ -7,6 +7,7 @@ import java.util.List;
 import net.runelite.api.Client;
 import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
+import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 
@@ -114,6 +115,60 @@ final class Progress
 		return o;
 	}
 
+	/** One quest as the game's quest table has it (11/16/2026): its name, done (2), started (0) or not (1), free or members,
+	 *  a miniquest or not, and its quest points. */
+	static final class Q
+	{
+		final String name;
+		final int state;
+		final boolean members;
+		final boolean mini;
+		final int points;
+
+		Q(String name, int state, boolean members, boolean mini, int points)
+		{
+			this.name = name;
+			this.state = state;
+			this.members = members;
+			this.mini = mini;
+			this.points = points;
+		}
+	}
+
+	/**
+	 * The quests as the game's own list groups them (11/16/2026, Jace: "it's nice being able to see which are free quests,
+	 * which are members' quests, and which are mini-quests"): the names done, started and not, as before, and with them
+	 * "free" (the free quests' names), "mini" (the miniquests') and "qp" (each quest's points, those with any), from which
+	 * the page groups the list as the game does and writes the points in all. In the order given (the game's sort names).
+	 */
+	static JsonObject quests(int points, List<Q> list)
+	{
+		List<String> done = new java.util.ArrayList<>(), started = new java.util.ArrayList<>(), todo = new java.util.ArrayList<>();
+		List<String> free = new java.util.ArrayList<>(), mini = new java.util.ArrayList<>();
+		JsonObject qp = new JsonObject();
+		for (Q q : list)
+		{
+			(q.state == 2 ? done : q.state == 1 ? todo : started).add(q.name);
+			if (q.mini)
+			{
+				mini.add(q.name);
+			}
+			else if (!q.members)
+			{
+				free.add(q.name);
+			}
+			if (q.points > 0)
+			{
+				qp.addProperty(clip(q.name), q.points);
+			}
+		}
+		JsonObject o = quests(points, list.size(), done, started, todo);
+		o.add("free", names(free));
+		o.add("mini", names(mini));
+		o.add("qp", qp);
+		return o;
+	}
+
 	/** The slayer task: null task when there's none (the points and streak still go). */
 	static JsonObject slayer(String task, int left, int of, String area, int points, int streak)
 	{
@@ -148,6 +203,23 @@ final class Progress
 		return out;
 	}
 
+	/** A field's first value, or null when the row has none. */
+	private static Object field(Client c, int row, int column)
+	{
+		Object[] v = c.getDBTableField(row, column, 0);
+		return v == null || v.length == 0 ? null : v[0];
+	}
+
+	private static int intOf(Object v, int otherwise)
+	{
+		return v instanceof Number ? ((Number) v).intValue() : otherwise;
+	}
+
+	private static boolean boolOf(Object v, boolean otherwise)
+	{
+		return v instanceof Boolean ? (Boolean) v : v instanceof Number ? ((Number) v).intValue() != 0 : otherwise;
+	}
+
 	private static JsonArray names(List<String> list)
 	{
 		JsonArray a = new JsonArray();
@@ -180,8 +252,57 @@ final class Progress
 		return h;
 	}
 
+	/** The game's quest status script, as RuneLite's Quest.getState runs it: 2 done, 1 not started, else started. */
+	static final int QUEST_STATUS = 4029;
+
+	/**
+	 * The quests from the game's own quest table (DBTableID.Quest), as its quest list shows them: every row but those it
+	 * hides (its release type 0, not out yet) and the subquests (a parent quest: Recipe for Disaster's parts), each one's
+	 * state by the game's status script; free or members, quest or miniquest (its type 1, the game's quest_is_miniquest)
+	 * and quest points from the row. New quests come with the game, before RuneLite's Quest list has them. Sorted by the
+	 * game's sort names ("Corsair Curse, The"). If the table can't be read, RuneLite's Quest list, ungrouped.
+	 */
 	static JsonObject readQuests(Client c)
 	{
+		try
+		{
+			List<Integer> rows = c.getDBTableRows(DBTableID.Quest.ID);
+			if (rows != null && !rows.isEmpty())
+			{
+				List<Object[]> sorted = new java.util.ArrayList<>();
+				for (int row : rows)
+				{
+					if (Integer.valueOf(0).equals(intOf(field(c, row, DBTableID.Quest.COL_RELEASE_TYPE), -1)) || field(c, row, DBTableID.Quest.COL_PARENT_QUEST) != null)
+					{
+						continue;
+					}
+					Object name = field(c, row, DBTableID.Quest.COL_DISPLAYNAME), sort = field(c, row, DBTableID.Quest.COL_SORTNAME);
+					if (!(name instanceof String) || ((String) name).isEmpty())
+					{
+						continue;
+					}
+					c.runScript(QUEST_STATUS, row);
+					int st = c.getIntStack()[0];
+					Q q = new Q((String) name, st == 2 ? 2 : st == 1 ? 1 : 0, boolOf(field(c, row, DBTableID.Quest.COL_MEMBERS), true),
+						intOf(field(c, row, DBTableID.Quest.COL_TYPE), 0) == 1, Math.max(0, intOf(field(c, row, DBTableID.Quest.COL_QUESTPOINTS_OVERRIDE), 0)));
+					sorted.add(new Object[]{sort instanceof String ? sort : name, q});
+				}
+				sorted.sort((a, b) -> ((String) a[0]).compareToIgnoreCase((String) b[0]));
+				List<Q> list = new java.util.ArrayList<>();
+				for (Object[] e : sorted)
+				{
+					list.add((Q) e[1]);
+				}
+				if (!list.isEmpty())
+				{
+					return quests(c.getVarpValue(VarPlayerID.QP), list);
+				}
+			}
+		}
+		catch (RuntimeException e)
+		{
+			// (the table not as expected: RuneLite's own list below)
+		}
 		List<String> done = new java.util.ArrayList<>(), started = new java.util.ArrayList<>(), todo = new java.util.ArrayList<>();
 		Quest[] all = Quest.values();
 		for (Quest q : all)

@@ -119,7 +119,20 @@ export function gameFields(g: unknown): Fields {
   if (g.quests === null) out.quests = null;
   else if (isObj(g.quests)) {
     const q = g.quests, points = whole(q.points), total = whole(q.total), done = names(q.done), started = names(q.started), todo = names(q.todo);
-    if (points !== undefined && total !== undefined && done && started && todo) out.quests = { points, total, done, started, todo };
+    if (points !== undefined && total !== undefined && done && started && todo) {
+      const quests: Record<string, unknown> = { points, total, done, started, todo };
+      // (11/16/2026: grouped as the game's list is: the free quests' names, the miniquests', each quest's points; each
+      // left out when it isn't its shape)
+      const free = names(q.free), mini = names(q.mini);
+      if (free) quests.free = free;
+      if (mini) quests.mini = mini;
+      if (isObj(q.qp) && Object.keys(q.qp).length <= NAMES_MOST) {
+        const qp: Record<string, number> = {};
+        for (const [k, v] of Object.entries(q.qp)) { const n = whole(v, 1000); if (n !== undefined) qp[oneLine(k, 80)] = n; }
+        quests.qp = qp;
+      }
+      out.quests = quests;
+    }
   }
   if (g.diaries === null) out.diaries = null;
   else if (isObj(g.diaries)) {

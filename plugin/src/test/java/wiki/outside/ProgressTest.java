@@ -74,4 +74,23 @@ public class ProgressTest
 		// (a task whose amount given reads under what's left: never "87 of 50")
 		assertEquals(87, Progress.slayer("Hellhounds", 87, 50, null, 0, 0).get("of").getAsInt());
 	}
+
+	@Test
+	public void questsGroupedAsTheGameHasThem()
+	{
+		// (11/16/2026: free, members and miniquests, and each one's points, from the game's quest table)
+		JsonObject q = Progress.quests(3, Arrays.asList(
+			new Progress.Q("Cook's Assistant", 2, false, false, 1),
+			new Progress.Q("The Corsair Curse", 1, false, false, 2),
+			new Progress.Q("Dragon Slayer II", 0, true, false, 5),
+			new Progress.Q("Bear Your Soul", 1, true, true, 0)));
+		assertEquals(4, q.get("total").getAsInt());
+		assertEquals("[\"Cook's Assistant\"]", q.getAsJsonArray("done").toString());
+		assertEquals("[\"Dragon Slayer II\"]", q.getAsJsonArray("started").toString());
+		assertEquals("[\"The Corsair Curse\",\"Bear Your Soul\"]", q.getAsJsonArray("todo").toString());
+		assertEquals("[\"Cook's Assistant\",\"The Corsair Curse\"]", q.getAsJsonArray("free").toString());
+		assertEquals("[\"Bear Your Soul\"]", q.getAsJsonArray("mini").toString());
+		assertEquals(5, q.getAsJsonObject("qp").get("Dragon Slayer II").getAsInt());
+		assertTrue(!q.getAsJsonObject("qp").has("Bear Your Soul"));
+	}
 }

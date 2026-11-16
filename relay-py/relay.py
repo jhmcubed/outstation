@@ -733,7 +733,21 @@ def game_fields(g):
         points, total = game_whole(q.get("points")), game_whole(q.get("total"))
         done, started, todo = game_names(q.get("done")), game_names(q.get("started")), game_names(q.get("todo"))
         if points is not None and total is not None and done is not None and started is not None and todo is not None:
-            out["quests"] = {"points": points, "total": total, "done": done, "started": started, "todo": todo}
+            quests = {"points": points, "total": total, "done": done, "started": started, "todo": todo}
+            # (11/16/2026: grouped as the game's list is: free, mini, each quest's points; game.ts's)
+            free, mini = game_names(q.get("free")), game_names(q.get("mini"))
+            if free is not None:
+                quests["free"] = free
+            if mini is not None:
+                quests["mini"] = mini
+            if isinstance(q.get("qp"), dict) and len(q["qp"]) <= NAMES_MOST:
+                qp = {}
+                for k, v in q["qp"].items():
+                    n = game_whole(v, 1000)
+                    if n is not None:
+                        qp[one_line(k, 80)] = n
+                quests["qp"] = qp
+            out["quests"] = quests
     if "diaries" in g and g["diaries"] is None:
         out["diaries"] = None
     elif isinstance(g.get("diaries"), dict):

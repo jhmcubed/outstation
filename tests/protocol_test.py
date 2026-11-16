@@ -1882,13 +1882,16 @@ class Game(Base):
         g = await self.game()
         v = await self.watch()
         await self.pause()
-        sent = {"quests": {"points": 201, "total": 216, "done": ["Cook's Assistant", "Dragon\nSlayer I"], "started": ["Desert Treasure II"], "todo": ["Sins of the Father"]},
+        sent = {"quests": {"points": 201, "total": 216, "done": ["Cook's Assistant", "Dragon\nSlayer I"], "started": ["Desert Treasure II"], "todo": ["Sins of the Father"],
+                           "free": ["Cook's Assistant", "Dragon\nSlayer I"], "mini": [], "qp": {"Cook's Assistant": 1, "Dragon Slayer I": 2, "bad": -1}},
                 "diaries": {"Varrock": [1, 1, 0, 0, 30, 42], "Karamja": [1, 2, 0, 0, 1, 1], "Narnia": [1, 1, 1, 1, 9, 9]},
                 "combat": {"points": 1234, "tiers": [[33, 33], [41, 115], [30, 304], [12, 820], [2, 1465], [0, 2005]]},
                 "slayer": {"task": "Abyssal demons", "left": 87, "of": 180, "area": "Catacombs of Kourend", "points": 1450, "streak": 312}}
         await g.send(json.dumps({"game": sent}))
         got = await next_of(v, "game")
         self.assertEqual(got["quests"]["done"], ["Cook's Assistant", "Dragon Slayer I"])
+        self.assertEqual((got["quests"]["free"], got["quests"]["mini"], got["quests"]["qp"]),
+                         (["Cook's Assistant", "Dragon Slayer I"], [], {"Cook's Assistant": 1, "Dragon Slayer I": 2}))
         self.assertEqual(got["diaries"], {"Varrock": [1, 1, 0, 0, 30, 42]})
         self.assertEqual(got["combat"], sent["combat"])
         self.assertEqual(got["slayer"], sent["slayer"])
