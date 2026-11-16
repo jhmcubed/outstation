@@ -170,6 +170,8 @@ public class OutsidePlugin extends Plugin
 	private String slayerKey;
 	/** the desk socket for the page's chat in the game (11/16/2026) */
 	private WebSocket talkSocket;
+	/** the player's name as the game shows it, from the last tick */
+	private volatile String shownName;
 	/** the slayer task the game's just said is done, till its next line gives the count and the points */
 	private String slayerDoneTask;
 	private volatile WebSocket socket;
@@ -373,6 +375,10 @@ public class OutsidePlugin extends Plugin
 		// (whose game this is: known from the first tick; another than before, the key and the side tab follow)
 		Player me = client.getLocalPlayer();
 		String whose = me == null ? null : channelName(me.getName());
+		if (me != null && me.getName() != null)
+		{
+			shownName = me.getName().replace('\u00a0', ' ');
+		}
 		if (whose != null && !whose.equals(character))
 		{
 			character = whose;
@@ -3121,8 +3127,8 @@ public class OutsidePlugin extends Plugin
 		{
 			return;
 		}
-		Player me = client.getLocalPlayer();
-		String name = me != null && me.getName() != null ? me.getName() : a.getChannel();
+		// (the name as the game shows it, read on the client thread each tick: this runs on the socket's)
+		String name = shownName != null ? shownName : a.getChannel();
 		long since = System.currentTimeMillis();
 		Request req = new Request.Builder().url(a.deskUrl(name)).header("User-Agent", "outside-plugin/" + VERSION).build();
 		talkSocket = http.newWebSocket(req, new WebSocketListener()
