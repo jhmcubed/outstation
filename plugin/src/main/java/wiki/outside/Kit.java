@@ -133,6 +133,23 @@ public class Kit
 	 * Held back somewhere dangerous: "paused", and what was worn and carried emptied with it, so the relay keeps
 	 * nothing of what they took in (it keeps the last of each field otherwise), nor the vitals and prayers.
 	 */
+	/** Everything taken off the page (11/16/2026, the permissions review): sent as "Send to my Outside page" goes off, so
+	 *  the page doesn't go on showing what was last sent. */
+	public static JsonObject cleared()
+	{
+		JsonObject o = held("x");
+		o.remove("paused");
+		o.addProperty("off", true);
+		o.add("skills", new JsonObject());
+		o.add("charges", new JsonObject());
+		o.add("quests", JsonNull.INSTANCE);
+		o.add("diaries", JsonNull.INSTANCE);
+		o.add("combat", JsonNull.INSTANCE);
+		o.add("slayer", JsonNull.INSTANCE);
+		o.add("delve", JsonNull.INSTANCE);
+		return o;
+	}
+
 	public static JsonObject held(String why)
 	{
 		JsonObject o = new JsonObject();

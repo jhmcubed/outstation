@@ -352,6 +352,11 @@ public class OutsidePlugin extends Plugin
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
 		{
+			if (e.getKey().equals("send") && !config.send() && socket != null && open)
+			{
+				// (switched off: what's on the page comes off it first)
+				send(Kit.cleared());
+			}
 			close("settings changed");
 			stopped = false;
 			toldConnected = false;
