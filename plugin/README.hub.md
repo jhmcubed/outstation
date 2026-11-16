@@ -25,7 +25,7 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 ## Settings
 
 - **Send to my Outside page:** the main switch. Off, nothing is sent, and what it sent comes off your page.
-- **Worn and carried**, **Skills**, **Quests, diaries and combat achievements** (and the collection log's count), **My slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
+- **Worn and carried**, **Skills**, **Quests, diaries and combat achievements** (and the collection log's count, kill counts and clue counts), **My slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
 
 ## What it sends, and only that
 
@@ -38,7 +38,7 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 - your character's name and account type (normal, ironman…)
 - **worn and carried:** your equipment and inventory; the looting bag's contents once you've looked in it; the seed box's and chugging barrel's once you've opened them; your rune pouch's runes; Dizana's quiver's ammunition; and each item's name and Grand Exchange price
 - **skills:** each skill's level, boosted level and experience
-- **quests, diaries and combat achievements:** your quest points and which quests you've done or started, each Achievement Diary area's tiers and tasks done, and your combat achievement points and tasks done in each tier, and your collection log's count (slots filled and in all) with the names of the slots the game's chat said you added since the last update (the game's "Collection log - New addition notification" setting)
+- **quests, diaries and combat achievements:** your quest points and which quests you've done or started, each Achievement Diary area's tiers and tasks done, and your combat achievement points and tasks done in each tier, and your collection log's count (slots filled and in all) with the names of the slots the game's chat said you added since the last update (the game's "Collection log - New addition notification" setting), and your kill counts and clue counts as the game's chat last said each one ("Your Vorkath kill count is: 418", "You have completed 152 hard Treasure Trails"; never a Wilderness boss's), kept on this RuneLite for the account
 - **my slayer task:** the monster, how many are left of how many, the area if your master named one, your slayer points and your task streak
 - **item charges:** each worn or carried item's charges, as the game tells you them in its chat when you check one or as it's used
 - **Doom of Mokhaiotl delves:** when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level (as the Delve Calculator plugin reads it)

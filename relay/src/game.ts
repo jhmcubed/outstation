@@ -13,7 +13,7 @@
 // replaces the one kept, but "items", a name and a price for each item id, which is merged. channel.ts has the socket,
 // who hears what changed, and the saving. relay-py/relay.py's game_fields and Game, the same.
 
-import { oneLine, pyjson } from "./text";
+import { oneLine, pyjson, wildernessBoss } from "./text";
 
 // a message at most GAME_MESSAGE long, and GAME_A_SECOND a second (more are dropped); the kept state at most GAME_KEPT as
 // JSON (a message that would take it past is ignored), its dictionary of item names and prices at most GAME_ITEMS ids
@@ -36,6 +36,9 @@ export const DIARY_AREAS = ["Ardougne", "Desert", "Falador", "Fremennik", "Kanda
 const NAMES_MOST = 400;
 // (the collection log: its slots at most, and its newly added names with one update at most)
 export const CLOG_MOST = 5000, CLOG_NEW_MOST = 8;
+// (11/16/2026: kill counts by boss, at most COUNTS_MOST, and clue counts by tier, each at most COUNT_TOP)
+export const COUNTS_MOST = 250, COUNT_TOP = 10_000_000;
+export const CLUE_TIERS = ["beginner", "easy", "medium", "hard", "elite", "master"];
 const names = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.length <= NAMES_MOST && v.every((x) => typeof x === "string") ? v.map((x) => oneLine(x, 80)) : undefined;
 
@@ -167,6 +170,21 @@ export function gameFields(g: unknown): Fields {
     const count = whole(g.clog.count, CLOG_MOST), max = whole(g.clog.max, CLOG_MOST);
     const fresh = Array.isArray(g.clog.new) ? g.clog.new.filter((x): x is string => typeof x === "string").slice(0, CLOG_NEW_MOST).map((x) => oneLine(x, 60)).filter(Boolean) : [];
     if (count !== undefined && max !== undefined && count <= max) out.clog = { count, max, new: fresh };
+  }
+  // (11/16/2026: kill counts and clue counts as the game's chat last said each, {"kills": {boss: n}, "clues": {tier: n}};
+  // never a Wilderness boss's; null, switched off)
+  if (g.counts === null) out.counts = null;
+  else if (isObj(g.counts) && isObj(g.counts.kills) && isObj(g.counts.clues)) {
+    const kills: Record<string, number> = {}, clues: Record<string, number> = {};
+    for (const [k, v] of Object.entries(g.counts.kills).slice(0, COUNTS_MOST)) {
+      const boss = oneLine(k, 60), n = whole(v, COUNT_TOP);
+      if (boss && n !== undefined && !wildernessBoss(boss)) kills[boss] = n;
+    }
+    for (const [k, v] of Object.entries(g.counts.clues)) {
+      const n = whole(v, COUNT_TOP);
+      if (CLUE_TIERS.includes(k) && n !== undefined) clues[k] = n;
+    }
+    out.counts = { kills, clues };
   }
   // (11/15/2026, the live view: the animation they're doing now, its id or -1, with the gear it's in; null, none)
   if (g.anim === null) out.anim = null;

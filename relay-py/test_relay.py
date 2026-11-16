@@ -1798,6 +1798,29 @@ class SnapshotEvents(unittest.TestCase):
         self.assertEqual(len(relay.snapshot_events({"quests": {"done": []}}, {"quests": {"done": done}})), relay.SNAPSHOT_EVENTS_MOST)
 
 
+class SnapshotCounts(unittest.TestCase):
+    """Kill counts and clue counts with each update (11/16/2026): kept as sent, less a Wilderness boss's; a count gone up
+    is a kill or a clue on the Array; one the feed already has from Dink isn't added again."""
+
+    def test_a_count_gone_up(self):
+        p = {"counts": {"kills": {"Vorkath": 417, "Zulrah": 10}, "clues": {"hard": 5}}}
+        n = {"counts": {"kills": {"Vorkath": 417, "Zulrah": 12, "Kraken": 1}, "clues": {"hard": 6, "elite": 1}}}
+        self.assertEqual(relay.snapshot_events(p, n), [{"kind": "kill", "boss": "Zulrah", "kc": 12, "from": "update"},
+                                                       {"kind": "clue", "tier": "hard", "count": 6, "from": "update"}])
+
+    def test_never_a_wilderness_boss(self):
+        self.assertTrue(relay.wilderness_boss("Callisto") and relay.wilderness_boss("vet'ion") and not relay.wilderness_boss("Vorkath"))
+
+    def test_not_twice_with_dink(self):
+        f = relay.ArrayFeed(now=0)
+        f.add("sburb", [{"kind": "kill", "boss": "Vorkath", "kc": 418}], now=1000)
+        got = f.add("sburb", [{"kind": "kill", "boss": "Vorkath", "kc": 418, "from": "update"},
+                              {"kind": "kill", "boss": "Zulrah", "kc": 11, "from": "update"}], now=90000)
+        self.assertEqual([e["boss"] for e in got], ["Zulrah"])
+        got = f.add("moss", [{"kind": "kill", "boss": "Vorkath", "kc": 418, "from": "update"}], now=90000)  # (another's)
+        self.assertEqual(len(got), 1)
+
+
 class AetherRate(unittest.TestCase):
     """The aether's rate (relay.aether_wait and aether_recent; the Worker's aetherWait and aetherRecent, the same): a line
     every 2 s and 15 a minute from someone at most, and how long to wait past that."""

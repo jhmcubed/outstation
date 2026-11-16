@@ -2130,6 +2130,32 @@ class Snapshot(Base):
         self.assertEqual(mine, [{"kind": "kill", "boss": "Vorkath", "kc": 418}])
         self.assertNotIn("302", json.dumps(array_since(since)))
 
+    async def test_kill_and_clue_counts_from_an_update_and_never_twice_with_dink(self):
+        # (11/16/2026, Jace: kill counts and clue counts with each update, for players without Dink: a count gone up is a
+        # kill or a clue on the Array, "by the last update"; one Dink already told as it happened isn't told again;
+        # never a Wilderness boss's)
+        # (a snapshot, as the plugin's always are: it carries skills)
+        sk = {"Attack": [99, 99, 13034431]}
+        first = {"name": "Sburb", "skills": sk, "counts": {"kills": {"Vorkath": 417, "Zulrah": 10, "Callisto": 3}, "clues": {"hard": 5, "nope": 1}}}
+        self.assertEqual(self.post({"game": first})[0], 204)
+        await self.pause()
+        kept = http("GET", "/game/%s?code=" % self.ch)[1]["game"]["counts"]
+        self.assertEqual(kept, {"kills": {"Vorkath": 417, "Zulrah": 10}, "clues": {"hard": 5}})
+        since = array_read()[2]["next"]
+        dink = lambda p: http("POST", "/dink/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), p)
+        self.assertEqual(dink({"type": "KILL_COUNT", "content": "", "extra": {"boss": "Vorkath", "count": 418}})[0], 204)
+        await self.pause()
+        second = {"name": "Sburb", "skills": sk, "counts": {"kills": {"Vorkath": 418, "Zulrah": 11, "Callisto": 4}, "clues": {"hard": 6}}}
+        self.assertEqual(self.post({"game": second})[0], 204)
+        await self.pause(2)
+        mine = [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in array_since(since) if e["channel"] == self.ch]
+        self.assertEqual(mine, [{"kind": "kill", "boss": "Vorkath", "kc": 418},
+                                {"kind": "kill", "boss": "Zulrah", "kc": 11, "from": "update"},
+                                {"kind": "clue", "tier": "hard", "count": 6, "from": "update"}])
+        self.assertEqual(self.post({"game": {"skills": sk, "counts": None}})[0], 204)     # (switched off: off the page)
+        await self.pause()
+        self.assertIsNone(http("GET", "/game/%s?code=" % self.ch)[1]["game"]["counts"])
+
     async def test_the_list_names_them_as_the_game_shows_them(self):
         # (11/16/2026, Jace: "Oran Berries" was on the globe as oranberries: GET /channels carries the plugin's name, a
         # no-break space as a space, only when it comes down to the channel; else null)
