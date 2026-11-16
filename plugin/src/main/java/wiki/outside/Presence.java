@@ -497,6 +497,11 @@ final class Presence
 			e.put(n, new int[]{2240, 3328});   // (Prifddinas's middle, where the world map draws it)
 		}
 		e.put("Giant Mole", new int[]{3008, 3392});   // (Falador Park)
+		// (11/16/2026, Jace: a friend at the Guardians of the Rift stood in the Murkshore Sea, as a boat: the place above
+		// its region is no way in. These three were the ones whose place above was far from their way in)
+		e.put("Guardians of the Rift", new int[]{3104, 3168});   // (the Wizards' Tower, whose basement holds the portal)
+		e.put("Kalphite Queen", new int[]{3232, 3104});   // (the Kalphite Lair's way in, in the desert)
+		e.put("Temple Trekking", new int[]{3424, 3488});   // (Paterdomus, where the treks start)
 		for (String n : new String[]{"General Graardor", "Kree'arra", "Commander Zilyana", "K'ril Tsutsaroth", "Nex"})
 		{
 			e.put(n, new int[]{2880, 3776});   // (the God Wars Dungeon's way in, in Trollheim)
@@ -537,10 +542,15 @@ final class Presence
 				sy += on[i][1];
 			}
 		}
+		// (a known way in first, since 11/16/2026: the place above an underground region can be nowhere near it)
+		int[] at = ENTRANCES.get(area.name);
+		if (at != null)
+		{
+			return at.clone();
+		}
 		if (n == 0)
 		{
-			int[] at = ENTRANCES.get(area.name);
-			return at == null ? null : at.clone();
+			return null;
 		}
 		double mx = (double) sx / n, my = (double) sy / n, best = Double.MAX_VALUE;
 		int[] pick = null;
