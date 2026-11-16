@@ -42,7 +42,9 @@ export const KEPT_FIELDS: readonly Exclude<keyof Listing, MemoryOnly>[] =
    // (11/16/2026: the Hub's plugin, heard from by its posts, not a socket: when it last posted and what Discord shows.
    // Not stored, a Directory that slept dropped them, and a player posting all along read as dark on the globe, not
    // asked again for LISTING_DARK_MS. The channel stores the same in its own storage: docs/protocol.md, "presence")
-   "seenAt", "presence", "presenceAt"];
+   "seenAt", "presence", "presenceAt",
+   // (the name as the game shows it: channel.ts, shownName)
+   "name"];
 
 /** A row as it's stored: only KEPT_FIELDS, copied one by one (never the row spread, which would carry the rest). */
 export function keptRow(row: Listing): Listing {
