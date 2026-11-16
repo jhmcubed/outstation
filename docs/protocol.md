@@ -886,7 +886,8 @@ relay-py's `array_events` and `ArrayFeed`.
 
 A snapshot's events (array.ts's `snapshotEvents`, relay-py's `snapshot_events`) are against the last snapshot kept, each
 part only when that one had it too (a first snapshot says nothing), at most 8 from one, while the plugin's heard from or
-the channel's live, and listed; they come as late as the snapshot (pressed, or hourly).
+the channel's live, and listed; they come as late as the snapshot (pressed, or hourly), so each carries `"from":
+"update"` and pages say so ("by the last update").
 
 They're made from the numbers each report carries (its `data`, above in "Dink": what `reportData` / `report_data` keep),
 the same as the stream's summary is, so a report that comes as a Dink post and one that comes over the transmit socket
