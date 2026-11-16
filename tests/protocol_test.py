@@ -1899,6 +1899,28 @@ class Game(Base):
         self.assertEqual([got[k] for k in ("quests", "diaries", "combat", "slayer")], [None] * 4)
         self.assertIsNone(self.read()[1]["game"]["quests"])
 
+    async def test_a_desk_saying_talk_lights_the_status_lines_talk_and_its_going_puts_it_out(self):
+        # (11/16/2026: the Outside plugin's chat in the game: a desk that says &talk=1 makes "talk" true for every
+        # viewer, dark or not, and only that one; an ordinary desk (the outstation's chat window) changes nothing)
+        v = await self.watch()
+        self.assertFalse((await next_of(v, "relay"))["talk"])
+        plain = await self.desk(name="window")
+        await self.pause()
+        talker = await self.connect("desk", "key=%s&name=%s&talk=1" % (self.key, self.ch))
+        while not (await next_of(v, "relay"))["talk"]:
+            pass
+        await v.send(json.dumps({"hello": {"name": "visitor", "device": "d" * 16}}))
+        await v.send(json.dumps({"say": "hello from the page"}))
+        got = await next_of(talker, "chat")
+        self.assertEqual(got["text"], "hello from the page")         # (heard by the plugin's desk while dark)
+        await talker.send(json.dumps({"say": "hi, from the game"}))
+        while (await next_of(v, "chat"))["text"] != "hi, from the game":
+            pass
+        talker.close()
+        while (await next_of(v, "relay"))["talk"]:
+            pass
+        plain.close()
+
     async def test_a_second_game_socket_replaces_the_first(self):
         old = await self.game()
         await self.pause()

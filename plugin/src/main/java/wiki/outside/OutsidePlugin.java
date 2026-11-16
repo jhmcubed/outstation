@@ -168,6 +168,8 @@ public class OutsidePlugin extends Plugin
 	private long progressSig = Long.MIN_VALUE;
 	private int progressAt = -1;
 	private String slayerKey;
+	/** the desk socket for the page's chat in the game (11/16/2026) */
+	private WebSocket talkSocket;
 	/** the slayer task the game's just said is done, till its next line gives the count and the points */
 	private String slayerDoneTask;
 	private volatile WebSocket socket;
@@ -286,6 +288,17 @@ public class OutsidePlugin extends Plugin
 			else
 			{
 				keep("model", null);
+			}
+		}
+		if (e.getKey().equals("chat"))
+		{
+			if (config.chat())
+			{
+				talkOpen();
+			}
+			else
+			{
+				talkClose();
 			}
 		}
 		if (e.getKey().equals("bank") && !config.bank())
@@ -930,6 +943,40 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted e)
 	{
+		// (the page's chat, 11/16/2026: ::o answers it, ::ochat off / on stops and starts visitors' lines)
+		if ("o".equalsIgnoreCase(e.getCommand()) || "ochat".equalsIgnoreCase(e.getCommand()))
+		{
+			WebSocket ws = talkSocket;
+			if (ws == null)
+			{
+				say(config.chat() ? "your page's chat isn't open yet" : "switch on \"The page's chat in my game\" in the plugin's settings first");
+				return;
+			}
+			if ("ochat".equalsIgnoreCase(e.getCommand()))
+			{
+				String w = e.getArguments().length > 0 ? e.getArguments()[0].toLowerCase(java.util.Locale.ROOT) : "";
+				if (!w.equals("on") && !w.equals("off"))
+				{
+					say("::ochat off stops visitors' lines on your page, ::ochat on lets them back");
+					return;
+				}
+				ws.send(Talk.chatOn(w.equals("on"), gson));
+				say(w.equals("on") ? "visitors can talk on your page again" : "visitors' lines on your page go nowhere now");
+				return;
+			}
+			String line = Talk.say(String.join(" ", e.getArguments()), gson);
+			if (line == null)
+			{
+				say("::o and your words, to answer your page's chat");
+				return;
+			}
+			ws.send(line);
+			// (their own line, in the chat box beside the visitors': the relay's echo is the host's, which isn't shown)
+			String me = myName(), words = String.join(" ", e.getArguments()).replaceAll("\\s+", " ").trim();
+			clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.FRIENDSCHAT)
+				.sender("Outside").name(Text.escapeJagex(me == null ? "you" : me)).value(Text.escapeJagex(words)).build()));
+			return;
+		}
 		if ("outsideforget".equalsIgnoreCase(e.getCommand()))
 		{
 			String name = motionName(e.getArguments());
@@ -2865,6 +2912,7 @@ public class OutsidePlugin extends Plugin
 				open = true;
 				retryIn = 5;
 				resend = true;
+				talkOpen();
 				if (!toldConnected)
 				{
 					toldConnected = true;
@@ -2902,6 +2950,7 @@ public class OutsidePlugin extends Plugin
 		}
 		socket = null;
 		open = false;
+		talkClose();
 		if (code == 4012)
 		{
 			// (taking a name back, 11/15/2026: proven, the page is theirs now; its key opens it as the holder's)
@@ -2946,9 +2995,81 @@ public class OutsidePlugin extends Plugin
 		WebSocket ws = socket;
 		socket = null;
 		open = false;
+		talkClose();
 		if (ws != null)
 		{
 			ws.close(1000, why);
+		}
+	}
+
+	// ---- the page's chat in the game (11/16/2026; Talk) ----
+
+	/** The desk socket for the page's chat, while "The page's chat in my game" is on and the game's socket is open. */
+	private synchronized void talkOpen()
+	{
+		Attach a = attach;
+		if (!config.chat() || talkSocket != null || a == null || !open)
+		{
+			return;
+		}
+		Player me = client.getLocalPlayer();
+		String name = me != null && me.getName() != null ? me.getName() : a.getChannel();
+		long since = System.currentTimeMillis();
+		Request req = new Request.Builder().url(a.deskUrl(name)).header("User-Agent", "outside-plugin/" + VERSION).build();
+		talkSocket = http.newWebSocket(req, new WebSocketListener()
+		{
+			@Override
+			public void onMessage(WebSocket ws, String text)
+			{
+				Talk.Line l = Talk.visitor(text, since, gson);
+				if (l != null)
+				{
+					clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.FRIENDSCHAT)
+						.sender("Outside").name(Text.escapeJagex(l.name)).value(Text.escapeJagex(l.text)).build()));
+				}
+			}
+
+			@Override
+			public void onClosing(WebSocket ws, int code, String reason)
+			{
+				ws.close(1000, null);
+			}
+
+			@Override
+			public void onClosed(WebSocket ws, int code, String reason)
+			{
+				talkEnded(ws);
+			}
+
+			@Override
+			public void onFailure(WebSocket ws, Throwable t, Response response)
+			{
+				talkEnded(ws);
+			}
+		});
+	}
+
+	private synchronized void talkEnded(WebSocket ws)
+	{
+		if (ws != talkSocket)
+		{
+			return;
+		}
+		talkSocket = null;
+		// (still wanted, and the game's socket still open: again, in a while)
+		if (config.chat() && open)
+		{
+			executor.schedule(this::talkOpen, 15, TimeUnit.SECONDS);
+		}
+	}
+
+	private synchronized void talkClose()
+	{
+		WebSocket ws = talkSocket;
+		talkSocket = null;
+		if (ws != null)
+		{
+			ws.close(1000, "chat off");
 		}
 	}
 

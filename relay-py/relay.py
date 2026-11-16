@@ -1804,6 +1804,9 @@ class Channel:
               "static": self.sender is not None and self.state == "static",
               "set": self.key is not None, "pings": self.pings_on, "chat": self.chat_on,     # (set: someone has claimed it; Outside says "no portal here yet" when not)
               "title": self.title, "game": self.gamer is not None,     # (game: the Outside plugin's connected, 11/07/2026)
+              # (talk: a desk that said &talk=1 is open, the Outside plugin's chat in the game: the page's chat shows
+              # while the channel's dark, 11/16/2026)
+              "talk": any(getattr(d, "talk", False) for d in self.desks),
               # (lookers asking for frames, 11/10/2026: with viewers, who's watching, for the transmitter: the Worker's)
               "lookers": sum(1 for v in self.lookers if getattr(v, "look_frames", False))}
         if place:
@@ -2755,7 +2758,7 @@ class Relay:
             if role == "transmit":
                 await self.transmit(sock, name, q.get("key", ""), q.get("code", ""))
             elif role == "desk":
-                await self.desk(sock, name, q.get("key", ""), q.get("name", ""))
+                await self.desk(sock, name, q.get("key", ""), q.get("name", ""), q.get("talk") == "1")
             elif role == "sound":
                 await self.sound(sock, name, q.get("key", ""))
             elif role == "game":
@@ -2982,15 +2985,18 @@ class Relay:
         ch.key_used()
         return ch
 
-    async def desk(self, sock, name, key, host_name):
+    async def desk(self, sock, name, key, host_name, talk=False):
         """Jace's chat window: the chat, the poll and the pings in; his lines, polls, hides and blocks out."""
         ch = await self.claim(sock, name, key)
         if ch is None:
             return
         host_name = one_line(host_name, NAME_MAX) or name
         ch.host_names.add(host_name.lower())
+        sock.talk = talk
         ch.desks.add(sock)
         self.log("desk      %s  (%d open)" % (name, len(ch.desks)))
+        if talk:
+            ch.tell_viewers()
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
         if ch.game.kept:
@@ -3014,6 +3020,8 @@ class Relay:
                     self.from_desk(ch, host_name, msg, sock)
         finally:
             ch.desks.discard(sock)
+            if talk:
+                ch.tell_viewers()
 
     def send_dm(self, ch, host_name, dm, sock):
         """A message from this portal to another channel's: to its desks, or held till it opens; the sender told

@@ -94,6 +94,14 @@ public final class Attach
 		return base + "/game/" + enc(channel) + "?key=" + enc(key) + "&v=" + enc(version);
 	}
 
+	/** The relay's desk socket for the page's chat in the game (11/16/2026): ws(s)://…/desk/<channel>?key=…&name=…&talk=1. */
+	public String deskUrl(String name)
+	{
+		String game = gameUrl("0");
+		String base = game.substring(0, game.indexOf("/game/"));
+		return base + "/desk/" + enc(channel) + "?key=" + enc(key) + "&name=" + enc(name) + "&talk=1";
+	}
+
 	/** The relay's keep for the page (11/14/2026): http(s)://…/keep/<channel>/<what>?key=… (a bare relay as https://). */
 	public String keepUrl(String what)
 	{

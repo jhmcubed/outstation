@@ -68,7 +68,7 @@ to about 55 (the Outside plugin's own socket, and HTTP reads like GET /channels,
 
 
 **They hear:**
-- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game", "lookers"}}` (`lookers`: lookers asking for frames, for the transmitter: "Who's watching", above). `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
+- the status line: `{"relay": {"channel", "live", "viewers", "max", "waiting", "open", "static", "set", "pings", "chat", "title", "game", "talk", "lookers"}}` (`talk`, 11/16/2026: a desk that said `&talk=1` is open, the Outside plugin's "The page's chat in my game": the page shows its chat while the channel's dark; below, "The desk") (`lookers`: lookers asking for frames, for the transmitter: "Who's watching", above). `static`: the static key is down. `pings` and `chat`: whether viewers may ping and chat. `set` says whether the channel has been handed out (on the Python relay: claimed by a transmitter). `title` is the broadcast's title, from the desk (`""` for none). `game`: whether the Outside plugin is connected now (below, "The game"). In line for a seat it also has `"seat": false` and `"place": n`; with a seat, `"you": n`, their number in the chat.
 - frames and data, as the transmitter sent them. On arriving they get the last data line, the last frame (only while live), the reports, the summary, the game state, the chat so far, the poll, the drop guess and the sound's line.
 - `{"game": {...}}`: the player's game state, from the Outside plugin (below, "The game"), once seated.
 - `{"report": {"type", "text", "at", "data"}}`: a field report (from Dink; below, "Dink").
@@ -93,6 +93,13 @@ to about 55 (the Outside plugin's own socket, and HTTP reads like GET /channels,
 **The waiting line:** past the cap, a viewer waits in line, with status lines and the chat but no frames. The first in line takes the first seat that frees.
 
 ## The desk
+
+**The Outside plugin's desk** (11/16/2026): `/desk/<channel>?key=<key>&name=<the player's name>&talk=1`, opened by the
+plugin while its "The page's chat in my game" is on and its game socket is open. It's a desk like any other (it hears
+the chat, says lines as the host, turns visitors' lines off and on with `chat_on`); the plugin shows visitors' lines in
+the game's chat box and sends what the player types after `::o`. While one is open, every status line says
+`"talk": true`, and the page shows its chat with nothing transmitting; it going, `false`. A desk without `talk=1` (the
+outstation's chat window) never sets it.
 
 **It hears:** the status line, the chat so far and all of it after, the poll, the drop guess, pings, ✼ signals, the reports and the summary, the game state (below, "The game"), who's banned (`{"banned": [{"who", "name"}]}`), messages from other outstations (below, "Messages between outstations"), who's watching (`{"viewers": [{"who", "name", "waiting"}]}` whenever it changes: names as given, never a device), `{"upload": {"bps", "viewers", "acked"}}` (`acked`: what viewers say they've had, on Cloudflare) each second while live, and on Cloudflare the keeper's `{"notice"}` ("A notice from the keeper", below); and, since 11/10/2026, the player's own `{"mine"}` lines, which no other socket ever gets (below, "Your year"). The upload is what the relay sends viewers: on the Python relay it's the PC's own upload; on Cloudflare, Cloudflare's.
 

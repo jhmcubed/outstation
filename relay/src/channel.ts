@@ -161,6 +161,7 @@ interface Att {
   says?: number[];
   lastPing?: number;
   host?: string; // a desk's name in the chat
+  talk?: boolean; // a desk that said &talk=1: the Outside plugin's chat in the game (11/16/2026)
   lastSignal?: number;
   lookFrames?: boolean; // a looker asking for frames
   lookAt?: number;
@@ -442,6 +443,9 @@ export class Channel extends DurableObject<Env> {
       chat: !this.meta.chatOff,
       title: this.meta.title || "",
       game: this.sockets("game").length > 0, // (the Outside plugin's connected, 11/07/2026)
+      // (a desk that said &talk=1 is open, the Outside plugin's chat in the game: the page's chat shows while the
+      // channel's dark, 11/16/2026)
+      talk: this.sockets("desk").some((d) => !!this.att(d).talk),
       // (lookers asking for frames (11/10/2026): with viewers, what the transmitter needs to know of who's watching, so
       // with neither it sends a frame now and then and no sound, and with no lookers no small frames: docs/protocol.md
       // "Who's watching")
@@ -720,7 +724,7 @@ export class Channel extends DurableObject<Env> {
       if (role === "transmit") {
         this.openTransmit(ws, q.get("code") || "", q.get("v"));
       } else if (role === "desk") {
-        this.openDesk(ws, a, q.get("name") || "");
+        this.openDesk(ws, a, q.get("name") || "", q.get("talk") === "1");
         await this.tellNotice(ws);
         await this.tellDms(ws);
       } else if (role === "game") {
@@ -802,10 +806,12 @@ export class Channel extends DurableObject<Env> {
     if (game) this.send(ws, game);
   }
 
-  openDesk(ws: WebSocket, a: Att, hostName: string) {
+  openDesk(ws: WebSocket, a: Att, hostName: string, talk = false) {
     const host = oneLine(hostName, NAME_MAX) || this.name;
     a.host = host;
+    if (talk) a.talk = true;
     this.keep(ws, a);
+    if (talk) this.tellViewers();
     if (!this.meta.hostNames.includes(host.toLowerCase())) {
       this.meta.hostNames.push(host.toLowerCase());
       this.saveMeta();
@@ -1126,6 +1132,8 @@ export class Channel extends DurableObject<Env> {
       this.tellViewers();
     } else if (a.role === "look") {
       if (a.lookFrames) this.tellViewers(); // (the transmitter's "lookers": one fewer)
+    } else if (a.role === "desk") {
+      if (a.talk) this.tellViewers(); // (the plugin's chat gone: the page's chat goes with it while dark)
     } else if (a.role === "sound") {
       if (!this.sockets("sound").length) {
         this.soundHeld = [];
