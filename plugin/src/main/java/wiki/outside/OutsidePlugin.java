@@ -171,7 +171,7 @@ public class OutsidePlugin extends Plugin
 	private static final Logger log = LoggerFactory.getLogger(OutsidePlugin.class);
 	static final String VERSION = "0.3.0";
 	/** the relay a page is claimed on when there's no key yet (docs/protocol.md "Claiming a name") */
-	static final String HOME_RELAY = "https://relay.ghillie.workers.dev";
+	static final String HOME_RELAY = Attach.HOME;
 	// hub:cut live
 	/** vitals alone (run energy draining as you run) go at most this often, in ticks */
 	private static final int VITALS_EVERY = 5;

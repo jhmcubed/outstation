@@ -12,6 +12,13 @@ import java.util.Base64;
  */
 public final class Attach
 {
+	/** The Outside relay's host: the only one the Plugin Hub's version talks to (11/16/2026, the reviewer on
+	 *  runelite/plugin-hub#20811: "Hub plugins aren't allowed to take a URL from a server response then connect to it…
+	 *  make sure the hostname portion of relay is relay.ghillie.workers.dev"). */
+	public static final String HOME_HOST = "relay.ghillie.workers.dev";
+	/** Its address, the base of every request the Hub's version makes. */
+	public static final String HOME = "https://" + HOME_HOST;
+
 	private final String relay;
 	private final String channel;
 	private final String key;
@@ -67,12 +74,42 @@ public final class Attach
 			{
 				return null;
 			}
+			// (the Hub's version: a key for any other relay is no key, whether pasted or from /claim's answer, and
+			// every request is built on HOME, never on what the key says; the whole plugin, in developer mode, also
+			// takes an outstation's own relay or a local one)
+			// hub:only if (!isHome(relay))
+			// hub:only {
+			// hub:only 	return null;
+			// hub:only }
+			// hub:only return new Attach(HOME, channel, key);
+			// hub:cut live
 			return new Attach(relay, channel, key);
+			// hub:end live
 		}
 		catch (RuntimeException e)
 		{
 			return null;
 		}
+	}
+
+	/** Whether a key's relay is the Outside relay itself: relay.ghillie.workers.dev, as https://, wss:// or bare, with no
+	 *  port, path or anything else. */
+	public static boolean isHome(String relay)
+	{
+		if (relay == null)
+		{
+			return false;
+		}
+		String r = relay.trim().replaceAll("/+$", "");
+		if (r.startsWith("https://"))
+		{
+			r = r.substring(8);
+		}
+		else if (r.startsWith("wss://"))
+		{
+			r = r.substring(6);
+		}
+		return r.equalsIgnoreCase(HOME_HOST);
 	}
 
 	// hub:cut live
