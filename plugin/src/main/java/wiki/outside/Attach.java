@@ -163,6 +163,30 @@ public final class Attach
 		return keepUrl("x").replaceFirst("/keep/.*$", "/proof/" + enc(channel));
 	}
 
+	/** Friends only, set from the plugin (11/16/2026, the permissions review): http(s)://…/code/<channel>?key=…. */
+	public String codeUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/code/" + enc(channel) + "?");
+	}
+
+	/** The page taken down by its own key (11/16/2026): http(s)://…/channels/<channel>?key=…. */
+	public String takeDownUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/channels/" + enc(channel) + "?");
+	}
+
+	/** The page's kept game, as anyone reads it (403 when it's friends only and no code is given). */
+	public String gameReadUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/.*$", "/game/" + enc(channel));
+	}
+
+	/** The page with a watch code, for friends (11/16/2026). */
+	public String page(String code)
+	{
+		return code == null || code.isEmpty() ? page() : page() + "?code=" + enc(code);
+	}
+
 	/** The outstation's page on Outside. */
 	public String page()
 	{

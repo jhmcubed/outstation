@@ -194,6 +194,8 @@ public class OutsidePlugin extends Plugin
 	private final Follow follow = new Follow();
 	// hub:end globe
 	// hub:cut year
+	/** whether the outstation's app is attached, as the relay says ({"app"}; 11/16/2026): the exact path goes only then */
+	private volatile boolean appHere;
 	/** the exact path, for the player's own year (11/10/2026; Track) */
 	private final Track track = new Track();
 	// hub:end year
@@ -347,10 +349,16 @@ public class OutsidePlugin extends Plugin
 			readEmotes();
 			// hub:end talk
 			readProof();
+			readAccess();
 		}
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
 		{
+			if (e.getKey().equals("send") && !config.send() && socket != null && open)
+			{
+				// (switched off: what's on the page comes off it first)
+				send(Kit.cleared());
+			}
 			close("settings changed");
 			stopped = false;
 			toldConnected = false;
@@ -544,7 +552,7 @@ public class OutsidePlugin extends Plugin
 		}
 		// hub:end globe
 		// hub:cut year
-		if (path != null)
+		if (path != null && appHere)
 		{
 			send(path);
 		}
@@ -660,6 +668,15 @@ public class OutsidePlugin extends Plugin
 			int amount = client.getVarpValue(VarPlayerID.DIZANAS_QUIVER_TEMP_AMMO_AMOUNT);
 			m.put("quiver", ammo > 0 && amount > 0 ? Kit.pair(ammo, amount) : com.google.gson.JsonNull.INSTANCE);
 		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			for (String f : new String[]{"worn", "inv", "bag", "pouch", "seeds", "barrel"})
+			{
+				m.put(f, new JsonArray());
+			}
+			m.put("quiver", JsonNull.INSTANCE);
+		}
 		if (config.items() && config.charges())
 		{
 			// (only the items worn or carried now)
@@ -685,6 +702,11 @@ public class OutsidePlugin extends Plugin
 			}
 			m.put("charges", ch);
 		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("charges", new JsonObject());
+		}
 		// hub:cut model
 		// (the live view, 11/15/2026: the animation they're doing now and the gear it's in)
 		if (config.model() && me != null && liveGear != null)
@@ -694,11 +716,21 @@ public class OutsidePlugin extends Plugin
 			an.add(liveGear);
 			m.put("anim", an);
 		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("anim", JsonNull.INSTANCE);
+		}
 		// hub:end model
 		// hub:cut delve
 		if (config.delve() && delveSeen != null)
 		{
 			m.put("delve", delveSeen);
+		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("delve", JsonNull.INSTANCE);
 		}
 		// hub:end delve
 		if (config.skills())
@@ -718,6 +750,11 @@ public class OutsidePlugin extends Plugin
 				skills.add(s.getName(), v);
 			}
 			m.put("skills", skills);
+		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("skills", new JsonObject());
 		}
 		if (config.progress())
 		{
@@ -777,6 +814,12 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 			m.put("prayers", on);
+		}
+		else
+		{
+			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
+			m.put("vitals", new JsonObject());
+			m.put("prayers", new JsonArray());
 		}
 		return m;
 	}
@@ -1612,10 +1655,159 @@ public class OutsidePlugin extends Plugin
 				Attach a = key();
 				if (a != null)
 				{
-					net.runelite.client.util.LinkBrowser.browse("https://outside.wiki/" + java.net.URLEncoder.encode(a.getChannel(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+					net.runelite.client.util.LinkBrowser.browse(a.page(friendsOnly ? watchCode(false) : null));
 				}
 			}
+
+			@Override
+			public void friendsOnly(boolean on)
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				String code = on ? watchCode(true) : "";
+				JsonObject body = new JsonObject();
+				body.addProperty("code", code);
+				panel.accessStatus(on ? "making it friends only…" : "opening it to anyone…");
+				http.newCall(new Request.Builder().url(a.codeUrl())
+					.header("User-Agent", "outside-plugin/" + VERSION).put(RequestBody.create(JSON, gson.toJson(body))).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.accessStatus("the relay's out of reach: try again");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						try (Response res = r)
+						{
+							if (res.code() != 200)
+							{
+								panel.accessStatus("the relay said no (" + res.code() + ")");
+								return;
+							}
+							friendsOnly = on;
+							panel.access(on);
+							panel.accessStatus(on ? "friends only now: copy the friends' link for them" : "open to anyone now");
+						}
+					}
+				});
+			}
+
+			@Override
+			public void copyFriendsLink()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				try
+				{
+					java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(a.page(watchCode(true))), null);
+					panel.accessStatus("copied: give it only to friends");
+				}
+				catch (IllegalStateException | java.awt.HeadlessException ex)
+				{
+					panel.accessStatus("the clipboard's busy: try again");
+				}
+			}
+
+			@Override
+			public void takeDown()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				panel.accessStatus("taking it down…");
+				http.newCall(new Request.Builder().url(a.takeDownUrl())
+					.header("User-Agent", "outside-plugin/" + VERSION).delete().build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.accessStatus("the relay's out of reach: nothing was taken down");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						try (Response res = r)
+						{
+							if (res.code() != 204)
+							{
+								panel.accessStatus("the relay said no (" + res.code() + "): nothing was taken down");
+								return;
+							}
+						}
+						// (the key's no good now: forgotten here too, and in the settings if it was this page's)
+						String gone = stationKey();
+						configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, "stationKey");
+						configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, "watchCode");
+						if (gone != null && gone.trim().equals(config.stationKey().trim()))
+						{
+							configManager.unsetConfiguration(OutsideConfig.GROUP, "stationKey");
+						}
+						friendsOnly = false;
+						close("page taken down");
+						panel.accessStatus(null);
+						panel.who(null);
+						say("your Outside page is taken down");
+					}
+				});
+			}
 		};
+	}
+
+	/** Whether this character's page is friends only, as last read (readAccess) or set here. */
+	private volatile boolean friendsOnly;
+
+	/** This character's watch code, kept with their account; made the first time it's asked for (make), else "". */
+	private String watchCode(boolean make)
+	{
+		String c = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "watchCode");
+		if ((c == null || c.isEmpty()) && make)
+		{
+			byte[] b = new byte[9];
+			new java.security.SecureRandom().nextBytes(b);
+			c = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "watchCode", c);
+		}
+		return c == null ? "" : c;
+	}
+
+	/** Who sees the page, read as anyone would: the kept game refused without a code is friends only (an outstation
+	 *  transmitting sets its own watch code, so this reads what's true now, not what was set here). */
+	private void readAccess()
+	{
+		Attach a = key();
+		if (a == null || panel == null)
+		{
+			return;
+		}
+		http.newCall(new Request.Builder().url(a.gameReadUrl()).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					friendsOnly = res.code() == 403;
+					panel.access(friendsOnly);
+				}
+			}
+		});
 	}
 
 	/** The station key for the character logged in: their own (kept with their account by "Make my Outside page"), else
@@ -1653,6 +1845,7 @@ public class OutsidePlugin extends Plugin
 			readEmotes();
 			// hub:end talk
 			readProof();
+			readAccess();
 		}
 		if (attach != null && (a == null || !a.getChannel().equals(attach.getChannel())))
 		{
@@ -3219,6 +3412,9 @@ public class OutsidePlugin extends Plugin
 				open = true;
 				retryIn = 5;
 				resend = true;
+				// hub:cut year
+				appHere = false;
+				// hub:end year
 				// hub:cut talk
 				talkOpen();
 				// hub:end talk
@@ -3229,6 +3425,31 @@ public class OutsidePlugin extends Plugin
 						: "your Outside page is live: " + attach.page().replaceFirst("^https://", ""));
 				}
 			}
+
+			// hub:cut year
+			@Override
+			public void onMessage(WebSocket ws, String text)
+			{
+				// (whether the outstation's app is here, {"app": bool}: the exact path goes only while it is; come, the
+				// tile goes again at once)
+				try
+				{
+					JsonObject o = gson.fromJson(text, JsonObject.class);
+					if (o != null && o.has("app") && o.get("app").isJsonPrimitive())
+					{
+						boolean now = o.get("app").getAsBoolean();
+						if (now && !appHere)
+						{
+							clientThread.invokeLater(() -> track.forget());
+						}
+						appHere = now;
+					}
+				}
+				catch (RuntimeException ignored)
+				{
+				}
+			}
+			// hub:end year
 
 			@Override
 			public void onClosing(WebSocket ws, int code, String reason)

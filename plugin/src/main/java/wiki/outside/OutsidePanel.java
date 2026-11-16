@@ -75,6 +75,12 @@ public class OutsidePanel extends PluginPanel
 
 		void copyKey();
 
+		void friendsOnly(boolean on);
+
+		void copyFriendsLink();
+
+		void takeDown();
+
 		// hub:cut talk
 		void addEmote(String name);
 
@@ -116,6 +122,12 @@ public class OutsidePanel extends PluginPanel
 	private final JLabel yearStatus = small(" ");
 	// hub:end year
 	private final JLabel keyStatus = small(" ");
+	// (11/16/2026, the permissions review: who sees the page, and taking it down, with the plugin alone)
+	private final JLabel access = small(" ");
+	private final JButton accessButton = new JButton("Make it friends only");
+	private final JPanel friendsLink = new JPanel();
+	private final JLabel accessStatus = small(" ");
+	private boolean friends;
 	// hub:cut talk
 	private final JTextField emoteName = new JTextField();
 	private final JPanel emotes = new JPanel();
@@ -241,6 +253,33 @@ public class OutsidePanel extends PluginPanel
 		page.add(wide(button("Copy my station key", hooks::copyKey)));
 		keyStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		page.add(left(keyStatus));
+		page.add(Box.createVerticalStrut(14));
+
+		page.add(left(heading("Who sees it")));
+		page.add(left(access));
+		page.add(Box.createVerticalStrut(4));
+		accessButton.addActionListener(e -> hooks.friendsOnly(!friends));
+		page.add(wide(accessButton));
+		friendsLink.setLayout(new BoxLayout(friendsLink, BoxLayout.Y_AXIS));
+		friendsLink.add(Box.createVerticalStrut(4));
+		friendsLink.add(wide(button("Copy the friends' link", hooks::copyFriendsLink)));
+		friendsLink.setVisible(false);
+		page.add(friendsLink);
+		accessStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(accessStatus));
+		page.add(Box.createVerticalStrut(14));
+		page.add(wide(button("Take my page down", () ->
+		{
+			int sure = javax.swing.JOptionPane.showConfirmDialog(this,
+				"Take your Outside page down? Everything on it goes, and the name is free for anyone to claim."
+					+ " Your year's record on this PC stays.", "Take my page down", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+				javax.swing.JOptionPane.WARNING_MESSAGE);
+			if (sure == javax.swing.JOptionPane.OK_OPTION)
+			{
+				hooks.takeDown();
+			}
+		})));
+		access(null);
 
 		page.setVisible(false);
 		col.add(page);
@@ -327,6 +366,27 @@ public class OutsidePanel extends PluginPanel
 	}
 	// hub:end talk
 
+
+	/** Who sees the page: true friends only, false anyone, null not read yet. */
+	public void access(Boolean friendsOnly)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			friends = Boolean.TRUE.equals(friendsOnly);
+			access.setText("<html><div style='width:155px'>" + (friendsOnly == null ? "Anyone with the link, unless you've made it friends only."
+				: friends ? "Friends only: only those you give the friends' link to. It's off the globe and the feed."
+				: "Anyone with the link, and you show on outside.wiki's globe and feed while you play.") + "</div></html>");
+			accessButton.setText(friends ? "Open it to anyone" : "Make it friends only");
+			friendsLink.setVisible(friends);
+			revalidate();
+		});
+	}
+
+	/** A line under "Who sees it". */
+	public void accessStatus(String words)
+	{
+		SwingUtilities.invokeLater(() -> accessStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
+	}
 
 	/** A line under "Copy my station key". */
 	public void keyStatus(String words)

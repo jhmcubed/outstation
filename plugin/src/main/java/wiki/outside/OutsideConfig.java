@@ -26,10 +26,11 @@ public interface OutsideConfig extends Config
 		keyName = "send",
 		name = "Send to my Outside page",
 		description = "What's switched on below goes to the Outside relay (on Cloudflare, unless your key names another),"
-			+ " and your Outside page shows it to anyone. Off: nothing is sent anywhere.",
-		warning = "This sends what you wear and carry, your looting bag, rune pouch, skills and vitals, and your IP"
-			+ " address, to the Outside relay, a server not controlled or verified by the RuneLite developers."
-			+ " Your Outside page shows them to anyone who opens it.",
+			+ " and your Outside page shows it to anyone. While you play, you also show on outside.wiki's globe and feed,"
+			+ " unless your page is friends only (the Outside side tab). Off: nothing more is sent, and your gear, stats and progress come off your page.",
+		warning = "This submits your gear, stats, quests, diaries, slayer task, kills and drops, and your IP address,"
+			+ " to the Outside relay, a 3rd-party server not controlled or verified by the RuneLite developers."
+			+ " Your Outside page shows them publicly.",
 		position = 1
 	)
 	default boolean send()
@@ -135,7 +136,7 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "follow",
 		name = "Follow me on the globe",
-		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe travels to the rough area"
+		description = "Off (to begin with). On, your light on outside.wiki's globe travels to the rough area"
 			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
 			+ " you're logged in with this plugin (or your outstation's transmitting). In an instance (a raid, a boss room), the area it's opened from. Never in"
 			+ " the Wilderness (whatever \"In the Wilderness too\" says), a PvP area, or on a PvP or Deadman world: there,"
@@ -174,7 +175,7 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "activity",
 		name = "What I'm doing, on the globe",
-		description = "Off (to begin with). On, your outstation's light on outside.wiki's globe shows what you were doing"
+		description = "Off (to begin with). On, your light on outside.wiki's globe shows what you were doing"
 			+ " two minutes ago, only as one word: skilling (and which skill), a boss, a raid or a minigame (and which),"
 			+ " fighting, or idle. At most once a minute, while you're logged in with this plugin. Never in a PvP area or on"
 			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe), nor in the Wilderness unless"
@@ -197,11 +198,11 @@ public interface OutsideConfig extends Config
 		name = "Shooting stars I find",
 		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
 			+ " its size, its world, its landing site and the rough area it's in (a square about 128 tiles a side), two"
-			+ " minutes late (with your outstation's name as its finder only if you say so, below). Never one in the Wilderness, or"
+			+ " minutes late (with your name as its finder only if you say so, below). Never one in the Wilderness, or"
 			+ " seen from it, a PvP area or world, or Deadman (Ferox Enclave and the PvP minigames are safe).",
 		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
 			+ " to the Outside relay, a server not controlled or verified by the RuneLite developers, which shows it"
-			+ " to anyone on outside.wiki's list of stars (your outstation's name with it only with \"Name me as a star's"
+			+ " to anyone on outside.wiki's list of stars (your name with it only with \"Name me as a star's"
 			+ " finder\" on).",
 		position = 9
 	)
@@ -215,10 +216,10 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "starsCredit",
 		name = "Name me as a star's finder",
-		description = "Off (to begin with). Only with \"Shooting stars I find\" on: your outstation's name goes on"
+		description = "Off (to begin with). Only with \"Shooting stars I find\" on: your name goes on"
 			+ " outside.wiki's list of stars beside each star you told of first. Off, your stars still go on the list,"
 			+ " with no finder named.",
-		warning = "On, outside.wiki's list of stars shows your outstation's name beside each shooting star you told of"
+		warning = "On, outside.wiki's list of stars shows your name beside each shooting star you told of"
 			+ " first (its world, landing site and rough area, two minutes after you saw it), to anyone who opens it.",
 		position = 10
 	)
@@ -236,7 +237,8 @@ public interface OutsideConfig extends Config
 			+ " the map about 128 tiles a side, two minutes behind), what you're doing, your levels, kills, pets, log"
 			+ " slots, clues and big drops, and with \"Record my exact path\" on, the tiles you walk. Nothing of it leaves"
 			+ " this PC unless the switch below is on. Never in the Wilderness, a PvP area, or on a PvP or Deadman world."
-			+ " Kept in RuneLite's folder, outside/record.",
+			+ " Kept in RuneLite's folder, outside/record. The outstation app has a switch of its own for the same record;"
+			+ " with the encrypted copy on in both, the two join on your page.",
 		position = 10
 	)
 	default boolean year()
@@ -268,13 +270,13 @@ public interface OutsideConfig extends Config
 		keyName = "recordPath",
 		name = "Record my exact path for my year",
 		description = "Off (to begin with). On, the exact tile you're on goes into your year's record on this PC (and its"
-			+ " encrypted copy, if you keep one), and to your own outstation's app if you run one: when you move, at most"
-			+ " once every few seconds, and when you stop. On a boat, where it is at sea. Your relay passes it only to your own"
-			+ " outstation's app, never keeps it, and never shows it to anyone. Never in the Wilderness, a PvP area, or on"
-			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe).",
-		warning = "On, the exact tile you're on (and your world) goes to the Outside relay, a server not controlled"
-			+ " or verified by the RuneLite developers, every few seconds while you move. The relay passes it on only to"
-			+ " your own outstation's app, for your year's record, and doesn't keep it; but it passes through that server.",
+			+ " encrypted copy, if you keep one). If you also run the outstation app, the tile goes to it through your"
+			+ " relay too, only while the app is open: the relay passes it on, never keeps it, and never shows it to anyone."
+			+ " On a boat, where it is at sea. Never in the Wilderness, a PvP area, or on a PvP or Deadman world (Ferox"
+			+ " Enclave and the PvP minigames are safe).",
+		warning = "On, while your outstation app is open, the exact tile you're on (and your world) goes to the Outside"
+			+ " relay, a 3rd-party server not controlled or verified by the RuneLite developers, every few seconds while you"
+			+ " move, for the app's record. The relay doesn't keep it. Without the app open, it stays on this PC.",
 		position = 11
 	)
 	default boolean recordPath()

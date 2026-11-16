@@ -896,6 +896,26 @@ export default {
       return Response.json({ channel: player, key: got.key, code: attachCode(relayOf(request.url), player, got.key), proof: "unproven" });
     }
 
+    // a page taken down by its own key, and friends only from the plugin (11/16/2026, the permissions review):
+    // DELETE /channels/<channel>?key= (204; the name free again: its row, its record and its year go too);
+    // PUT /code/<channel>?key= {"code"} ({"code": true | false}; "" for anyone)
+    if (parts[0] === "channels" && parts.length === 2 && request.method === "DELETE") {
+      const name = parts[1];
+      if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
+      const r = await channelStub(env, name).fetch(toChannel(request, name, "/_takedown"));
+      if (r.status !== 204) return r;
+      const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+      await dir.fetch("https://dir/?name=" + encodeURIComponent(name), { method: "DELETE" });
+      if (env.RECORD) await env.RECORD.get(env.RECORD.idFromName(name)).fetch(new Request("https://record/all", { method: "DELETE", headers: { "x-station": "1" } }));
+      return new Response(null, { status: 204 });
+    }
+    if (parts[0] === "code" && parts.length === 2) {
+      const name = parts[1];
+      if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
+      if (request.method !== "PUT") return new Response(null, { status: 405 });
+      return channelStub(env, name).fetch(toChannel(request, name, "/_code"));
+    }
+
     // who stands behind a name (11/15/2026): {"proof": "unproven" | "vouched"}, anyone's, for the page's mark
     if (parts[0] === "proof" && parts.length === 2 && (request.method === "GET" || request.method === "HEAD")) {
       const name = parts[1];

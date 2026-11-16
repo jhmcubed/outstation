@@ -2706,7 +2706,7 @@ fn year_ui(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.add_space(6.0);
     ui.label(rich("your year", 16.0, LIME()));
-    ui.label(wrapped("a year of your own travels on your Outside page: where you spent your time, the paths between, what you did most, and a replay. Recorded on this PC while the outstation's open, from what the Outside plugin already tells the relay (following's square, what you're doing) and your field reports' kills, levels, pets, drops, log slots and clues.", 14.0, GREY(), w));
+    ui.label(wrapped("a year of your own travels on your Outside page: where you spent your time, the paths between, what you did most, and a replay. Recorded on this PC while the outstation's open, from what the Outside plugin already tells the relay (following's square, what you're doing) and your field reports' kills, levels, pets, drops, log slots and clues. The Outside plugin keeps the same record itself (its \"Record my year\", on to begin with), with or without the outstation; with the encrypted copy on in both, the two join on your page, each event once.", 14.0, GREY(), w));
     ui.add_space(4.0);
     tick(ui, &mut s.record, rich("record my year on this PC", 16.0, GREY()))
         .on_hover_text(tip(&format!("a line for each change (and one a minute while you stay put), in {}: plain JSON, yours, never sent anywhere unless the copy below is on. Off: nothing's recorded; what's there stays.", dir.display())));
