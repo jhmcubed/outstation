@@ -26,7 +26,10 @@ Title: `Add Outside`
 > - One WebSocket to the relay through RuneLite's OkHttp, and the third-party warning above (also on the setting that
 >   sends). No overlays, menus, input or game changes.
 > - Every piece of information it reads or sends is matched with a Plugin Hub plugin (or RuneLite's own) that already
->   does the same, at pinned commits: https://github.com/jhmcubed/outstation/blob/main/docs/hub-precedents.md
+>   does the same, at pinned commits: https://github.com/jhmcubed/outstation/blob/2b2f2713fd66262593e17b4f6ad7e211fdce5686/docs/hub-precedents.md
+>
+>   (That page covers the whole plugin as it's planned; this first version is the part without location, the year,
+>   the model, the bank and the chat, each of which would come later as its own update.)
 >
 > Source: https://github.com/jhmcubed/outside-plugin (BSD 2-Clause).
 
