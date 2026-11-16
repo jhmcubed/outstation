@@ -157,7 +157,7 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
 - **No forbidden features:** no reflection, JNI or JNA, other programs, code downloaded at runtime, `Desktop`/`LinkBrowser.open`, `Thread.sleep`/`interrupt`, `menuAction`, `java.io` files, `KeyboardFocusManager`, or network clients other than OkHttp. RuneLite's own Gson, OkHttp, executor and client thread are injected, never made. The package isn't `net.runelite`.
 - **No new dependencies:** `build=standard`, nothing outside runelite-client.
 - **Network IO** (a sensitive API, allowed): one WebSocket to the relay named in the station key the player pastes in, through RuneLite's OkHttp. It sends only the player's own game, as listed above; it reads nothing back.
-- **The third-party warning:** on the "Send to my outstation" setting (`@ConfigItem(warning = …)`), and for the Hub's manifest (below).
+- **The third-party warning:** on the "Send to my Outside page" setting (`@ConfigItem(warning = …)`), and for the Hub's manifest (below).
 - **Jagex's rules and the rejected list:**
   - It changes nothing in the game or RuneLite: no overlays, no menu entries, no input, no chat typed.
   - It reads only the player's own character: nothing about other players ("crowdsourcing" is on the rejected list).
@@ -171,7 +171,7 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
 <!-- hub:else globe,year
   - Location: none. It reads where the player is only to tell whether they're somewhere dangerous, and never sends it.
 -->
-  - It runs no server and exposes nothing over HTTP from the PC ("plugins which expose player information over HTTP" are rejected): it sends to the player's own outstation's relay, as RuneProfile and Wise Old Man's plugins send to theirs.
+  - It runs no server and exposes nothing over HTTP from the PC ("plugins which expose player information over HTTP" are rejected): it sends to the Outside relay, as RuneProfile and Wise Old Man's plugins send to theirs.
   - It's free, with nothing behind a paid service.
 <!-- hub:cut globe -->
   - In the Wilderness, a PvP area, or on a PvP or Deadman world, it stops sending (unless the player turns "In the Wilderness too" on, behind its own warning), so nobody watching can see what a player risks. Not in Ferox Enclave or the PvP minigames (11/10/2026), where no one can take what they carry: `OutsidePlugin.held`, tested in `ActivityTest`.
@@ -196,14 +196,14 @@ The manifest, `plugins/outside` in runelite/plugin-hub (the Hub builds outside-p
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
 commit=<the full commit hash>
-warning=This plugin submits your character's name and account hash when you make your page, your levels, kill counts, collection log slots, pets, clue counts, quests, diary tiers, combat and slayer tasks and valuable drops, and your equipment, inventory, looting bag, rune pouch, item charges, skills, vitals, quests, achievement diaries, combat achievements and slayer task, and the Doom of Mokhaiotl board's counts when you read it; if you switch them on, your bank, your character's model and what you type after ::o or /o; if you switch them on, the rough area and world you were in two minutes ago, your exact path for your own record (passed only to your own outstation), what you were doing (skilling, bossing, raiding, a minigame, fighting or idle), and the location and size of shooting stars you see, with your outstation's name as their finder if you ask; and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page and outside.wiki show them publicly.
+warning=This plugin submits your character's name and account hash when you make your page, your levels, kill counts, collection log slots, pets, clue counts, quests, diary tiers, combat and slayer tasks and valuable drops, and your equipment, inventory, looting bag, rune pouch, item charges, skills, vitals, quests, achievement diaries, combat achievements and slayer task, and the Doom of Mokhaiotl board's counts when you read it; if you switch them on, your bank, your character's model and what you type after ::o or /o; if you switch them on, the rough area and world you were in two minutes ago, your exact path for your own record (passed only to your own outstation), what you were doing (skilling, bossing, raiding, a minigame, fighting or idle), and the location and size of shooting stars you see, with your outstation's name as their finder if you ask; and your IP address, to the Outside relay, a server not controlled or verified by the RuneLite developers; your Outside page and outside.wiki show them publicly.
 ```
 <!-- hub:end globe,delve,year,model,bank,talk -->
 <!-- hub:else globe,delve,year,model,bank,talk
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
 commit=<the full commit hash>
-warning=This plugin submits your character's name and account hash when you make your page, your levels, kill counts, collection log slots, pets, clue counts, quests, diary tiers, combat and slayer tasks and valuable drops, and your equipment, inventory, looting bag, rune pouch, item charges, skills, vitals, quests, achievement diaries, combat achievements and slayer task, and your IP address, to your outstation's relay, a server not controlled or verified by the RuneLite developers; your Outside page and outside.wiki show them publicly.
+warning=This plugin submits your character's name and account hash when you make your page, your levels, kill counts, collection log slots, pets, clue counts, quests, diary tiers, combat and slayer tasks and valuable drops, and your equipment, inventory, looting bag, rune pouch, item charges, skills, vitals, quests, achievement diaries, combat achievements and slayer task, and your IP address, to the Outside relay, a server not controlled or verified by the RuneLite developers; your Outside page and outside.wiki show them publicly.
 ```
 -->
 

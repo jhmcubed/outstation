@@ -24,11 +24,11 @@ public interface OutsideConfig extends Config
 
 	@ConfigItem(
 		keyName = "send",
-		name = "Send to my outstation",
-		description = "What's switched on below goes to your outstation's relay (Jace's, on Cloudflare, unless your key"
-			+ " names another), and your Outside page shows it to anyone. Off: nothing is sent anywhere.",
+		name = "Send to my Outside page",
+		description = "What's switched on below goes to the Outside relay (on Cloudflare, unless your key names another),"
+			+ " and your Outside page shows it to anyone. Off: nothing is sent anywhere.",
 		warning = "This sends what you wear and carry, your looting bag, rune pouch, skills and vitals, and your IP"
-			+ " address, to your outstation's relay, a server not controlled or verified by the RuneLite developers."
+			+ " address, to the Outside relay, a server not controlled or verified by the RuneLite developers."
 			+ " Your Outside page shows them to anyone who opens it.",
 		position = 1
 	)
@@ -141,7 +141,7 @@ public interface OutsideConfig extends Config
 			+ " the Wilderness (whatever \"In the Wilderness too\" says), a PvP area, or on a PvP or Deadman world: there,"
 			+ " what was sent is cleared at once. Ferox Enclave and the PvP minigames are safe.",
 		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
-			+ " your outstation's relay, a server not controlled or verified by the RuneLite developers, at most once a"
+			+ " the Outside relay, a server not controlled or verified by the RuneLite developers, at most once a"
 			+ " minute, and anyone who opens outside.wiki's globe can see it while you're logged in with this plugin or your"
 			+ " outstation's transmitting.",
 		position = 6
@@ -180,7 +180,7 @@ public interface OutsideConfig extends Config
 			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe), nor in the Wilderness unless"
 			+ " \"In the Wilderness too\" is on: there, what was sent is cleared at once. It doesn't need following on.",
 		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss, raid or minigame and"
-			+ " which, fighting, or idle) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
+			+ " which, fighting, or idle) goes to the Outside relay, a server not controlled or verified by the RuneLite developers,"
 			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while you're logged in with"
 			+ " this plugin.",
 		position = 8
@@ -200,7 +200,7 @@ public interface OutsideConfig extends Config
 			+ " minutes late (with your outstation's name as its finder only if you say so, below). Never one in the Wilderness, or"
 			+ " seen from it, a PvP area or world, or Deadman (Ferox Enclave and the PvP minigames are safe).",
 		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
-			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, which shows it"
+			+ " to the Outside relay, a server not controlled or verified by the RuneLite developers, which shows it"
 			+ " to anyone on outside.wiki's list of stars (your outstation's name with it only with \"Name me as a star's"
 			+ " finder\" on).",
 		position = 9
@@ -253,7 +253,7 @@ public interface OutsideConfig extends Config
 			+ " any you give it to) holds, so \"Open my year\" in the Outside tab can show it on outside.wiki. The relay"
 			+ " can't read it, nor can anyone else without the key.",
 		warning = "On, your year's record (where you've been, what you did, and with the exact path on, the tiles you"
-			+ " walked) goes to your outstation's relay, a server not controlled or verified by the RuneLite developers,"
+			+ " walked) goes to the Outside relay, a server not controlled or verified by the RuneLite developers,"
 			+ " encrypted with a key only your own computers hold. Lose the key and that copy can't be read by anyone.",
 		position = 10
 	)
@@ -272,7 +272,7 @@ public interface OutsideConfig extends Config
 			+ " once every few seconds, and when you stop. On a boat, where it is at sea. Your relay passes it only to your own"
 			+ " outstation's app, never keeps it, and never shows it to anyone. Never in the Wilderness, a PvP area, or on"
 			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe).",
-		warning = "On, the exact tile you're on (and your world) goes to your outstation's relay, a server not controlled"
+		warning = "On, the exact tile you're on (and your world) goes to the Outside relay, a server not controlled"
 			+ " or verified by the RuneLite developers, every few seconds while you move. The relay passes it on only to"
 			+ " your own outstation's app, for your year's record, and doesn't keep it; but it passes through that server.",
 		position = 11
@@ -339,7 +339,7 @@ public interface OutsideConfig extends Config
 		name = "My bank on my page",
 		description = "Off (to begin with). On, your whole bank (every item, how many, and its tabs) goes to your Outside"
 			+ " page each time you use it, where anyone can see it",
-		warning = "On, your whole bank (every item and how many) goes to your outstation's relay, a server not controlled"
+		warning = "On, your whole bank (every item and how many) goes to the Outside relay, a server not controlled"
 			+ " or verified by the RuneLite developers, each time you use your bank, and your Outside page shows it to"
 			+ " anyone who opens it. Switching it off takes it off your page.",
 		position = 14
@@ -356,8 +356,8 @@ public interface OutsideConfig extends Config
 		name = "My character's model on my page",
 		description = "Off (to begin with). On, your character's 3D model as you look now goes to your Outside page"
 			+ " (as RuneProfile's does); type ::outsidemodel to send it again after a change. Off takes it down",
-		warning = "On, your character's model as you look now (its shape and colours, nothing else) goes to your"
-			+ " outstation's relay, a server not controlled or verified by the RuneLite developers, and your Outside page"
+		warning = "On, your character's model as you look now (its shape and colours, nothing else) goes to the"
+			+ " Outside relay, a server not controlled or verified by the RuneLite developers, and your Outside page"
 			+ " shows it to anyone who opens it.",
 		position = 15
 	)
@@ -375,7 +375,7 @@ public interface OutsideConfig extends Config
 			+ " tab), the ground round you then (about five tiles each way: its paint and its shape, no objects or"
 			+ " people) goes with it, and your page draws you standing on it. Never with the live view's own captures.",
 		warning = "On, each time you capture your character, the ground round you then (about five tiles each way) goes"
-			+ " to your outstation's relay, a server not controlled or verified by the RuneLite developers, and your"
+			+ " to the Outside relay, a server not controlled or verified by the RuneLite developers, and your"
 			+ " Outside page shows it to anyone who opens it.",
 		position = 16
 	)
