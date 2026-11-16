@@ -254,10 +254,12 @@ pub fn open_page(url: &str) -> bool {
     r.0 as usize > 32
 }
 
-/// Whether open_page opens this: ghillie.wiki's pages, SAFETY.md, and the repository's form for a report. (outside.wiki's
-/// globe and a page on this computer were let through for settling, 11/08/2026 to 11/10/2026: nothing opens them now.)
+/// Whether open_page opens this: ghillie.wiki's pages, outside.wiki's (players' pages and the year, since 11/16/2026,
+/// when the outstation's links moved there: friendlist::page, record::year_url), SAFETY.md, and the repository's form
+/// for a report. (A page on this computer was let through for settling, 11/08/2026 to 11/10/2026: nothing opens it now.)
 pub fn opens(url: &str) -> bool {
-    let ours = url.starts_with("https://ghillie.wiki/") || url == crate::settings::SAFETY_PAGE
+    let ours = url.starts_with("https://ghillie.wiki/") || url.starts_with("https://outside.wiki/")
+        || url == crate::settings::SAFETY_PAGE
         || url.starts_with(&format!("{}?", crate::report::ISSUE_PAGE));
     ours && !url.chars().any(|c| c.is_whitespace() || c == '"')
 }

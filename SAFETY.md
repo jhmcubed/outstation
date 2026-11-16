@@ -218,6 +218,7 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 - your cap on viewers, whether viewers may chat and ping, and the chat names your outstation has used (so no viewer can take one)
 - the version of the outstation you run, and your time on air by month (the last four months, so Jace can see what the relay costs)
 - the chat so far (its last 50 lines), the poll and the drop guess going on, and who you've banned
+- the SHA-256 of each link you've made to tend your page's chat (the Outside plugin's **Tend my page's chat**, 11/16/2026), at most 4, each for 12 hours: never the link itself, which only your browser has
 - the last 8 reports from Dink (each one's kind, its line and its numbers), and each boss's last kill count, for drop guesses
 - this stream's summary, for your page's readings and the recap after it: the bosses and their kill counts, the loot's total and best drop, the levels reached, your collection log's count and the last 5 pets. It's replaced when you next transmit, unless that's within 15 minutes of the stream ending (then it carries on).
 
@@ -330,7 +331,7 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
    - `relay.ghillie.workers.dev`, the listening post's relay
    - `api.github.com/repos/jhmcubed/outstation/releases/latest`, the check for a newer version
    - `github.com/jhmcubed/outstation`: SAFETY.md and the report forms, opened in your browser
-   - `ghillie.wiki`, the Outside pages it opens in your browser
+   - `ghillie.wiki` and `outside.wiki`, the pages it opens in your browser (the Outside pages are on outside.wiki since 11/16/2026)
    - `127.0.0.1`, this PC, for Dink and for a relay of your own
 
     Run it on your own copy (Python, nothing to install):

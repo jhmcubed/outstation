@@ -38,7 +38,11 @@ type MemoryOnly = "where" | "whereAt" | "activity" | "activityAt";
 
 /** What of a row is written to storage: everything a row has but MemoryOnly (the type refuses one of those here). */
 export const KEPT_FIELDS: readonly Exclude<keyof Listing, MemoryOnly>[] =
-  ["channel", "set", "code", "at", "live", "open", "static", "viewers", "title", "doing", "game", "pending"];
+  ["channel", "set", "code", "at", "live", "open", "static", "viewers", "title", "doing", "game", "pending",
+   // (11/16/2026: the Hub's plugin, heard from by its posts, not a socket: when it last posted and what Discord shows.
+   // Not stored, a Directory that slept dropped them, and a player posting all along read as dark on the globe, not
+   // asked again for LISTING_DARK_MS. The channel stores the same in its own storage: docs/protocol.md, "presence")
+   "seenAt", "presence", "presenceAt"];
 
 /** A row as it's stored: only KEPT_FIELDS, copied one by one (never the row spread, which would carry the rest). */
 export function keptRow(row: Listing): Listing {

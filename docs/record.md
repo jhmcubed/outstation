@@ -272,9 +272,11 @@ any device within `HOLD_MS`), never by adding up each device's durations, so two
 
 ## Viewing
 
-"open my year" in the app opens, in the browser:
+"open my year" in the app (and the Outside plugin's "Open my year") opens, in the browser:
 
-    https://ghillie.wiki/outside?player=<channel>&view=year#k=<the record key, base64url, 43 characters>
+    https://outside.wiki/<channel>/year/mine#k=<the record key, base64url, 43 characters>
+
+(until 11/16/2026 the app's was `https://ghillie.wiki/outside?player=<channel>&view=year#k=…`)
 
 A URL's fragment (`#…`) is never sent to any server, so the key reaches only the page. The page should:
 

@@ -36,10 +36,10 @@ The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open
 -->
 
 <!-- hub:cut year -->
-Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on outside.wiki's globe and feed while you play) or friends only, **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (after a confirmation: everything on the page goes and the name is free again; your year's record on this PC stays).
+Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on outside.wiki's globe and feed while you play) or friends only, **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (after a confirmation: everything on the page goes and the name is free again; your year's record on this PC stays). Under **Your page's chat** (11/16/2026): **Tend my page's chat** makes a token, hands it to the relay with the page's key (`POST /tend/<channel>`) and opens the page with it in the fragment (`outside.wiki/<name>#tend=<token>`): **take back** and **ban** beside each visitor's line, for 12 hours, in that browser (`Tend.java`; outstation's docs/protocol.md, "Tending the page's chat from the page").
 <!-- hub:end year -->
 <!-- hub:else year
-Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on outside.wiki's globe while you play) or friends only, **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (after a confirmation: everything on the page goes and the name is free again).
+Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on outside.wiki's globe while you play) or friends only, **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (after a confirmation: everything on the page goes and the name is free again). Under **Your page's chat** (11/16/2026): **Tend my page's chat** makes a token, hands it to the relay with the page's key (`POST /tend/<channel>`) and opens the page with it in the fragment (`outside.wiki/<name>#tend=<token>`): **take back** and **ban** beside each visitor's line, for 12 hours, in that browser (`Tend.java`; outstation's docs/protocol.md, "Tending the page's chat from the page").
 -->
 
 ## What it sends, and only that
@@ -173,7 +173,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
 
 ## For developers
 
-- `build.gradle`: RuneLite's example-plugin template, as the Plugin Hub builds it (`gradle build` runs the tests).
+- `build.gradle`: RuneLite's example-plugin template, as the Plugin Hub builds it (`gradle build` runs the tests); since 11/16/2026 GitHub runs them too on every pull request and on main (`.github/workflows/tests.yml`, its `plugin` job: `gradle test` and `hub_check.py`, then the same for the Hub's version cut by `hub_cut.py` into a scratch folder).
 - `src/main/java/wiki/outside/`:
 <!-- hub:cut live -->
   - `OutsidePlugin.java`: reading the game each tick, the connection to the relay, the snapshot and its posts

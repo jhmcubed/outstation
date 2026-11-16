@@ -229,10 +229,13 @@ ADDRESSES = {
     "https://api.github.com/repos/jhmcubed/outstation/releases/latest": "is there a newer version? (check_updates)",
     "https://relay.ghillie.workers.dev": "the listening post's relay: where asking for a portal goes (ask.rs HOME_RELAY), and the "
                                          "friends list's open portals before you're attached",
-    "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; and the Outside pages the "
-                            "friends list opens in your browser when you click a name, and your year's view on your own Outside page (record.rs "
-                            "YEAR_PAGE, \"open my year\": its record key in the address's fragment, which the browser never "
-                            "sends) (win.rs open_page: ghillie.wiki's only)",
+    "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; ghillie.wiki's pages opened "
+                            "in your browser (win.rs open_page)",
+    "https://outside.wiki/": "the Outside pages (since 11/16/2026, when they moved from ghillie.wiki): the one the friends "
+                             "list opens in your browser when you click a name (friendlist.rs), your own as the keeper "
+                             "issues a key (keeper.rs), and your year's view on your own page (record.rs YEAR_PAGE, "
+                             "\"open my year\": its record key in the address's fragment, which the browser never sends) "
+                             "(win.rs open_page)",
     "https://github.com/jhmcubed/outstation/issues/new": "the repository's \"Something went wrong\" form, opened in your "
                                                        "browser from \"report an anomaly\" (report.rs, win.rs open_page)",
     "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
@@ -292,7 +295,7 @@ def main(argv):
     net = check_network()
     print("its addresses: %s" % ("; ".join(net) if net else "only the relay you attach to, your Discord webhook if you set one, "
                                                               "GitHub's releases, and the pages it opens in your browser (ghillie.wiki's, "
-                                                              "and its own SAFETY.md); it listens on 127.0.0.1 only"))
+                                                              "outside.wiki's and its own SAFETY.md); it listens on 127.0.0.1 only"))
     failed |= bool(net)
     print("FAILED" if failed else "passed")
     return 1 if failed else 0

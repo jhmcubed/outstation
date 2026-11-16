@@ -222,6 +222,18 @@ public final class Attach
 		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/channels/" + enc(channel) + "?");
 	}
 
+	/** A token to tend the page's chat from the page, handed in by its own key (11/16/2026): http(s)://…/tend/<channel>?key=…. */
+	public String tendUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/tend/" + enc(channel) + "?");
+	}
+
+	/** The page, opened to tend its chat: the token in the fragment, which no server sees (11/16/2026). */
+	public String tendPage(String token)
+	{
+		return page() + "#tend=" + token;
+	}
+
 	/** The page's kept game, as anyone reads it (403 when it's friends only and no code is given). */
 	public String gameReadUrl()
 	{

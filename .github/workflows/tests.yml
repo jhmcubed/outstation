@@ -40,6 +40,38 @@ jobs:
         env:
           PORTAL_RELAY: worker
 
+  # The Outside plugin (11/16/2026, the 11/10 review: on the Plugin Hub now, so a change that breaks it is caught here,
+  # not only when a session runs its tests). The whole plugin's unit tests and the Hub's rules, then the Hub's version
+  # cut from it (hub_cut.py, into a scratch folder: never compared with outside-plugin, which takes a change only after
+  # it's merged here) with its own tests and the Hub's rules. Java 21 and Gradle 8.14.3, as the session that set it up
+  # ran them; build.gradle compiles for Java 11, as the Hub does.
+  plugin:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - name: the whole plugin's unit tests
+        working-directory: plugin
+        run: gradle test --console=plain
+      - name: the whole plugin against the Hub's rules
+        run: python plugin/hub_check.py
+      - name: the Hub's version, cut
+        run: python plugin/hub_cut.py "$RUNNER_TEMP/outside-plugin"
+      - name: the Hub's version's unit tests
+        working-directory: ${{ runner.temp }}/outside-plugin
+        run: gradle test --console=plain
+      - name: the Hub's version against the Hub's rules
+        run: python "$RUNNER_TEMP/outside-plugin/hub_check.py"
+
   client:
     runs-on: windows-2025
     env:
