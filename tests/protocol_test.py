@@ -58,6 +58,9 @@ WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.star
 # how old a live row on the Worker's open list (GET /channels) may be before its Directory asks the channel again: 300 s
 # as it's run, shortened here so the check can be seen to catch a telling that was lost (relay.py asks nothing)
 LISTING_CHECK_S = 5
+# how long the Hub's plugin counts as here after its last POST (11/16/2026, the snapshot): 70 minutes as the relays are
+# run, shortened here so it can be seen to go stale
+PRESENCE_FRESH_S = float(os.environ.get("PRESENCE_FRESH_SECONDS") or (4200 if MODE.startswith("ws") else 5))
 RELAY = None          # ws://127.0.0.1:port
 PROC = None
 STATE = None
@@ -208,7 +211,7 @@ def setUpModule():
             [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
              "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
              "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
-             "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S,
+             "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S, "--var", "PRESENCE_FRESH_SECONDS:%g" % PRESENCE_FRESH_S,
              "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
              "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1",
              "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
@@ -220,6 +223,7 @@ def setUpModule():
         PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
                                  "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
                                  "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
+                                 "--presence-fresh-seconds", "%g" % PRESENCE_FRESH_S,
                                  "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base, "--witness-wait", "1", "--witness-look", "1",
                                  "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -2025,6 +2029,133 @@ class Game(Base):
         self.assertIsNone(await nothing_game(await self.watch()))
 
 
+def game_post(channel, key, body):
+    """(status, JSON or None) from POST /game/<channel>?key= (the Hub's plugin, 11/16/2026)."""
+    return http("POST", "/game/%s?key=%s&v=0.3.0" % (channel, urllib.parse.quote(key)), body)
+
+
+class Snapshot(Base):
+    """The snapshot (11/16/2026, the Plugin Hub's answer; docs/protocol.md "The snapshot"): the Hub's plugin keeps no
+    socket. It POSTs {"game"} when the player presses "Update my page", hourly, as what they're doing changes ("presence",
+    what RuneLite's Discord plugin shows) and as they log out. A POST is taken as the socket's messages are, but never
+    their "where", "activity", "here" or "star"; one with worn, inv or skills is a snapshot, and the page reads when."""
+
+    STATE = {"name": "Sburb", "type": "NORMAL", "skills": {"Attack": [99, 99, 13034431]},
+             "worn": [[1163, 1]] + [None] * 13, "inv": [[385, 12]] + [None] * 27,
+             "items": {"385": ["Shark", 870], "1163": ["Rune full helm", 21000]}}
+    WC = {"skill": "Woodcutting", "area": "Woodcutting Guild", "kind": "region", "x": 1632, "y": 3488}
+
+    def post(self, body, key=None):
+        return game_post(self.ch, key or self.key, body)
+
+    async def row(self):
+        await self.pause(2)
+        rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
+        return rows.get(self.ch)
+
+    async def test_a_snapshot_is_kept_read_with_when_it_was_taken_and_reaches_whoever_watches(self):
+        v = await self.watch()
+        await self.pause()
+        t0 = time.time() * 1000
+        self.assertEqual(self.post({"game": self.STATE})[0], 204)
+        got = await next_of(v, "game")
+        snap = got.pop("snap")
+        self.assertLess(abs(snap - t0), 60000)
+        got.pop("at")
+        self.assertEqual(got, self.STATE)
+        st, read = http("GET", "/game/%s?code=" % self.ch)
+        self.assertEqual((st, read["snap"], read["connected"], read["game"]["worn"]), (200, snap, False, self.STATE["worn"]))
+        # (the same again an hour on: nothing changed, but the snapshot's newer)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.post({"game": {"skills": self.STATE["skills"]}})[0], 204)
+        again = await next_of(v, "game")
+        self.assertEqual(sorted(again), ["at", "snap"])
+        self.assertGreater(again["snap"], snap)
+        self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["snap"], again["snap"])
+        # (only a name or a logout isn't a snapshot)
+        self.assertEqual(self.post({"game": {"off": True}})[0], 204)
+        self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["snap"], again["snap"])
+
+    async def test_a_wrong_key_a_bad_body_and_too_many_are_refused(self):
+        self.assertEqual(self.post({"game": self.STATE})[0], 204)        # (relay.py: this claims the channel)
+        self.assertEqual(game_post(self.ch, "wrong-key-" + secrets.token_hex(3), {"game": self.STATE})[0], 403)
+        self.assertEqual(game_post(self.ch, "short", {"game": self.STATE})[0], 403)
+        st, h, out = raw("POST", "/game/%s?key=%s" % (self.ch, self.key), b"not json", {"Content-Type": "application/json"})
+        self.assertEqual(st, 400)
+        self.assertEqual(self.post({"nope": 1})[0], 400)
+        for _ in range(3):
+            self.post({"game": {"name": "Sburb"}})
+        self.assertEqual(self.post({"game": {"name": "Sburb"}})[0], 429)  # (the 7th in a minute)
+        st, h, out = raw("POST", "/game/%s?key=%s" % (self.ch, self.key), b"{" * (70 * 1024),
+                         {"Content-Type": "application/json"})
+        self.assertIn(st, (413, 429))
+
+    async def test_presence_shows_on_the_list_and_the_read_till_they_log_out(self):
+        self.assertEqual(self.post({"game": dict(self.STATE, presence=self.WC)})[0], 204)
+        r = await self.row()
+        self.assertEqual((r["presence"], r["game"], r["where"], r["activity"]), (self.WC, True, None, None))
+        self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["presence"], self.WC)
+        # (in game, nothing named: as Discord's "In Game")
+        none = {"skill": None, "area": None, "kind": None}
+        self.post({"game": {"presence": none}})
+        self.assertEqual((await self.row())["presence"], none)
+        self.post({"game": {"presence": self.WC}})
+        self.post({"game": {"off": True}})
+        r = await self.row()
+        self.assertEqual((r["presence"], r["game"]), (None, False))
+        self.assertIsNone(http("GET", "/game/%s?code=" % self.ch)[1].get("presence"))
+
+    async def test_it_goes_stale_an_hour_or_so_after_the_last_post(self):
+        if MODE.startswith("ws"):
+            self.skipTest("a relay already running keeps its own 70 minutes")
+        self.post({"game": dict(self.STATE, presence=self.WC)})
+        self.assertEqual((await self.row())["presence"], self.WC)
+        await asyncio.sleep(PRESENCE_FRESH_S + 0.5)
+        r = await self.row()
+        self.assertEqual((r["presence"], r["game"]), (None, False))
+        self.assertIsNone(http("GET", "/game/%s?code=" % self.ch)[1].get("presence"))
+
+    async def test_each_shape_it_takes_and_what_it_ignores(self):
+        self.post({"game": {"name": "Sburb"}})
+        good = [{"skill": None, "area": "Zulrah", "kind": "boss", "x": 2240, "y": 3072},
+                {"skill": "Slayer", "area": None, "kind": None},
+                {"skill": None, "area": "Zanaris", "kind": "city", "x": 2368, "y": 4416},
+                {"skill": "Mining", "area": "Motherlode Mine", "kind": "dungeon"},
+                {"skill": None, "area": "Kree'arra", "kind": "boss", "x": 2880, "y": 3776}]
+        bad = [{"skill": "Overall", "area": None, "kind": None}, {"skill": None, "area": None, "kind": "boss"},
+               {"skill": None, "area": "Zulrah", "kind": "lair"}, {"skill": None, "area": "Zulrah", "kind": "boss", "x": 2241, "y": 3072},
+               {"skill": None, "area": "Zulrah", "kind": "boss", "x": 5000, "y": 3072},
+               {"skill": None, "area": None, "kind": None, "x": 3200, "y": 3200}, {"skill": None, "area": "Zulrah"},
+               {"skill": None, "area": "Zulrah", "kind": "boss", "world": 302}, {"skill": None, "area": "<b>", "kind": "city"},
+               {"skill": None, "area": "Zulrah", "kind": "boss", "x": True, "y": 3072}, "Zulrah"]
+        for p in good:                                 # (five, and the first: six posts, a minute's most)
+            self.assertEqual(self.post({"game": {"presence": p}})[0], 204)
+            self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["presence"], p, p)
+        for i, p in enumerate(bad):
+            if i % 5 == 0:                             # (a channel of its own every five, for the minute's most)
+                self.ch = "t" + secrets.token_hex(5)
+                if WORKER:
+                    self.key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch))[1]["key"]
+                self.post({"game": {"name": "Sburb", "presence": good[0]}})
+            self.assertEqual(self.post({"game": {"presence": p, "type": "IRONMAN"}})[0], 204)
+            got = http("GET", "/game/%s?code=" % self.ch)[1]
+            self.assertEqual((got.get("presence"), got["game"]["type"]), (good[0], "IRONMAN"), p)
+
+    async def test_a_post_never_takes_where_activity_or_a_star(self):
+        self.post({"game": {"name": "Sburb", "where": {"x": 3200, "y": 3200}, "activity": {"kind": "idle"},
+                            "star": {"world": 302, "x": 3200, "y": 3200, "tier": 5}, "presence": self.WC}})
+        r = await self.row()
+        self.assertEqual((r["where"], r["activity"], r["presence"]), (None, None, self.WC))
+
+    async def test_the_sockets_logout_drops_it_too(self):
+        self.post({"game": {"name": "Sburb", "presence": self.WC}})
+        g = await self.connect("game", "key=%s&v=0.0.1" % self.key)
+        await g.send(json.dumps({"game": {"off": True}}))
+        g.close()
+        r = await self.row()
+        self.assertEqual((r["presence"], r["game"]), (None, False))
+
+
 class Following(Base):
     """Following (11/08/2026): the Outside plugin may send "where", the middle of the 128-tile square of the main map the
     player was in two minutes before, or null. The relay holds it (one every 50 s at most; null whenever it comes), drops
@@ -3219,6 +3350,45 @@ class Proving(Witnessing):
         self.assertEqual(self.proof(name), "unproven")
 
 
+class ProvingByPosts(Witnessing):
+    """The Hub's plugin proves a page the same way with its posts (11/16/2026): "Update my page" after gaining some
+    experience, a minute's wait, and logging out."""
+
+    async def test_a_snapshot_then_a_logout_proves_it(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Ranged": 5000})
+        self.assertEqual(game_post(name, key, {"game": {"name": name, "skills": {"Ranged": [20, 20, 5000]}}})[0], 204)
+        await asyncio.sleep(1.5)
+        self.assertEqual(game_post(name, key, {"game": {"skills": {"Ranged": [21, 21, 5600]}}})[0], 204)
+        await asyncio.sleep(1.8)                       # (the look, while still logged in)
+        self.assertEqual(game_post(name, key, {"game": {"off": True}})[0], 204)
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.proof(name), "unproven")
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+
+    async def test_a_challengers_posts_only_prove_it(self):
+        name, held = await self.claimed()
+        game_post(name, held, {"game": {"name": name, "type": "NORMAL", "skills": {"Ranged": [99, 99, 13034431]}}})
+        st, hh, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                          {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        mine = json.loads(out)["key"]
+        self.hiscores(name, {"Ranged": 5000})
+        self.assertEqual(game_post(name, mine, {"game": {"name": name, "type": "IRONMAN", "skills": {"Ranged": [80, 80, 5000]}}})[0], 204)
+        await asyncio.sleep(1.5)
+        game_post(name, mine, {"game": {"skills": {"Ranged": [81, 81, 5600]}}})
+        await asyncio.sleep(1.8)
+        page = http("GET", "/game/%s?code=" % name)[1]["game"]
+        self.assertEqual(page["type"], "NORMAL")       # (nothing of the challenger's on the page)
+        game_post(name, mine, {"game": {"off": True}})
+        await asyncio.sleep(0.5)
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        self.assertEqual(game_post(name, held, {"game": {"name": name}})[0], 403)   # (the holder's key stops)
+        self.assertEqual(game_post(name, mine, {"game": {"name": name, "type": "IRONMAN"}})[0], 204)
+        self.assertEqual(http("GET", "/game/%s?code=" % name)[1]["game"]["type"], "IRONMAN")
+
+
 class TakingBack(Witnessing):
     """Taking a name back (11/15/2026; docs/protocol.md "Taking a name back"): a claim on a name held unproven gives a
     challenger's key, whose plugin proves itself off the page; proven, its key becomes the page's and the holder's
@@ -4084,8 +4254,8 @@ class SettlingGone(Base):
         await next_of(tx, "relay")
         await self.pause(2)
         row = {c["channel"]: c for c in (await asyncio.to_thread(http, "GET", "/channels"))[1]["channels"]}[self.ch]
-        self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "open", "static", "title",
-                                       "viewers", "where"])
+        self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "open", "presence", "static",
+                                       "title", "viewers", "where"])
         if WORKER:   # (the keeper's list: no home, nor when it changed)
             mine = {c["channel"]: c for c in (await asyncio.to_thread(admin, "GET", "/admin/channels"))[1]}[self.ch]
             self.assertNotIn("home", mine)

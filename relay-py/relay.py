@@ -903,6 +903,57 @@ def game_activity(g):
     return _BAD
 
 
+# The snapshot, and what they're doing as Discord shows it (11/16/2026, the Plugin Hub's answer; docs/protocol.md "The
+# snapshot"; the Worker's game.ts, the same): the Hub's plugin keeps no socket and POSTs {"game"} to /game/<channel>?key=
+# (Relay.game_post), GAME_POSTS_A_MINUTE a minute a channel at most; one carrying any of SNAP_FIELDS is a snapshot.
+# "presence" is the skill (ACTIVITY_SKILLS) and the area by Discord's own name, each or both None, and with the area a
+# point for the globe ({"x", "y"}, multiples of PRESENCE_GRID within the main map, or Zanaris's), shown while the plugin's
+# heard from (presence_fresh_s after its last POST, till it logs out) or its socket's connected.
+GAME_POSTS_A_MINUTE, SNAP_FIELDS, PRESENCE_GRID, PRESENCE_FRESH_S = 6, ("worn", "inv", "skills"), 32, 70 * 60
+PRESENCE_KINDS = ("boss", "city", "dungeon", "minigame", "raid", "region")
+AREA_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 '.()&-]{0,47}")       # (fullmatch)
+
+
+def game_presence(g):
+    """A {"game"} message's "presence": exactly {"skill", "area", "kind"} (and "x", "y" with an area) as above (a copy);
+    None to clear it (null); or _BAD for anything else (none, or not its shape: ignored, and the rest of the message taken
+    as ever). The Worker's gamePresence, the same."""
+    if not isinstance(g, dict) or "presence" not in g:
+        return _BAD
+    p = g["presence"]
+    if p is None:
+        return None
+    if not isinstance(p, dict):
+        return _BAD
+    keys = sorted(p)
+    at = keys == ["area", "kind", "skill", "x", "y"]
+    if not at and keys != ["area", "kind", "skill"]:
+        return _BAD
+    skill = p["skill"]
+    if skill is not None and not (isinstance(skill, str) and skill in ACTIVITY_SKILLS):
+        return _BAD
+    if p["area"] is None:
+        if p["kind"] is not None or at:
+            return _BAD
+        return {"skill": skill, "area": None, "kind": None}
+    if not isinstance(p["area"], str) or not AREA_NAME.fullmatch(p["area"]):
+        return _BAD
+    if not isinstance(p["kind"], str) or p["kind"] not in PRESENCE_KINDS:
+        return _BAD
+    out = {"skill": skill, "area": p["area"], "kind": p["kind"]}
+    if not at:
+        return out
+    x, y = game_int(p["x"]), game_int(p["y"])
+    if x is None or y is None or isinstance(p["x"], bool) or isinstance(p["y"], bool):
+        return _BAD
+    zanaris = x == WHERE_ZANARIS["x"] and y == WHERE_ZANARIS["y"]
+    ok = lambda v, b: b[0] <= v < b[1] and v % PRESENCE_GRID == 0
+    if not zanaris and not (ok(x, WHERE_X) and ok(y, WHERE_Y)):
+        return _BAD
+    out.update(x=x, y=y)
+    return out
+
+
 def game_star(g):
     """A {"game"} message's "star" (a shooting star found, 11/08/2026): {"world", "x", "y", "tier"} (a world, a square's
     middle on the main map as "where"'s, a tier 1 to 9) or {"world", "x", "y", "gone": True}, exactly, each with "site"
@@ -1010,6 +1061,7 @@ class Game:
     def __init__(self):
         self.kept = {}
         self.at = 0                  # when it last changed (ms)
+        self.snap = 0                # when the last snapshot was posted (ms; 11/16/2026, the Hub's plugin), or 0
         self.lens = {}               # each field's length in the kept state's JSON, as '"field": value'
         self.item_lens = {}          # each item's, as '"id": [name, price]'
         self.items_body = 0          # those summed
@@ -1514,6 +1566,11 @@ class Channel:
         self.activity_at = None
         self.activity_took = None
         self.activity_ms = 0
+        # the snapshot's plugin (11/16/2026; game_presence): what they're doing as Discord shows it, when the plugin
+        # last posted (time.monotonic(); None once it's logged out), and its posts in the last minute
+        self.presence = None
+        self.seen_at = None
+        self.posts = deque()
 
     def seconds_in_all(self):
         """Seconds on air in all, the stretch going on now included (for invites)."""
@@ -1524,7 +1581,9 @@ class Channel:
 
     def game_line(self):
         """The whole game state, for someone just come (a seat, a desk, a looker); None while there's none."""
-        return json.dumps({"game": dict(self.game.kept, at=self.game.at)}) if self.game.kept else None
+        if not self.game.kept:
+            return None
+        return json.dumps({"game": dict(self.game.kept, at=self.game.at, **({"snap": self.game.snap} if self.game.snap else {}))})
 
     def take_game(self, msg):
         """A message from the game socket (Relay.game) into the kept state, and what it changed on to the seated
@@ -1539,6 +1598,9 @@ class Channel:
         self.witness_game(fields)
         self.take_where(game_where(m["game"]), fields)
         self.take_activity(game_activity(m["game"]), fields)
+        if fields.get("off") is True:
+            self.seen_at = None              # (logged out: the Hub's plugin's posts no longer count it here)
+        self.take_presence(game_presence(m["game"]), fields)
         self.take_here(game_here(m["game"]), fields)
         self.take_star(game_star(m["game"]), fields)
         got = self.game.apply(fields)       # (never "where", "activity" or "star": game_fields leaves them out)
@@ -1658,6 +1720,7 @@ class Channel:
                 if s is not None:
                     asyncio.ensure_future(s.close(4003, "this name was proven by another: its key no longer opens it"))
             self.game = Game()
+            self.presence, self.seen_at = None, None
         for k, s in provers.items():
             asyncio.ensure_future(s.close(4012, "proven: this page is yours now; connect again") if ch and k == party
                                   else s.close(4003, "this name was proven by another"))
@@ -1750,6 +1813,51 @@ class Channel:
         self.activity = self.activity_at = None
         if held:
             self.tell_mine({"activity": None, "at": int(time.time() * 1000)})
+
+    def take_presence(self, p, fields):
+        """What they're doing as Discord shows it (game_presence; 11/16/2026): taken whenever it comes; null, logging
+        out or holding for the player's safety drops it. The Worker's takePresence, the same."""
+        if fields.get("off") is True or isinstance(fields.get("paused"), str) or p is None:
+            self.presence = None
+            return
+        if p is _BAD:
+            return
+        self.presence = p
+
+    def heard(self, fresh_s):
+        """Whether the plugin's here, as the page and the globe count it: its socket's connected, or it posted within
+        fresh_s and hasn't logged out since."""
+        return self.gamer is not None or (self.seen_at is not None and time.monotonic() - self.seen_at <= fresh_s)
+
+    def take_post(self, party, msg):
+        """A POST /game's body (Relay.game_post; 11/16/2026, the snapshot): as a socket's message, but never its "where",
+        "activity", "here" or "star"; one carrying SNAP_FIELDS is a snapshot. A challenger's (party): its own proof only.
+        False when it isn't a {"game"} object."""
+        try:
+            m = json.loads(msg, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return False
+        if not isinstance(m, dict) or not isinstance(m.get("game"), dict):
+            return False
+        if party:
+            self.take_prove(party, msg)
+            return True
+        fields = game_fields(m["game"])
+        self.witness_game(fields)
+        self.seen_at = None if fields.get("off") is True else time.monotonic()
+        self.take_presence(game_presence(m["game"]), fields)
+        now = int(time.time() * 1000)
+        snap = any(f in fields for f in SNAP_FIELDS)
+        if snap:
+            self.game.snap = now
+        got = self.game.apply(fields, now)
+        if fields.get("off") is True:
+            self.witness_off()
+        if got is not None or snap:
+            line = json.dumps({"game": dict(got or {}, at=self.game.at, **({"snap": self.game.snap} if self.game.snap else {}))})
+            for v in list(self.viewers) + list(self.lookers) + list(self.desks):
+                v.send_nowait(line)
+        return True
 
     def take_star(self, star, fields):
         """A shooting star the plugin found (game_star): into the relay's StarList, which counts this channel's reports
@@ -2595,7 +2703,7 @@ def too_old(v, min_client):
 class Relay:
     def __init__(self, delay=0.0, log=print, forward=None, max_viewers=0, min_client="", clips_dir=None, admin_token="",
                  where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False, records_dir=None,
-                 record_chunks=RECORD_CHUNKS, lookup="off"):
+                 record_chunks=RECORD_CHUNKS, lookup="off", presence_fresh_s=PRESENCE_FRESH_S):
         self.delay = delay
         # the lookups (11/10/2026; lookup.py): Wise Old Man, RuneProfile and the icons, asked by the relay and kept:
         # "off" (nothing's asked: 503), "on" (the real hosts) or an address everything's fetched under instead (tests)
@@ -2610,6 +2718,7 @@ class Relay:
         self.almanac = almanac_sources.Almanac(almanac_sources.async_fetch, None if almanac in ("on", "off") else almanac,
                                                log=log)
         self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
+        self.presence_fresh_s = presence_fresh_s  # how long the Hub's plugin counts as here after a POST (PRESENCE_FRESH_S)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
         self.stars = StarList()        # shooting stars (11/08/2026): the ones the plugins found, and who found each
@@ -2715,7 +2824,7 @@ class Relay:
             await self.channel_list(writer)
             return
         if len(path) == 2 and path[0] == "game" and not key:
-            await self.game_read(writer, method, path[1], q)
+            await self.game_read(reader, writer, method, headers, path[1], q)
             return
         if aether and not key:
             await self.aether_read(writer, method)
@@ -3298,7 +3407,10 @@ class Relay:
         "activity" (11/08/2026; game_activity): what they were doing, the same way. Nowhere else."""
         rows = [{"channel": ch.name, "live": ch.sender is not None, "open": ch.sender is not None and ch.state == "open",
                  "static": ch.sender is not None and ch.state == "static", "viewers": len(ch.viewers), "title": ch.title,
-                 "doing": ch.doing(), "by": ch.by, "game": ch.gamer is not None,
+                 "doing": ch.doing(), "by": ch.by, "game": ch.heard(self.presence_fresh_s),
+                 # (what they're doing as Discord shows it, 11/16/2026: while the plugin's heard from or it transmits)
+                 "presence": dict(ch.presence) if ch.presence is not None
+                             and (ch.sender is not None or ch.heard(self.presence_fresh_s)) else None,
                  # (while it transmits, or its plugin's connected: 11/15/2026, the plugin first)
                  "where": dict(ch.where) if ch.where is not None and (ch.sender is not None or ch.gamer is not None)
                           and time.monotonic() - ch.where_at <= self.where_fresh_s else None,
@@ -3319,7 +3431,7 @@ class Relay:
         finally:
             writer.close()
 
-    async def game_read(self, writer, method, name, q):
+    async def game_read(self, reader, writer, method, headers, name, q):
         """GET /game/<channel>?code=<watch code> (11/07/2026): the game state kept, for a page while the outstation's
         dark, and whether the plugin's connected now. It needs the watch code when the channel has one, as watching
         does. Anyone may read it (the public side too: it's what viewers see anyway)."""
@@ -3332,16 +3444,67 @@ class Relay:
                 await writer.drain()
             finally:
                 writer.close()
-        if method != "GET":
+        if method not in ("GET", "POST"):
             return await answer("405 Method Not Allowed")
         if not re.fullmatch(r"[A-Za-z0-9_.~-]{1,64}", name):
             return await answer("400 Bad Request", {"error": "which outstation?"})
+        if method == "POST":
+            return await self.game_post(reader, writer, headers, name, q, answer)
         ch = self.channels.get(name)
         if ch is not None and ch.code and q.get("code", "") != ch.code:
             return await answer("403 Forbidden", {"error": "wrong watch code"})
         if ch is None or not ch.game.kept:
             return await answer("404 Not Found", {"error": "no game state for that outstation"})
-        await answer("200 OK", {"game": ch.game.kept, "at": ch.game.at, "connected": ch.gamer is not None})
+        heard = ch.heard(self.presence_fresh_s)
+        body = {"game": ch.game.kept, "at": ch.game.at, "connected": ch.gamer is not None}
+        if ch.game.snap:
+            body["snap"] = ch.game.snap
+        if ch.seen_at is not None:
+            body["seen"] = int(time.time() * 1000 - (time.monotonic() - ch.seen_at) * 1000)
+        if heard and ch.presence is not None:
+            body["presence"] = ch.presence
+        await answer("200 OK", body)
+
+    async def game_post(self, reader, writer, headers, name, q, answer):
+        """POST /game/<channel>?key= (11/16/2026, the snapshot; docs/protocol.md "The snapshot"): the Hub's plugin, which
+        keeps no socket (Channel.take_post). A challenger's key: its own proof only. 204 taken; 400 not a {"game"}
+        object; 403 a wrong key; 413 too long; 429 past GAME_POSTS_A_MINUTE a minute. The Worker's postGame, the same."""
+        try:
+            body = await read_body(reader, headers, GAME_MESSAGE)
+        except (ValueError, asyncio.IncompleteReadError):
+            return await answer("400 Bad Request", {"error": "unreadable"})
+        if body is None:
+            return await answer("413 Payload Too Large", {"error": "too long"})
+        key = q.get("key", "")
+        ch = self.channels.get(name)
+        party = ""
+        if ch is not None and ch.unproven and any(c["key"] == key and time.time() - c["at"] < CHALLENGE_DAYS * 86400
+                                                  for c in ch.challengers):
+            party = key
+        elif len(key) < 8:
+            return await answer("403 Forbidden", {"error": "a transmit key needs at least 8 characters"})
+        elif ch is None:
+            ch = self.channels[name] = Channel(name, key, self.array, self.stars)
+        elif ch.key is None:
+            ch.key = key
+        elif not hmac.compare_digest(key.encode("utf-8", "surrogatepass"), ch.key.encode("utf-8", "surrogatepass")):
+            return await answer("403 Forbidden", {"error": "wrong key for this channel"})
+        if not party:
+            ch.key_used()
+        now = time.monotonic()
+        while ch.posts and now - ch.posts[0] >= 60:
+            ch.posts.popleft()
+        if len(ch.posts) >= GAME_POSTS_A_MINUTE:
+            return await answer("429 Too Many Requests", {"error": "too often: wait a minute"})
+        ch.posts.append(now)
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return await answer("400 Bad Request", {"error": "send {\"game\": {...}}"})
+        if not ch.take_post(party, text):
+            return await answer("400 Bad Request", {"error": "send {\"game\": {...}}"})
+        self.log("snapshot  %s" % name)
+        await answer("204 No Content")
 
     async def aether_socket(self, sock, q):
         """The aether (11/07/2026; Aether): a visitor (?name=&device=) or an outstation (?channel=&key=: its version and
@@ -4537,13 +4700,13 @@ def dink_report(p):
 async def serve(host, port, delay, ready=None, log=print, forward=None, public_port=None, max_viewers=0,
                 settings=None, min_client="", clips_dir=None, admin_token="",
                 where_fresh_s=WHERE_FRESH_S, almanac="off", test_forget=False, records_dir=None,
-                record_chunks=RECORD_CHUNKS, lookup="off"):
+                record_chunks=RECORD_CHUNKS, lookup="off", presence_fresh_s=PRESENCE_FRESH_S):
     """port: everything (keep it on this PC). public_port: the page and watching only,
     for Tailscale Funnel (or anything else) to hand to the internet. admin_token: the keeper's (the aether's routes).
     almanac: "off" (the default here: nothing fetched), "on" (the real hosts, main()'s default) or an address to fetch
     everything under instead (tests). lookup: the same, for the lookups (Wise Old Man, RuneProfile, the icons)."""
     relay = Relay(delay, log, forward, max_viewers, min_client, clips_dir, admin_token, where_fresh_s,
-                  almanac, test_forget, records_dir, record_chunks, lookup)
+                  almanac, test_forget, records_dir, record_chunks, lookup, presence_fresh_s)
     server = await asyncio.start_server(relay.handle, host, port)
     public = await asyncio.start_server(relay.handle_public, host, public_port) if public_port else None
     holder = asyncio.ensure_future(relay.release_held())
@@ -4600,6 +4763,9 @@ def main(argv=None):
     ap.add_argument("--where-fresh-seconds", type=float, default=WHERE_FRESH_S,
                     help="how long a player's square shows on the open outstations' list after it came (%d; shorter "
                          "for tests)" % WHERE_FRESH_S)
+    ap.add_argument("--presence-fresh-seconds", type=float, default=PRESENCE_FRESH_S,
+                    help="how long the Hub's plugin counts as here after its last POST (%d; shorter for tests)"
+                         % PRESENCE_FRESH_S)
     ap.add_argument("--almanac", default="on",
                     help="the almanac's sources (GET /almanac): on (Jagex's news and world list and the Wiki's prices, "
                          "each on its own schedule), off, or an address to fetch them all under instead (tests)")
@@ -4628,7 +4794,8 @@ def main(argv=None):
                           max_viewers=a.max_viewers, settings=a.settings, min_client=a.min_client,
                           clips_dir=a.clips or None, admin_token=a.admin_token,
                           where_fresh_s=a.where_fresh_seconds, almanac=a.almanac, test_forget=a.test_forget,
-                          records_dir=a.records or None, record_chunks=a.record_chunks, lookup=a.lookup))
+                          records_dir=a.records or None, record_chunks=a.record_chunks, lookup=a.lookup,
+                          presence_fresh_s=a.presence_fresh_seconds))
     except KeyboardInterrupt:
         pass
 

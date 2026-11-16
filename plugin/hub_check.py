@@ -31,7 +31,7 @@ FORBIDDEN = [
 ]
 # allowed, but reviewed more closely (said, not failed)
 SENSITIVE = [
-    ("network IO (the relay's socket, through RuneLite's own OkHttp)", r"newWebSocket|\.newCall\("),
+    ("network IO (the relay, through RuneLite's own OkHttp)", r"newWebSocket|\.newCall\("),
     ("Client.runScript", r"\.runScript\("),
 ]
 RESTRICTED = [

@@ -12,8 +12,12 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "stationKey",
 		name = "Station key",
+		// hub:cut live
 		description = "Your station key (it starts outstation1:): made for you by \"Make my Outside page\" in the Outside side tab,"
-			+ " or from the outstation or a friend's invite. With it, what you wear and carry and your stats show live on your Outside page.",
+			+ " or from the outstation or a friend's invite. With it, what you wear and carry and your stats show on your Outside page.",
+		// hub:end live
+		// hub:only description = "Your page's key (it starts outstation1:): made for you by \"Make my Outside page\" in the Outside"
+		// hub:only 	+ " side tab and kept with your account, so this stays blank. Paste one here only if you were given one.",
 		secret = true,
 		position = 0
 	)
@@ -25,12 +29,23 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "send",
 		name = "Send to my Outside page",
+		// hub:cut live
 		description = "What's switched on below goes to the Outside relay (on Cloudflare, unless your key names another),"
 			+ " and your Outside page shows it to anyone. While you play, you also show on outside.wiki's globe and feed,"
 			+ " unless your page is friends only (the Outside side tab). Off: nothing more is sent, and your gear, stats and progress come off your page.",
+		// hub:end live
+		// hub:only description = "What's switched on below goes to the Outside relay (on Cloudflare) when you press Update my page in the"
+		// hub:only 	+ " Outside side tab, and hourly while you're logged in; what you're doing goes as it changes. Your Outside page"
+		// hub:only 	+ " shows it to anyone, and while you play you show on outside.wiki's globe, unless your page is friends only"
+		// hub:only 	+ " (the side tab). Off: nothing more is sent, and your gear, stats and progress come off your page.",
+		// hub:cut live
 		warning = "This submits your gear, stats, quests, diaries, slayer task, kills and drops, and your IP address,"
 			+ " to the Outside relay, a 3rd-party server not controlled or verified by the RuneLite developers."
 			+ " Your Outside page shows them publicly.",
+		// hub:end live
+		// hub:only warning = "This submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it)"
+		// hub:only 	+ " and your IP address to the Outside relay, a 3rd-party server not controlled or verified by the RuneLite"
+		// hub:only 	+ " developers, when you press Update my page, and hourly. Your Outside page shows them publicly.",
 		position = 1
 	)
 	default boolean send()
@@ -84,6 +99,20 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "presence",
+		name = "What I'm doing, as Discord shows it",
+		description = "The skill you're training and the area you're in by name (a city, a dungeon, a boss, a raid, a minigame"
+			+ " or a region), as RuneLite's own Discord plugin shows them: sent as they change (once a minute at most) and with"
+			+ " each update. Your page shows it, and outside.wiki's globe lights you in that area. Never your tile or your"
+			+ " world, and nothing from the Wilderness or a PvP world.",
+		position = 3
+	)
+	default boolean presence()
+	{
+		return true;
+	}
+
 	// hub:cut talk
 	@ConfigItem(
 		keyName = "chat",
@@ -121,6 +150,7 @@ public interface OutsideConfig extends Config
 	}
 	// hub:end globe
 
+	// hub:cut live
 	@ConfigItem(
 		keyName = "vitals",
 		name = "Hitpoints, prayer, run and special",
@@ -131,6 +161,7 @@ public interface OutsideConfig extends Config
 	{
 		return true;
 	}
+	// hub:end live
 
 	// hub:cut globe
 	@ConfigItem(
@@ -297,6 +328,7 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 
+	// hub:cut reports
 	@ConfigItem(
 		keyName = "reports",
 		name = "Levels, kills, drops and log slots",
@@ -320,6 +352,7 @@ public interface OutsideConfig extends Config
 	{
 		return 100_000;
 	}
+	// hub:end reports
 
 	// hub:cut delve
 	@ConfigItem(

@@ -14,7 +14,10 @@ public class AttachTest
 		assertEquals("https://relay.ghillie.workers.dev/record/jhmcubed/token?key=k3y-k3y-k3y", a.recordUrl("token"));
 		assertEquals("https://relay.ghillie.workers.dev/record/jhmcubed/Gzkegxw9dQilhK1vBkcdUg?key=k3y-k3y-k3y", a.recordUrl("Gzkegxw9dQilhK1vBkcdUg"));
 		// hub:end year
+		// hub:cut reports
 		assertEquals("https://relay.ghillie.workers.dev/dink/jhmcubed?key=k3y-k3y-k3y&from=plugin", a.dinkUrl());
+		// hub:end reports
+		assertEquals("https://relay.ghillie.workers.dev/game/jhmcubed?key=k3y-k3y-k3y&v=0.3.0", a.postUrl("0.3.0"));
 		assertEquals("https://relay.ghillie.workers.dev/proof/jhmcubed", a.proofUrl());
 	}
 

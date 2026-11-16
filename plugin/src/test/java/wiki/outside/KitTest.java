@@ -45,6 +45,19 @@ public class KitTest
 	}
 
 	@Test
+	public void aSnapshotNamesEveryItemInIt()
+	{
+		// (11/16/2026: each snapshot stands alone, so every item in it gets its name and price, every time)
+		Map<String, JsonElement> now = new LinkedHashMap<>();
+		now.put("worn", Kit.slots(new int[]{1163}, new int[]{1}, 14));
+		now.put("inv", Kit.slots(new int[]{4151, 995}, new int[]{1, 1000}, 28));
+		now.put("quiver", Kit.pair(28872, 300));
+		assertEquals("[995, 1163, 4151, 28872]", Kit.ids(now).toString());
+		assertEquals("[995, 1163, 4151, 28872]", Kit.ids(now).toString());
+		assertTrue(Kit.cleared().has("presence") && Kit.cleared().get("presence").isJsonNull());
+	}
+
+	@Test
 	public void eachItemIsNamedOnce()
 	{
 		Kit kit = new Kit();
@@ -71,9 +84,13 @@ public class KitTest
 		Gson gson = new Gson(); // (a test's own; the plugin uses RuneLite's)
 		Attach a = Attach.parse("  " + code + " ", gson);
 		assertEquals("sburb", a.getChannel());
+		// hub:cut live
 		assertEquals("wss://relay.ghillie.workers.dev/game/sburb?key=abcdefgh%2B%2F%3Dij&v=0.1.0", a.gameUrl("0.1.0"));
 		assertEquals("ws://127.0.0.1:8790/game/sburb?key=k&v=1",
 			new Attach("http://127.0.0.1:8790/", "sburb", "k").gameUrl("1"));
+		// hub:end live
+		assertEquals("https://relay.ghillie.workers.dev/game/sburb?key=abcdefgh%2B%2F%3Dij&v=0.3.0", a.postUrl("0.3.0"));
+		assertEquals("http://127.0.0.1:8790/game/sburb?key=k&v=1", new Attach("http://127.0.0.1:8790/", "sburb", "k").postUrl("1"));
 		assertNull(Attach.parse("hello", gson));
 		assertNull(Attach.parse("outstation1:!!!", gson));
 	}

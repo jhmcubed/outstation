@@ -32,7 +32,10 @@ import net.runelite.client.ui.PluginPanel;
  * The plugin's side tab (11/15/2026). It shows:
  * <ul>
  * <li>whose page it is and a way to open it; making a page for the character logged in, and proving it theirs;</li>
+ * <li>"Update my page" and when it was last updated (11/16/2026, the snapshot);</li>
+// hub:cut live
  * <li>the station key, copied for the outstation program;</li>
+// hub:end live
 // hub:cut model
  * <li>capturing the character (the next emote done within 8 seconds, else them and their pet standing), the motions
  * on their page, which one it shows first, taking one away, and taking their model off their page;</li>
@@ -73,7 +76,11 @@ public class OutsidePanel extends PluginPanel
 		void openYear();
 		// hub:end year
 
+		// hub:cut live
 		void copyKey();
+		// hub:end live
+
+		void update();
 
 		void friendsOnly(boolean on);
 
@@ -121,7 +128,14 @@ public class OutsidePanel extends PluginPanel
 	// hub:cut year
 	private final JLabel yearStatus = small(" ");
 	// hub:end year
+	// hub:cut live
 	private final JLabel keyStatus = small(" ");
+	// hub:end live
+	// (11/16/2026, the snapshot: "Update my page", when it was last updated from here, and what the last press did)
+	private final JLabel snapLine = small(" ");
+	private final JLabel snapStatus = small(" ");
+	private long snapAt;
+	private final javax.swing.Timer snapClock = new javax.swing.Timer(30_000, e -> snapLine.setText(snapWords(snapAt)));
 	// (11/16/2026, the permissions review: who sees the page, and taking it down, with the plugin alone)
 	private final JLabel access = small(" ");
 	private final JButton accessButton = new JButton("Make it friends only");
@@ -156,7 +170,8 @@ public class OutsidePanel extends PluginPanel
 		// here, under the name they're logged in as; docs/protocol.md "Claiming a name")
 		start.setLayout(new BoxLayout(start, BoxLayout.Y_AXIS));
 		start.add(left(small("<html><div style='width:155px'>No page yet. Log in, then make one: it's named after the character you're logged in as,"
-			+ " and shows what you wear and carry and your stats, live. Each character has a page and a key of its own.</div></html>")));
+			+ " and shows what you wear and carry, your stats, quests, diaries and slayer task, updated when you ask and"
+			+ " hourly while you play. Each character has a page and a key of its own.</div></html>")));
 		otherLine.setVisible(false);
 		start.add(left(otherLine));
 		start.add(Box.createVerticalStrut(4));
@@ -164,13 +179,24 @@ public class OutsidePanel extends PluginPanel
 		start.add(wide(claim));
 		claimStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		start.add(left(claimStatus));
+		// hub:cut live
 		start.add(left(small("<html><div style='width:155px'>Have an outstation or a friend's invite? Paste its station key in the plugin's settings instead.</div></html>")));
+		// hub:end live
 		start.add(Box.createVerticalStrut(10));
 		start.setVisible(false);
 		col.add(start);
 		// (what needs a page: only when this character has one; 11/15/2026, Jace: on his alt, sburb's motions still showed)
 		page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
 		page.add(wide(button("Open my page", hooks::openPage)));
+		page.add(Box.createVerticalStrut(6));
+		page.add(wide(button("Update my page", hooks::update)));
+		snapLine.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(snapLine));
+		snapStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(snapStatus));
+		page.add(left(small("<html><div style='width:155px'>Your gear, stats, quests, diaries and slayer task go when you press"
+			+ " it, and by themselves every hour you're logged in; never from the Wilderness or a PvP world.</div></html>")));
+		snapClock.start();
 		page.add(Box.createVerticalStrut(14));
 
 		// hub:cut model
@@ -243,6 +269,7 @@ public class OutsidePanel extends PluginPanel
 		page.add(emotes);
 		page.add(Box.createVerticalStrut(14));
 		// hub:end talk
+		// hub:cut live
 		// (11/15/2026, "Open your own" led by the plugin: an outstation transmits to the same page with the same key, and a
 		// key made here is kept with the account, not in the settings, so this is how it's handed over)
 		page.add(left(heading("A transmission")));
@@ -254,6 +281,7 @@ public class OutsidePanel extends PluginPanel
 		keyStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		page.add(left(keyStatus));
 		page.add(Box.createVerticalStrut(14));
+		// hub:end live
 
 		page.add(left(heading("Who sees it")));
 		page.add(left(access));
@@ -272,7 +300,10 @@ public class OutsidePanel extends PluginPanel
 		{
 			int sure = javax.swing.JOptionPane.showConfirmDialog(this,
 				"Take your Outside page down? Everything on it goes, and the name is free for anyone to claim."
-					+ " Your year's record on this PC stays.", "Take my page down", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+					// hub:cut year
+					+ " Your year's record on this PC stays."
+					// hub:end year
+					, "Take my page down", javax.swing.JOptionPane.OK_CANCEL_OPTION,
 				javax.swing.JOptionPane.WARNING_MESSAGE);
 			if (sure == javax.swing.JOptionPane.OK_OPTION)
 			{
@@ -388,11 +419,13 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() -> accessStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
+	// hub:cut live
 	/** A line under "Copy my station key". */
 	public void keyStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> keyStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
+	// hub:end live
 
 	// hub:cut year
 	/** A line under "Open my year". */
@@ -422,13 +455,52 @@ public class OutsidePanel extends PluginPanel
 		{
 			boolean un = "unproven".equals(proof) || "challenging".equals(proof);
 			proofLine.setText("challenging".equals(proof)
-				? "<html><div style='width:155px'>Someone claimed this name first and hasn't proven it. Gain any experience, wait a minute,"
-				+ " then log out: when the official hiscores show it, the page is yours, and their key stops working." + whyLine(why) + "</div></html>"
-				: un ? "<html><div style='width:155px'>Your page is marked unproven. Gain any experience, wait a minute, then log out:"
+				? "<html><div style='width:155px'>Someone claimed this name first and hasn't proven it. Gain any experience, press Update"
+				+ " my page, wait a minute, then log out: when the official hiscores show it, the page is yours, and their key stops working." + whyLine(why) + "</div></html>"
+				: un ? "<html><div style='width:155px'>Your page is marked unproven. Gain any experience, press Update my page, wait a"
+				+ " minute, then log out:"
 				+ " within a few minutes the official hiscores show it, and your page is proven yours." + whyLine(why) + "</div></html>" : " ");
 			proofLine.setVisible(un);
 			revalidate();
 		});
+	}
+
+	/** The plugin's off: the clock stops. */
+	public void stop()
+	{
+		snapClock.stop();
+	}
+
+	/** When the page was last updated from here (ms; 0: not this session). */
+	public void snapped(long at)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			snapAt = at;
+			snapLine.setText(snapWords(at));
+			if (at > 0)
+			{
+				snapStatus.setText(" ");
+			}
+		});
+	}
+
+	/** A line under "Update my page" (what the last press did). */
+	public void snapStatus(String words)
+	{
+		SwingUtilities.invokeLater(() -> snapStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
+	}
+
+	/** "updated 14 minutes ago", or nothing before the first this session. */
+	static String snapWords(long at)
+	{
+		if (at <= 0)
+		{
+			return " ";
+		}
+		long m = Math.max(0, (System.currentTimeMillis() - at) / 60_000);
+		return m < 1 ? "updated just now" : m == 1 ? "updated a minute ago" : m < 60 ? "updated " + m + " minutes ago"
+			: m < 120 ? "updated an hour ago" : "updated " + (m / 60) + " hours ago";
 	}
 
 	/** While a claim's asked, the button waits; then a line under it (null: none). */

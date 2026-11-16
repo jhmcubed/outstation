@@ -75,6 +75,7 @@ public final class Attach
 		}
 	}
 
+	// hub:cut live
 	/** The relay's game socket: ws(s)://…/game/<channel>?key=…&v=… (an https:// relay as wss://). */
 	public String gameUrl(String version)
 	{
@@ -92,6 +93,13 @@ public final class Attach
 			base = "wss://" + base;
 		}
 		return base + "/game/" + enc(channel) + "?key=" + enc(key) + "&v=" + enc(version);
+	}
+	// hub:end live
+
+	/** The snapshot's address (11/16/2026; docs/protocol.md, "The snapshot"): POST http(s)://…/game/<channel>?key=…&v=…. */
+	public String postUrl(String version)
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/game/" + enc(channel) + "?") + "&v=" + enc(version);
 	}
 
 	// hub:cut talk
@@ -143,11 +151,13 @@ public final class Attach
 		return base + "/keep/" + enc(channel) + "/" + enc(what) + "?key=" + enc(key);
 	}
 
+	// hub:cut reports
 	/** The relay's Dink route, for the plugin's own reports (11/15/2026): http(s)://…/dink/<channel>?key=…&from=plugin. */
 	public String dinkUrl()
 	{
 		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/dink/" + enc(channel) + "?") + "&from=plugin";
 	}
+	// hub:end reports
 
 	// hub:cut year
 	/** Your year's routes (11/15/2026; docs/record.md, "Sync"): http(s)://…/record/<channel>/<tail>?key=…. */

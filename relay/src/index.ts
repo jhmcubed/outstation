@@ -6,6 +6,7 @@
 //   ws(s)://<relay>/watch/<channel>?code=<watch code>                  a viewer (Outside)
 //   ws(s)://<relay>/game/<channel>?key=<key>&v=<its version>           the Outside plugin: the player's game state (game.ts)
 //   GET <relay>/game/<channel>?code=<watch code>                       the game state kept, and whether the plugin's connected
+//   POST <relay>/game/<channel>?key=<key>                              the Hub's plugin: a snapshot, what they're doing (11/16/2026)
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
 //   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
 //   /keep/<channel>/<bank|model>                                        their bank and their model, for the page (keep.ts)
@@ -96,7 +97,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Channel, CLAIMS_AN_ADDRESS, CLAIMS_A_DAY, PLAYER, type Env, type Listing } from "./channel";
 import { Aether } from "./aether";
 import { type ArrayEvent, ArrayFeed, type Lost, arrayAnswer, arrayBackfill, arraySince } from "./array";
-import { type StarReport, WHERE_FRESH_MS } from "./game";
+import { PRESENCE_FRESH_MS, type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
 import { emoteKey } from "./emotes";
@@ -416,10 +417,15 @@ export class Directory extends DurableObject<Env> {
     // (while it transmits, or its plugin's connected: 11/15/2026, the plugin first)
     const whereOf = (r: Listing) => ((r.live || r.game) && r.where && at - (r.whereAt || 0) <= fresh ? { ...r.where } : null);
     const activityOf = (r: Listing) => ((r.live || r.game) && r.activity && at - (r.activityAt || 0) <= fresh ? { ...r.activity } : null);
+    // (the Hub's plugin, 11/16/2026: heard from while it posted within PRESENCE_FRESH_MS and hasn't logged out; what
+    // they're doing as Discord shows it, while the plugin's heard from or the channel's live)
+    const pfresh = (parseFloat(this.env.PRESENCE_FRESH_SECONDS || "") * 1000) || PRESENCE_FRESH_MS;
+    const heard = (r: Listing) => !!r.game || (!!r.seenAt && at - r.seenAt <= pfresh);
+    const presenceOf = (r: Listing) => ((r.live || heard(r)) && r.presence ? { ...r.presence } : null);
     const open = rows.filter((r) => !r.code && !waits(r))
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
-                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: !!r.game,
-                     where: whereOf(r), activity: activityOf(r) }));
+                     title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: heard(r),
+                     where: whereOf(r), activity: activityOf(r), presence: presenceOf(r) }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     const shown = new Set(open.map((r) => r.channel)), counts = new Map<string, number>();
     for (const r of rows) {
@@ -999,10 +1005,11 @@ export default {
     }
 
     // the game state kept (11/07/2026; game.ts): for Outside while the outstation's dark, with the watch code as watching
+    // (and POSTed, 11/16/2026: the Plugin Hub's plugin's snapshot and presence, docs/protocol.md "The snapshot")
     if (parts[0] === "game" && parts.length === 2 && !upgrade) {
-      if (request.method !== "GET") return new Response(null, { status: 405 });
+      if (request.method !== "GET" && request.method !== "POST") return new Response(null, { status: 405 });
       if (!NAME.test(parts[1])) return Response.json({ error: "which outstation?" }, { status: 400 });
-      return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_game"));
+      return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], request.method === "POST" ? "/_gamepost" : "/_game"));
     }
 
     if (upgrade) {
