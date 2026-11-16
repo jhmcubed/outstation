@@ -2076,6 +2076,15 @@ class Snapshot(Base):
         self.assertEqual(self.post({"game": {"off": True}})[0], 204)
         self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["snap"], again["snap"])
 
+    async def test_the_list_names_them_as_the_game_shows_them(self):
+        # (11/16/2026, Jace: "Oran Berries" was on the globe as oranberries: GET /channels carries the plugin's name, a
+        # no-break space as a space, only when it comes down to the channel; else null)
+        shown = self.ch[0].upper() + "\u00a0" + self.ch[1:]   # (12 long: the game's most)
+        self.assertEqual(self.post({"game": {"name": shown, "presence": self.WC}})[0], 204)
+        self.assertEqual((await self.row())["name"], shown.replace("\u00a0", " "))
+        self.assertEqual(self.post({"game": {"name": "Somebody Else", "presence": self.WC}})[0], 204)
+        self.assertIsNone((await self.row())["name"])
+
     async def test_a_snapshot_clears_what_only_the_socket_sends_and_keeps_the_delve_board(self):
         # (11/16/2026, Jace: the outstation's orbs and world stayed on his page under the Hub's plugin; SNAP_CLEARS)
         socket = {"world": 369, "vitals": {"hp": [99, 99], "prayer": [99, 99], "run": 100, "spec": 100},
@@ -4336,7 +4345,7 @@ class SettlingGone(Base):
         await next_of(tx, "relay")
         await self.pause(2)
         row = {c["channel"]: c for c in (await asyncio.to_thread(http, "GET", "/channels"))[1]["channels"]}[self.ch]
-        self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "open", "presence", "static",
+        self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "name", "open", "presence", "static",
                                        "title", "viewers", "where"])
         if WORKER:   # (the keeper's list: no home, nor when it changed)
             mine = {c["channel"]: c for c in (await asyncio.to_thread(admin, "GET", "/admin/channels"))[1]}[self.ch]

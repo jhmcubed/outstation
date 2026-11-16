@@ -1835,6 +1835,17 @@ class Channel:
             return
         self.presence = p
 
+    def shown_name(self):
+        """The player's name as the game shows it (11/16/2026, Jace: "make it show his name everywhere as his in-game
+        name"): the last the plugin said, its no-break spaces as spaces, only when it comes down to this channel and is a
+        name the game allows; else None, and pages show the channel."""
+        n = self.game.kept.get("name")
+        if not isinstance(n, str):
+            return None
+        n = re.sub(r"[\s\u00a0]+", " ", n).strip()
+        ok = re.fullmatch(r"[A-Za-z0-9 _-]{1,12}", n) and re.sub(r"[ _-]", "", n.lower()) == self.name.lower()
+        return n if ok else None
+
     def heard(self, fresh_s):
         """Whether the plugin's here, as the page and the globe count it: its socket's connected, or it posted within
         fresh_s and hasn't logged out since."""
@@ -3476,7 +3487,9 @@ class Relay:
                  "where": dict(ch.where) if ch.where is not None and (ch.sender is not None or ch.gamer is not None)
                           and time.monotonic() - ch.where_at <= self.where_fresh_s else None,
                  "activity": dict(ch.activity) if ch.activity is not None and (ch.sender is not None or ch.gamer is not None)
-                             and time.monotonic() - ch.activity_at <= self.where_fresh_s else None}
+                             and time.monotonic() - ch.activity_at <= self.where_fresh_s else None,
+                 # (the name as the game shows it, 11/16/2026: shown_name; the Worker's shownName, the same)
+                 "name": ch.shown_name()}
                 for ch in self.channels.values() if ch.listed()]
         rows.sort(key=lambda r: (not r["live"], r["channel"]))
         shown, counts = {r["channel"] for r in rows}, {}

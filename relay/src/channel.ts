@@ -158,6 +158,7 @@ export interface Listing {
   // (what they're doing as Discord shows it, and when it last came; when the Hub's plugin last posted, 11/16/2026: the
   // Directory says if it's fresh, PRESENCE_FRESH_MS)
   presence?: Presence; presenceAt?: number; seenAt?: number;
+  name?: string; // (the name as the game shows it, from the plugin, 11/16/2026: "Oran Berries" for oranberries; shownName)
 }
 
 interface Att {
@@ -508,7 +509,18 @@ export class Channel extends DurableObject<Env> {
              ...(shown && this.where ? { where: this.where, whereAt: this.whereAt } : {}),
              ...(shown && this.activity ? { activity: this.activity, activityAt: this.activityAt } : {}),
              ...(this.seenAt ? { seenAt: this.seenAt } : {}),
-             ...(this.presence && (shown || this.seenAt) ? { presence: this.presence, presenceAt: this.presenceAt } : {}) };
+             ...(this.presence && (shown || this.seenAt) ? { presence: this.presence, presenceAt: this.presenceAt } : {}),
+             ...(this.shownName() ? { name: this.shownName() as string } : {}) };
+  }
+
+  /** The player's name as the game shows it (11/16/2026, Jace: "make it show his name everywhere as his in-game name
+   *  'Oran Berries', they shouldn't be mismatched"): the last the plugin said, its no-break spaces as spaces, only when it
+   *  comes down to this channel (channelForm) and is a name the game allows; else null, and pages show the channel. */
+  shownName(): string | null {
+    const n = this.game.kept.name;
+    if (typeof n !== "string") return null;
+    const s = n.replace(/[\s\u00a0]+/g, " ").trim();
+    return /^[A-Za-z0-9 _-]{1,12}$/.test(s) && channelForm(s) === this.name.toLowerCase() ? s : null;
   }
 
   /** The row told to the Directory when it's changed (11/07/2026): GET /channels had asked every channel handed out for
@@ -1035,7 +1047,9 @@ export class Channel extends DurableObject<Env> {
     this.takePresence(gamePresence(m.game), fields, now);
     this.takeHere(gameHere(m.game), fields, now);
     this.takeStar(gameStar(m.game), fields);
+    const was = this.shownName();
     const got = this.game.apply(fields); // (never "where", "activity" or "star": gameFields leaves them out)
+    if (this.shownName() !== was) this.tellListing(); // (the list's name, as the game shows it)
     if (fields.off === true) this.witnessOff(); // (after the message is taken: its last skills with it)
     if (!got) return;
     const line = pyjson({ game: { ...got, at: this.game.at } });

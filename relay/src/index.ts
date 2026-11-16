@@ -426,7 +426,8 @@ export class Directory extends DurableObject<Env> {
     const open = rows.filter((r) => !r.code && !waits(r))
       .map((r) => ({ channel: r.channel, live: !!r.live, open: !!r.open, static: !!r.static, viewers: r.viewers || 0,
                      title: r.title || "", doing: r.doing || null, by: given.get(r.channel) ?? null, game: heard(r),
-                     where: whereOf(r), activity: activityOf(r), presence: presenceOf(r) }));
+                     where: whereOf(r), activity: activityOf(r), presence: presenceOf(r),
+                     name: typeof r.name === "string" ? r.name : null }));
     open.sort((a, b) => Number(b.live) - Number(a.live) || a.channel.localeCompare(b.channel));
     const shown = new Set(open.map((r) => r.channel)), counts = new Map<string, number>();
     for (const r of rows) {

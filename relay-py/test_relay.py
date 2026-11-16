@@ -1617,8 +1617,8 @@ class SettlingGone(RelayTest):
                 self.assertEqual((status, got), (410, {"error": relay.SETTLING_GONE}), (port, method, path))
         status, _, body = await get(self.port, "/channels")
         self.assertEqual([sorted(c) for c in json.loads(body)["channels"]],
-                         [["activity", "by", "channel", "doing", "game", "live", "open", "presence", "static", "title",
-                           "viewers", "where"]])
+                         [["activity", "by", "channel", "doing", "game", "live", "name", "open", "presence", "static",
+                           "title", "viewers", "where"]])
 
 
 class ArrayWords(unittest.TestCase):
