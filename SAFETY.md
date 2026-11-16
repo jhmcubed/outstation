@@ -331,7 +331,7 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
    - `relay.ghillie.workers.dev`, the listening post's relay
    - `api.github.com/repos/jhmcubed/outstation/releases/latest`, the check for a newer version
    - `github.com/jhmcubed/outstation`: SAFETY.md and the report forms, opened in your browser
-   - `ghillie.wiki`, the Outside pages it opens in your browser
+   - `ghillie.wiki` and `outside.wiki`, the pages it opens in your browser (the Outside pages are on outside.wiki since 11/16/2026)
    - `127.0.0.1`, this PC, for Dink and for a relay of your own
 
     Run it on your own copy (Python, nothing to install):
