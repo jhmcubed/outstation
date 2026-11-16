@@ -18,6 +18,7 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 - Whose page it is, **Open my page**, **Make my Outside page**, and whether it's proven yours.
 - **Update my page**, and when it was last updated. **Refresh** asks again whether it's proven.
 - **Who sees it:** whether your page is open to anyone (and on outside.wiki's globe while you play) or friends only. **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (it asks first: everything on the page goes and the name is free again).
+- **Your page's chat:** visitors can leave lines on your page. **Tend my page's chat** opens your page in your browser with **take back** and **ban** beside each visitor's line, and who you've banned (with **unban**). The link works for 12 hours, only in that browser, and can do nothing else.
 
 ## Settings
 

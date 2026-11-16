@@ -379,6 +379,12 @@ DEFAULT_CLIPS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie port
 DEFAULT_RECORDS = os.path.join(os.path.expanduser("~"), "Documents", "ghillie portal", "records")
 VIEWER_TEXT = 2048                # anything longer from a viewer is thrown away unread
 CHAT_KEPT = 50                    # lines a late viewer (or a newly opened desk) gets at once
+# tending the page's chat from the page itself (11/16/2026; the Worker's TEND_MS, TENDS_MOST): a token the plugin hands
+# the relay with its key (POST /tend/<channel>?key= {"token"}), good for TEND_SECONDS, TENDS_MOST at once (the oldest
+# goes); the page opens /desk/<channel>?tend=<token>, which hears only the chat and the bans and may only take lines
+# back, block and ban
+TEND_SECONDS, TENDS_MOST = 12 * 3600, 4
+TEND_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: room to spam a little for fun (Jace, 11/05)
 NAME_MAX = 20
 TITLE_MAX = 100                   # the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
@@ -1497,6 +1503,8 @@ class Channel:
         self.reports = deque(maxlen=8)
         self.state = "open"          # the capture's last {"state"}: sound passes only while open
         self.desks = set()           # Jace's chat windows
+        self.tenders = set()         # pages tending the chat (11/16/2026): /desk/<channel>?tend=<token>
+        self.tends = {}              # each tending token's SHA-256 -> when it runs out (time.time())
         self.dink_seen = {}          # a Dink post's hash -> when: the same one twice in a row is one event
         self.last_thumb = None       # the newest small frame (4 bytes, b"TH", a small JPEG), for lookers only
         self.thumb_at = 0.0
@@ -1979,7 +1987,7 @@ class Channel:
         """A line to every viewer, every desk and everyone in line for a spot (the chat, the poll, pings): those
         who can't see the picture yet can still talk (11/05/2026, Jace: "people who cannot view the live feed
         of the stream can still send messages in the chat")."""
-        for v in list(self.viewers) + list(self.waiting) + list(self.desks):
+        for v in list(self.viewers) + list(self.waiting) + list(self.desks) + list(self.tenders):
             v.send_nowait(line)
 
     def seat(self, sock):
@@ -2126,8 +2134,15 @@ class Channel:
 
     def tell_banned(self):
         line = self.banned_line()
-        for d in list(self.desks):
+        for d in list(self.desks) + list(self.tenders):
             d.send_nowait(line)
+
+    def tend_until(self, token):
+        """When a tending token runs out (time.time()), or 0 for none that's good."""
+        if not isinstance(token, str) or not TEND_TOKEN.match(token):
+            return 0
+        until = self.tends.get(hashlib.sha256(token.encode()).hexdigest(), 0)
+        return until if until > time.time() else 0
 
     def poll_line(self):
         p = self.poll
@@ -2821,7 +2836,7 @@ class Relay:
             else:
                 await self.plain(writer, "200 OK", {"proof": "proven" if ch.proven else "unproven" if ch.unproven else "vouched"})
             return
-        if len(path) == 2 and ((path[0] == "channels" and method == "DELETE") or path[0] == "code") and not key:
+        if len(path) == 2 and ((path[0] == "channels" and method == "DELETE") or path[0] in ("code", "tend")) and not key:
             await self.owner_route(reader, writer, method, headers, path[0], path[1], q)
             return
         if settling:
@@ -2896,6 +2911,8 @@ class Relay:
                 return
             if role == "transmit":
                 await self.transmit(sock, name, q.get("key", ""), q.get("code", ""))
+            elif role == "desk" and "tend" in q:
+                await self.tend(sock, name, q.get("tend", ""))
             elif role == "desk":
                 await self.desk(sock, name, q.get("key", ""), q.get("name", ""), q.get("talk") == "1")
             elif role == "sound":
@@ -3123,6 +3140,43 @@ class Relay:
             return None
         ch.key_used()
         return ch
+
+    async def tend(self, sock, name, token):
+        """A page tending its own chat (11/16/2026; the Worker's openTend): the status line, the chat so far and who's
+        banned, then every line, take-back and ban as a desk hears them; it may only take lines back, block and ban,
+        and nothing once its token has run out."""
+        ch = self.channels.get(name)
+        until = ch.tend_until(token) if ch is not None and ch.key is not None else 0
+        if not until:
+            await sock.close(4003, "this link to tend the chat has run out: open it again from the plugin")
+            return
+        ch.tenders.add(sock)
+        self.log("tending   %s" % name)
+        sock.send_nowait(ch.status())
+        for _, line in ch.chat:
+            sock.send_nowait(line)
+        sock.send_nowait(ch.banned_line())
+        try:
+            while True:
+                msg = await sock.recv()
+                if not isinstance(msg, str) or len(msg) > 2048:
+                    continue
+                if time.time() > until:
+                    await sock.close(4003, "this link to tend the chat has run out: open it again from the plugin")
+                    return
+                try:
+                    m = json.loads(msg)
+                except ValueError:
+                    continue
+                if not isinstance(m, dict):
+                    continue
+                for k in ("hide", "block", "unblock", "ban", "unban"):
+                    v = m.get(k)
+                    if isinstance(v, int) and not isinstance(v, bool):
+                        self.from_desk(ch, name, json.dumps({k: v}))
+                        break
+        finally:
+            ch.tenders.discard(sock)
 
     async def desk(self, sock, name, key, host_name, talk=False):
         """Jace's chat window: the chat, the poll and the pings in; his lines, polls, hides and blocks out."""
@@ -3893,6 +3947,8 @@ class Relay:
         ch = self.channels.get(name)
         if kind == "code" and method != "PUT":
             return await self.plain(writer, "405 Method Not Allowed", {"error": "PUT"})
+        if kind == "tend" and method != "POST":
+            return await self.plain(writer, "405 Method Not Allowed", {"error": "POST"})
         if ch is None or ch.key is None:
             return await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
         if not q.get("key") or not hmac.compare_digest(q.get("key").encode(), ch.key.encode()):
@@ -3915,8 +3971,22 @@ class Relay:
                     await v.close(4003, "the watch code changed")
             ch.tell_viewers()
             return await self.plain(writer, "200 OK", {"code": code != ""})
+        if kind == "tend":
+            # (a tending token, 11/16/2026: POST /tend/<channel>?key= {"token"} -> {"until"} in ms)
+            try:
+                raw = await read_body(reader, headers, 1024)
+                token = json.loads(raw or b"{}").get("token")
+            except (ValueError, AttributeError, asyncio.IncompleteReadError):
+                token = None
+            if not isinstance(token, str) or not TEND_TOKEN.match(token):
+                return await self.plain(writer, "400 Bad Request", {"error": "a token: 43 base64url characters"})
+            now = time.time()
+            h = hashlib.sha256(token.encode()).hexdigest()
+            kept = [(k, u) for k, u in ch.tends.items() if u > now and k != h] + [(h, now + TEND_SECONDS)]
+            ch.tends = dict(kept[-TENDS_MOST:])
+            return await self.plain(writer, "200 OK", {"until": int((now + TEND_SECONDS) * 1000)})
         socks = [ch.sender, ch.sounder, ch.gamer] + list(ch.viewers) + list(ch.waiting) + list(ch.desks) \
-            + list(ch.lookers) + list(ch.provers.values())
+            + list(ch.lookers) + list(ch.provers.values()) + list(ch.tenders)
         for sock in socks:
             if sock is not None:
                 try:

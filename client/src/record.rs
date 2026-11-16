@@ -21,7 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The year view (docs/record.md, "Viewing"): the player's Outside page, its year, the key after "#k=".
-pub const YEAR_PAGE: &str = "https://ghillie.wiki/outside";
+/// their own year, as the Outside plugin opens it: outside.wiki/<name>/year/mine#k=<key> (since 11/16/2026)
+pub const YEAR_PAGE: &str = "https://outside.wiki/";
 /// a heartbeat at most this often while a place or an activity is held (docs/record.md, "The local record")
 const HEARTBEAT_MS: i64 = 60_000;
 /// the exact path (docs/record.md, "The exact path"): one `here` line written at most this often; one that comes sooner
@@ -48,7 +49,7 @@ pub fn key_of(s: &Settings) -> Option<fmt::Key> {
 
 /// The year view's address for this outstation, with its key in the fragment.
 pub fn year_url(s: &Settings, k: &fmt::Key) -> String {
-    format!("{}?player={}&view=year#k={}", YEAR_PAGE, enc(&s.channel), fmt::key_b64u(k))
+    format!("{}{}/year/mine#k={}", YEAR_PAGE, enc(&s.channel), fmt::key_b64u(k))
 }
 
 // ---- the recorder ----

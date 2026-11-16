@@ -29,7 +29,7 @@ pub enum State { Live(Seen), OffAir, NoPortal, Unknown }
 
 /// Their Outside page (where a click on their name goes).
 pub fn page(channel: &str) -> String {
-    format!("https://ghillie.wiki/outside?player={}", channel)
+    format!("{}{}", crate::keeper::SITE, channel)
 }
 
 /// The relay to read the open portals from: the one this portal's attached to, else the listening post's.
@@ -172,7 +172,7 @@ mod tests {
         assert!(check_add(&s, "Lichen Ring").unwrap_err().contains("yourself"));
         assert!(check_add(&s, "no/slash").is_err());
         assert_eq!(find(&s, "MOSS-FERN").as_deref(), Some("Moss Fern"));
-        assert_eq!(page("mossfern"), "https://ghillie.wiki/outside?player=mossfern");
+        assert_eq!(page("mossfern"), "https://outside.wiki/mossfern");
     }
 
     #[test]

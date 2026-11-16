@@ -87,6 +87,11 @@ const SIGNAL_EVERY = 80; // a viewer's ✼: as often as a hand can press, a doze
 const GUESS_MIN_VALUE = 1_000_000; // a drop from the guessed boss this big ends a guess round by itself
 const GUESS_KEPT = 120_000; // a decided round's result stays this long
 const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused for a minute
+// tending the page's chat from the page itself (11/16/2026, Jace: "There is currently no way for someone who doesn't
+// have the outstation to remove comments from people off of their profile"): a token the plugin makes and hands the
+// relay with its key (POST /tend/<channel>?key=), good for TEND_MS, TENDS_MOST at once (the oldest goes); the page opens
+// /desk/<channel>?tend=<token>, a socket that hears only the chat and the bans and may only take lines back, block and ban
+const TEND_MS = 12 * 3_600_000, TENDS_MOST = 4, TEND_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 // messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
 // for it till its portal next opens (relay.py's DMS_KEPT, DMS_DAYS, DMS_A_MINUTE)
 const DMS_KEPT = 20, DMS_DAYS = 7, DMS_A_MINUTE = 20;
@@ -129,7 +134,7 @@ const ACKED_OVER = 5000;
 // up to 18,000 rows written an hour), and as its socket closes
 const GAME_SAVE = 60_000;
 
-type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "game" | "prove" | "refused";
+type Role = "transmit" | "watch" | "desk" | "sound" | "look" | "game" | "prove" | "tend" | "refused";
 
 // a party's proof (witness.ts): the session's start, the claims made at logout, when they're next asked and how often
 // they have been; a challenger's own name and skills as its plugin last said them
@@ -157,6 +162,7 @@ export interface Listing {
 
 interface Att {
   role: Role;
+  tendUntil?: number; // a tending socket's token runs out then (ms)
   who?: number; // a viewer's number in the chat
   seq?: number; // when it came, for the order of the waiting line
   seated?: boolean;
@@ -204,6 +210,8 @@ interface Meta {
   // those taking the name back (11/15/2026, docs/protocol.md "Taking a name back"): each a key of its own, opening only
   // a proving socket, and kept CHALLENGE_DAYS at most, CHALLENGERS at once (the oldest goes)
   challengers?: { keyHash: string; at: number; account?: string }[];
+  // tending tokens (11/16/2026): each one's SHA-256 and when it runs out
+  tends?: { hash: string; until: number }[];
   code: string;
   cap: number; // the channel's own cap on viewers (the desk's {"cap"}): 0 none
   chatId: number;
@@ -574,7 +582,7 @@ export class Channel extends DurableObject<Env> {
   }
 
   broadcast(line: string) {
-    for (const ws of [...this.sockets("watch"), ...this.sockets("desk")]) this.send(ws, line);
+    for (const ws of [...this.sockets("watch"), ...this.sockets("desk"), ...this.sockets("tend")]) this.send(ws, line);
   }
 
   seat(ws: WebSocket) {
@@ -665,6 +673,8 @@ export class Channel extends DurableObject<Env> {
     const q = url.searchParams;
     let [, role] = url.pathname.split("/");
     if (role === "watch" && q.get("look") === "1") role = "look";
+    if (role === "desk" && q.has("tend")) role = "tend";
+    if (role === "_tend") return this.tendToken(request, q, ip);
 
     if (role === "_mint") return this.mint(q.get("new") === "1", q.get("claim") === "1", request.headers.get("x-account") || "");
     if (role === "_challenge") return this.challenge(request.headers.get("x-account") || "");
@@ -724,13 +734,15 @@ export class Channel extends DurableObject<Env> {
       const h = await this.hash(q.get("key") || "");
       if ((this.meta.challengers || []).some((c) => c.keyHash === h && Date.now() - c.at < CHALLENGE_DAYS * 86_400_000)) { prover = h; role = "prove"; }
     }
+    const tendUntil = role === "tend" ? await this.tendUntil(q.get("tend") || "") : 0;
     const no: [number, string] | null = role === "watch" || role === "look" || role === "prove" ? null
+      : role === "tend" ? (tendUntil ? null : [4003, "this link to tend the chat has run out: open it again from the plugin"])
       : role !== "game" && tooOld(q.get("v"), min) ? [4026, `this outstation is too old for the relay: ${min} or newer is needed`]
       : await this.checkKey(q.get("key") || "", ip);
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
-    const a: Att = { role: (no ? "refused" : role) as Role, ...(prover && !no ? { prover } : {}) };
+    const a: Att = { role: (no ? "refused" : role) as Role, ...(prover && !no ? { prover } : {}), ...(tendUntil && !no ? { tendUntil } : {}) };
     this.keep(ws, a);
     this.moved();
 
@@ -740,6 +752,8 @@ export class Channel extends DurableObject<Env> {
       this.openWatch(ws, a, q.get("code") || "");
     } else if (role === "look") {
       this.openLook(ws, a, q.get("code") || "");
+    } else if (role === "tend") {
+      this.openTend(ws);
     } else {
       if (role === "transmit") {
         this.openTransmit(ws, q.get("code") || "", q.get("v"));
@@ -824,6 +838,50 @@ export class Channel extends DurableObject<Env> {
     this.send(ws, this.status());
     const game = this.game.wholeLine();
     if (game) this.send(ws, game);
+  }
+
+  /** A tending socket (11/16/2026): the status line, the chat so far and who's banned; after that every line, every
+   *  line taken back and every change to the bans, as a desk hears them; nothing else of the channel's. */
+  openTend(ws: WebSocket) {
+    this.send(ws, this.status());
+    for (const [, line] of this.chat) this.send(ws, line);
+    this.send(ws, this.bannedLine());
+  }
+
+  /** When a tending token runs out (ms), or 0 for none that's good (a bad shape, unknown, or run out). */
+  async tendUntil(token: string): Promise<number> {
+    if (!TEND_TOKEN.test(token)) return 0;
+    const h = await this.hash(token), now = Date.now();
+    const t = (this.meta.tends || []).find((x) => x.hash === h && x.until > now);
+    return t ? t.until : 0;
+  }
+
+  /** POST /tend/<channel>?key= {"token"} (index.ts; 11/16/2026): a tending token from the plugin, 43 base64url
+   *  characters, kept as its SHA-256 for TEND_MS. 200 {"until"}; 400 a bad token; 403 the wrong key; 404 nobody's. */
+  async tendToken(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    let token: unknown;
+    try { token = ((await request.json()) as { token?: unknown }).token; } catch { token = undefined; }
+    if (typeof token !== "string" || !TEND_TOKEN.test(token)) return json({ error: "a token: 43 base64url characters" }, 400);
+    const now = Date.now(), until = now + TEND_MS, h = await this.hash(token);
+    this.meta.tends = [...(this.meta.tends || []).filter((x) => x.until > now && x.hash !== h), { hash: h, until }].slice(-TENDS_MOST);
+    this.saveMeta();
+    return json({ until });
+  }
+
+  /** What a tending socket said: one of the desk's take-back, block and ban lines, nothing else; and none once its
+   *  token has run out (the socket's closed then). */
+  fromTend(ws: WebSocket, a: Att, msg: string) {
+    if (!a.tendUntil || Date.now() > a.tendUntil) { this.close(ws, 4003, "this link to tend the chat has run out: open it again from the plugin"); return; }
+    let m: any;
+    try { m = JSON.parse(msg); } catch { return; }
+    if (!m || typeof m !== "object" || Array.isArray(m)) return;
+    for (const k of ["hide", "block", "unblock", "ban", "unban"]) {
+      if (Number.isInteger(m[k])) { this.fromDesk(this.name, JSON.stringify({ [k]: m[k] })); return; }
+    }
   }
 
   openDesk(ws: WebSocket, a: Att, hostName: string, talk = false) {
@@ -922,7 +980,7 @@ export class Channel extends DurableObject<Env> {
 
   tellBanned() {
     const line = this.bannedLine();
-    for (const d of this.sockets("desk")) this.send(d, line);
+    for (const d of [...this.sockets("desk"), ...this.sockets("tend")]) this.send(d, line);
   }
 
   lastName(who: number): string {
@@ -1222,6 +1280,8 @@ export class Channel extends DurableObject<Env> {
       if (typeof msg === "string" && msg.length <= VIEWER_TEXT) this.fromViewer(ws, a, msg);
     } else if (a.role === "desk") {
       if (typeof msg === "string") this.fromDesk(a.host || this.name, msg, ws);
+    } else if (a.role === "tend") {
+      if (typeof msg === "string" && msg.length <= VIEWER_TEXT) this.fromTend(ws, a, msg);
     } else if (a.role === "sound") this.fromSound(msg);
     else if (a.role === "game") {
       if (typeof msg === "string") this.fromGame(ws, msg);
@@ -2415,7 +2475,7 @@ export class Channel extends DurableObject<Env> {
     if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
     const no = await this.checkKey(q.get("key") || "", ip);
     if (no) return json({ error: no[1] }, 403);
-    for (const role of ["watch", "look"] as Role[]) {
+    for (const role of ["watch", "look", "tend"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this page was taken down");
     }
     await this.revoke();
@@ -2461,7 +2521,8 @@ export class Channel extends DurableObject<Env> {
     this.meta.keyHash = null;
     delete this.meta.pending; // (handed out again later, it's pending only if an invite hands it out)
     this.saveMeta();
-    for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
+    delete this.meta.tends;
+    for (const role of ["transmit", "desk", "sound", "game", "tend"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel was taken back");
     }
     this.clearGame();
