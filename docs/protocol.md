@@ -208,6 +208,13 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
 
+## The app, told to the plugin (11/16/2026)
+
+The relay tells the plugin's game socket whether the outstation's app is attached: `{"app": true | false}`, once as the
+socket opens and again whenever a desk that isn't the plugin's own chat (`&talk=1`) comes or goes. The plugin sends the
+exact path (`{"here"}`, below) only while it's true, since only the app takes it; the plugin keeps its own record of the
+path on the player's PC either way. Both relays.
+
 ## A page's own key: friends only, and taking it down (11/16/2026)
 
 The permissions review: a player with only the plugin has no outstation to set a watch code, and only the keeper could

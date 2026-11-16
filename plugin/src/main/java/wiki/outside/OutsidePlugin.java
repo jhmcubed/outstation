@@ -194,6 +194,8 @@ public class OutsidePlugin extends Plugin
 	private final Follow follow = new Follow();
 	// hub:end globe
 	// hub:cut year
+	/** whether the outstation's app is attached, as the relay says ({"app"}; 11/16/2026): the exact path goes only then */
+	private volatile boolean appHere;
 	/** the exact path, for the player's own year (11/10/2026; Track) */
 	private final Track track = new Track();
 	// hub:end year
@@ -550,7 +552,7 @@ public class OutsidePlugin extends Plugin
 		}
 		// hub:end globe
 		// hub:cut year
-		if (path != null)
+		if (path != null && appHere)
 		{
 			send(path);
 		}
@@ -3410,6 +3412,9 @@ public class OutsidePlugin extends Plugin
 				open = true;
 				retryIn = 5;
 				resend = true;
+				// hub:cut year
+				appHere = false;
+				// hub:end year
 				// hub:cut talk
 				talkOpen();
 				// hub:end talk
@@ -3420,6 +3425,31 @@ public class OutsidePlugin extends Plugin
 						: "your Outside page is live: " + attach.page().replaceFirst("^https://", ""));
 				}
 			}
+
+			// hub:cut year
+			@Override
+			public void onMessage(WebSocket ws, String text)
+			{
+				// (whether the outstation's app is here, {"app": bool}: the exact path goes only while it is; come, the
+				// tile goes again at once)
+				try
+				{
+					JsonObject o = gson.fromJson(text, JsonObject.class);
+					if (o != null && o.has("app") && o.get("app").isJsonPrimitive())
+					{
+						boolean now = o.get("app").getAsBoolean();
+						if (now && !appHere)
+						{
+							clientThread.invokeLater(() -> track.forget());
+						}
+						appHere = now;
+					}
+				}
+				catch (RuntimeException ignored)
+				{
+				}
+			}
+			// hub:end year
 
 			@Override
 			public void onClosing(WebSocket ws, int code, String reason)

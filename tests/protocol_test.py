@@ -3100,6 +3100,28 @@ class OwnPage(Base):
         self.assertEqual(await again.recv_close(timeout=5), ("close", 4003))
 
 
+class AppHere(Base):
+    """The plugin told whether the outstation's app is attached ({"app": bool}, 11/16/2026, the permissions review): the
+    exact path goes only while it is. The plugin's own chat desk (&talk=1) isn't the app."""
+
+    async def test_the_plugin_hears_when_the_app_comes_and_goes(self):
+        name = "a" + secrets.token_hex(5)
+        st, h, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                         {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        key = json.loads(out)["key"]
+        g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, key))
+        self.clients.append(g)
+        self.assertEqual((await next_of(g, "app")), False)
+        talk = await Client().open("%s/desk/%s?key=%s&talk=1" % (RELAY, name, key))
+        self.clients.append(talk)
+        await next_of(talk, "relay")
+        app = await Client().open("%s/desk/%s?key=%s&name=%s" % (RELAY, name, key, name))
+        self.clients.append(app)
+        self.assertEqual((await next_of(g, "app", timeout=5)), True)
+        app.close()
+        self.assertEqual((await next_of(g, "app", timeout=5)), False)
+
+
 class Witnessing(Base):
     """(Proving's and TakingBack's helpers: a claimed page, its plugin, its proof and the hiscores' stand-in)"""
 

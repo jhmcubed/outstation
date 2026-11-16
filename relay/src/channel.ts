@@ -814,6 +814,7 @@ export class Channel extends DurableObject<Env> {
     if (talk) a.talk = true;
     this.keep(ws, a);
     if (talk) this.tellViewers();
+    else this.tellApp();
     if (!this.meta.hostNames.includes(host.toLowerCase())) {
       this.meta.hostNames.push(host.toLowerCase());
       this.saveMeta();
@@ -927,6 +928,15 @@ export class Channel extends DurableObject<Env> {
       if (old !== ws) this.close(old, 4000, "replaced by a newer game");
     }
     this.tellViewers(); // (the status line's "game")
+    this.tellApp(ws);
+  }
+
+  /** Whether the outstation's app is here (a desk not the plugin's chat), to the plugin's game socket as {"app": bool}
+   *  (11/16/2026, the permissions review): the exact path goes only while it is, since only the app takes it (the plugin
+   *  keeps its own record). To one socket just opened, or to every game socket as a desk comes or goes. */
+  tellApp(only?: WebSocket) {
+    const line = pyjson({ app: this.sockets("desk").some((d) => !this.att(d).talk) });
+    for (const g of only ? [only] : this.sockets("game")) this.send(g, line);
   }
 
   /** A {"game"} message: GAME_A_SECOND a second at most and GAME_MESSAGE long at most (the rest dropped, with no
@@ -1136,6 +1146,7 @@ export class Channel extends DurableObject<Env> {
       if (a.lookFrames) this.tellViewers(); // (the transmitter's "lookers": one fewer)
     } else if (a.role === "desk") {
       if (a.talk) this.tellViewers(); // (the plugin's chat gone: the page's chat goes with it while dark)
+      else this.tellApp();
     } else if (a.role === "sound") {
       if (!this.sockets("sound").length) {
         this.soundHeld = [];

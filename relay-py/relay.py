@@ -1796,6 +1796,12 @@ class Channel:
         still waiting to be taken up. The Array's events come only from a channel listed (and live)."""
         return self.key is not None and not self.code and not self.pending
 
+    def tell_app(self):
+        """Whether the outstation's app is here (a desk not the plugin's chat), to the plugin's game socket as
+        {"app": bool} (11/16/2026, the permissions review; the Worker's tellApp): the exact path goes only while it is."""
+        if self.gamer is not None:
+            self.gamer.send_nowait(json.dumps({"app": any(not getattr(d, "talk", False) for d in self.desks)}))
+
     def key_used(self):
         """Its key's been used, rightly (a socket, Dink, clips or invites): an invite not taken up yet is
         taken up, and on the open outstations' list from now on (the Worker's checkKey, the same)."""
@@ -3014,6 +3020,8 @@ class Relay:
         self.log("desk      %s  (%d open)" % (name, len(ch.desks)))
         if talk:
             ch.tell_viewers()
+        else:
+            ch.tell_app()
         sock.send_nowait(ch.status())
         ch.late_joiner(sock)
         if ch.game.kept:
@@ -3039,6 +3047,8 @@ class Relay:
             ch.desks.discard(sock)
             if talk:
                 ch.tell_viewers()
+            else:
+                ch.tell_app()
 
     def send_dm(self, ch, host_name, dm, sock):
         """A message from this portal to another channel's: to its desks, or held till it opens; the sender told
@@ -3219,6 +3229,7 @@ class Relay:
         ch.gamer = sock
         self.log("game      %s" % name)
         ch.tell_viewers()                    # (the status line's "game")
+        ch.tell_app()
         read = deque()                       # when its last messages were read, for GAME_A_SECOND
         try:
             while ch.gamer is sock:

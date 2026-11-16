@@ -237,7 +237,8 @@ public interface OutsideConfig extends Config
 			+ " the map about 128 tiles a side, two minutes behind), what you're doing, your levels, kills, pets, log"
 			+ " slots, clues and big drops, and with \"Record my exact path\" on, the tiles you walk. Nothing of it leaves"
 			+ " this PC unless the switch below is on. Never in the Wilderness, a PvP area, or on a PvP or Deadman world."
-			+ " Kept in RuneLite's folder, outside/record.",
+			+ " Kept in RuneLite's folder, outside/record. The outstation app has a switch of its own for the same record;"
+			+ " with the encrypted copy on in both, the two join on your page.",
 		position = 10
 	)
 	default boolean year()
@@ -269,13 +270,13 @@ public interface OutsideConfig extends Config
 		keyName = "recordPath",
 		name = "Record my exact path for my year",
 		description = "Off (to begin with). On, the exact tile you're on goes into your year's record on this PC (and its"
-			+ " encrypted copy, if you keep one), and to your own outstation's app if you run one: when you move, at most"
-			+ " once every few seconds, and when you stop. On a boat, where it is at sea. Your relay passes it only to your own"
-			+ " outstation's app, never keeps it, and never shows it to anyone. Never in the Wilderness, a PvP area, or on"
-			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe).",
-		warning = "On, the exact tile you're on (and your world) goes to the Outside relay, a server not controlled"
-			+ " or verified by the RuneLite developers, every few seconds while you move. The relay passes it on only to"
-			+ " your own outstation's app, for your year's record, and doesn't keep it; but it passes through that server.",
+			+ " encrypted copy, if you keep one). If you also run the outstation app, the tile goes to it through your"
+			+ " relay too, only while the app is open: the relay passes it on, never keeps it, and never shows it to anyone."
+			+ " On a boat, where it is at sea. Never in the Wilderness, a PvP area, or on a PvP or Deadman world (Ferox"
+			+ " Enclave and the PvP minigames are safe).",
+		warning = "On, while your outstation app is open, the exact tile you're on (and your world) goes to the Outside"
+			+ " relay, a 3rd-party server not controlled or verified by the RuneLite developers, every few seconds while you"
+			+ " move, for the app's record. The relay doesn't keep it. Without the app open, it stays on this PC.",
 		position = 11
 	)
 	default boolean recordPath()
