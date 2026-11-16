@@ -102,6 +102,22 @@ public final class Attach
 		return base + "/desk/" + enc(channel) + "?key=" + enc(key) + "&name=" + enc(name) + "&talk=1";
 	}
 
+	/** The page chat's emotes (11/16/2026): the list (no name: ?code=, as anyone reads it), an upload (a name: ?key=…&name=…). */
+	public String emotesUrl(String name)
+	{
+		String base = keepUrl("x");
+		base = base.substring(0, base.indexOf("/keep/"));
+		return base + "/emotes/" + enc(channel) + (name == null ? "?code=" : "?key=" + enc(key) + "&name=" + enc(name));
+	}
+
+	/** One emote, to take it away: DELETE http(s)://…/emotes/<channel>/<name>?key=…. */
+	public String emoteUrl(String name)
+	{
+		String base = keepUrl("x");
+		base = base.substring(0, base.indexOf("/keep/"));
+		return base + "/emotes/" + enc(channel) + "/" + enc(name) + "?key=" + enc(key);
+	}
+
 	/** The relay's keep for the page (11/14/2026): http(s)://…/keep/<channel>/<what>?key=… (a bare relay as https://). */
 	public String keepUrl(String what)
 	{

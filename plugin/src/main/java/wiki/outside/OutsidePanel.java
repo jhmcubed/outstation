@@ -51,6 +51,10 @@ public class OutsidePanel extends PluginPanel
 		void openYear();
 
 		void copyKey();
+
+		void addEmote(String name);
+
+		void removeEmote(String name);
 	}
 
 	/** a motion on their page, as the relay lists it */
@@ -81,6 +85,9 @@ public class OutsidePanel extends PluginPanel
 	private final JLabel otherLine = small(" ");
 	private final JLabel yearStatus = small(" ");
 	private final JLabel keyStatus = small(" ");
+	private final JTextField emoteName = new JTextField();
+	private final JPanel emotes = new JPanel();
+	private final JLabel emoteStatus = small(" ");
 
 	public OutsidePanel(Hooks hooks)
 	{
@@ -162,6 +169,25 @@ public class OutsidePanel extends PluginPanel
 		page.add(left(yearStatus));
 
 		page.add(Box.createVerticalStrut(14));
+		// (11/16/2026: the page chat's emotes, from here as from the outstation's settings; Emotes)
+		page.add(left(heading("Your emotes")));
+		page.add(left(small("<html><div style='width:155px'>Pictures your page's chat shows for :name:. Copy a picture"
+			+ " (from a browser, a screenshot), name it, then paste it here: 256 KB at most, 30 in all. One of the same name is"
+			+ " replaced.</div></html>")));
+		page.add(Box.createVerticalStrut(6));
+		JPanel en = new JPanel(new BorderLayout(6, 0));
+		en.add(small("Name"), BorderLayout.WEST);
+		emoteName.setToolTipText("2 to 24 letters, numbers or _");
+		en.add(emoteName, BorderLayout.CENTER);
+		en.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+		page.add(en);
+		page.add(Box.createVerticalStrut(6));
+		page.add(wide(button("Paste a picture as an emote", () -> hooks.addEmote(emoteName.getText().trim()))));
+		emoteStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		page.add(left(emoteStatus));
+		emotes.setLayout(new GridLayout(0, 1, 0, 4));
+		page.add(emotes);
+		page.add(Box.createVerticalStrut(14));
 		// (11/15/2026, "Open your own" led by the plugin: an outstation transmits to the same page with the same key, and a
 		// key made here is kept with the account, not in the settings, so this is how it's handed over)
 		page.add(left(heading("A transmission")));
@@ -198,6 +224,54 @@ public class OutsidePanel extends PluginPanel
 				motions.add(small("(not read yet)"));
 			}
 			revalidate();
+		});
+	}
+
+	/** The page's emotes by name (null: not read), each with its ✕. */
+	public void showEmotes(List<String> names)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			emotes.removeAll();
+			if (names == null)
+			{
+				emotes.add(small("(not read yet)"));
+			}
+			else if (names.isEmpty())
+			{
+				emotes.add(small("none yet"));
+			}
+			else
+			{
+				for (String n : names)
+				{
+					JPanel r = new JPanel(new BorderLayout(4, 0));
+					r.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+					r.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+					r.add(new JLabel(":" + n + ":"), BorderLayout.CENTER);
+					JButton x = new JButton("✕");
+					x.setToolTipText("take :" + n + ": off your page");
+					x.setMargin(new java.awt.Insets(0, 4, 0, 4));
+					x.addActionListener(e -> hooks.removeEmote(n));
+					r.add(x, BorderLayout.EAST);
+					emotes.add(r);
+				}
+			}
+			emotes.revalidate();
+			emotes.repaint();
+		});
+	}
+
+	/** A line under the paste button; a done one clears the name. */
+	public void emoteStatus(String words, boolean done)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			emoteStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>");
+			if (done)
+			{
+				emoteName.setText("");
+			}
 		});
 	}
 

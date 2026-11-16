@@ -240,6 +240,7 @@ public class OutsidePlugin extends Plugin
 		if (a != null)
 		{
 			readMotions();
+			readEmotes();
 			readProof();
 		}
 		connect();
@@ -268,6 +269,7 @@ public class OutsidePlugin extends Plugin
 			Attach a = key();
 			panel.who(a == null ? null : a.getChannel());
 			readMotions();
+			readEmotes();
 			readProof();
 		}
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
@@ -1297,6 +1299,8 @@ public class OutsidePlugin extends Plugin
 			public void refresh()
 			{
 				readMotions();
+				readEmotes();
+				readEmotes();
 				readProof();
 			}
 
@@ -1368,6 +1372,65 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
+			public void addEmote(String name)
+			{
+				Attach a = key();
+				byte[] b = Emotes.fromClipboard();
+				String no = a == null ? "no page for this character yet" : b == null ? "copy a picture first, then paste it here" : Emotes.refuse(name, b);
+				if (no != null)
+				{
+					panel.emoteStatus(no, false);
+					return;
+				}
+				panel.emoteStatus("sending :" + name + ":…", false);
+				http.newCall(new Request.Builder().url(a.emotesUrl(name)).header("User-Agent", "outside-plugin/" + VERSION)
+					.post(RequestBody.create(MediaType.parse("image/" + ("jpg".equals(Emotes.kind(b)) ? "jpeg" : Emotes.kind(b))), b)).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.emoteStatus("the relay's out of reach", false);
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						int code = r.code();
+						r.close();
+						panel.emoteStatus(code / 100 == 2 ? ":" + name + ": is on your page" : code == 429 ? "too many uploads this hour: try later"
+							: code == 413 ? "too big, or your page holds 30 already" : "the relay didn't take it (" + code + ")", code / 100 == 2);
+						readEmotes();
+					}
+				});
+			}
+
+			@Override
+			public void removeEmote(String name)
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				http.newCall(new Request.Builder().url(a.emoteUrl(name)).header("User-Agent", "outside-plugin/" + VERSION).delete().build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.emoteStatus("the relay's out of reach", false);
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						r.close();
+						panel.emoteStatus(":" + name + ": is off your page", false);
+						readEmotes();
+					}
+				});
+			}
+
+			@Override
 			public void copyKey()
 			{
 				Attach a = key();
@@ -1428,6 +1491,7 @@ public class OutsidePlugin extends Plugin
 			panel.who(a == null ? null : a.getChannel());
 			panel.otherKey(any != null && a == null ? any.getChannel() : null, character);
 			readMotions();
+			readEmotes();
 			readProof();
 		}
 		if (attach != null && (a == null || !a.getChannel().equals(attach.getChannel())))
@@ -1559,6 +1623,50 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** The motions on their page and the one it shows first, into the side tab. */
+	/** The page's emotes, for the side tab (GET /emotes/<channel>, as anyone reads them). */
+	private void readEmotes()
+	{
+		Attach a = key();
+		if (a == null || panel == null)
+		{
+			return;
+		}
+		http.newCall(new Request.Builder().url(a.emotesUrl(null)).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				panel.showEmotes(null);
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try
+				{
+					JsonObject o = gson.fromJson(r.body() == null ? "" : r.body().string(), JsonObject.class);
+					List<String> names = new ArrayList<>();
+					if (o != null && o.has("emotes"))
+					{
+						for (JsonElement e : o.getAsJsonArray("emotes"))
+						{
+							names.add(e.getAsJsonObject().get("name").getAsString());
+						}
+					}
+					panel.showEmotes(names);
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					panel.showEmotes(null);
+				}
+				finally
+				{
+					r.close();
+				}
+			}
+		});
+	}
+
 	private void readMotions()
 	{
 		Attach a = key();
@@ -2221,6 +2329,7 @@ public class OutsidePlugin extends Plugin
 				if ("motion".equals(what) || "model".equals(what))
 				{
 					readMotions();
+					readEmotes();
 				}
 				if (body != null && code == 200)
 				{

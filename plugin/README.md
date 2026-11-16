@@ -14,7 +14,7 @@ It works with or without the outstation program. With both, your page has your t
 
 ## Its side tab (11/15/2026)
 
-The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**; **Capture my character**, which records the next emote you do within 8 seconds from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it (blank: "idle" or "motion"), with your model standing still; the motions on your page, the one picked showing first to everyone who opens it, ✕ taking one away; and **Take my model off my page**. The same as `::outsidemodel`, `::outsidemotion <a name>` and `::outsideforget <a name>`. It needs "My character's model on my page" switched on.
+The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**; **Capture my character**, which records the next emote you do within 8 seconds from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it (blank: "idle" or "motion"), with your model standing still; the motions on your page, the one picked showing first to everyone who opens it, ✕ taking one away; and **Take my model off my page**. The same as `::outsidemodel`, `::outsidemotion <a name>` and `::outsideforget <a name>`. It needs "My character's model on my page" switched on. Since 11/16/2026 also **Your emotes** (copy a picture, give it a name, **Paste a picture as an emote**: your page's chat shows it for `:name:`; ✕ takes one away; made a PNG in memory, never a file read) and **Copy my station key** (for the outstation program, which transmits to the same page with the same key).
 
 ## What it sends, and only that
 

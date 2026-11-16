@@ -578,7 +578,7 @@ Too big for the game's fields, each sent over HTTP by the Outside plugin when th
 
 ## Emotes (11/14/2026)
 
-A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):
+A broadcaster's own emotes, uploaded from the outstation (settings ▸ emotes) or, since 11/16/2026, the Outside plugin's side tab (a picture pasted from the clipboard, sent as PNG), shown in that outstation's transmission chat only (never the aether), where `:name:` is the emote (relay/src/emotes.ts):
 
 - `GET /emotes/<channel>?code=<watch code>`: `{"emotes": [{"name", "id", "ext", "size", "at"}]}`, oldest first.
 - `GET /emotes/<channel>/<id>.<png|jpg|gif>`: the picture, straight from the CLIPS bucket (`emotes/<channel>/<id>.<ext>`), kept a year by browsers.
