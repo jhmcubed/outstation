@@ -1,13 +1,13 @@
 # The Plugin Hub submission (11/16/2026)
 
 What goes to runelite/plugin-hub for Outside's first version: the lean cut (`plugin/hub_cut.py`), merged into
-jhmcubed/outside-plugin's `main` as ca2b8f7 (jhmcubed/outside-plugin#1), checked to match the cut exactly.
+jhmcubed/outside-plugin's `main` as 0b90619 (jhmcubed/outside-plugin#1 and #2), checked to match the cut exactly.
 
 ## The file: `plugins/outside`
 
 ```
 repository=https://github.com/jhmcubed/outside-plugin.git
-commit=ca2b8f7f015af9fa13b6505034cd576e70febaa8
+commit=0b90619d2a45013494ee1f045b2ee1c78e0fd90a
 warning=This plugin submits your character's name and account hash when you make your page, your levels, kill counts, collection log slots, pets, clue counts, quests, diary tiers, combat and slayer tasks and valuable drops, and your equipment, inventory, looting bag, rune pouch, item charges, skills, vitals, quests, achievement diaries, combat achievements and slayer task, and your IP address, to the Outside relay, a server not controlled or verified by the RuneLite developers; your Outside page at outside.wiki shows them publicly.
 ```
 
