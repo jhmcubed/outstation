@@ -3041,6 +3041,65 @@ class Claims(Base):
         self.assertEqual(raw("GET", "/proof/" + late)[0], 404)
 
 
+class OwnPage(Base):
+    """A page's own key makes it friends only, and takes it down (11/16/2026, the permissions review: a player with only
+    the plugin has no outstation to set a watch code, and nobody but the keeper could take a page down)."""
+
+    def claim(self):
+        name = "o" + secrets.token_hex(5)
+        st, h, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                         {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        self.assertEqual(st, 200, out)
+        return name, json.loads(out)["key"]
+
+    def code(self, name, key, body):
+        st, h, out = raw("PUT", "/code/%s?key=%s" % (name, urllib.parse.quote(key)), json.dumps(body).encode(),
+                         {"Content-Type": "application/json"})
+        return st, json.loads(out) if out else None
+
+    async def test_friends_only_by_the_pages_own_key(self):
+        name, key = self.claim()
+        viewer = await Client().open("%s/watch/%s?code=" % (RELAY, name))
+        self.clients.append(viewer)
+        await next_of(viewer, "relay")
+        # (a wrong key, a bad code, the wrong method: refused, nothing changed)
+        self.assertEqual(self.code(name, "not-its-key", {"code": "friends1"})[0], 403)
+        self.assertEqual(self.code(name, key, {"code": "no"})[0], 400)
+        self.assertEqual(self.code(name, key, {"code": "has space"})[0], 400)
+        self.assertEqual(self.code(name, key, {})[0], 400)
+        self.assertEqual(raw("GET", "/code/" + name)[0], 405)
+        self.assertEqual(self.code("o" + secrets.token_hex(5), key, {"code": "friends1"})[0], 404)
+        # (set: the viewer without it let go, the game's read refused without it, a viewer with it let in)
+        self.assertEqual(self.code(name, key, {"code": "friends1"}), (200, {"code": True}))
+        self.assertEqual(await viewer.recv_close(timeout=5), ("close", 4003))
+        self.assertEqual(raw("GET", "/game/" + name)[0], 403)
+        friend = await Client().open("%s/watch/%s?code=friends1" % (RELAY, name))
+        self.clients.append(friend)
+        await next_of(friend, "relay")
+        # (off again: anyone)
+        self.assertEqual(self.code(name, key, {"code": ""}), (200, {"code": False}))
+        anyone = await Client().open("%s/watch/%s?code=" % (RELAY, name))
+        self.clients.append(anyone)
+        await next_of(anyone, "relay")
+
+    async def test_a_page_taken_down_by_its_own_key_frees_the_name(self):
+        name, key = self.claim()
+        g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, key))
+        self.clients.append(g)
+        self.assertEqual(raw("DELETE", "/channels/%s?key=not-its-key" % name)[0], 403)
+        self.assertEqual(raw("DELETE", "/channels/o%s?key=%s" % (secrets.token_hex(5), urllib.parse.quote(key)))[0], 404)
+        self.assertEqual(raw("DELETE", "/channels/%s?key=%s" % (name, urllib.parse.quote(key)))[0], 204)
+        self.assertEqual(await g.recv_close(timeout=5), ("close", 4003))
+        # (nobody's now: no proof, the name free to claim again, and the old key refused)
+        self.assertEqual(raw("GET", "/proof/" + name)[0], 404)
+        st, h, out = raw("POST", "/claim", json.dumps({"player": name}).encode(),
+                         {"Content-Type": "application/json", "x-test-from": secrets.token_hex(6)})
+        self.assertEqual((st, json.loads(out)["proof"]), (200, "unproven"))
+        again = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, name, key))
+        self.clients.append(again)
+        self.assertEqual(await again.recv_close(timeout=5), ("close", 4003))
+
+
 class Witnessing(Base):
     """(Proving's and TakingBack's helpers: a claimed page, its plugin, its proof and the hiscores' stand-in)"""
 

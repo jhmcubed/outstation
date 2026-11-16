@@ -17,4 +17,15 @@ public class AttachTest
 		assertEquals("https://relay.ghillie.workers.dev/dink/jhmcubed?key=k3y-k3y-k3y&from=plugin", a.dinkUrl());
 		assertEquals("https://relay.ghillie.workers.dev/proof/jhmcubed", a.proofUrl());
 	}
+
+	@Test
+	public void friendsOnlyAndTakingThePageDown()
+	{
+		Attach a = new Attach("wss://relay.ghillie.workers.dev", "jhmcubed", "k3y-k3y-k3y");
+		assertEquals("https://relay.ghillie.workers.dev/code/jhmcubed?key=k3y-k3y-k3y", a.codeUrl());
+		assertEquals("https://relay.ghillie.workers.dev/channels/jhmcubed?key=k3y-k3y-k3y", a.takeDownUrl());
+		assertEquals("https://relay.ghillie.workers.dev/game/jhmcubed", a.gameReadUrl());
+		assertEquals("https://outside.wiki/jhmcubed?code=a-b_c", a.page("a-b_c"));
+		assertEquals("https://outside.wiki/jhmcubed", a.page(""));
+	}
 }

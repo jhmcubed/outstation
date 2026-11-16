@@ -347,6 +347,7 @@ public class OutsidePlugin extends Plugin
 			readEmotes();
 			// hub:end talk
 			readProof();
+			readAccess();
 		}
 		// (a new key, or sending switched: start again; a part switched off goes as an empty field next tick)
 		if (e.getKey().equals("stationKey") || e.getKey().equals("send"))
@@ -1647,10 +1648,159 @@ public class OutsidePlugin extends Plugin
 				Attach a = key();
 				if (a != null)
 				{
-					net.runelite.client.util.LinkBrowser.browse("https://outside.wiki/" + java.net.URLEncoder.encode(a.getChannel(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+					net.runelite.client.util.LinkBrowser.browse(a.page(friendsOnly ? watchCode(false) : null));
 				}
 			}
+
+			@Override
+			public void friendsOnly(boolean on)
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				String code = on ? watchCode(true) : "";
+				JsonObject body = new JsonObject();
+				body.addProperty("code", code);
+				panel.accessStatus(on ? "making it friends only…" : "opening it to anyone…");
+				http.newCall(new Request.Builder().url(a.codeUrl())
+					.header("User-Agent", "outside-plugin/" + VERSION).put(RequestBody.create(JSON, gson.toJson(body))).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.accessStatus("the relay's out of reach: try again");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						try (Response res = r)
+						{
+							if (res.code() != 200)
+							{
+								panel.accessStatus("the relay said no (" + res.code() + ")");
+								return;
+							}
+							friendsOnly = on;
+							panel.access(on);
+							panel.accessStatus(on ? "friends only now: copy the friends' link for them" : "open to anyone now");
+						}
+					}
+				});
+			}
+
+			@Override
+			public void copyFriendsLink()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				try
+				{
+					java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(a.page(watchCode(true))), null);
+					panel.accessStatus("copied: give it only to friends");
+				}
+				catch (IllegalStateException | java.awt.HeadlessException ex)
+				{
+					panel.accessStatus("the clipboard's busy: try again");
+				}
+			}
+
+			@Override
+			public void takeDown()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					return;
+				}
+				panel.accessStatus("taking it down…");
+				http.newCall(new Request.Builder().url(a.takeDownUrl())
+					.header("User-Agent", "outside-plugin/" + VERSION).delete().build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.accessStatus("the relay's out of reach: nothing was taken down");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						try (Response res = r)
+						{
+							if (res.code() != 204)
+							{
+								panel.accessStatus("the relay said no (" + res.code() + "): nothing was taken down");
+								return;
+							}
+						}
+						// (the key's no good now: forgotten here too, and in the settings if it was this page's)
+						String gone = stationKey();
+						configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, "stationKey");
+						configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, "watchCode");
+						if (gone != null && gone.trim().equals(config.stationKey().trim()))
+						{
+							configManager.unsetConfiguration(OutsideConfig.GROUP, "stationKey");
+						}
+						friendsOnly = false;
+						close("page taken down");
+						panel.accessStatus(null);
+						panel.who(null);
+						say("your Outside page is taken down");
+					}
+				});
+			}
 		};
+	}
+
+	/** Whether this character's page is friends only, as last read (readAccess) or set here. */
+	private volatile boolean friendsOnly;
+
+	/** This character's watch code, kept with their account; made the first time it's asked for (make), else "". */
+	private String watchCode(boolean make)
+	{
+		String c = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "watchCode");
+		if ((c == null || c.isEmpty()) && make)
+		{
+			byte[] b = new byte[9];
+			new java.security.SecureRandom().nextBytes(b);
+			c = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "watchCode", c);
+		}
+		return c == null ? "" : c;
+	}
+
+	/** Who sees the page, read as anyone would: the kept game refused without a code is friends only (an outstation
+	 *  transmitting sets its own watch code, so this reads what's true now, not what was set here). */
+	private void readAccess()
+	{
+		Attach a = key();
+		if (a == null || panel == null)
+		{
+			return;
+		}
+		http.newCall(new Request.Builder().url(a.gameReadUrl()).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					friendsOnly = res.code() == 403;
+					panel.access(friendsOnly);
+				}
+			}
+		});
 	}
 
 	/** The station key for the character logged in: their own (kept with their account by "Make my Outside page"), else
@@ -1688,6 +1838,7 @@ public class OutsidePlugin extends Plugin
 			readEmotes();
 			// hub:end talk
 			readProof();
+			readAccess();
 		}
 		if (attach != null && (a == null || !a.getChannel().equals(attach.getChannel())))
 		{

@@ -2699,6 +2699,9 @@ class Relay:
             else:
                 await self.plain(writer, "200 OK", {"proof": "proven" if ch.proven else "unproven" if ch.unproven else "vouched"})
             return
+        if len(path) == 2 and ((path[0] == "channels" and method == "DELETE") or path[0] == "code") and not key:
+            await self.owner_route(reader, writer, method, headers, path[0], path[1], q)
+            return
         if settling:
             await self.settling_gone(reader, writer, headers)
             return
@@ -3695,6 +3698,59 @@ class Relay:
         writer.write(("HTTP/1.1 %s\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n"
                       "Cache-Control: public, max-age=60\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
                       % (status, len(data))).encode() + data)
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+
+    async def owner_route(self, reader, writer, method, headers, kind, name, q):
+        """A page taken down by its own key, and friends only from the plugin (11/16/2026, the permissions review; the
+        Worker's, the same):
+            DELETE /channels/<channel>?key=          204: everything it holds gone, its year too, the name free again
+            PUT    /code/<channel>?key=  {"code"}    {"code": true | false}: the watch code ("" for anyone), viewers
+                                                     whose code no longer matches let go; whoever set it last wins"""
+        ch = self.channels.get(name)
+        if kind == "code" and method != "PUT":
+            return await self.plain(writer, "405 Method Not Allowed", {"error": "PUT"})
+        if ch is None or ch.key is None:
+            return await self.plain(writer, "404 Not Found", {"error": "no outstation called that here"})
+        if not q.get("key") or not hmac.compare_digest(q.get("key").encode(), ch.key.encode()):
+            return await self.plain(writer, "403 Forbidden", {"error": "wrong key for this channel"})
+        if kind == "code":
+            try:
+                raw = await read_body(reader, headers, 1024)
+                code = json.loads(raw or b"{}").get("code")
+            except (ValueError, AttributeError, asyncio.IncompleteReadError):
+                code = None
+            if not isinstance(code, str) or (code != "" and not re.match(r"^[A-Za-z0-9_-]{4,64}$", code)):
+                return await self.plain(writer, "400 Bad Request", {"error": "a watch code: 4 to 64 letters, numbers, - or _ (or none)"})
+            ch.code = code
+            for v in list(ch.viewers) + list(ch.waiting) + list(ch.lookers):
+                if getattr(v, "code", "") != code:
+                    ch.viewers.discard(v)
+                    ch.lookers.discard(v)
+                    if v in ch.waiting:
+                        ch.waiting.remove(v)
+                    await v.close(4003, "the watch code changed")
+            ch.tell_viewers()
+            return await self.plain(writer, "200 OK", {"code": code != ""})
+        socks = [ch.sender, ch.sounder, ch.gamer] + list(ch.viewers) + list(ch.waiting) + list(ch.desks) \
+            + list(ch.lookers) + list(ch.provers.values())
+        for sock in socks:
+            if sock is not None:
+                try:
+                    await sock.close(4003, "this page was taken down")
+                except Exception:
+                    pass
+        folder = self.clip_folder_of(name)
+        if folder and os.path.isdir(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+        if self.records is not None:
+            self.records.delete_all(name)
+        if self.channels.get(name) is ch:
+            del self.channels[name]
+        self.log("taken down  %s  (by its own key)" % name)
+        writer.write(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
         try:
             await writer.drain()
         finally:

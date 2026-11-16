@@ -208,6 +208,26 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
 
+## A page's own key: friends only, and taking it down (11/16/2026)
+
+The permissions review: a player with only the plugin has no outstation to set a watch code, and only the keeper could
+take a page down. Both relays:
+
+    PUT    /code/<channel>?key=<key>   {"code": "" | 4 to 64 of A-Z a-z 0-9 - _}
+                  200 {"code": true | false}: the watch code ("" for anyone); viewers and lookers whose code no longer
+                  matches are let go (4003), and the page leaves (or comes back to) GET /channels and the feed.
+                  400 a bad code; 403 the wrong key; 404 nobody's channel; 405 not PUT
+    DELETE /channels/<channel>?key=<key>
+                  204: everything the channel holds goes (its key, game, keep, clips, emotes, chat, reports, summary,
+                  time on air, proof, its record and public year, its Directory row), every socket on it is closed
+                  (4003), and the name is free to claim again. 403 the wrong key; 404 nobody's channel
+
+- **Whoever set the code last wins.** An outstation transmitting sets its own watch code as it connects (above), so the
+  plugin reads which is true now (GET /game/<channel> without a code: 403 means friends only) rather than trusting what
+  it set.
+- The plugin keeps its watch code with the character's account (`watchCode`), made the first time friends only is
+  switched on; its side tab copies the friends' link, `outside.wiki/<channel>?code=<code>`.
+
 ## Claiming a name (11/15/2026)
 
 The Outside plugin's own channel, for a player who comes from the Plugin Hub with no outstation and no invite (Jace: the

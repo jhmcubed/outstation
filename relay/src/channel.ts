@@ -693,6 +693,8 @@ export class Channel extends DurableObject<Env> {
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
     if (role === "_keep") return this.kept(request, q, ip);
     if (role === "_emotes") return this.emotes(request, q, ip);
+    if (role === "_takedown") return this.takedown(request, q, ip);
+    if (role === "_code") return this.setCode(request, q, ip);
 
     // the client's version, then the key, so a refused socket never counts as the channel's, even for a moment
     // (a version turned away isn't a wrong key: it doesn't count towards the wrong-key limit). The game's v= is the
@@ -2272,6 +2274,57 @@ export class Channel extends DurableObject<Env> {
     await this.ctx.storage.put("emotes", list);
     this.tellClip({ emotes: list });
     return json(e);
+  }
+
+  /** DELETE /channels/<channel>?key= (index.ts; 11/16/2026, the permissions review: a player with only the plugin can
+   *  take their own page down): everything the channel holds goes, as taking it back does, and with it what taking it
+   *  back leaves for the keeper (its clips, chat, reports, summary, time on air, proof). The name is free again
+   *  (index.ts drops its row and its year). */
+  async takedown(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (request.method !== "DELETE") return new Response(null, { status: 405 });
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    for (const role of ["watch", "look"] as Role[]) {
+      for (const ws of this.sockets(role)) this.close(ws, 4003, "this page was taken down");
+    }
+    await this.revoke();
+    const clips = await this.ctx.storage.list<Clip>({ prefix: "clip:" });
+    if (clips.size) await this.dropClips([...clips.values()]);
+    await this.ctx.storage.deleteAll();
+    this.meta = { keyHash: null, code: "", cap: 0, chatId: 0, pollId: 0, nextWho: 0, seq: 0,
+                  hostNames: [], blocked: [], soundInfo: null, state: "open" };
+    this.chat = [];
+    this.poll = null;
+    this.reports = [];
+    this.guess = null;
+    this.wit = {};
+    this.cwit = {};
+    if (this.name) this.ctx.storage.put("name", this.name);
+    return new Response(null, { status: 204 });
+  }
+
+  /** PUT /code/<channel>?key= {"code"} (index.ts; 11/16/2026, the permissions review): friends only from the plugin, as
+   *  a transmitter's code sets it: a watch code ("" for anyone), viewers whose code no longer matches let go. Whoever
+   *  set it last wins: an outstation transmitting sets its own as it connects. Answers {"code": true | false}. */
+  async setCode(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (request.method !== "PUT") return new Response(null, { status: 405 });
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    let code: unknown;
+    try { code = ((await request.json()) as { code?: unknown }).code; } catch { code = undefined; }
+    if (typeof code !== "string" || code.length > 64 || (code !== "" && !/^[A-Za-z0-9_-]{4,64}$/.test(code))) {
+      return json({ error: "a watch code: 4 to 64 letters, numbers, - or _ (or none)" }, 400);
+    }
+    this.meta.code = code;
+    this.saveMeta();
+    for (const v of [...this.sockets("watch"), ...this.sockets("look")]) {
+      if ((this.att(v).code || "") !== code) this.close(v, 4003, "the watch code changed");
+    }
+    this.tellListing();
+    this.tellViewers();
+    return json({ code: code !== "" });
   }
 
   async revoke(): Promise<Response> {
