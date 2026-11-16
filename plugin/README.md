@@ -185,7 +185,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
   - `Sites.java`: the stars' landing sites by name (Shooting Star Info's: "Credits")
 <!-- hub:end globe -->
   - `OutsideConfig.java`: the settings
-- The relay's side: [`docs/protocol.md`](https://github.com/jhmcubed/outstation/blob/main/docs/protocol.md), "The snapshot" and "The game" (jhmcubed/outstation).
+- The relay's side: [`docs/protocol.md`](https://github.com/jhmcubed/outstation/blob/77d8e1df560fe2ac38ef3e14f4afd267e7ffad7c/docs/protocol.md), "The snapshot" and "The game" (jhmcubed/outstation).
 
 ## For the Hub's review
 
