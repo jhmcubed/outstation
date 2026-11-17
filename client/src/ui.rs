@@ -4971,6 +4971,23 @@ fn overlay(ctx: &egui::Context, id: egui::ViewportId, builder: egui::ViewportBui
     if RESTING.with(|r| r.borrow().get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(3))) {
         return;
     }
+    // (made hidden, and shown only once it has drawn two frames of its own: Windows put a new window on the screen
+    // before its first frame was drawn, its border there for a moment, each time one was made again after LINGER had
+    // let it go: 11/17/2026, Jace: "on the first time a visitor clicks on my stream, a transparent outline thing pops up
+    // for a split second... after waiting a certain amount of seconds, and then clicking a single time again, i see it
+    // happen again". A window not shown on the last pass is a new one, its count started over)
+    thread_local! {
+        static SHOWN: std::cell::RefCell<std::collections::HashMap<egui::ViewportId, (u64, u32)>> = Default::default();
+    }
+    let pass = ctx.cumulative_pass_nr();
+    let frames = SHOWN.with(|m| {
+        let mut m = m.borrow_mut();
+        let e = m.entry(id).or_insert((pass, 0));
+        e.1 = if e.0 + 1 >= pass && e.0 != pass { e.1.saturating_add(1) } else if e.0 == pass { e.1 } else { 0 };
+        e.0 = pass;
+        e.1
+    });
+    let builder = builder.with_visible(frames >= 2);
     // (Windows' frame off it at the very start of its first frame, before it's drawn and shown on the screen's next
     // refresh: taken off after, at the end of the window's frame, a new one's border and shadow had shown for that
     // moment; 11/07/2026, Jace: "when clicks appear on my screen i can sometimes see their border for a split second")
