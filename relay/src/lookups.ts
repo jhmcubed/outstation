@@ -6,7 +6,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { type Env } from "./channel";
-import { type Entry, Shelf, httpLookup, perMinute, pruned, want } from "./lookup";
+import { type Entry, Shelf, httpLookup, lookupHeaders, perMinute, pruned, want, womKeys, womUpdateUrl } from "./lookup";
 
 const PRUNE_EVERY = 86_400_000;
 
@@ -22,6 +22,20 @@ export class Lookups extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean).map((p) => { try { return decodeURIComponent(p); } catch { return ""; } });
+    // (the Directory's, never a page's: the Worker passes only /lookup/ and /icon/ here) Wise Old Man asked to update a
+    // player (lookup.ts, womUpdateUrl), its answer's status back; what was kept of them forgotten, so it's read anew
+    if (request.method === "POST" && parts[0] === "track" && parts[1] === "wom" && parts.length === 3) {
+      const at = womUpdateUrl(parts[2], this.env.LOOKUP_UPSTREAM || null);
+      if (!at) return new Response(null, { status: 400 });
+      let status = 0;
+      try {
+        const r = await fetch(at, { method: "POST", headers: lookupHeaders(at, "wom", this.env.WOM_API_KEY), signal: AbortSignal.timeout(15_000) });
+        status = r.status;
+        await r.body?.cancel();
+      } catch { status = 0; }
+      if (status >= 200 && status < 300) await this.ctx.storage.delete(womKeys(parts[2]).map((k) => "e:" + k));
+      return Response.json({ status });
+    }
     const q: Record<string, string> = {};
     for (const [k, v] of url.searchParams) if (!(k in q)) q[k] = v;
     const w = want(parts, this.env.LOOKUP_UPSTREAM || null, q);

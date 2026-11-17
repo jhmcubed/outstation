@@ -186,6 +186,21 @@ export function want(parts: string[], base?: string | null, q: Record<string, st
   return { source, key, url: under(HOSTS[source], base) + path, fresh, missFresh, json };
 }
 
+/** Wise Old Man's own update of a player (POST /players/<name>; 11/17/2026, Jace, for friends new to the game who
+ *  aren't on RuneProfile: "build all four"): it starts tracking them if nobody had asked it to, and takes the snapshot
+ *  their week's gains are read from. The address, or null for a name the game wouldn't allow; the Directory asks it
+ *  for the Array's own players, a day apart (index.ts, womDue). */
+export function womUpdateUrl(raw: string, base?: string | null): string | null {
+  const name = plainName(raw);
+  return name ? under(HOSTS.wom, base) + encodeURIComponent(name) : null;
+}
+
+/** The keys a fresh update makes stale: the player's own record and its week's gains, read again when next asked. */
+export function womKeys(raw: string): string[] {
+  const name = plainName(raw);
+  return name ? ["wom:" + name, "wom:" + name + "/gained?period=week"] : [];
+}
+
 function under(host: string, base?: string | null): string {
   if (!base) return host;
   return base.replace(/\/+$/, "") + "/" + host.split("://")[1].split("/").slice(1).join("/");
