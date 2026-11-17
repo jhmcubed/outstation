@@ -2242,19 +2242,28 @@ fn auto_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
 /// someone enters their code? we should have a first time portal setup process"): after attaching, before the main
 /// window, a step at a time, each one skippable and each one there again later (dink ▸, settings): welcome, Dink and
 /// Discord (Discord first, so it's kept as it is before Dink changes), Dink pointed at the portal, clips, and done.
+/// The first-time setup's parts, in order (11/17/2026, the review before v0.2.0: the Outside plugin, which had no step,
+/// and its station key, first; then the clips, which decide whether Dink and Discord are needed, before them).
+#[derive(Clone, Copy, PartialEq)]
+enum Part { Hello, Plugin, Clips, Dink, Discord, Done }
+
 fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
-    const STEPS: u8 = 5;
     let st = app.dink.lock().unwrap().clone();
     let mut s = app.settings.get();
     let before = serde_json::to_string(&s).unwrap_or_default();
+    let parts: &[Part] = if s.clips_mode() { &[Part::Hello, Part::Clips, Part::Dink, Part::Discord, Part::Done] }
+                         else { &[Part::Hello, Part::Plugin, Part::Clips, Part::Dink, Part::Discord, Part::Done] };
+    let steps = parts.len() as u8;
+    let step = step.min(steps - 1);
     let w = ui.available_width();
     ui.add_space(16.0);
     ui.label(RichText::new("⊂λ,ｍ⊙ ✼ the outstation").font(title_font(24.0)).color(LIME()));
-    ui.label(rich(&format!("first-time setup · {} of {}", step + 1, STEPS), 14.0, QUIET()));
+    ui.label(rich(&format!("first-time setup · {} of {}", step + 1, steps), 14.0, QUIET()));
     ui.add_space(10.0);
     let mut next: Option<Option<u8>> = None; // (Some(None): finished)
-    match step {
-        0 => {
+    let selfsave = s.replay_seconds > 0 && s.dink.auto_clip;
+    match parts[step as usize] {
+        Part::Hello => {
             if s.clips_mode() {
                 ui.label(rich("clips only", 18.0, LIME()));
                 ui.label(wrapped("no channel: nothing is ever sent anywhere but your own Discord, and only the clips you'd want there.", 16.0, TEXT(), w));
@@ -2263,32 +2272,29 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 ui.label(wrapped(&format!("your outstation opens on your Outside page: outside.wiki/{}", s.channel), 16.0, TEXT(), w));
             }
             ui.add_space(8.0);
-            ui.label(wrapped(if s.clips_mode() { "clips only: Dink, Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }
-                             else { "a few things before your first transmission: Dink, Discord for clips, the clips themselves, and the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }, 16.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "clips only: the clips themselves, Dink, Discord, then the Start menu. Each can be skipped, and each is there again later (clips ▸, dink ▸ and settings ▸)." }
+                             else { "a few things before your first transmission: the Outside plugin, the clips, Dink, Discord for clips, and the Start menu. Each can be skipped, and each is there again later (clips ▸, dink ▸ and settings ▸)." }, 16.0, GREY(), w));
         }
-        1 => {
-            ui.label(rich("Dink", 18.0, LIME()));
-            ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation when something big happens, so it knows when to save a clip. Without Dink, the clip key (Insert) still saves the last seconds; if you don't use Dink, skip this step.", 14.0, GREY(), w));
-            if !s.clips_mode() {
-                ui.label(wrapped("your field reports (levels, kills, drops…) go to your Outside page from Dink directly, with the Outside plugin's \"Copy my Dink address\": the outstation doesn't pass them on.", 14.0, QUIET(), w));
-            }
+        Part::Plugin => {
+            ui.label(rich("the Outside plugin", 18.0, LIME()));
+            ui.label(wrapped("the Outside plugin for RuneLite puts what you wear and carry, your stats, quests, bank and more on your Outside page, beside your transmission, each time you press Update my page in its side tab and once an hour while you play. In RuneLite: the Plugin Hub ▸ search \"Outside\" ▸ install. Skip this if you don't want it.", 14.0, GREY(), w));
             ui.add_space(6.0);
-            ui.label(rich("point Dink at the outstation too", 16.0, LIME()));
-            dink_address_ui(app, ui, &mut s, &st);
-        }
-        2 => {
-            ui.label(rich("Discord", 18.0, LIME()));
-            ui.label(wrapped("the clips that save themselves can go to a Discord channel of yours too, a few seconds after the moment, playing there. Dink's own posts stay as you have them in Dink. Skip this if you don't want clips in Discord.", 14.0, GREY(), w));
+            ui.label(rich("give it this outstation's key", 16.0, LIME()));
+            ui.label(wrapped("so it puts them on this outstation's page, not a page of its own: copy the key, then in RuneLite the Outside plugin's settings ▸ Advanced ▸ Station key, paste it. Its side tab then shows this page. (Don't press Make my Outside page there: this outstation's page is already yours.)", 14.0, GREY(), w));
+            ui.horizontal_wrapped(|ui| {
+                if button(ui, "copy my station key", true, None)
+                    .on_hover_text(tip("this outstation's key: give it to nobody else. It's in settings ▸ more too.")).clicked() {
+                    win::copy_text(&crate::settings::make_attach(&s.relay, &s.channel, &s.key));
+                    app.note("your station key is on the clipboard: paste it into the Outside plugin's settings ▸ Advanced");
+                }
+            });
             ui.add_space(6.0);
-            tick(ui, &mut s.dink.clips_discord, rich("send the clips to Discord", 16.0, GREY()));
-            if s.dink.clips_discord {
-                discord_webhook_ui(ui, &mut s);
-            }
+            ui.label(wrapped("who sees your page is set there too: its side tab ▸ More ▸ Who sees it (anyone, or friends only). The outstation follows it.", 14.0, QUIET(), w));
         }
-        3 => {
+        Part::Clips => {
             ui.label(rich("clips", 18.0, LIME()));
-            ui.label(wrapped(if s.clips_mode() { "the outstation keeps a tape: the last few seconds of RuneLite, always rolling, kept in memory and sent nowhere. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }
-                             else { "while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }, 14.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "the outstation keeps a tape: the last few seconds of RuneLite, always rolling, kept in memory and sent nowhere. The clip key (Insert) saves what just happened as a video, and with Dink (the next step) one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }
+                             else { "while you're transmitting, the outstation can keep a tape: the last few seconds of what it's sent, always rolling. The clip key (Insert) saves what just happened as a video, and with Dink (the next step) one saves itself when something big comes: a pet, a new collection log slot, a 99 or a big drop." }, 14.0, GREY(), w));
             let mut replay = s.replay_seconds.min(30);
             if bar(ui, "the tape", "s kept", 0, 30, 1, &mut replay, "how many of the last seconds the tape holds, always rolling, for a clip of what just happened (in memory only). 0 holds nothing.") {
                 s.replay_seconds = replay;
@@ -2298,9 +2304,6 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 if s.dink.auto_clip && !s.clips_mode() {
                     tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
                         .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
-                }
-                if s.dink.auto_clip && s.dink.clips_discord && !s.clip_webhook().is_empty() {
-                    ui.label(wrapped("and to your Discord (the step before)", 14.0, QUIET(), w));
                 }
                 // (11/07/2026, Jace: "make sure during the normal outstation set up process there is an option to click to
                 // keep clips posting/recording while dark": a line of its own, not tucked under the others)
@@ -2317,7 +2320,33 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             ui.label(wrapped(if s.clips_mode() { "afterwards, clips ▸ at the top of the window has them: the newest on this PC, to play, and these same switches." }
                              else { "afterwards, clips ▸ at the top of the window has them: the newest on this PC, and the recovered footage on your Outside page, to watch, file for good or take down. These same switches are there too." }, 14.0, QUIET(), w));
         }
-        _ => {
+        Part::Dink => {
+            ui.label(rich("Dink", 18.0, LIME()));
+            ui.label(wrapped("Dink (a RuneLite plugin, on the Plugin Hub) tells the outstation when something big happens, so it knows when to save a clip. Without Dink, the clip key (Insert) still saves the last seconds.", 14.0, GREY(), w));
+            if !selfsave {
+                ui.label(wrapped("clips that save themselves are off (the step before), so the outstation doesn't need Dink: skip this, or turn them on there.", 14.0, PINK(), w));
+            }
+            ui.add_space(6.0);
+            ui.label(rich("point Dink at the outstation", 16.0, LIME()));
+            dink_address_ui(app, ui, &mut s, &st);
+            if !s.clips_mode() {
+                ui.add_space(6.0);
+                ui.label(wrapped("your field reports (levels, kills, drops, pets…) go to your Outside page from Dink directly, not through the outstation: in RuneLite, the Outside plugin's side tab ▸ More ▸ Copy my Dink address, and that on a line of its own in Dink's Primary Webhook URLs too.", 14.0, QUIET(), w));
+            }
+        }
+        Part::Discord => {
+            ui.label(rich("Discord", 18.0, LIME()));
+            ui.label(wrapped("the clips that save themselves can go to a Discord channel of yours too, a few seconds after the moment, playing there. Dink's own posts stay as you have them in Dink. Skip this if you don't want clips in Discord.", 14.0, GREY(), w));
+            if !selfsave {
+                ui.label(wrapped("clips that save themselves are off (two steps back): nothing would go there till they're on.", 14.0, PINK(), w));
+            }
+            ui.add_space(6.0);
+            tick(ui, &mut s.dink.clips_discord, rich("send the clips to Discord", 16.0, GREY()));
+            if s.dink.clips_discord {
+                discord_webhook_ui(ui, &mut s);
+            }
+        }
+        Part::Done => {
             ui.label(rich("done", 18.0, LIME()));
             // (11/06/2026, Jace: the box and the line under it read as one, as if ticking it went live)
             let clips = s.clips_mode();
@@ -2349,7 +2378,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
     ui.add_space(14.0);
     ui.horizontal(|ui| {
         if step > 0 && button(ui, "◂ back", false, None).clicked() { next = Some(Some(step - 1)); }
-        if step + 1 < STEPS {
+        if step + 1 < steps {
             if button(ui, if step == 0 { "start" } else { "next ▸" }, false, None).clicked() { next = Some(Some(step + 1)); }
             if button(ui, "skip the setup", true, None).on_hover_text(tip("straight to the outstation: everything here is in dink ▸, clips ▸ and settings ▸, and settings ▸ more runs this again")).clicked() {
                 next = Some(None);
@@ -2800,7 +2829,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     let _ = rich;
     ui.add_space(10.0);
     ui.label(rich("this outstation is not attached to a channel yet.", 16.0, GREY()));
-    ui.label(rich(&format!("paste your station key (the code from the listening post: it starts {}).", settings::KEY_PREFIX), 16.0, GREY()));
+    ui.label(rich(&format!("paste your station key (from the listening post, or a friend's invite: it starts {}).", settings::KEY_PREFIX), 16.0, GREY()));
     ui.add_space(8.0);
     ui.add(egui::TextEdit::multiline(&mut app.attach_code).desired_rows(3).desired_width(f32::INFINITY).font(body(14.0)));
     ui.add_space(6.0);
@@ -2849,7 +2878,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(14.0);
     ui.label(rich("only here for the clips?", 16.0, LIME()));
     ui.label(wrapped("no channel and no key needed: the outstation keeps a tape of RuneLite (sent nowhere), and when Dink tells of something big (a pet, a new collection log slot, a 99, a big drop) it saves the clip to this PC and sends it to your Discord under Dink's post.", 14.0, GREY(), ui.available_width()));
-    if button(ui, "clips only ▸", false, None).on_hover_text(tip("a short setup (Dink, Discord, the clips), then the outstation as a recorder. A channel can be added any time.")).clicked() {
+    if button(ui, "clips only ▸", false, None).on_hover_text(tip("a short setup (the clips, Dink, Discord), then the outstation as a recorder. A channel can be added any time.")).clicked() {
         let _ = app.settings.update(|s| {
             s.clips_only = true;
             s.tape_dark = true;
