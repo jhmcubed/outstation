@@ -229,12 +229,11 @@ ADDRESSES = {
     "https://api.github.com/repos/jhmcubed/outstation/releases/latest": "is there a newer version? (check_updates)",
     "https://relay.ghillie.workers.dev": "the listening post's relay: where asking for a portal goes (ask.rs HOME_RELAY), and the "
                                          "friends list's open portals before you're attached",
-    "https://ghillie.wiki": "named in the Discord user agent Dink's posts are forwarded with; ghillie.wiki's pages opened "
-                            "in your browser (win.rs open_page)",
+    "https://ghillie.wiki": "named in the Discord user agent the clips are posted with; the outstation's page in an "
+                            "invite's link (invites.rs); ghillie.wiki's pages opened in your browser (win.rs open_page)",
     "https://outside.wiki/": "the Outside pages (since 11/16/2026, when they moved from ghillie.wiki): the one the friends "
                              "list opens in your browser when you click a name (friendlist.rs), your own as the keeper "
-                             "issues a key (keeper.rs), and your year's view on your own page (record.rs YEAR_PAGE, "
-                             "\"open my year\": its record key in the address's fragment, which the browser never sends) "
+                             "issues a key (keeper.rs) "
                              "(win.rs open_page)",
     "https://github.com/jhmcubed/outstation/issues/new": "the repository's \"Something went wrong\" form, opened in your "
                                                        "browser from \"report an anomaly\" (report.rs, win.rs open_page)",

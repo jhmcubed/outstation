@@ -11,7 +11,7 @@ the Worker's half is true now.
 
 | | address | who |
 |---|---|---|
-| transmit | `/transmit/<channel>?key=<key>&code=<watch code>` | the capture |
+| transmit | `/transmit/<channel>?key=<key>` (`&code=<watch code>` from an outstation before 11/17/2026: a non-empty one sets the page's; an empty one is ignored, since the plugin owns it, `PUT /code`) | the capture |
 | sound | `/sound/<channel>?key=<key>` | the sound |
 | desk | `/desk/<channel>?key=<key>&name=<your name in the chat>` | the chat window (several may be open) |
 | watch | `/watch/<channel>?code=<watch code>` | a viewer (Outside) |
@@ -227,15 +227,19 @@ take a page down. Both relays:
     PUT    /code/<channel>?key=<key>   {"code": "" | 4 to 64 of A-Z a-z 0-9 - _}
                   200 {"code": true | false}: the watch code ("" for anyone); viewers and lookers whose code no longer
                   matches are let go (4003), and the page leaves (or comes back to) GET /channels and the feed.
-                  400 a bad code; 403 the wrong key; 404 nobody's channel; 405 not PUT
+                  400 a bad code; 403 the wrong key; 404 nobody's channel; 405 neither PUT nor GET
+    GET    /code/<channel>?key=<key>   (11/17/2026)
+                  200 {"code": "<the watch code>"} ("" for anyone): the owner reads it; the outstation does, once a
+                  minute while attached, for its monitor, clips and emotes. 403 the wrong key; 404 nobody's channel
     DELETE /channels/<channel>?key=<key>
                   204: everything the channel holds goes (its key, game, keep, clips, emotes, chat, reports, summary,
                   time on air, proof, its record and public year, its Directory row), every socket on it is closed
                   (4003), and the name is free to claim again. 403 the wrong key; 404 nobody's channel
 
-- **Whoever set the code last wins.** An outstation transmitting sets its own watch code as it connects (above), so the
-  plugin reads which is true now (GET /game/<channel> without a code: 403 means friends only) rather than trusting what
-  it set.
+- **The plugin owns the code** (11/17/2026, Jace: "the who-sees-it fix"). An outstation no longer keeps one: it reads the
+  page's with GET and transmits with none, and a transmitter's empty code leaves the page's as it is (one from an older
+  outstation that has a code of its own still sets it, never opening a page). The plugin still reads which is true now
+  (GET /game/<channel> without a code: 403 means friends only) rather than trusting what it set.
 - The plugin keeps its watch code with the character's account (`watchCode`), made the first time friends only is
   switched on; its side tab copies the friends' link, `outside.wiki/<channel>?code=<code>`.
 
@@ -576,7 +580,7 @@ channel.ts's `takeActivity`; relay-py's `game_activity` and `Channel.take_activi
   lookers, `GET /game`, the Array's events, the aether or the keeper's list; the channel's own desks get it, and `where`, only
   as `{"mine"}` (below, "Your year").
 
-**The exact path** (11/10/2026, Jace: "your year" records the exact tile, privately; `docs/record.md`, "The exact
+**The exact path** (no longer sent since 11/17/2026: the plugin keeps it in its own record, the outstation no longer keeps a year; what follows is how the relay still handles one from an older plugin) (11/10/2026, Jace: "your year" records the exact tile, privately; `docs/record.md`, "The exact
 path"): with the plugin's "Record my exact path for my year" on (off to begin with, its own warning), the tile the
 player's on goes as `{"game": {"here": {"x", "y", "plane", "world"}}}`, at once (not two minutes behind), when it
 changes, at most one every 4 s while they move and once when they stop; placed as following places it (at sea, the

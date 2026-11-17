@@ -109,6 +109,11 @@ The local files are **plain JSON, not encrypted**: they're the player's own, on 
 
 ## The exact path
 
+(11/17/2026, Jace: "plugin owns the year": the outstation no longer keeps a year, so the plugin no longer sends the exact
+path to the relay; it stays in the plugin's record on the PC. What follows is how it went from 11/10 to 11/17/2026, and
+where this page speaks of the app (client/src/record.rs, recordfmt.rs) recording, that's history: the plugin's Record
+and Track keep the year now.)
+
 With the Outside plugin's "Record my exact path for my year" on (off to begin with, behind its own warning; the plugin's
 `Track`), the plugin sends `{"game": {"here": {"x", "y", "plane", "world"}}}`:
 

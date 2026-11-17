@@ -269,8 +269,7 @@ public interface OutsideConfig extends Config
 			+ " the map about 128 tiles a side, two minutes behind), what you're doing, your levels, kills, pets, log"
 			+ " slots, clues and big drops, and with \"Record my exact path\" on, the tiles you walk. Nothing of it leaves"
 			+ " this PC unless the switch below is on. Never in the Wilderness, a PvP area, or on a PvP or Deadman world."
-			+ " Kept in RuneLite's folder, outside/record. The outstation app has a switch of its own for the same record;"
-			+ " with the encrypted copy on in both, the two join on your page.",
+			+ " Kept in RuneLite's folder, outside/record.",
 		position = 10
 	)
 	default boolean year()

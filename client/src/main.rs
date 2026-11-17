@@ -37,8 +37,6 @@ mod invites;
 mod keeper;
 mod net;
 mod notify;
-mod record;
-mod recordfmt;
 mod report;
 mod settings;
 mod shortcut;
@@ -127,7 +125,6 @@ fn main() {
     let snd = sound::start(shared.clone());
     let dk = dink::start(shared.clone());
     autolive::start(shared.clone());
-    record::start(shared.clone());
     whosees::start(shared.clone());
     stuck::watch();
     stuck::begin("opening the window");
