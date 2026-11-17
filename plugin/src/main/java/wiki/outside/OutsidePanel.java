@@ -259,10 +259,6 @@ public class OutsidePanel extends PluginPanel
 		page.add(wide(button("Take my model off my page", hooks::removeModel)));
 		page.add(Box.createVerticalStrut(14));
 		// hub:end model
-		// hub:only page.add(wide(button("Refresh", hooks::refresh)));
-		// hub:only status.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		// hub:only page.add(left(status));
-		// hub:only page.add(Box.createVerticalStrut(14));
 		// hub:cut year
 		// (11/15/2026: your year, kept by this plugin; docs/record.md)
 		page.add(left(heading("Your year")));
