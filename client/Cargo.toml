@@ -16,6 +16,8 @@ windows = { version = "0.62", features = [
   "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Storage_Xps", "Win32_System_Console", "Win32_System_Time",
   "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_SystemInformation", "Win32_UI_Shell",
   # the Start menu shortcut's id and friends' notifications (shortcut.rs, notify.rs; 11/06/2026)
+  # the windows over the game (overlay.rs, 11/17/2026): the program's own handle for their window class
+  "Win32_System_LibraryLoader",
   "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage", "Win32_System_Com_StructuredStorage",
   "Win32_System_Variant", "Foundation", "Data_Xml_Dom", "UI_Notifications",
   # the capture's own copy texture, kept from frame to frame (capture.rs, read_shrunk; 11/07/2026)

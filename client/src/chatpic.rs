@@ -36,17 +36,18 @@ pub struct Plan {
 
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
 
-/// what was drawn last: what it was drawn for, and the drawing
-struct Drawn {
-    key: (Vec<(String, String)>, i32, i32, i32),
-    w: i32,
-    h: i32,
+/// what was drawn last: what it was drawn for, and the drawing (the windows over the game draw their chat with it too,
+/// overlay.rs)
+pub(crate) struct Drawn {
+    pub(crate) key: (Vec<(String, String)>, i32, i32, i32),
+    pub(crate) w: i32,
+    pub(crate) h: i32,
     /// how much of each pixel the rim, a name and the words cover (0–255)
-    rim: Vec<u8>,
-    name: Vec<u8>,
-    words: Vec<u8>,
+    pub(crate) rim: Vec<u8>,
+    pub(crate) name: Vec<u8>,
+    pub(crate) words: Vec<u8>,
     /// each line's rows: its first and last, and which line it is
-    rows: Vec<(i32, i32, usize)>,
+    pub(crate) rows: Vec<(i32, i32, usize)>,
 }
 
 static DRAWN: Mutex<Option<Drawn>> = Mutex::new(None);
@@ -56,7 +57,7 @@ pub fn set(p: Option<Plan>) {
     *PLAN.lock().unwrap() = p;
 }
 
-const WORDS_RGB: [u8; 3] = [0xf0, 0xf0, 0xf0];
+pub(crate) const WORDS_RGB: [u8; 3] = [0xf0, 0xf0, 0xf0];
 
 /// The chat drawn into a frame, if there's any to draw.
 pub fn onto(img: &mut Image) {
@@ -142,18 +143,24 @@ fn rows_of(name: &str, text: &str, room: i32, measure: &dyn Fn(&str) -> i32) -> 
     rows
 }
 
+/// The chat's font for this program only, from the copy built into it, taken in once (GDI's "RuneScape Chat '07").
 #[cfg(windows)]
-fn draw(lines: &[Line], bw: i32, bh: i32, px: i32, sc: f32, key: (Vec<(String, String)>, i32, i32, i32)) -> Option<Drawn> {
-    use windows::Win32::Foundation::{COLORREF, SIZE};
-    use windows::Win32::Graphics::Gdi::*;
-    use windows::core::w;
+pub(crate) fn chat_font() {
+    use windows::Win32::Graphics::Gdi::AddFontMemResourceEx;
     static FONT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     FONT.get_or_init(|| unsafe {
-        // the chat's font for this program only, from the copy built into it
         let bytes: &'static [u8] = include_bytes!("../assets/fonts/runescape-chat.ttf");
         let n = 0u32;
         let _ = AddFontMemResourceEx(bytes.as_ptr() as *const _, bytes.len() as u32, None, &n);
     });
+}
+
+#[cfg(windows)]
+pub(crate) fn draw(lines: &[Line], bw: i32, bh: i32, px: i32, sc: f32, key: (Vec<(String, String)>, i32, i32, i32)) -> Option<Drawn> {
+    use windows::Win32::Foundation::{COLORREF, SIZE};
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::core::w;
+    chat_font();
     unsafe {
         let dc = CreateCompatibleDC(None);
         if dc.is_invalid() {
@@ -247,7 +254,7 @@ fn draw(lines: &[Line], bw: i32, bh: i32, px: i32, sc: f32, key: (Vec<(String, S
 }
 
 #[cfg(not(windows))]
-fn draw(_: &[Line], _: i32, _: i32, _: i32, _: f32, _: (Vec<(String, String)>, i32, i32, i32)) -> Option<Drawn> {
+pub(crate) fn draw(_: &[Line], _: i32, _: i32, _: i32, _: f32, _: (Vec<(String, String)>, i32, i32, i32)) -> Option<Drawn> {
     None
 }
 

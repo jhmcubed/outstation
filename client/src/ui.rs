@@ -276,17 +276,14 @@ pub struct App {
     guess_form: Option<(String, String)>,
     banned: Vec<(i64, String)>,
     over: Vec<OverLine>,
-    /// when the last ping and ✼ came: their windows stay a few seconds after (LINGER), so a burst makes one window
     /// something came that flashes the taskbar button (once, after what came is read: drain)
     flash_wanted: bool,
     /// the aether: one room for every outstation and visitor (aether.rs), joined when its tab's first opened
     aether: crate::aether::Aether,
     /// the Outside plugin (RuneLite) connected to this channel, as the relay last said (None: not said yet)
     plugin_on: Option<bool>,
-    pings_last: Option<Instant>,
     /// the moving box put where the chat sits, once as moving starts (it's dragged from there)
     moving_placed: bool,
-    stars_last: Option<Instant>,
     history_until: Instant,
     moving_chat: bool,
     zoom: f32,
@@ -523,7 +520,7 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -710,7 +707,6 @@ impl App {
             if self.settings.get().signals && self.stars.len() < 60 {
                 let who = sg.get("who").and_then(|x| x.as_u64()).unwrap_or(0) as f32;
                 let x = 0.25 + ((who * 0.618 + self.signals as f32 * 0.137) % 1.0) * 0.5;
-                self.stars_last = Some(Instant::now());
                 self.stars.push(Star { at: Instant::now(), x, name: sg.get("name").and_then(|x| x.as_str()).unwrap_or("").into() });
             }
         } else if let Some(g) = m.get("guess") {
@@ -734,7 +730,6 @@ impl App {
             if self.settings.get().pings {
                 if let Some((l, t, r, b)) = frame_rect(&self.settings.get()) {
                     let (x, y) = (p.get("x").and_then(|x| x.as_f64()).unwrap_or(0.5), p.get("y").and_then(|x| x.as_f64()).unwrap_or(0.5));
-                    self.pings_last = Some(Instant::now());
                     self.pings.push(Ping { at: Instant::now(), x: (l as f64 + (r - l) as f64 * x) as f32,
                                            y: (t as f64 + (b - t) as f64 * y) as f32, name });
                 }
@@ -3296,8 +3291,8 @@ impl eframe::App for App {
             ctx.set_zoom_factor(scale);
         }
         // the pings: PING_S each; a ✼ about 1.3 s; a line over the game the settings' time, then fading out
-        self.pings.retain(|p| p.at.elapsed().as_secs_f32() < PING_S);
-        self.stars.retain(|p| p.at.elapsed() < Duration::from_millis(1300));
+        self.pings.retain(|p| p.at.elapsed().as_secs_f32() < crate::overlay::PING_S);
+        self.stars.retain(|p| p.at.elapsed().as_secs_f32() < crate::overlay::STAR_S);
         let fade = self.settings.get().game_chat_fade;
         if fade > 0 {
             self.over.retain(|l| over_alpha(l.at.elapsed().as_secs_f32(), fade) > 0.0);
@@ -3305,13 +3300,13 @@ impl eframe::App for App {
         let fading = fade > 0 && self.over.iter().any(|l| l.at.elapsed().as_secs_f32() >= fade as f32);
         crate::stuck::at("the frame: the chat in the picture (RuneLite's window looked for)");
         self.chat_in_picture(&ctx);
+        // (the pings and ✼s are drawn by the windows over the game on their own thread, at the screen's pace (overlay.rs):
+        // this window looks again only to let them go)
         let busy = !self.pings.is_empty() || !self.stars.is_empty() || fading;
         // (hidden in the tray with nothing over the game: a look twice a second is plenty, since anything that comes
         // in wakes the window at once; 11/07/2026)
         let resting = self.hidden && self.over.is_empty() && !self.moving_chat && !self.editing_masks;
-        // (a ping is drawn every frame the screen shows, so it moves smoothly: 11/14/2026)
-        let pinging = !self.pings.is_empty();
-        ctx.request_repaint_after(Duration::from_millis(if pinging { 8 } else if busy { 30 } else if resting { 500 } else { 110 }));
+        ctx.request_repaint_after(Duration::from_millis(if busy { 100 } else if resting { 500 } else { 110 }));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -4558,36 +4553,28 @@ impl App {
         });
     }
 
-    /// The chat over the game: the newest lines over RuneLite (its top-left corner, or where it was moved), in a
-    /// see-through window clicks pass through; "move it" makes it a box to drag, "done" or Enter keeps it there.
+    /// The chat over the game: the newest lines over RuneLite (its top-left corner, or where it was moved), drawn by the
+    /// windows over the game (overlay.rs, `chat_scene`); "move it" makes it a box to drag here, an egui window (it's a
+    /// box he's asked for), "done" or Enter keeps it there.
     fn over_ui(&mut self, ctx: &egui::Context) {
         let s = self.settings.get();
-        // (a size just changed in the settings: two lines to show how big, for a few seconds; 11/07/2026, Jace:
-        // "there is no indicator of the size of the actual text")
-        let sample = self.panel.as_ref().and_then(|p| p.sample_chat).is_some_and(|at| at.elapsed() < Duration::from_secs(4));
-        if !s.game_chat && !self.moving_chat && !sample {
+        if !self.moving_chat {
+            self.moving_placed = false;
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&s) else { return };
-        if self.over.is_empty() && !self.moving_chat && !sample {
-            return;
-        }
         let ppp = ctx.pixels_per_point();
         let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
-        let moving = self.moving_chat;
         let mut builder = egui::ViewportBuilder::default().with_title("outstation ✼ chat over the game").with_decorations(false)
-            .with_transparent(true).with_always_on_top().with_mouse_passthrough(!moving).with_taskbar(false)
+            .with_transparent(true).with_always_on_top().with_taskbar(false)
             .with_resizable(false).with_inner_size(Vec2::new(wide, tall));
-        if !moving {
-            builder = builder.with_position(egui::pos2(x / ppp, y / ppp)).with_active(false);
-            self.moving_placed = false;
-        } else if !self.moving_placed {
+        if !self.moving_placed {
             // (where the chat sits, as moving starts: made new, the box had come up at the screen's corner)
             builder = builder.with_position(egui::pos2(x / ppp, y / ppp));
             self.moving_placed = true;
         }
         let size = s.game_chat_size.clamp(10.0, 48.0);
-        let lines: Vec<(f32, String, String, bool)> = if self.over.is_empty() && (sample || moving) {
+        let lines: Vec<(f32, String, String, bool)> = if self.over.is_empty() {
             sample_lines(&s).into_iter().map(|(n, w, h)| (0.0, n, w, h)).collect()
         } else {
             self.over.iter().map(|o| (o.at.elapsed().as_secs_f32(), o.name.clone(), o.text.clone(), o.host)).collect()
@@ -4599,40 +4586,64 @@ impl App {
         overlay(ctx, id, builder, |ui, _| {
             let rect = ui.max_rect();
             let p = ui.painter();
-            if moving {
-                p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
-                p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
-                // (the words at the top, and the lines at the bottom as they'll be, at their size)
-                p.text(egui::pos2(rect.center().x, rect.top() + 18.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
-                p.text(egui::pos2(rect.center().x, rect.top() + 38.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
-                draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 84.0);
-                let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
-                if resp.drag_started() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-                // its own "done" (11/07/2026: over RuneLite and above everything, it could cover the window's own)
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 62.0), Vec2::new(90.0, 28.0)))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)));
-                if button(&mut child, "done", false, Some(true)).clicked() { done = true; }
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) { done = true; }
-                if let Some(outer) = ui.input(|i| i.viewport().outer_rect) {
-                    put = Some((outer.min.x * ppp, outer.min.y * ppp));
-                }
-                return;
+            p.rect_filled(rect.shrink(1.0), 0.0, Color32::from_rgb(0x0b, 0x0f, 0x06));
+            p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, LIME()), egui::StrokeKind::Inside);
+            // (the words at the top, and the lines at the bottom as they'll be, at their size)
+            p.text(egui::pos2(rect.center().x, rect.top() + 18.0), egui::Align2::CENTER_CENTER, "drag the chat where you want it", body(18.0), LIME());
+            p.text(egui::pos2(rect.center().x, rect.top() + 38.0), egui::Align2::CENTER_CENTER, "Enter, or \"done\", to keep it there", body(14.0), GREY());
+            draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 84.0);
+            let resp = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
+            if resp.drag_started() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
-            draw_over_lines(ui, rect, &lines, size, fade, rect.top() + 10.0);
-            crate::cursor::follow(ui.ctx(), crate::cursor::still());
+            // its own "done" (11/07/2026: over RuneLite and above everything, it could cover the window's own)
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 62.0), Vec2::new(90.0, 28.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)));
+            if button(&mut child, "done", false, Some(true)).clicked() { done = true; }
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) { done = true; }
+            if let Some(outer) = ui.input(|i| i.viewport().outer_rect) {
+                put = Some((outer.min.x * ppp, outer.min.y * ppp));
+            }
         });
-        if moving {
-            if let Some((px, py)) = put {
-                let fx = ((px - l as f32) / (r - l).max(1) as f32).clamp(0.0, 0.98);
-                let fy = ((py - t as f32) / (b - t).max(1) as f32).clamp(0.0, 0.98);
-                if s.game_chat_at.map_or(true, |a| (a[0] as f32 - fx).abs() > 0.001 || (a[1] as f32 - fy).abs() > 0.001) {
-                    let _ = self.settings.update(|x| x.game_chat_at = Some([(fx as f64 * 1e4).round() / 1e4, (fy as f64 * 1e4).round() / 1e4]));
-                }
+        if let Some((px, py)) = put {
+            let fx = ((px - l as f32) / (r - l).max(1) as f32).clamp(0.0, 0.98);
+            let fy = ((py - t as f32) / (b - t).max(1) as f32).clamp(0.0, 0.98);
+            if s.game_chat_at.map_or(true, |a| (a[0] as f32 - fx).abs() > 0.001 || (a[1] as f32 - fy).abs() > 0.001) {
+                let _ = self.settings.update(|x| x.game_chat_at = Some([(fx as f64 * 1e4).round() / 1e4, (fy as f64 * 1e4).round() / 1e4]));
             }
-            if done { self.moving_chat = false; }
         }
+        if done { self.moving_chat = false; }
+    }
+
+    /// The chat over the game as the windows over the game draw it (overlay.rs): where it sits, how big, its lines (or,
+    /// a size just changed in the settings, two lines to show how big for a few seconds; 11/07/2026, Jace: "there is no
+    /// indicator of the size of the actual text"). None while it's off, being moved, or empty.
+    fn chat_scene(&self, ppp: f32) -> Option<crate::overlay::Chat> {
+        let s = self.settings.get();
+        let sample = self.panel.as_ref().and_then(|p| p.sample_chat).is_some_and(|at| at.elapsed() < Duration::from_secs(4));
+        if self.moving_chat || (!s.game_chat && !sample) {
+            return None;
+        }
+        let (l, t, r, b) = frame_rect(&s)?;
+        let lines: Vec<crate::overlay::ChatLine> = if self.over.is_empty() {
+            if !sample {
+                return None;
+            }
+            sample_lines(&s).into_iter().map(|(name, text, host)| {
+                let c = if host { LIME() } else { CYAN() };
+                crate::overlay::ChatLine { at: None, name, text, rgb: [c.r(), c.g(), c.b()] }
+            }).collect()
+        } else {
+            self.over.iter().map(|o| {
+                let c = if o.host { LIME() } else { CYAN() };
+                crate::overlay::ChatLine { at: Some(o.at), name: o.name.clone(), text: o.text.clone(), rgb: [c.r(), c.g(), c.b()] }
+            }).collect()
+        };
+        let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
+        Some(crate::overlay::Chat {
+            x: x.round() as i32, y: y.round() as i32, w: (wide * ppp).round() as i32, h: (tall * ppp).round() as i32,
+            px: (s.game_chat_size.clamp(10.0, 48.0) * ppp).round() as i32, sc: ppp, fade: s.game_chat_fade, lines,
+        })
     }
 
     /// Drawing your own masks, in a window laid over the game: drag on the game to cover a part of it, drag a box to
@@ -4738,39 +4749,6 @@ impl App {
         }
     }
 
-    /// Each ✼ a viewer sends, rising over RuneLite with their name (as many as they like), in one see-through window
-    /// over the game that clicks pass through.
-    fn stars_ui(&mut self, ctx: &egui::Context) {
-        if self.stars.is_empty() && !self.stars_last.is_some_and(|t| t.elapsed() < LINGER) && !self.overlays_held() {
-            return;
-        }
-        let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
-        let ppp = ctx.pixels_per_point();
-        let (w, h) = ((r - l) as f32 / ppp, (b - t) as f32 / ppp);
-        let builder = egui::ViewportBuilder::default().with_title("outstation ✼ signals").with_decorations(false)
-            .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
-            .with_resizable(false).with_active(false).with_position(egui::pos2(l as f32 / ppp, t as f32 / ppp))
-            .with_inner_size(Vec2::new(w, h));
-        let stars: Vec<(f32, f32, String)> = self.stars.iter().map(|s| (s.at.elapsed().as_secs_f32(), s.x, s.name.clone())).collect();
-        overlay(ctx, egui::ViewportId::from_hash_of("signals"), builder, |ui, _| {
-            let rect = ui.max_rect();
-            let p = ui.painter();
-            for (age, x, name) in &stars {
-                let k = (age / 1.2).min(1.0);
-                let step = (k * 8.0).floor() / 8.0; // (in steps, the dither's way, not a glide)
-                let at = egui::pos2(rect.left() + x * rect.width(), rect.top() + rect.height() * (0.78 - 0.45 * step));
-                let colour = if step < 0.6 { LIME() } else if step < 0.9 { theme::pal().lime_dim } else { Color32::from_rgb(0x22, 0x33, 0x0a) };
-                let big = 34.0 + 10.0 * (1.0 - step);
-                p.text(at + Vec2::new(2.0, 2.0), egui::Align2::CENTER_CENTER, "✼", symbol_font(big), Color32::from_rgb(10, 10, 10));
-                p.text(at, egui::Align2::CENTER_CENTER, "✼", symbol_font(big), colour);
-                if !name.is_empty() && step < 0.7 {
-                    p.text(at + Vec2::new(1.0, big * 0.6 + 1.0), egui::Align2::CENTER_TOP, name, body(16.0), Color32::from_rgb(10, 10, 10));
-                    p.text(at + Vec2::new(0.0, big * 0.6), egui::Align2::CENTER_TOP, name, body(16.0), colour);
-                }
-            }
-        });
-    }
-
     /// The chat in the picture (11/07/2026): what's over the game, told to the capture to draw into each frame
     /// (chatpic.rs), where it sits and as big; nothing while it's off or there's no chat.
     fn chat_in_picture(&self, ctx: &egui::Context) {
@@ -4794,127 +4772,34 @@ impl App {
         }));
     }
 
-    /// Whether the pings' and the ✼s' windows are kept over the game whether or not there's anything in them: while
-    /// transmitting, when observers can send them.
-    fn overlays_held(&self) -> bool {
-        let s = self.settings.get();
-        s.on_air && s.attached()
-    }
-
-    /// A ring that grows over the spot, with the viewer's name, in a see-through window that clicks pass through.
+    /// What's over the game (the pings, the ✼s, the chat), told to the windows that draw it there (overlay.rs): windows
+    /// of Windows' own layered kind, shown only as what's drawn in them, never a frame or an edge (11/17/2026, Jace: "I do
+    /// not want to see any transparent windows pop up"); then the two that are boxes he's asked for, moving the chat and
+    /// the redactions, egui's windows as before.
     fn pings_ui(&mut self, ctx: &egui::Context) {
         crate::stuck::at("the windows over RuneLite (pings, ✼, the chat over the game, redactions)");
-        self.over_ui(ctx);
-        self.stars_ui(ctx);
-        self.masks_ui(ctx);
-        // (11/07/2026: all of them in one window over the game, as the ✼s are; a window for each ping had Windows
-        // making and dropping windows several a second, and one it wouldn't give stopped the outstation)
-        // (kept while transmitting, empty when there's nothing in it, rather than made again on a click after LINGER had let
-        // it go: a window made new showed its border for a moment before its first frame (11/17/2026, Jace: "on the first
-        // time a visitor clicks on my stream, a transparent outline thing pops up for a split second... after waiting a
-        // certain amount of seconds... i see it happen again"). Made hidden and shown after, it was never shown at all
-        // (Jace: "i don't see the pings at all now"))
-        if self.pings.is_empty() && !self.pings_last.is_some_and(|t| t.elapsed() < LINGER) && !self.overlays_held() {
-            return;
-        }
-        let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
-        const WIDE: f32 = 520.0;
-        const TALL: f32 = 160.0;
+        let s = self.settings.get();
         let ppp = ctx.pixels_per_point();
-        // (the game's area, with room round it for a ring and its name at the edge)
-        let origin = egui::pos2(l as f32 / ppp - WIDE / 2.0, t as f32 / ppp - TALL / 2.0);
-        let size = Vec2::new((r - l) as f32 / ppp + WIDE, (b - t) as f32 / ppp + TALL);
-        let builder = egui::ViewportBuilder::default().with_title("outstation ✼ pings").with_decorations(false)
-            .with_transparent(true).with_always_on_top().with_mouse_passthrough(true).with_taskbar(false)
-            .with_resizable(false).with_active(false).with_position(origin).with_inner_size(size);
-        let pings: Vec<(f32, egui::Pos2, String)> = self.pings.iter()
-            .map(|p| (p.at.elapsed().as_secs_f32(), egui::pos2(p.x / ppp - origin.x, p.y / ppp - origin.y), p.name.clone()))
-            .collect();
-        overlay(ctx, egui::ViewportId::from_hash_of("pings"), builder, move |ui, _| {
-            let painter = ui.painter();
-            for (age, c, name) in &pings {
-                draw_ping(painter, *c, *age, name);
-            }
+        let p = theme::pal();
+        crate::overlay::set(crate::overlay::Scene {
+            game: frame_rect(&s),
+            ppp,
+            pings: self.pings.iter().map(|x| crate::overlay::Ping { at: x.at, x: x.x, y: x.y, name: x.name.clone() }).collect(),
+            stars: self.stars.iter().map(|x| crate::overlay::Star { at: x.at, x: x.x, name: x.name.clone() }).collect(),
+            chat: self.chat_scene(ppp),
+            lime: [p.lime.r(), p.lime.g(), p.lime.b()],
+            dim: [p.lime_dim.r(), p.lime_dim.g(), p.lime_dim.b()],
         });
+        self.over_ui(ctx);
+        self.masks_ui(ctx);
     }
 }
-
-/// How long a ping lasts on the screen, in seconds (11/14/2026: 0.6 s in six steps before).
-const PING_S: f32 = 1.1;
-/// The ping's cells, in points: the ring is drawn in squares this size, each there or not by the dither.
-const PING_CELL: f32 = 3.0;
-
-/// The 8 x 8 ordered dither's thresholds (Bayer's), 0 to 1: the site's own (outside-portal.js's BAYER).
-fn bayer(x: i32, y: i32) -> f32 {
-    const M: [u8; 64] = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28,
-        52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63,
-        31, 55, 23, 61, 29, 53, 21];
-    (M[((y & 7) * 8 + (x & 7)) as usize] as f32 + 0.5) / 64.0
-}
-
-/// One ping (11/14/2026, Jace: "make the ping effect that broadcasters receive when an observer clicks on the video
-/// feed look better. make it a smooth animation, add dither to it if you want to make it unique. right now its just quite
-/// plain and low frame rate."): a ring that springs out from the spot, eased, drawn every frame in square cells that the
-/// ordered dither thins into the black as it grows; a fainter ring a moment behind it; a dithered dot at the spot that
-/// fades; the viewer's name surfacing beside it and fading at the end. The cells sit on a grid fixed to the screen, so
-/// the dither holds still while the ring moves through it, as the site's own does. Held still (reduced motion): the ring
-/// whole at its middle size, then gone.
-fn draw_ping(painter: &egui::Painter, c: egui::Pos2, age: f32, name: &str) {
-    let still = crate::cursor::still();
-    let k = if still { 0.45 } else { (age / PING_S).clamp(0.0, 1.0) };
-    let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
-    let lime = LIME();
-    let dim = theme::pal().lime_dim;
-    let cell = PING_CELL;
-    // a ring: its radius, its width and how lit it is; each cell in it there if the dither's threshold is under its light
-    let ring = |radius: f32, width: f32, light: f32| {
-        if light <= 0.0 || width <= 0.0 { return; }
-        let (x0, x1) = (((c.x - radius - width) / cell).floor() as i32, ((c.x + radius + width) / cell).ceil() as i32);
-        let (y0, y1) = (((c.y - radius - width) / cell).floor() as i32, ((c.y + radius + width) / cell).ceil() as i32);
-        for gy in y0..=y1 {
-            for gx in x0..=x1 {
-                let (px, py) = (gx as f32 * cell + cell / 2.0, gy as f32 * cell + cell / 2.0);
-                let d = ((px - c.x).powi(2) + (py - c.y).powi(2)).sqrt();
-                let edge = 1.0 - (d - radius).abs() / width;
-                if edge <= 0.0 { continue; }
-                let level = edge.powf(0.7) * light;
-                if bayer(gx, gy) >= level { continue; }
-                let colour = if level > 0.55 { lime } else { dim };
-                painter.rect_filled(egui::Rect::from_min_size(egui::pos2(gx as f32 * cell, gy as f32 * cell), Vec2::splat(cell)), 0.0, colour);
-            }
-        }
-    };
-    let light = if still { 1.0 } else { (1.0 - k).powf(1.4) };
-    ring(12.0 + 44.0 * ease(k * 1.15), 3.0 + 6.0 * (1.0 - k), light);
-    // (the echo, a little behind and fainter)
-    let k2 = ((k * PING_S - 0.16) / PING_S).max(0.0);
-    if !still && k2 > 0.0 {
-        ring(8.0 + 30.0 * ease(k2 * 1.2), 2.0 + 4.0 * (1.0 - k2), (1.0 - k2).powf(1.8) * 0.7);
-    }
-    // the spot: a small disk, dithered away
-    ring(0.0, 7.0 * (1.0 - k * 0.5), if still { 1.0 } else { (1.0 - k * 1.3).max(0.0) });
-    if !name.is_empty() {
-        // the name: in over the first tenth, out over the last third, a dark rim round it first
-        let a = if still { 1.0 } else { (k / 0.1).min(1.0) * ((1.0 - k) / 0.33).min(1.0) };
-        if a > 0.0 {
-            let at = egui::pos2(c.x + 24.0, c.y - 28.0 + 4.0 * (1.0 - (k / 0.15).min(1.0)));
-            for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-2.0, -2.0), (2.0, 2.0), (-2.0, 2.0), (2.0, -2.0)] {
-                painter.text(at + Vec2::new(dx, dy), egui::Align2::LEFT_CENTER, name, body(32.0), Color32::from_rgb(10, 10, 10).gamma_multiply(a));
-            }
-            painter.text(at, egui::Align2::LEFT_CENTER, name, body(32.0), lime.gamma_multiply(a));
-        }
-    }
-}
-
-/// How long the pings' and the ✼s' window stays, empty, after the last one: a burst of them is one window, made once
-/// (each new window is a moment of Windows making it; 11/07/2026).
-const LINGER: Duration = Duration::from_secs(3);
 
 /// How long a line over the game takes to fade out, once its time's up (in 6 steps, the dither's way).
 const OVER_FADE_S: f32 = 1.2;
 
 /// How lit a line over the game is at this age (1 lit, 0 gone), with the settings' "fades after" (0: never).
-fn over_alpha(age: f32, fade: u32) -> f32 {
+pub(crate) fn over_alpha(age: f32, fade: u32) -> f32 {
     let fade = fade as f32;
     if fade <= 0.0 || age < fade {
         1.0
