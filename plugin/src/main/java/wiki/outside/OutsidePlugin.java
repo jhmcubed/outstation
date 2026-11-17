@@ -317,6 +317,11 @@ public class OutsidePlugin extends Plugin
 	// hub:end reports
 	/** this key is a challenger's (taking a name back, 11/15/2026): what it sends only proves the name, till it's proven */
 	private volatile boolean challenging = false;
+	// proving, as the side tab follows it (11/17/2026): what the relay last said, the total experience in the update it
+	// said "ready" to, and whether more's been gained since (noticed here, nothing sent)
+	private volatile String proofState = null;
+	private volatile long postXp = -1, readyXp = -1;
+	private volatile boolean readyStale = false;
 	/** movePage tried this session (a page under the name's old form) */
 	private boolean movedThisSession = false;
 	// hub:cut live
@@ -1034,6 +1039,7 @@ public class OutsidePlugin extends Plugin
 			return;
 		}
 		posted = posted || !fields.has("off");
+		long sentXp = fields.has("skills") && fields.get("skills").isJsonObject() && fields.getAsJsonObject("skills").size() > 0 ? postXp : -1;
 		JsonObject msg = new JsonObject();
 		msg.add("game", fields);
 		Request req = new Request.Builder().url(a.postUrl(VERSION)).header("User-Agent", "outside-plugin/" + VERSION)
@@ -1066,6 +1072,22 @@ public class OutsidePlugin extends Plugin
 					else if (code == 429 && done != null)
 					{
 						panel.snapStatus("too often: try again in a minute");
+					}
+					else if (code == 200 && res.body() != null)
+					{
+						// (what the page's proof did with it, while it's still to be made: docs/protocol.md "Proving a name")
+						try
+						{
+							JsonObject o = gson.fromJson(res.body().string(), JsonObject.class);
+							if (o != null && o.has("proof"))
+							{
+								proofSaid(o.get("proof").getAsString(), o.has("why") ? o.get("why").getAsString() : null, sentXp);
+							}
+						}
+						catch (IOException | RuntimeException ignored)
+						{
+							// (an answer it can't read: the update itself was taken)
+						}
 					}
 					if (done != null)
 					{
@@ -1208,6 +1230,7 @@ public class OutsidePlugin extends Plugin
 				skills.add(s.getName(), v);
 			}
 			m.put("skills", skills);
+			postXp = client.getOverallExperience();
 		}
 		else
 		{
@@ -2648,6 +2671,41 @@ public class OutsidePlugin extends Plugin
 		});
 	}
 
+	/** What the relay said of the page's proof, into the side tab: from a read of it, or an update's own answer (`sentXp`:
+	 *  the total experience that update carried, -1 for a read). A "ready" is remembered with it, so experience gained
+	 *  after it can be noticed (onStatChanged). Skills switched off, nothing can prove it: said so. */
+	private void proofSaid(String proof, String why, long sentXp)
+	{
+		proofState = proof;
+		challenging = "challenging".equals(proof);
+		boolean open = "unproven".equals(proof) || challenging;
+		if (!open || why == null || !why.startsWith("ready"))
+		{
+			readyXp = -1;
+		}
+		else if (sentXp > 0)
+		{
+			readyXp = sentXp;
+			readyStale = false;
+		}
+		if (open && !config.skills())
+		{
+			why = "Skills is switched off in the plugin's settings (On your page): proving needs it on, as it's your"
+				+ " experience the official hiscores confirm.";
+		}
+		else if (open && readyStale && readyXp > 0)
+		{
+			why = STALE;
+		}
+		if (panel != null)
+		{
+			panel.proof(proof, why);
+		}
+	}
+
+	private static final String STALE = "You've gained experience since your page said ready: once you've stopped, press"
+		+ " Update my page again, then log out when this says ready.";
+
 	/** Whether their page is proven theirs, into the side tab (docs/protocol.md "Proving a name"). */
 	private void readProof()
 	{
@@ -2675,8 +2733,7 @@ public class OutsidePlugin extends Plugin
 				{
 					JsonObject o = res.code() == 200 && res.body() != null ? gson.fromJson(res.body().string(), JsonObject.class) : null;
 					String proof = o != null && o.has("proof") ? o.get("proof").getAsString() : null;
-					challenging = "challenging".equals(proof);
-					panel.proof(proof, o != null && o.has("why") ? o.get("why").getAsString() : null);
+					proofSaid(proof, o != null && o.has("why") ? o.get("why").getAsString() : null, -1);
 				}
 				catch (IOException | RuntimeException ignored)
 				{
@@ -3653,6 +3710,13 @@ public class OutsidePlugin extends Plugin
 		// hub:end globe,year
 		// (what they're doing as Discord shows it: their own experience going up, 11/16/2026)
 		presence.experience(e.getSkill().getName(), e.getXp(), System.currentTimeMillis());
+		// (proving, 11/17/2026: experience gained after the relay said "ready" makes the update it said it to out of date by
+		// logout, so the side tab says to update again; noticed here, nothing sent)
+		if (readyXp > 0 && !readyStale && client.getOverallExperience() > readyXp && panel != null)
+		{
+			readyStale = true;
+			panel.proof(proofState, STALE);
+		}
 		// hub:cut reports
 		// (a level gained: its real level above the one last seen this session; the first seen is only remembered)
 		String skill = e.getSkill().getName();

@@ -6,12 +6,12 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 
 1. Install **Outside** from the Plugin Hub (RuneLite's wrench icon, then Plugin Hub).
 2. Log in, open the **Outside** side tab (a lime ✼) and press **Make my Outside page**. Your page is made under the name you're logged in as, at outside.wiki/<your name>, and its key is saved in the plugin's settings for you. Its first update goes as it's made.
-3. Prove the name is yours. Until then, the page marks it **unproven**. Gain any experience, press **Update my page**, wait a minute, then log out: within a few minutes the official hiscores confirm it. The side tab says whether it's proven.
+3. Prove the name is yours. Until then, the page marks it **unproven**. Gain some experience, stop, press **Update my page**, then log out once the side tab says **ready** (a second or two): within a few minutes the official hiscores confirm it. If you gain more experience after it says ready, the side tab tells you to press Update my page again first. The side tab says whether it's proven, and if it didn't work, why.
 4. From then on, press **Update my page** whenever you want your page to show what you have now (once a minute at most: pressed sooner, the button counts down and it goes by itself when the minute's up). It also updates by itself every hour you're logged in. Your page says when it was last updated.
 
 **More than one character:** each has its own page and key. Logging into another character shows that one's page in the side tab, or the button to make one. An alt never shows on a main's page.
 
-**A name someone else took:** if someone made a page under your name but never proved it, the side tab says so, and proving it the same way (gain experience, Update my page, wait a minute, log out) makes the page yours. A proven name can't be taken.
+**A name someone else took:** if someone made a page under your name but never proved it, the side tab says so, and proving it the same way (gain experience, stop, Update my page, log out once the side tab says ready) makes the page yours. A proven name can't be taken.
 
 ## The side tab
 

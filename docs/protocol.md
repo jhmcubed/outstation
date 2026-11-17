@@ -311,7 +311,16 @@ exact experience the plugin reports while they play, before the official hiscore
 try his new experience was already public by then, as Jagex's update comes with the logout, so nothing was kept.)
 
 - **Wait a minute before logging out**: experience gained in the last 45 seconds before a logout isn't looked at in
-  time, so it can't be claimed (the side tab says so).
+  time, so it can't be claimed (the side tab says so). That's the socket's (the whole plugin's) way.
+- **A post is looked at at once** (11/17/2026): the Hub's plugin sends skills only in its updates (Update my page, the
+  hourly one), so the look comes as one arrives, not 45 seconds after, and while it's logged in the hiscores can't have
+  any of it either way. A post that asks (`&proof=1`) is answered `200 {"proof": "unproven" | "challenging", "why"}`
+  while the page's proof is open, after the look (6 seconds at most): `why` starts "ready:" when logging out now would
+  prove it. Otherwise, and once it's proven, `204` as before. Why: two players on the Hub's plugin played for hours
+  and stayed unproven. Their claims were their last update's figures, out of date by the time they logged out (they'd
+  trained on), and nothing told them. Sending the figures at logout instead was ruled out: Jagex's update comes with the
+  logout, so a figure first sent then is already public (above), and copying it would prove anyone. The plugin's side
+  tab now says what to do, and notices by itself, sending nothing, when experience is gained after a "ready".
 - **What it last did**: `GET /proof/<channel>?key=<its own key>` adds `"why"`, the proof's last step in words (looked,
   claimed, waiting for the hiscores, or why nothing was claimed), which the plugin's side tab shows.
 - **The name** read on the hiscores is the plugin's `name` (the one they're logged in as), and only when it's the page's
@@ -322,12 +331,14 @@ try his new experience was already public by then, as Jagex's update comes with 
   experience (unranked skills, -1, can't prove anything); if it doesn't answer, Wise Old Man's player (its update for
   every read but a look's). Each read carries the relay's User-Agent and nothing else, and asks Jagex for a page of its
   own (a cache in front of the hiscores can answer with an older one); an unproven page is read once a look (45 s after
-  experience last changed, so at most about once a minute while they gain it) and four times after a logout.
+  experience last changed, so at most about once a minute while they gain it; a post's at once, and posts come once a
+  minute at most) and four times after a logout.
 - What it can't stop: someone relaying another player's game live, with that player's exact experience showing, and
   typing it in as it happens. Contrived; the transmission would show someone else's game.
 - Tests: `WITNESS_WAIT_S` and `WITNESS_LOOK_S` (the Worker), `--witness-wait` and `--witness-look` (relay.py) make every
   wait and look that many seconds; the hiscores
-  and Wise Old Man come from the tests' stand-in (`LOOKUP_UPSTREAM`, `--lookup`). protocol_test's `Proving`.
+  and Wise Old Man come from the tests' stand-in (`LOOKUP_UPSTREAM`, `--lookup`). protocol_test's `Proving` and
+  `ProvingByPosts`.
 
 ## Taking a name back (11/15/2026)
 
@@ -624,7 +635,7 @@ action and an hourly sync should be okay, as should matching Discord activity").
 Both relays (`relay/src/channel.ts`'s `postGame`, game.ts's `gamePresence`; relay-py's `Relay.game_post`,
 `Channel.take_post`, `game_presence`).
 
-    POST <relay>/game/<channel>?key=<key>&v=<the plugin's version>      {"game": {...}}
+    POST <relay>/game/<channel>?key=<key>&v=<the plugin's version>[&proof=1]      {"game": {...}}
 
 - **When the plugin posts**: when the player presses **Update my page** in the ✼ side tab, hourly while they're logged
   in (60 minutes of being logged in since the last, as RuneProfile's sync), as `presence` changes (at most once a minute),

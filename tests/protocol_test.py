@@ -3516,6 +3516,47 @@ class ProvingByPosts(Witnessing):
         self.hiscores(name, {"Ranged": 5600})
         self.assertEqual(await self.until_proof(name, "proven"), "proven")
 
+    def asked(self, name, key, body):
+        """A post that asks what its proof did (&proof=1, 11/17/2026): (status, JSON or None)."""
+        st, h, out = raw("POST", "/game/%s?key=%s&v=0.3.1&proof=1" % (name, urllib.parse.quote(key)), json.dumps(body).encode(),
+                         {"Content-Type": "application/json"})
+        return st, (json.loads(out) if out else None)
+
+    async def test_an_update_is_looked_at_at_once_and_says_when_logging_out_would_prove_it(self):
+        # (11/17/2026: two friends played for hours on the Hub's plugin and stayed unproven; now the update's own answer
+        # says "ready" once the hiscores have been looked at, with no minute's wait and nothing more sent)
+        name, key = await self.claimed()
+        self.hiscores(name, {"Ranged": 5000})
+        st, got = self.asked(name, key, {"game": {"name": name, "skills": {"Ranged": [20, 20, 5000]}}})
+        self.assertEqual((st, got["proof"]), (200, "unproven"))
+        self.assertIn("nothing in this update is new", got["why"])
+        st, got = self.asked(name, key, {"game": {"skills": {"Ranged": [21, 21, 5600]}}})
+        self.assertTrue(got["why"].startswith("ready: 1 skill"), got)
+        st, got = self.asked(name, key, {"game": {"off": True}})
+        self.assertIn("logged out: 1 skill", got["why"])
+        self.hiscores(name, {"Ranged": 5600})
+        self.assertEqual(await self.until_proof(name, "proven"), "proven")
+        # (proven: nothing more to say, and an answer as before)
+        self.assertEqual(self.asked(name, key, {"game": {"skills": {"Ranged": [21, 21, 5700]}}})[0], 204)
+
+    async def test_experience_gained_after_the_update_is_said_plainly(self):
+        name, key = await self.claimed()
+        self.hiscores(name, {"Ranged": 5000})
+        self.asked(name, key, {"game": {"name": name, "skills": {"Ranged": [20, 20, 5000]}}})
+        self.assertTrue(self.asked(name, key, {"game": {"skills": {"Ranged": [21, 21, 5600]}}})[1]["why"].startswith("ready"))
+        self.asked(name, key, {"game": {"off": True}})
+        self.hiscores(name, {"Ranged": 6100})          # (they trained on after the update)
+        await asyncio.sleep(4.0)
+        self.assertEqual(self.proof(name), "unproven")
+        why = json.loads(raw("GET", "/proof/%s?key=%s" % (name, key))[2]).get("why", "")
+        self.assertIn("after your last update", why)
+
+    async def test_no_update_this_session_is_said_plainly(self):
+        name, key = await self.claimed()
+        self.asked(name, key, {"game": {"name": name, "presence": {"skill": "Woodcutting"}}})
+        st, got = self.asked(name, key, {"game": {"off": True}})
+        self.assertIn("no update reached your page while you played", got["why"])
+
     async def test_a_challengers_posts_only_prove_it(self):
         name, held = await self.claimed()
         game_post(name, held, {"game": {"name": name, "type": "NORMAL", "skills": {"Ranged": [99, 99, 13034431]}}})
