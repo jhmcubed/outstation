@@ -27,7 +27,7 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 
 - **Send to my Outside page:** the main switch. Off, nothing is sent, and what it sent comes off your page.
 - **Worn and carried**, **Skills**, **Quests, diaries and combat achievements** (and the collection log's count, kill counts and clue counts), **My slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
-- **My bank on my page**, **My deathbank on my page**, **My character's model on my page** and **The ground under my model:** each off to begin with, behind its own warning; switching one off takes it off your page.
+- **My bank on my page**, **My deathbank on my page**, **My character's model on my page** and **The ground under my model:** each on to begin with (11/17/2026), with a warning when it's switched back on; switching one off takes it off your page.
 
 ## What it sends, and only that
 

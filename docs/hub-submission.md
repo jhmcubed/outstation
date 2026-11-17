@@ -101,7 +101,7 @@ stays false.
 
 ## Update 2: the model, the bank and the deathbank (11/17/2026, built, not yet sent)
 
-`hub_cut.py`'s SUBMITTED adds `model`, `bank` and `deathbank`, each off to begin with behind its own warning, under the
+`hub_cut.py`'s SUBMITTED adds `model`, `bank` and `deathbank` (each on to begin with since 11/17/2026, Jace: "we should leave everything on by default"; a warning when switched back on), under the
 reviewer's terms ("an 'Update my page' action and an hourly sync"):
 - **The model:** sent when the player presses Capture my character (or `::outsidemodel`, `::outsidemotion`), their own
   press, as Update my page is. The live view (the model following their gear and animation every tick over the socket)
