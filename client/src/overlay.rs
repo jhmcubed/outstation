@@ -87,6 +87,8 @@ pub fn set(scene: Scene) {
     });
     *sh.scene.lock().unwrap() = scene;
     sh.woken.notify_all();
+    #[cfg(windows)]
+    native::wake();
 }
 
 // ---- the drawing: a picture of premultiplied BGRA, placed on the screen ----
@@ -390,8 +392,18 @@ fn run(sh: Arc<Shared>) {
             std::thread::sleep(Duration::from_millis(8));
         } else {
             // (nothing moving: woken by the next change, or a look now and then for a line's fade to begin)
-            let g = sh.scene.lock().unwrap();
-            let _ = sh.woken.wait_timeout(g, Duration::from_millis(if scene.chat.is_some() { 100 } else { 250 }));
+            let most = Duration::from_millis(if scene.chat.is_some() { 100 } else { 250 });
+            // (on Windows, woken by any message for these windows too, answered at once: another of the outstation's
+            // threads reading one's title waits on its answer, and while a line of chat sat over the game unchanged
+            // that wait was the whole nap, the window all but frozen; 11/17/2026, Jace: "when i send text in the chat
+            // and it pops up on my screen the outstation app is basically unresponsive")
+            #[cfg(windows)]
+            native::wait(most);
+            #[cfg(not(windows))]
+            {
+                let g = sh.scene.lock().unwrap();
+                let _ = sh.woken.wait_timeout(g, most);
+            }
         }
     }
 }
@@ -461,14 +473,34 @@ mod native {
         unsafe { DefWindowProcW(h, m, wp, lp) }
     }
 
+    static THREAD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
     /// Messages for this thread's windows taken and handled, so Windows never thinks them hung.
     pub fn pump() {
         unsafe {
+            if THREAD.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                THREAD.store(windows::Win32::System::Threading::GetCurrentThreadId(), std::sync::atomic::Ordering::Relaxed);
+            }
             let mut msg = MSG::default();
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+        }
+    }
+
+    /// Till a message comes for this thread (one sent to its windows, or `wake`'s), or `most` has passed.
+    pub fn wait(most: Duration) {
+        unsafe {
+            let _ = MsgWaitForMultipleObjects(None, false, most.as_millis() as u32, QS_ALLINPUT);
+        }
+    }
+
+    /// The drawing thread woken for a new scene (a message of its own, which `wait` returns for).
+    pub fn wake() {
+        let id = THREAD.load(std::sync::atomic::Ordering::Relaxed);
+        if id != 0 {
+            unsafe { let _ = PostThreadMessageW(id, WM_APP, WPARAM(0), LPARAM(0)); }
         }
     }
 

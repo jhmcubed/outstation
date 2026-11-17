@@ -13,11 +13,14 @@ pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// A window's title as Windows keeps it, read without asking the window (11/17/2026: GetWindowText asks a window of
+/// another of this program's threads, and waits till that thread answers: the windows over the game's thread, between
+/// its frames, held up every look for RuneLite and for this program's own window while a line of chat sat over the
+/// game)
 pub fn text(hwnd: HWND) -> String {
     unsafe {
-        let n = GetWindowTextLengthW(hwnd);
-        let mut buf = vec![0u16; (n + 1).max(1) as usize];
-        let got = GetWindowTextW(hwnd, &mut buf);
+        let mut buf = [0u16; 512];
+        let got = InternalGetWindowText(hwnd, &mut buf);
         String::from_utf16_lossy(&buf[..got.max(0) as usize])
     }
 }
