@@ -320,6 +320,9 @@ public class OutsidePlugin extends Plugin
 	// proving, as the side tab follows it (11/17/2026): what the relay last said, the total experience in the update it
 	// said "ready" to, and whether more's been gained since (noticed here, nothing sent)
 	private volatile String proofState = null;
+	// the register's newest note as last read (its id), and whether this login's been told of new ones
+	private volatile long notesLast = 0;
+	private volatile boolean notesSaid = false;
 	private volatile long postXp = -1, readyXp = -1;
 	private volatile boolean readyStale = false;
 	/** movePage tried this session (a page under the name's old form) */
@@ -548,6 +551,7 @@ public class OutsidePlugin extends Plugin
 		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
+			notesSaid = false;   // (the register's new notes, said again at the next login)
 			// (logged out: the snapshot's and what they're doing's, said once if anything went this session)
 			if (posted)
 			{
@@ -2373,7 +2377,7 @@ public class OutsidePlugin extends Plugin
 					return;
 				}
 				String token = Tend.token(new java.security.SecureRandom());
-				panel.tendStatus("opening your page's chat…");
+				panel.tendStatus("opening your page's register…");
 				http.newCall(new Request.Builder().url(a.tendUrl())
 					.header("User-Agent", "outside-plugin/" + VERSION)
 					.post(RequestBody.create(JSON, Tend.body(token, gson))).build()).enqueue(new Callback()
@@ -2395,7 +2399,13 @@ public class OutsidePlugin extends Plugin
 								return;
 							}
 						}
-						panel.tendStatus("opened in your browser: each visitor's line has take back and ban");
+						panel.tendStatus("opened in your browser: each visitor's note has take back and ban");
+						// (read: what's there now isn't new any more)
+						if (notesLast > 0)
+						{
+							configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "registerSeen", Long.toString(notesLast));
+						}
+						panel.notes(0);
 						net.runelite.client.util.LinkBrowser.browse(a.tendPage(token));
 					}
 				});
@@ -2718,7 +2728,9 @@ public class OutsidePlugin extends Plugin
 			}
 			return;
 		}
-		http.newCall(new Request.Builder().url(a.proofUrl() + "?key=" + java.net.URLEncoder.encode(a.getKey(), java.nio.charset.StandardCharsets.UTF_8))
+		String seen = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "registerSeen");
+		http.newCall(new Request.Builder().url(a.proofUrl() + "?key=" + java.net.URLEncoder.encode(a.getKey(), java.nio.charset.StandardCharsets.UTF_8)
+			+ "&seen=" + (seen != null && seen.matches("\\d{1,12}") ? seen : "0"))
 			.header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
 		{
 			@Override
@@ -2734,6 +2746,21 @@ public class OutsidePlugin extends Plugin
 					JsonObject o = res.code() == 200 && res.body() != null ? gson.fromJson(res.body().string(), JsonObject.class) : null;
 					String proof = o != null && o.has("proof") ? o.get("proof").getAsString() : null;
 					proofSaid(proof, o != null && o.has("why") ? o.get("why").getAsString() : null, -1);
+					// (the register's notes not read here yet, 11/17/2026: the side tab's line, and once a login a line in
+					// the chat box)
+					if (o != null && o.has("notes") && o.get("notes").isJsonObject())
+					{
+						JsonObject n = o.getAsJsonObject("notes");
+						int count = n.has("n") ? n.get("n").getAsInt() : 0;
+						notesLast = n.has("last") ? n.get("last").getAsLong() : 0;
+						panel.notes(count);
+						if (count > 0 && !notesSaid)
+						{
+							notesSaid = true;
+							say(count == 1 ? "1 new note in your Outside page's register (the side tab's More)"
+								: count + " new notes in your Outside page's register (the side tab's More)");
+						}
+					}
 				}
 				catch (IOException | RuntimeException ignored)
 				{

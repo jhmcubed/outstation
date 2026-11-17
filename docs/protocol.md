@@ -243,6 +243,23 @@ take a page down. Both relays:
 - The plugin keeps its watch code with the character's account (`watchCode`), made the first time friends only is
   switched on; its side tab copies the friends' link, `outside.wiki/<channel>?code=<code>`.
 
+## The register (11/17/2026)
+
+Jace: "for people who haven't opened an outstation client/don't have a transmission on their page, should we re-brand
+the 'chat' into a guestbox where people can leave comments… build it and call it the register". A page's chat, while
+nothing transmits, is its register: visitors sign it, and the owner reads it later. It's the same lines (one store; a
+note left while the page is quiet is in the chat when it next transmits, and the other way round), shown on the page
+as entries newest first while it's quiet. Both are tended the same way (below).
+
+- **Kept:** the last 500 lines (`CHAT_KEPT`; 50 before), visitors' and the host's. Someone just come gets the last 50
+  (`CHAT_SENT`), as the chat so far.
+- **Older ones:** `GET <relay>/chat/<channel>?before=<id>[&code=<watch code>]` → `{"lines": [...], "more": bool}`: up to 50
+  lines before that id, oldest first, each as a `{"chat"}` line's insides; `more` when there are older still. The watch
+  code as watching (403 without it on a friends-only page); 404 for no page.
+- **New notes, to the page's own key:** `GET /proof/<channel>?key=<key>&seen=<id>` adds
+  `"notes": {"n": <visitors' lines after that id>, "last": <the newest visitor's line's id>}`, for the plugin's side tab
+  ("3 new notes in your register"). It remembers `last` once the owner opens the register to tend it.
+
 ## Tending the page's chat from the page (11/16/2026)
 
 Jace: "There is currently no way for someone who doesn't have the outstation to remove comments from people off of their

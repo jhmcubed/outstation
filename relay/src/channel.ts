@@ -72,7 +72,12 @@ export interface Env {
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
 const VIEWER_TEXT = 2048; // anything longer from a viewer is thrown away unread
-const CHAT_KEPT = 50;
+// (the register, 11/17/2026, Jace: "build it and call it the register": a page's chat, while nothing transmits, is its
+// guestbook, so its lines are kept far longer than a chat needs. Someone just come gets the last CHAT_SENT; older ones
+// are read as asked, GET /chat/<channel>?before=<id>, CHAT_PAGE at a time)
+const CHAT_KEPT = 500;
+const CHAT_SENT = 50;
+const CHAT_PAGE = 50;
 const SAY_MAX = 300, SAY_BURST = 20, SAY_WINDOW = 10_000;
 const NAME_MAX = 20;
 const TITLE_MAX = 100; // the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
@@ -637,7 +642,7 @@ export class Channel extends DurableObject<Env> {
   }
 
   lateJoiner(ws: WebSocket, role: Role) {
-    for (const [, line] of this.chat) this.send(ws, line);
+    for (const [, line] of this.chat.slice(-CHAT_SENT)) this.send(ws, line);
     if (this.poll) this.send(ws, this.pollLine());
     if (this.guess) this.send(ws, this.guessLine());
     if (this.meta.soundInfo && role !== "desk") this.send(ws, this.meta.soundInfo);
@@ -707,13 +712,18 @@ export class Channel extends DurableObject<Env> {
       // "proven" from the game itself; and to a challenger's own key, "challenging")
       if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
       const k = q.get("key");
+      // (to the page's own key, 11/17/2026: how many visitors' lines the register has after `seen`, the newest's id, for
+      // the plugin's side tab, "3 new notes in your register")
+      if (k && !this.meta.unproven && (await this.hash(k)) === this.meta.keyHash) {
+        return json({ proof: this.meta.proven ? "proven" : "vouched", notes: this.notesSince(q.get("seen")) });
+      }
       if (k && this.meta.unproven) {
         // (to the key's own, what its proof last did, in words: the plugin's side tab says it)
         const h = await this.hash(k);
         if ((this.meta.challengers || []).some((c) => c.keyHash === h)) {
           return json({ proof: "challenging", ...(this.cwit[h]?.last ? { why: this.cwit[h].last } : {}) });
         }
-        if (h === this.meta.keyHash && this.wit.last) return json({ proof: "unproven", why: this.wit.last });
+        if (h === this.meta.keyHash) return json({ proof: "unproven", ...(this.wit.last ? { why: this.wit.last } : {}), notes: this.notesSince(q.get("seen")) });
       }
       return json({ proof: this.meta.proven ? "proven" : this.meta.unproven ? "unproven" : "vouched" });
     }
@@ -740,6 +750,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "_dm") return this.takeDm(request);
     if (role === "_invites") return this.invites(request, q, ip);
     if (role === "_game") return this.readGame(q);
+    if (role === "_chat") return this.readChat(q);
     if (role === "_gamepost") return this.postGame(request, q, ip);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
@@ -1309,6 +1320,30 @@ export class Channel extends DurableObject<Env> {
 
   /** GET /game/<channel>?code= (index.ts): the game state kept, for a page while the outstation's dark, and whether the
    *  plugin's connected now; the watch code needed when the channel has one, as watching. */
+  /** The register's older lines (11/17/2026; docs/protocol.md "The register"): up to CHAT_PAGE before the line `before`
+   *  (its id), oldest first, as a socket has them ({"chat": {...}}'s insides), and whether there are older still. The
+   *  watch code as watching. */
+  readChat(q: URLSearchParams): Response {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+    const before = parseInt(q.get("before") || "", 10);
+    const older = Number.isFinite(before) ? this.chat.filter(([id]) => id < before) : this.chat;
+    const page = older.slice(-CHAT_PAGE);
+    return json({ lines: page.map(([, line]) => JSON.parse(line).chat), more: older.length > page.length });
+  }
+
+  /** Visitors' lines in the register after the line `seen` (its id; none, all of them), and the newest's id. */
+  notesSince(seen: string | null): { n: number; last: number } {
+    const after = parseInt(seen || "", 10) || 0;
+    let n = 0, last = 0;
+    for (const [id, line] of this.chat) {
+      if (JSON.parse(line).chat.host) continue;
+      last = id;
+      if (id > after) n++;
+    }
+    return { n, last };
+  }
+
   readGame(q: URLSearchParams): Response {
     if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
     if (this.game.empty) return json({ error: "no game state for that outstation" }, 404);

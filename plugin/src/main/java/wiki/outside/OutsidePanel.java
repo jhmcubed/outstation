@@ -159,6 +159,7 @@ public class OutsidePanel extends PluginPanel
 	// too soon waits, and the button counts the seconds down till it goes by itself)
 	private JButton updateButton;
 	private final JLabel dinkStatus = small(" ");
+	private final JLabel notesLine = small(" ");
 	private volatile long updateWaits;
 	private final javax.swing.Timer updateClock = new javax.swing.Timer(250, e -> updateCount());
 	// (11/16/2026, the permissions review: who sees the page, and taking it down, with the plugin alone)
@@ -345,11 +346,15 @@ public class OutsidePanel extends PluginPanel
 		moreTab.add(Box.createVerticalStrut(12));
 		// (11/16/2026, Jace: "There is currently no way for someone who doesn't have the outstation to remove comments
 		// from people off of their profile": the page opens with a link only this browser has, good for 12 hours)
-		moreTab.add(left(heading("Your page's chat")));
-		moreTab.add(left(small("<html><div style='width:155px'>Take back visitors' lines, or ban whoever said them, on your page"
-			+ " itself: the link works for 12 hours, in the browser it opens in.</div></html>")));
+		// (11/17/2026, Jace: the page's chat, while nothing transmits, is its register: visitors sign it, you read it later)
+		moreTab.add(left(heading("Your page's register")));
+		moreTab.add(left(small("<html><div style='width:155px'>Visitors sign your page's register. Read it, take back a note or"
+			+ " ban whoever wrote it, on your page itself: the link works for 12 hours, in the browser it opens in.</div></html>")));
+		notesLine.setForeground(LIME);
+		notesLine.setVisible(false);
+		moreTab.add(left(notesLine));
 		moreTab.add(Box.createVerticalStrut(6));
-		moreTab.add(wide(button("Tend my page's chat", hooks::tendChat)));
+		moreTab.add(wide(button("Read and tend my register", hooks::tendChat)));
 		tendStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		moreTab.add(left(tendStatus));
 		moreTab.add(Box.createVerticalStrut(12));
@@ -544,7 +549,18 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() -> accessStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
-	/** A line under "Tend my page's chat". */
+	/** How many visitors' notes the register has that haven't been read here (0: the line hidden). */
+	public void notes(int n)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			notesLine.setText(n == 1 ? "1 new note" : n + " new notes");
+			notesLine.setVisible(n > 0);
+			revalidate();
+		});
+	}
+
+	/** A line under "Read and tend my register". */
 	public void tendStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> tendStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
