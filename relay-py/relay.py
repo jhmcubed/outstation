@@ -384,7 +384,7 @@ CHAT_KEPT = 50                    # lines a late viewer (or a newly opened desk)
 # goes); the page opens /desk/<channel>?tend=<token>, which hears only the chat and the bans and may only take lines
 # back, block and ban
 TEND_SECONDS, TENDS_MOST = 12 * 3600, 4
-TEND_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+TEND_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}\Z")   # (\Z: a trailing newline isn't one, as the Worker's $)
 SAY_MAX, SAY_BURST, SAY_WINDOW = 300, 20, 10.0   # 20 lines in 10 s a viewer: room to spam a little for fun (Jace, 11/05)
 NAME_MAX = 20
 TITLE_MAX = 100                   # the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
@@ -1596,6 +1596,8 @@ class Aether:
 
 
 class Channel:
+    presence_fresh_s = PRESENCE_FRESH_S   # (the relay's --presence-fresh-seconds, set as it starts)
+
     def __init__(self, name, key, array=None, stars=None):
         self.name, self.key = name, key
         self.array = array           # the relay's ArrayFeed: this channel's events go in while it's live and listed
@@ -1839,6 +1841,10 @@ class Channel:
             for s in [self.sender, self.gamer, self.sounder] + list(self.desks):
                 if s is not None:
                     asyncio.ensure_future(s.close(4003, "this name was proven by another: its key no longer opens it"))
+            # (the holder's links to tend the chat go with their key; the Worker's, the same)
+            self.tends = {}
+            for s in list(self.tenders):
+                asyncio.ensure_future(s.close(4003, "this name was proven by another: its key no longer opens it"))
             self.game = Game()
             self.presence, self.seen_at = None, None
         for k, s in provers.items():
@@ -2176,7 +2182,7 @@ class Channel:
                 asyncio.get_event_loop().call_soon(self.tell_summary)
             # (11/16/2026: or the Hub's plugin's heard from, its posts: so Dink posting to the page puts its reports on
             # the Array, as a connected plugin's do; a dark outstation with no plugin, still never)
-            if self.array is not None and (self.sender is not None or self.heard(PRESENCE_FRESH_S)) and self.listed():
+            if self.array is not None and (self.sender is not None or self.heard(Channel.presence_fresh_s)) and self.listed():
                 # the Array's events (11/08/2026): only while it's live, or its plugin's connected (11/15/2026), and on
                 # the open outstations' list, so a coded outstation's reports, and a dark one's with no plugin, never
                 # show (with --delay, as the report reaches viewers)
@@ -2873,6 +2879,7 @@ class Relay:
         self.almanac = almanac_sources.Almanac(almanac_sources.async_fetch, None if almanac in ("on", "off") else almanac,
                                                log=log)
         self.where_fresh_s = where_fresh_s  # how long a "where" shows on GET /channels (WHERE_FRESH_S; tests shorten it)
+        Channel.presence_fresh_s = presence_fresh_s
         self.presence_fresh_s = presence_fresh_s  # how long the Hub's plugin counts as here after a POST (PRESENCE_FRESH_S)
         self.aether = Aether()         # the aether (11/07/2026): one room for every outstation and visitor
         self.array = ArrayFeed()       # the Array's events (11/08/2026): what's happening across the open outstations
@@ -4095,7 +4102,7 @@ class Relay:
                 code = json.loads(raw or b"{}").get("code")
             except (ValueError, AttributeError, asyncio.IncompleteReadError):
                 code = None
-            if not isinstance(code, str) or (code != "" and not re.match(r"^[A-Za-z0-9_-]{4,64}$", code)):
+            if not isinstance(code, str) or (code != "" and not re.match(r"^[A-Za-z0-9_-]{4,64}\Z", code)):
                 return await self.plain(writer, "400 Bad Request", {"error": "a watch code: 4 to 64 letters, numbers, - or _ (or none)"})
             ch.code = code
             for v in list(ch.viewers) + list(ch.waiting) + list(ch.lookers):

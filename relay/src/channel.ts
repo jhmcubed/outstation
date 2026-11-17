@@ -2015,7 +2015,9 @@ export class Channel extends DurableObject<Env> {
     if (ch) {
       this.meta.keyHash = ch.keyHash;
       if (ch.account) this.meta.account = ch.account; else delete this.meta.account;
-      for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
+      // (the holder's links to tend the chat go with their key: 11/16/2026, the review's second pass)
+      delete this.meta.tends;
+      for (const role of ["transmit", "desk", "sound", "game", "tend"] as Role[]) {
         for (const ws of this.sockets(role)) this.close(ws, 4003, "this name was proven by another: its key no longer opens it");
       }
       this.clearGame();
@@ -2262,7 +2264,9 @@ export class Channel extends DurableObject<Env> {
     }
     if (onlyNew) this.meta.pending = true; // (an invite's: not taken up till its key's used; the keeper's leaves it as it was)
     this.saveMeta();
-    for (const role of ["transmit", "desk", "sound", "game"] as Role[]) {
+    delete this.meta.tends; // (the old key's links to tend the chat go with it)
+    this.saveMeta();
+    for (const role of ["transmit", "desk", "sound", "game", "tend"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel has a new key");
     }
     this.clearGame(); // (whoever has the new key starts with none)
@@ -2303,7 +2307,7 @@ export class Channel extends DurableObject<Env> {
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const now = Date.now();
     this.keepUploads = this.keepUploads.filter((t) => now - t < 3_600_000);
-    if (this.keepUploads.length >= KEEP_AN_HOUR * 2) return json({ error: `${KEEP_AN_HOUR} an hour at most: try again later` }, 429);
+    if (this.keepUploads.length >= KEEP_AN_HOUR * 2) return json({ error: `${KEEP_AN_HOUR * 2} an hour at most, every kind together: try again later` }, 429);
     const raw = await request.text();
     if (raw.length > KEEP_MOST[what]) return json({ error: `at most ${KEEP_MOST[what]} bytes` }, 413);
     let d: unknown;
@@ -2429,7 +2433,7 @@ export class Channel extends DurableObject<Env> {
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const now = Date.now();
     this.keepUploads = this.keepUploads.filter((t) => now - t < 3_600_000);
-    if (this.keepUploads.length >= KEEP_AN_HOUR * 2) return json({ error: `${KEEP_AN_HOUR} an hour at most: try again later` }, 429);
+    if (this.keepUploads.length >= KEEP_AN_HOUR * 2) return json({ error: `${KEEP_AN_HOUR * 2} an hour at most, every kind together: try again later` }, 429);
     const others = list.filter((m) => m.name !== name);
     if (others.length >= MOTIONS_MOST) return json({ error: `${MOTIONS_MOST} motions at most: ::outsideforget one first` }, 409);
     const raw = await request.text();

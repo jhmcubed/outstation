@@ -42,7 +42,7 @@ const TITLE_H: f32 = 30.0;
 const PINGS: [(u8, &str, &str); 3] = [
     (0, "off", "observers' clicks on the picture go nowhere"),
     (1, "the site", "a ring on every observer's page where someone pointed"),
-    (2, "the site + my screen", "on observers' pages, and a ring over your RuneLite too: only on this PC, never in the transmission"),
+    (2, "the site + my screen", "on observers' pages, and a ring over your RuneLite too: only on this PC, never in the transmission (unless the picture falls back to the screen)"),
 ];
 const EDGE: f32 = 6.0;
 const CURSOR_SWITCH: &str = "my cursor in the picture";
@@ -1808,7 +1808,7 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             });
         };
         choice(ui, "what goes out:", &mut s.view, &[
-            ("canvas", "the whole game", "everything in RuneLite's game area: the world, the minimap, the side panel and the chat"),
+            ("canvas", "the whole game", "everything in RuneLite's game area: the world, the minimap, the inventory and side tabs, and the chat"),
             ("viewport", "fixed mode's 3D view", "only with RuneLite's Fixed layout (Classic, 765 × 503): just the 3D world in its frame, without the minimap, side panel and chat round it. In Resizable mode it changes nothing; use redactions there.")]);
         choice(ui, "taken by:", &mut s.method, &[
             ("auto", "the first that works", "Windows Graphics Capture, else PrintWindow, else the screen"),
@@ -3252,8 +3252,8 @@ fn anomaly_ui(app: &mut App, ui: &mut egui::Ui) {
         .hint_text(if req { "a way to…" } else { "the tape stopped after i went dark…" }));
     ui.add_space(10.0);
     ui.label(rich("1 · to the listening post", 16.0, LIME()));
-    ui.label(wrapped(if req { "sent from here, only when you press it: your words and this version (with your channel, when the outstation's attached to the listening post's relay)." }
-                     else { "sent from here, only when you press it: your words, the station log and this version (with your channel, when the outstation's attached to the listening post's relay)." }, 14.0, QUIET(), w));
+    ui.label(wrapped(if req { "sent from here, only when you press it: your words, your chat name and this version (with your channel and its key, when the outstation's attached to the listening post's relay)." }
+                     else { "sent from here, only when you press it: your words, your chat name, the station log and this version (with your channel and its key, when the outstation's attached to the listening post's relay)." }, 14.0, QUIET(), w));
     let busy = *app.report.busy.lock().unwrap();
     if pink_button(ui, if busy { "sending…" } else { "send to the listening post" }, !busy).clicked() && !busy {
         if app.report.note.trim().is_empty() {
@@ -4158,7 +4158,7 @@ impl App {
             3 => {
                 let mut st = s.signals;
                 if tick(ui, &mut st, rich("✼ on my screen", 14.0, GREY()))
-                    .on_hover_text(tip("each observer's ✼ rising over RuneLite. Only on this PC.")).changed() {
+                    .on_hover_text(tip("each observer's ✼ rising over RuneLite. Only on this PC (unless the picture falls back to the screen).")).changed() {
                     let _ = self.settings.update(|s| s.signals = st);
                 }
             }
@@ -4166,7 +4166,7 @@ impl App {
                 let mut over = s.game_chat;
                 ui.spacing_mut().item_spacing.x = gap;
                 if tick(ui, &mut over, rich("chat over the game", 14.0, GREY()))
-                    .on_hover_text(tip("the newest lines over RuneLite, fading out after a time (settings, \"text and size\"). Only on this PC, unless \"chat in the picture\" is on.")).changed() {
+                    .on_hover_text(tip("the newest lines over RuneLite, fading out after a time (settings, \"text and size\"). Only on this PC, unless \"chat in the picture\" is on (or the picture falls back to the screen).")).changed() {
                     let _ = self.settings.update(|s| s.game_chat = over);
                 }
                 if button(ui, if self.moving_chat { "done" } else { "move it" }, true, Some(self.moving_chat))
