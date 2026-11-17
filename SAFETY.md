@@ -41,7 +41,7 @@ Everything drawn in RuneLite's game area goes out while you're live. The outstat
 - **Your bank PIN:** press Pause first.
 - **The chat, if you put it there** ("chat in the picture", off to begin with; 11/07/2026): the chat over the game drawn into each frame on your PC, as it sits over the game, so observers and your clips see it. It's your viewers' names and lines, which are in the chat on Outside anyway.
 
-**Windows over RuneLite** (a browser, Discord, the outstation's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The monitor in the outstation's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more (every choice still falls back to the screen when the window comes back black, so if it does on your PC, put RuneLite where nothing covers it). And if the outstation can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
+**Windows over RuneLite** (a browser, Discord, the outstation's own pings and chat over the game) stay out of the picture: Windows Graphics Capture takes RuneLite's own window, whatever covers it. The exception is the last fallback, used only when a PC draws RuneLite's window black both other ways (see [What it does on your PC](#what-it-does-on-your-pc)): then the picture is that part of the screen, so whatever's over RuneLite shows. The monitor in the outstation's window is your stream as it came back from the relay, so if something shows there that shouldn't, it's in the picture: try another "taken by" in settings ▸ more (every choice still falls back to the screen when the window comes back black, unless you tick "never the screen" there: then nothing goes instead). And if the outstation can't find RuneLite's game area inside its window, it takes the whole window, RuneLite's side panel too.
 
 ## What leaves your PC
 
@@ -56,7 +56,7 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - "the game" is RuneLite's own sound.
   - "game + desktop" adds everything else your PC plays: music, videos, a Discord call's voices, Windows' own sounds. It goes as a second track, which viewers can turn down.
   - Never a microphone: the outstation only hears what your PC plays.
-  - The sound carries on through static (Pause), and while RuneLite's minimised or logged out; only going dark stops it. (The picture stops for those; the sound doesn't, as yet.)
+  - The sound carries on through static (Pause). With "the sound stops with the picture" on (settings ▸ more, on to begin with) it stops while RuneLite's minimised, closed or logged out (with "nothing while logged out" on), as the picture does, and none goes onto the tape; switched off, only going dark stops it.
   - With nobody watching, one picture goes every 10 seconds (so whoever opens your page first sees a recent one) and no sound at all; the rest is kept on your PC for the tape.
 
 **Your year, to the relay,** only with "keep an encrypted copy on the relay" on (off to begin with; 11/10/2026): each day of your record, hourly, when you go dark and when you press "open my year" or "send it now", **encrypted on your PC** before it goes, under a name that says nothing (not the day, not which PC). Once each time it opens, the two tokens made from your record key that let a page read it and post your public year (never the key). Below, [What the relay keeps](#what-the-relay-keeps), "Your year".
@@ -210,7 +210,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 **How it affects RuneLite:**
 - Nothing inside RuneLite changes: its files, settings, memory and plugins are untouched. It runs the same with the outstation open or closed.
 - Like streaming software, the outstation shares your PC: some CPU and GPU to copy and shrink each frame (more for more frames a second and wider pictures), and some of your upload (the window's upload line shows it). `outstation.exe --bench 30` times each step on your PC. If RuneLite slows down, lower the outstation's frames a second or its width.
-- On Cloudflare, more viewers don't cost you more upload: the relay sends each of them their own copy. A relay you run on your own PC (`relay-py`) sends every copy from your PC.
+- On Cloudflare, more viewers don't cost you more upload: the relay sends each of them their own copy.
 
 ## What the relay keeps
 
@@ -288,7 +288,7 @@ A request nobody answers goes after 14 days, and an answer nobody collects goes 
 
 **The lookups** (outside.wiki and ghillie.wiki's Outside page; 11/10/2026): a player's public records as Wise Old Man and RuneProfile show them (stats, gains, achievements, groups, recent collection log items), and item and boss icons, each as it was last fetched for a page that asked (below, "What the relay fetches"). A record is kept 14 days after it was fetched (an icon 90). They're the same public pages anyone can open on those sites; nothing about who asked is kept with them.
 
-All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see. On a relay of your own (`relay-py`), it's all in that PC's memory and gone when it stops, except clips and your year's encrypted copy and public year, which it keeps in folders.
+All of it lives in Cloudflare, in Jace's account. Cloudflare also keeps its own short-lived logs of the relay's requests, which only that account can see.
 
 ## What the relay fetches
 
@@ -304,7 +304,6 @@ So the Wiki gets about two requests a day from the relay, and Jagex about 360, h
 
 Each request says what it is and where to find us (the relay's User-Agent, `outstation-relay/1.0 (the almanac for outside.wiki's globe: fetched on a schedule and shared by every visitor; https://github.com/jhmcubed/outstation)`, which is what the Wiki's rules ask). Nothing about you or any visitor goes with it: no address, no name, nothing a page sent. These are public pages anyone's browser can open; the relay reads them as they are and passes on only the parts the globe shows.
 
-A relay of your own (`relay-py`) does the same while it runs, unless it's started with `--almanac off`.
 
 Since 11/10/2026 it also looks players up for the pages (outside.wiki's globe and ghillie.wiki's Outside page), so a visitor's browser never asks those sites itself: Wise Old Man (api.wiseoldman.net) and RuneProfile (api.runeprofile.com), for the player whose page or station menu is open (their stats, gains and timelines, achievements, groups, skills, quests, diaries, combat achievements, collection log and recent activity), and the item and boss icons from RuneLite's own icon server (static.runelite.net) and Wise Old Man's GitHub (through cdn.jsdelivr.net). These are asked only when a page wants them, then kept and shared: a player's record is asked at most about once an hour however many people look, an icon about once a month. The relay keeps under each site's allowance (Wise Old Man 15 requests a minute, RuneProfile 20) and waits when told to. The same User-Agent rule: it says what it is (`outstation-relay/1.0 (lookups for outside.wiki and ghillie.wiki's Outside page: …)`), and nothing about the visitor goes with it: only the player's name the page is about. On a relay of your own, `--lookup off` turns it off.
 
@@ -336,7 +335,7 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
    - `api.github.com/repos/jhmcubed/outstation/releases/latest`, the check for a newer version
    - `github.com/jhmcubed/outstation`: SAFETY.md and the report forms, opened in your browser
    - `ghillie.wiki` and `outside.wiki`, the pages it opens in your browser (the Outside pages are on outside.wiki since 11/16/2026)
-   - `127.0.0.1`, this PC, for Dink and for a relay of your own
+   - `127.0.0.1`, this PC, for Dink and for a relay running here for testing (the Worker under `wrangler dev`)
 
     Run it on your own copy (Python, nothing to install):
 

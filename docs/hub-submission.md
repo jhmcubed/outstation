@@ -84,3 +84,17 @@ claude/permissions-review.md, "The Hub's second answer"); the cut's README.md is
 only, and its CONTRIBUTING.md `plugin/CONTRIBUTING.hub.md` (`hub_cut.py`, HUB_FILES). The order above stands, with
 outside-wiki's branch merged (it deploys outside.wiki) before the comment, so the reviewer finds the site already
 changed.
+
+## The first update, merged (11/17/2026)
+
+runelite/plugin-hub#20826, at outside-plugin 88f3f23: the update countdown and Show what's sent, the delve board for
+everyone, the collection log's count, Copy my Dink address, kill and clue counts. Before merging, the reviewer (rsbfox)
+rewrote the warning: "The warning should not really be updated ever because it's only shown on install so I've gone
+ahead and made it shorter while covering you for current and future uses. The not controlled or verified by Runelite
+developers was also missing." The manifest now reads:
+
+    warning=This plugin submits your IP address, and may submit various account information, to a 3rd-party server not controlled or verified by Runelite developers. Your Outside page shows them publicly.
+
+So a later update changes only `commit=`: never the warning. Following (update 1's first idea, `globe` in
+`hub_cut.py`'s SUBMITTED) was never sent: the snapshot's Discord presence took its place, so open-panel.js's `FOLLOW`
+stays false.

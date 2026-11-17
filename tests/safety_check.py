@@ -241,7 +241,7 @@ ADDRESSES = {
     "https://github.com/jhmcubed/outstation/blob/main/SAFETY.md": "this page, opened in your browser from the attach "
                                                                      "screen's link (win.rs open_page)",
     "http://127.0.0.1": "Dink's address on this PC, shown to you",
-    "ws://127.0.0.1": "a relay of your own on this PC (relay-py), only when you choose one by hand",
+    "ws://127.0.0.1": "a relay on this PC (the Worker under wrangler dev, for testing), only when you choose one by hand",
     "https://discord.com/api/webhooks/": "the webhook box's hint, an example only",
 }
 

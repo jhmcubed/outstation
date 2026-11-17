@@ -24,21 +24,12 @@ jobs:
       - name: the Worker's types
         working-directory: relay
         run: npx tsc --noEmit
-      - name: the Python relay's own tests
-        run: python relay-py/test_relay.py
-      - name: the almanac's parsing and schedule (Python)
-        run: python relay-py/test_almanac.py
-      - name: the Python relay's lookups
-        run: python relay-py/test_lookup.py
-      - name: the almanac's parsing and schedule (the Worker's)
+      - name: the Worker's own tests (the almanac, the open list, the year, the lookups, the keep, the Array)
         working-directory: relay
         run: npm test
-      - name: the protocol, against the Python relay
-        run: python tests/protocol_test.py
+      # (the Python relay it was also run against was retired 11/17/2026: the Worker's the only relay)
       - name: the protocol, against the Worker (wrangler dev)
         run: python tests/protocol_test.py
-        env:
-          PORTAL_RELAY: worker
 
   # The Outside plugin (11/16/2026, the 11/10 review: on the Plugin Hub now, so a change that breaks it is caught here,
   # not only when a session runs its tests). The whole plugin's unit tests and the Hub's rules, then the Hub's version
@@ -64,6 +55,8 @@ jobs:
         run: gradle test --console=plain
       - name: the whole plugin against the Hub's rules
         run: python plugin/hub_check.py
+      - name: the plugin's closed lists against the relay's (bosses, raids, minigames, landing sites)
+        run: python tests/lists_match.py
       - name: the Hub's version, cut
         run: python plugin/hub_cut.py "$RUNNER_TEMP/outside-plugin"
       - name: the Hub's version's unit tests

@@ -339,7 +339,7 @@ fn stacks(p: &Value) -> Vec<(String, i64)> {
 /// What of Dink's post goes to the relay (11/06/2026): only what the relay uses of it, so nothing else leaves this PC.
 /// That's its kind, the line it shows (the embed's description, else its title, else the post's content: as the relay
 /// picks it), and the few numbers the readings and the drop guesses need for that kind (relay/src/text.ts's
-/// reportData and channel.ts's dinkCounts, relay-py's report_data and dink_counts: the same fields, every loot stack
+/// reportData and channel.ts's dinkCounts: the same fields, every loot stack
 /// and the loot's kill count included). Everything else in Dink's post stays here: your player's name and account type as
 /// Dink sends them, Dink's account hash, your Discord user if Dink adds it, the world and the region, the screenshot,
 /// a raid party's names, a PvP killer's name, the player a PvP drop came from. A PvP drop or death keeps no line (the
@@ -505,8 +505,8 @@ mod tests {
     use serde_json::json;
 
     fn rules() -> Value {
-        // relay-py/forward.example.json: Jace's ::dinkexport of 11/04/2026
-        serde_json::from_str(include_str!("../../relay-py/forward.example.json")).unwrap()
+        // tests/fixtures/dink/forward.example.json: Jace's ::dinkexport of 11/04/2026 (relay-py's, till it was retired)
+        serde_json::from_str(include_str!("../../tests/fixtures/dink/forward.example.json")).unwrap()
     }
     fn loot(stacks: &[(&str, i64, i64)]) -> Value {
         json!({"type": "LOOT", "content": "loot", "extra": {"items": stacks.iter().map(|(n, q, p)| json!({"name": n, "quantity": q, "priceEach": p})).collect::<Vec<_>>(), "source": "Vorkath"}})
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(crate::clip::file_safe("drop 4.2m abyssal whip <a/b>?"), "drop 4.2m abyssal whip a b");
     }
 
-    // (relay-py/test_relay.py's Rules, the same cases)
+    // (the Python relay's forwarding Rules' cases, kept here since it was retired, 11/17/2026)
     #[test]
     fn loot_needs_a_stack_worth_a_million_or_an_allowed_item() {
         let f = rules();

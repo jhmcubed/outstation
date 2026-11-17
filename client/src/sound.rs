@@ -61,10 +61,26 @@ pub fn label(m: &str) -> &'static str {
     }
 }
 
+/// Why the picture's stopped, for the sound to stop with it (sound_with_picture): RuneLite gone or minimised, or logged
+/// out with "nothing while logged out" on; never static (the sound carries on through it, as ever). capture::gate's
+/// reasons, but for the window alone.
+fn picture_held(s: &crate::settings::Settings) -> Option<String> {
+    let Some((h, title)) = win::find_window(&s.title) else { return Some("no RuneLite window".into()) };
+    if win::minimised(h) {
+        return Some("minimised".into());
+    }
+    if s.only_logged_in && !win::logged_in(&title, &s.title) {
+        return Some("not logged in".into());
+    }
+    None
+}
+
 fn run(settings: Shared, status: Arc<Mutex<Status>>) {
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE * 2);
     let mut buses: BTreeMap<u8, Bus> = BTreeMap::new();
     let (mut pid, mut pid_at) = (None::<u32>, Instant::now() - Duration::from_secs(5));
+    // why the sound's held with the picture (sound_with_picture, 11/17/2026), looked at with the pid, once a second
+    let mut held: Option<String> = None;
     let mut failures = 0usize;
     let mut last_note = String::new();
     loop {
@@ -105,6 +121,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
             let mode = mode_of(&s.sound);
             if pid_at.elapsed().as_secs_f64() > 1.0 {
                 pid = win::runelite_pid(&s.title);
+                held = if s.sound_with_picture { picture_held(&s) } else { None };
                 pid_at = Instant::now();
             }
             let mut want: BTreeMap<u8, (u32, bool)> = BTreeMap::new();
@@ -128,7 +145,9 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
                     buses.insert(*b, Bus::start(*b, *p, *inc, s.sound_kbps, tx.clone()));
                 }
             }
-            let note = if pid.is_some() || mode == "off" { format!("sound: {}", mode) } else { format!("sound: {}, waiting for RuneLite", mode) };
+            let note = if pid.is_none() && mode != "off" { format!("sound: {}, waiting for RuneLite", mode) }
+                else if let (Some(why), false) = (&held, mode == "off") { format!("sound: {}, held with the picture ({})", mode, why) }
+                else { format!("sound: {}", mode) };
             if note != last_note {
                 crate::transmit::log(&note);
                 last_note = note.clone();
@@ -159,6 +178,8 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
                     Err(_) => {}
                 }
                 while let Some(m) = queue.pop_front() {
+                    // (held with the picture: neither sent nor kept for the tape, as the picture's frames aren't)
+                    if held.is_some() { continue; }
                     crate::clip::keep(&m);
                     // (nobody seated, as the relay last told the transmitter: kept for clips, not sent, 11/10/2026;
                     // the tape sends nothing anyway)

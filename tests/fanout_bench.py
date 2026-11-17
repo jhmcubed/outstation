@@ -16,7 +16,6 @@ import struct
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay-py"))
 from wsmini import Client  # noqa: E402
 
 

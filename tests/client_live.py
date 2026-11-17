@@ -1,8 +1,7 @@
 """The client end to end against a relay: frames, the state line, the status, chat both ways, a ping, a poll, the
 sound and Dink, seen as a viewer sees them.
 
-    py tests/client_live.py                    # relay-py on a spare port
-    PORTAL_RELAY=worker py tests/client_live.py    # the Worker under wrangler dev
+    py tests/client_live.py                    # the Worker, under `wrangler dev` on a spare port
 
 Needs RuneLite open (it's what the client captures), and the client built (target/release/outstation.exe). It
 runs the client on a settings file of its own in a temporary folder, so your own portal's settings are never
@@ -21,7 +20,6 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(ROOT, "relay-py"))
 import protocol_test as pt  # noqa: E402
 from wsmini import Client  # noqa: E402
 

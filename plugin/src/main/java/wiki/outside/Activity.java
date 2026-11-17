@@ -54,7 +54,7 @@ class Activity
 	 * name as the game has it (RuneLite's NpcID names), and the label that goes. Every boss on the official hiscores
 	 * (RuneLite's HiscoreSkill, read 11/10/2026) is here, but for the raids (RAIDS) and Tempoross, Wintertodt and Zalcano
 	 * (MINIGAMES, as the minigames they are); a boss of several NPCs goes as one label. The relays take only these labels
-	 * (game.ts's ACTIVITY_BOSSES, relay.py's; relay-py/test_relay.py checks the three lists match). Those fought in an
+	 * (game.ts's ACTIVITY_BOSSES; tests/lists_match.py checks the two match). Those fought in an
 	 * instance (Vorkath, Zulrah, Zuk...) keep their labels there (11/09/2026). A name not here, or spelled otherwise in
 	 * the game, is "fighting" (or the raid or minigame it's in).
 	 */
@@ -175,7 +175,7 @@ class Activity
 	 * courses at sea), and RuneLite's Discord plugin and hiscores have no region or label for them, so they're told by
 	 * the game's own flag, VarbitID.SAILING_BT_IN_TRIAL, not 0 while a trial's run (as the Sailing plugin reads it:
 	 * LlemonDuck/sailing at af987f3, barracudatrials/HidePortalTransitions.java line 42). One more minigame label for the
-	 * relays (game.ts's ACTIVITY_MINIGAMES, relay.py's). Sailing's bosses, the Shellbane gryphon and the Mad Angel, are on
+	 * relay (game.ts's ACTIVITY_MINIGAMES). Sailing's bosses, the Shellbane gryphon and the Mad Angel, are on
 	 * BOSSES already; its other work (courier and bounty tasks, charting, salvaging, trawling) is skilling Sailing.
 	 */
 	static final String TRIALS = "Barracuda Trials";
