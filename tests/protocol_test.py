@@ -1,12 +1,11 @@
-"""The portal's protocol, tested from outside against either relay, so the two never drift apart.
+"""The portal's protocol, tested from outside against the relay (the Cloudflare Worker, relay/), as a client sees it.
 
-    py tests/protocol_test.py                  # relay-py/relay.py, started on a spare port
-    PORTAL_RELAY=worker py tests/protocol_test.py   # the Cloudflare Worker, under `wrangler dev` on a spare port
-    PORTAL_RELAY=ws://host:port ADMIN_TOKEN=... py tests/protocol_test.py   # a relay already running
+    py tests/protocol_test.py                  # the Worker, under `wrangler dev` on a spare port
+    PORTAL_RELAY=ws://host:port ADMIN_TOKEN=... py tests/protocol_test.py   # a Worker already running, with its token
 
-Only what a client can see is tested here. relay-py/test_relay.py keeps the Python relay's own tests
-(its page, its public side, the delay, forwarding to Discord). Each test has a channel of its own.
-Standard library only (relay-py/wsmini.py plays every client).
+The Python relay (relay-py) it was also run against was retired 11/17/2026 (Jace: "i would rather just use the client
+everybody else is using"); it's in git history before that day. Each test has a channel of its own. Standard library
+only (wsmini.py, beside this, plays every client).
 """
 
 import asyncio
@@ -33,21 +32,20 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(ROOT, "relay-py"))
 from wsmini import Client  # noqa: E402
 
-MODE = os.environ.get("PORTAL_RELAY", "python")
-WORKER = MODE == "worker" or (MODE.startswith("ws") and bool(os.environ.get("ADMIN_TOKEN")))
+MODE = os.environ.get("PORTAL_RELAY", "worker")
+if MODE == "python":
+    raise SystemExit("relay-py was retired 11/17/2026: run the suite against the Worker (no PORTAL_RELAY)")
+if MODE.startswith("ws") and not os.environ.get("ADMIN_TOKEN"):
+    raise SystemExit("a relay already running needs its ADMIN_TOKEN: the suite hands out its channels as the keeper")
 ADMIN = os.environ.get("ADMIN_TOKEN") or "test-admin-" + secrets.token_hex(12)
 # the oldest client the relays under test let in (a relay already running: whatever it was started with, given here)
 ASKS_AN_HOUR = 12    # (the Worker's own is 3: the tests all ask from one address)
 REPORTS_AN_HOUR = 8  # (the Worker's own is 5)
 MIN_CLIENT = os.environ.get("MIN_CLIENT", "" if MODE.startswith("ws") else "0.5.0")
-# the aether's keeper (11/07/2026): the Worker's ADMIN_TOKEN, and relay-py's --admin-token (given it here)
-AETHER_KEEPER = WORKER or MODE == "python"
 SAY_BURST = 20
-# the relays take 5 game messages a second from the plugin's socket and drop the rest (game.ts's GAME_A_SECOND, relay.py's
-# GAME_A_SECOND), counted by when each arrives; a test that needs every one of a run counted sends 5 and waits this long
+# the relays take 5 game messages a second from the plugin's socket and drop the rest (game.ts's GAME_A_SECOND), counted by when each arrives; a test that needs every one of a run counted sends 5 and waits this long
 # (11/11/2026: 1.05 s, measured on the test's own clock, let 6 arrive within a second on a busy GitHub runner, and the
 # Worker dropped one: the 31st star then fitted under the 30 an hour, jhmcubed/outstation#15 and the run after #10)
 GAME_PACE = 1.5
@@ -56,7 +54,7 @@ SOUND_HOLD = 0.5
 # shortened here so it can be seen to go stale (a relay already running: whatever it was started with, given here)
 WHERE_FRESH_S = float(os.environ.get("WHERE_FRESH_SECONDS") or (240 if MODE.startswith("ws") else 4))
 # how old a live row on the Worker's open list (GET /channels) may be before its Directory asks the channel again: 300 s
-# as it's run, shortened here so the check can be seen to catch a telling that was lost (relay.py asks nothing)
+# as it's run, shortened here so the check can be seen to catch a telling that was lost
 LISTING_CHECK_S = 5
 # how long the Hub's plugin counts as here after its last POST (11/16/2026, the snapshot): 70 minutes as the relays are
 # run, shortened here so it can be seen to go stale
@@ -124,7 +122,7 @@ class Upstream(http.server.ThreadingHTTPServer):
     """The almanac's sources (11/09/2026), on this computer, from tests/fixtures/almanac: Jagex's news and world list
     and the Wiki's /24h (today's, or the next day's once `day` says so; the day before with ?timestamp=) and /mapping,
     at the real ones' paths. `broken` maps a path to a status (or b"garbage"); `seen` is every request, with its
-    User-Agent. The relays fetch everything under it (relay.py's --almanac, the Worker's ALMANAC_UPSTREAM)."""
+    User-Agent. The relays fetch everything under it (the Worker's ALMANAC_UPSTREAM)."""
     daemon_threads = True
 
     def __init__(self):
@@ -204,31 +202,19 @@ def setUpModule():
     UPSTREAM = Upstream()
     port = free_port()
     RELAY = "ws://127.0.0.1:%d" % port
-    if MODE == "worker":
-        STATE = tempfile.mkdtemp(prefix="portal-wrangler-")
-        npx = shutil.which("npx") or "npx"
-        PROC = subprocess.Popen(
-            [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
-             "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
-             "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
-             "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S, "--var", "PRESENCE_FRESH_SECONDS:%g" % PRESENCE_FRESH_S,
-             "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
-             "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1",
-             "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
-            cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
-        up = wait_up(90)
-    else:
-        STATE = tempfile.mkdtemp(prefix="portal-clips-")
-        PROC = subprocess.Popen([sys.executable, os.path.join(ROOT, "relay-py", "relay.py"), "--port", str(port),
-                                 "--no-forward", "--min-client", MIN_CLIENT, "--clips", STATE, "--admin-token", ADMIN,
-                                 "--where-fresh-seconds", "%g" % WHERE_FRESH_S,
-                                 "--presence-fresh-seconds", "%g" % PRESENCE_FRESH_S,
-                                 "--almanac", UPSTREAM.base, "--test-forget", "--lookup", UPSTREAM.base, "--witness-wait", "1", "--witness-look", "1",
-                                 "--records", os.path.join(STATE, "records"), "--record-chunks", str(RECORD_CHUNKS)],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                start_new_session=sys.platform != "win32")
-        up = wait_up(15)
+    STATE = tempfile.mkdtemp(prefix="portal-wrangler-")
+    npx = shutil.which("npx") or "npx"
+    PROC = subprocess.Popen(
+        [npx, "wrangler", "dev", "--port", str(port), "--ip", "127.0.0.1", "--persist-to", STATE,
+         "--show-interactive-dev-session=false", "--var", "ADMIN_TOKEN:" + ADMIN,
+         "--var", "POLL_MIN_SECONDS:1", "--var", "POLL_KEPT_SECONDS:1", "--var", "MIN_CLIENT:" + MIN_CLIENT, "--var", "ASKS_AN_HOUR:" + str(ASKS_AN_HOUR), "--var", "REPORTS_AN_HOUR:" + str(REPORTS_AN_HOUR),
+         "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S, "--var", "PRESENCE_FRESH_SECONDS:%g" % PRESENCE_FRESH_S,
+         "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
+         "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1",
+         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
+        cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
+    up = wait_up(90)
     if not up:
         tearDownModule()
         raise RuntimeError("the relay didn't start (%s)" % MODE)
@@ -357,17 +343,14 @@ async def nothing_binary(c, wait=0.4):
 
 
 class Base(unittest.IsolatedAsyncioTestCase):
-    settle = 0.15 if WORKER else 0.05
+    settle = 0.15
 
     async def asyncSetUp(self):
         self.clients = []
         self.ch = "t" + secrets.token_hex(5)
-        if WORKER:
-            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch)
-            self.assertEqual(status, 200)
-            self.key = got["key"]
-        else:
-            self.key = "secret-key-" + secrets.token_hex(4)   # (relay.py: the first transmitter claims it)
+        status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch)
+        self.assertEqual(status, 200)
+        self.key = got["key"]
 
     async def asyncTearDown(self):
         for c in self.clients:
@@ -612,7 +595,6 @@ class Versions(Base):
         v = await self.connect("watch", "code=&v=" + self.older())
         self.assertIn("live", await next_of(v, "relay"))
 
-    @unittest.skipUnless(WORKER, "the wrong-key limit: the Worker only")
     async def test_turned_away_for_its_version_isnt_a_wrong_key(self):
         for _ in range(12):
             c = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, self.older()))
@@ -620,7 +602,6 @@ class Versions(Base):
         tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
         self.assertTrue((await next_of(tx, "relay"))["live"])
 
-    @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
     async def test_the_keepers_list_counts_hours_on_air_this_month(self):
         def seconds():
             return {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}[self.ch]["live_s"]
@@ -639,7 +620,6 @@ class Versions(Base):
         await asyncio.sleep(1.6)
         self.assertGreaterEqual(seconds(), after_one + 1)
 
-    @unittest.skipUnless(WORKER, "the keeper's list: the Worker only")
     async def test_the_keepers_list_says_which_version_last_transmitted(self):
         tx = await self.connect("transmit", "key=%s&code=&v=%s" % (self.key, MIN_CLIENT))
         await next_of(tx, "relay")
@@ -876,7 +856,6 @@ class Talk(Base):
         p = await next_of(late, "poll")
         self.assertEqual((p["counts"], p["open"]), ([0, 2], False))
 
-    @unittest.skipUnless(WORKER, "relay.py's poll takes 10 s at least: its own tests cover it")
     async def test_a_poll_ends_by_itself_and_goes_after_a_while(self):
         # (the Worker under test is started with POLL_MIN_SECONDS and POLL_KEPT_SECONDS at 1)
         tx, desk, a, b = await self.setup_room()
@@ -1372,13 +1351,11 @@ class ArrayEvents(Base):
         return [{k: v for k, v in e.items() if k not in ("id", "at", "channel")} for e in events]
 
     async def other(self):
-        """Another channel of this test's, and its key (handed out on the Worker; claimed by its transmitter here)."""
+        """Another channel of this test's, and its key (handed out by the keeper)."""
         ch = "t" + secrets.token_hex(5)
-        if WORKER:
-            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
-            self.assertEqual(status, 200)
-            return ch, got["key"]
-        return ch, "secret-key-" + secrets.token_hex(4)
+        status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+        self.assertEqual(status, 200)
+        return ch, got["key"]
 
     async def test_a_live_open_outstations_reports_become_events(self):
         await self.tx()
@@ -1664,7 +1641,6 @@ class Clips(Base):
         self.assertEqual(len(got["clips"]), 22)
         self.assertNotIn(ids[1], [c["id"] for c in got["clips"]])
 
-    @unittest.skipUnless(WORKER, "the keeper's routes are the Worker's")
     async def test_the_keeper_sees_and_takes_down_any_channels_clips(self):
         await self.tx(code="moss")
         await self.pause()
@@ -1697,15 +1673,10 @@ class Messages(Base):
     {"dm_sent"} or {"dm_failed"}."""
 
     async def other(self):
-        """A second channel, handed out (the Worker) or claimed (relay-py), and its key."""
+        """A second channel, handed out by the keeper, and its key."""
         ch = "t" + secrets.token_hex(5)
-        if WORKER:
-            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
-            return ch, got["key"]
-        key = "other-key-" + secrets.token_hex(4)
-        c = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, ch, key))
-        self.clients.append(c)
-        return ch, key
+        status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + ch)
+        return ch, got["key"]
 
     async def desk_of(self, ch, key, name):
         c = await Client().open("%s/desk/%s?key=%s&name=%s" % (RELAY, ch, key, name))
@@ -1789,7 +1760,6 @@ class Sound(Base):
         self.assertEqual((await next_of(v, "sound"))["mode"], "off")
 
 
-@unittest.skipUnless(WORKER, "flow control by acknowledgement: the Worker only (relay.py reads its own send buffer)")
 class Flow(Base):
     async def test_a_viewer_that_doesnt_acknowledge_stops_getting_frames_until_it_does(self):
         tx = await self.tx()
@@ -1818,7 +1788,7 @@ class Game(Base):
     """The game (11/07/2026): the Outside plugin, a RuneLite plugin of our own, sends the player's live game state on a
     socket of its own. Each field replaces the one kept but "items", which is merged; what changed reaches seated
     viewers, lookers and desks, and someone just come gets the whole of it; GET /game reads it while the outstation's
-    dark. (The checking of each field, the dictionary's most and the kept state's most: relay-py/test_relay.py's.)"""
+    dark. (The checking of each field, the dictionary's most and the kept state's most: relay-py's own tests' (retired 11/17/2026).)"""
 
     STATE = {"name": "Sburb", "world": 302, "type": "NORMAL", "off": False, "paused": False,
              "vitals": {"hp": [80, 99], "prayer": [43, 70], "run": 100, "spec": 50},
@@ -2020,7 +1990,6 @@ class Game(Base):
         await g.send(json.dumps({"game": {"world": 399}}))
         self.assertEqual((await next_of(v, "game"))["world"], 399)
 
-    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
     async def test_a_new_key_cuts_the_game_off_and_forgets_it(self):
         g = await self.game()
         v = await self.watch()
@@ -2186,7 +2155,7 @@ class Snapshot(Base):
         self.assertEqual(sorted(await next_of(v, "game")), ["at", "snap"])
 
     async def test_a_wrong_key_a_bad_body_and_too_many_are_refused(self):
-        self.assertEqual(self.post({"game": self.STATE})[0], 204)        # (relay.py: this claims the channel)
+        self.assertEqual(self.post({"game": self.STATE})[0], 204)
         self.assertEqual(game_post(self.ch, "wrong-key-" + secrets.token_hex(3), {"game": self.STATE})[0], 403)
         self.assertEqual(game_post(self.ch, "short", {"game": self.STATE})[0], 403)
         st, h, out = raw("POST", "/game/%s?key=%s" % (self.ch, self.key), b"not json", {"Content-Type": "application/json"})
@@ -2243,8 +2212,7 @@ class Snapshot(Base):
         for i, p in enumerate(bad):
             if i % 5 == 0:                             # (a channel of its own every five, for the minute's most)
                 self.ch = "t" + secrets.token_hex(5)
-                if WORKER:
-                    self.key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch))[1]["key"]
+                self.key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch))[1]["key"]
                 self.post({"game": {"name": "Sburb", "presence": good[0]}})
             self.assertEqual(self.post({"game": {"presence": p, "type": "IRONMAN"}})[0], 204)
             got = http("GET", "/game/%s?code=" % self.ch)[1]
@@ -2270,7 +2238,7 @@ class Following(Base):
     player was in two minutes before, or null. The relay holds it (one every 50 s at most; null whenever it comes), drops
     it when the plugin goes, logs out or holds for the player's safety, and shows it only on GET /channels, while the
     channel's live and listed and it came within WHERE_FRESH_S. Never to viewers or lookers, in GET /game or in
-    the Array's events. (The throttle's end and --delay: relay-py/test_relay.py's.)"""
+    the Array's events. (The throttle's end and --delay: relay-py's own tests' (retired 11/17/2026).)"""
 
     LUMBRIDGE = {"x": 3264, "y": 3264}
 
@@ -2327,9 +2295,6 @@ class Following(Base):
         self.assertNotIn({"x": 1088, "y": 2496}, [c["where"] for c in got])
 
     async def test_an_invite_is_taken_up_by_the_plugin_and_shows_it_at_once(self):
-        if not WORKER:
-            await self.tx()                    # (relay.py: the inviter's handed out once its first transmitter claims it)
-            await self.pause(2)
         a = "i" + secrets.token_hex(5)
         status, got = http("POST", "/invites/" + self.ch, {"key": self.key, "player": a})
         self.assertEqual(status, 200)
@@ -2410,7 +2375,6 @@ class Following(Base):
             pass
         self.assertIsNone(await self.where())
 
-    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
     async def test_a_new_key_drops_it(self):
         await self.live_and_following()
         self.assertEqual(await self.where(), self.LUMBRIDGE)
@@ -2514,7 +2478,7 @@ class Activity(Base):
     """What they're doing (11/08/2026): the Outside plugin may send "activity", one coarse label from closed lists
     ({"kind": "skilling", "skill"}, {"kind": "boss", "boss"}, {"kind": "fighting"}, {"kind": "idle"}), or null. Held,
     taken (one every 50 s), dropped and shown on GET /channels exactly as following's "where", and without it. Never to
-    viewers or lookers, in GET /game or in the Array's events; the owner's desk only as {"mine"} (YourYear). (The throttle's end: relay-py/test_relay.py's.)"""
+    viewers or lookers, in GET /game or in the Array's events; the owner's desk only as {"mine"} (YourYear). (The throttle's end: relay-py's own tests' (retired 11/17/2026).)"""
 
     MINING = {"kind": "skilling", "skill": "Mining"}
 
@@ -2567,9 +2531,8 @@ class Activity(Base):
                   {"kind": "boss", "boss": "Callisto"}, {"kind": "boss", "boss": "the Gauntlet"},
                   {"kind": "minigame", "minigame": "Last Man Standing"}, {"kind": "minigame", "minigame": "Zalcano"}):
             self.ch = "t" + secrets.token_hex(5)
-            if WORKER:
-                status, got = admin("POST", "/admin/channels/" + self.ch)
-                self.key = got["key"]
+            status, got = admin("POST", "/admin/channels/" + self.ch)
+            self.key = got["key"]
             await self.live_and_doing(a)
             self.assertEqual(await self.activity(), dict(a), a)
 
@@ -2618,15 +2581,13 @@ class Activity(Base):
         await self.say(g, {"off": True})
         self.assertIsNone(await self.activity())
         self.ch = "t" + secrets.token_hex(5)
-        if WORKER:
-            self.key = admin("POST", "/admin/channels/" + self.ch)[1]["key"]
+        self.key = admin("POST", "/admin/channels/" + self.ch)[1]["key"]
         tx, g = await self.live_and_doing()
         self.assertEqual(await self.activity(), self.MINING)
         await self.say(g, {"paused": "wilderness"})
         self.assertIsNone(await self.activity())
         self.ch = "t" + secrets.token_hex(5)
-        if WORKER:
-            self.key = admin("POST", "/admin/channels/" + self.ch)[1]["key"]
+        self.key = admin("POST", "/admin/channels/" + self.ch)[1]["key"]
         tx, g = await self.live_and_doing()
         self.assertEqual(await self.activity(), self.MINING)
         g.close()
@@ -2643,7 +2604,6 @@ class Activity(Base):
         await self.say(g, {"activity": {"kind": "minigame", "minigame": "Zalcano"}})
         self.assertIsNone(await self.row())
 
-    @unittest.skipUnless(WORKER, "a new key from the keeper: the Worker only")
     async def test_a_new_key_drops_it(self):
         await self.live_and_doing()
         self.assertEqual(await self.activity(), self.MINING)
@@ -2762,10 +2722,7 @@ class Stars(Base):
     async def test_several_outstations_one_star_tiers_only_fall_and_gone_takes_it_off(self):
         g = await self.game()
         other = "t" + secrets.token_hex(5)
-        if WORKER:
-            key = admin("POST", "/admin/channels/" + other)[1]["key"]
-        else:
-            key = "secret-key-" + secrets.token_hex(4)
+        key = admin("POST", "/admin/channels/" + other)[1]["key"]
         h = await self.game(key=key, channel=other)
         await self.say(g, self.star(tier=6))
         await self.pause(2)                                        # (this channel's first, on the Worker too)
@@ -2938,8 +2895,6 @@ class Kept(Base):
         """What the Worker's Directory stores of a channel's row and how often it's asked it since it woke ({"stored",
         "asked"}); with a body, those fields put into the row first, as a telling that was lost. None on relay.py."""
         status, got = await asyncio.to_thread(http, "POST" if body is not None else "GET", "/test/listed/" + (channel or self.ch), body)
-        if status == 404 and not WORKER:
-            return None
         self.assertEqual(status, 200)
         return got
 
@@ -3024,7 +2979,7 @@ class Kept(Base):
         self.assertFalse((await asyncio.to_thread(self.rows))[self.ch]["live"])
         s = await self.store()
         if s is None:
-            return                                                             # (relay.py: nothing to lose)
+            return
         self.assertEqual(s["asked"], 0)
         # a telling lost (or a channel reset without telling): the row says live, and nothing tells it otherwise. It's
         # asked when it's LISTING_CHECK_S old, and shows dark from then on
@@ -3071,11 +3026,6 @@ class Backfill(Base):
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
-        if not WORKER:
-            tx = await self.tx()                                               # (relay.py: the channel's claimed by it)
-            await next_of(tx, "relay")
-            tx.close()
-            await self.pause()
 
     @staticmethod
     def keeper(body, auth=True):
@@ -3171,10 +3121,7 @@ class Backfill(Base):
         status, got = await self.put_back(pet, channel="t" + secrets.token_hex(5))
         self.assertEqual((status, sorted(got)), (404, ["error"]))
         hidden = "t" + secrets.token_hex(5)
-        if WORKER:
-            key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + hidden))[1]["key"]
-        else:
-            key = "secret-key-" + secrets.token_hex(4)
+        key = (await asyncio.to_thread(admin, "POST", "/admin/channels/" + hidden))[1]["key"]
         c = await Client().open("%s/transmit/%s?key=%s&code=moss" % (RELAY, hidden, key))
         self.clients.append(c)
         await next_of(c, "relay")
@@ -3235,13 +3182,8 @@ class Claims(Base):
         return st, json.loads(out) if out else None
 
     async def given(self, name):
-        """A name handed out by the keeper (the Worker), or claimed by its first transmitter (relay.py)."""
-        if WORKER:
-            self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
-        else:
-            c = await Client().open("%s/transmit/%s?key=its-own-key-%s" % (RELAY, name, secrets.token_hex(3)))
-            self.clients.append(c)
-            await next_of(c, "relay")
+        """A name handed out by the keeper."""
+        self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
 
     async def test_a_name_with_a_space_is_its_own_channel(self):
         # (11/16/2026, Jace: "oranberries and oran berries/oran_berries are not the same ... can exist at the same time":
@@ -3671,16 +3613,11 @@ class TakingBack(Witnessing):
 
 class Invites(Base):
     """An outstation's invites (11/07/2026): it hands out channels of its own, three to begin with and one more every 10
-    hours on air (the earning is relay-py/test_relay.py's: ten hours on air can't be waited for here). An invite's code
+    hours on air (the earning is relay-py's own tests' (retired 11/17/2026): ten hours on air can't be waited for here). An invite's code
     attaches a client as the keeper's does, and the new channel says whose invite it came from."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
-        if not WORKER:
-            tx = await self.tx()           # (relay.py: a channel is handed out once its first transmitter claims it)
-            await next_of(tx, "relay")
-            tx.close()
-            await self.pause(2)
 
     def status(self, key=None):
         return http("GET", "/invites/%s?key=%s" % (self.ch, key or self.key))
@@ -3689,13 +3626,8 @@ class Invites(Base):
         return http("POST", "/invites/" + self.ch, {"key": key or self.key, "player": player})
 
     async def given(self, name):
-        """A name with an outstation already: handed out by the keeper (the Worker), or claimed (relay.py)."""
-        if WORKER:
-            self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
-        else:
-            c = await Client().open("%s/transmit/%s?key=its-own-key-%s" % (RELAY, name, secrets.token_hex(3)))
-            self.clients.append(c)
-            await next_of(c, "relay")
+        """A name with an outstation already: handed out by the keeper."""
+        self.assertEqual(admin("POST", "/admin/channels/" + name)[0], 200)
 
     async def test_a_new_outstation_has_three_and_has_used_none(self):
         status, got = self.status()
@@ -3722,10 +3654,9 @@ class Invites(Base):
         rows = {c["channel"]: c for c in http("GET", "/channels")[1]["channels"]}
         self.assertEqual(rows[name]["by"], self.ch)
         self.assertIsNone(rows[self.ch]["by"])
-        if WORKER:
-            kept = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}
-            self.assertEqual(kept[name]["by"], self.ch)
-            self.assertIsNone(kept[self.ch]["by"])                  # (the keeper's own)
+        kept = {c["channel"]: c for c in admin("GET", "/admin/channels")[1]}
+        self.assertEqual(kept[name]["by"], self.ch)
+        self.assertIsNone(kept[self.ch]["by"])                  # (the keeper's own)
 
     async def test_a_name_with_an_outstation_already_isnt_invited(self):
         other = "i" + secrets.token_hex(5)
@@ -3759,7 +3690,6 @@ class Invites(Base):
         self.assertEqual(got[self.ch][1]["error"], "that's your own outstation")
         self.assertEqual(self.status()[1]["used"], [])
 
-    @unittest.skipUnless(WORKER, "a new key and taking back: the keeper's, the Worker only")
     async def test_a_new_key_keeps_whose_invite_it_was_and_taking_back_takes_nothing_back(self):
         name = "i" + secrets.token_hex(5)
         self.assertEqual(self.invite(name)[0], 200)
@@ -3837,7 +3767,6 @@ class Invites(Base):
         self.assertNotIn(self.ch, raw)                                       # (nothing said of a hidden outstation)
         self.assertNotIn(a, raw)
 
-    @unittest.skipUnless(WORKER, "the keeper's own, a new key and taking back: the keeper's, the Worker only")
     async def test_the_keepers_own_are_listed_as_before_and_a_taken_back_inviters_invites_arent_counted(self):
         own = "k" + secrets.token_hex(5)
         self.assertEqual(admin("POST", "/admin/channels/" + own)[0], 200)   # (the keeper's, never used: listed, as ever)
@@ -3903,10 +3832,7 @@ class YourYear(Base):
     LUMBRIDGE = {"x": 3264, "y": 3264}
 
     async def claim(self):
-        """(relay.py: a channel is claimed by its first socket with a key; the Worker's are handed out already)"""
-        if not WORKER:
-            await self.desk()
-            await self.pause()
+        """(the Worker's channels are handed out already: nothing to do)"""
 
     async def game(self):
         g = await Client().open("%s/game/%s?key=%s&v=0.0.1" % (RELAY, self.ch, self.key))
@@ -4105,7 +4031,7 @@ class YourYear(Base):
         for token in (None, write, "x" * 43, read[:-1]):                   # (the write token can't read)
             self.assertEqual(self.listing(token)[0], 403, token)
         # what the relay keeps is the ciphertext as it came: the plaintext is nowhere in its storage
-        if MODE in ("python", "worker"):
+        if MODE == "worker":
             plain = VECTORS["plaintext"].encode()
             for marker in (VECTORS["device"].encode(), b'"where": {"x": 3264', plain[:40]):
                 for root, _, files in os.walk(STATE):
@@ -4156,14 +4082,13 @@ class YourYear(Base):
             self.assertEqual(len(self.listing(year_key(i)[1])[1]["chunks"]), 1, i)
         self.assertEqual(self.listing(year_key(4)[1])[0], 403)
         self.assertEqual(self.rec("POST", "/token", {"read": "short", "write": "x"}, key=self.key)[0], 400)
-        if WORKER:
-            # (a new station key from the keeper: the record's untouched, and the old key no longer reaches it)
-            old = self.key
-            status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch)
-            self.assertEqual(status, 200)
-            self.key = got["key"]
-            self.assertEqual(len(self.listing(year_key(0)[1])[1]["chunks"]), 1)
-            self.assertEqual(self.rec("DELETE", key=old)[0], 403)
+        # (a new station key from the keeper: the record's untouched, and the old key no longer reaches it)
+        old = self.key
+        status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + self.ch)
+        self.assertEqual(status, 200)
+        self.key = got["key"]
+        self.assertEqual(len(self.listing(year_key(0)[1])[1]["chunks"]), 1)
+        self.assertEqual(self.rec("DELETE", key=old)[0], 403)
 
     async def test_delete_everything_takes_the_chunks_the_tokens_and_the_year(self):
         await self.claim()
@@ -4415,7 +4340,6 @@ class YourYear(Base):
         self.assertEqual(self.year("GET")[0], 404)                         # (nothing refused was kept)
 
 
-@unittest.skipUnless(WORKER, "the keeper takes channels back only on the Worker")
 class YourYearTakenBack(Base):
     async def test_a_channel_taken_back_takes_its_record_and_year(self):
         _, read, write = year_key(0)
@@ -4430,7 +4354,7 @@ class YourYearTakenBack(Base):
 class SettlingGone(Base):
     """Settling (11/08/2026) went on 11/10/2026 (docs/protocol.md, "Settling"): the globe shows real positions on the land
     and every other outstation at the receiver, so an outstation has no home. Its routes answer 410 with a line an app
-    built while it was here shows as it is, and nothing lists a home. (relay.py's public side: relay-py/test_relay.py.)"""
+    built while it was here shows as it is, and nothing lists a home. (relay.py's public side: relay-py's own tests (retired 11/17/2026).)"""
 
     GONE = "settling has gone: the globe now shows each outstation where it really is, or at the receiver"
 
@@ -4468,10 +4392,10 @@ class SettlingGone(Base):
         row = {c["channel"]: c for c in (await asyncio.to_thread(http, "GET", "/channels"))[1]["channels"]}[self.ch]
         self.assertEqual(sorted(row), ["activity", "by", "channel", "doing", "game", "live", "name", "open", "presence", "static",
                                        "title", "viewers", "where"])
-        if WORKER:   # (the keeper's list: no home, nor when it changed)
-            mine = {c["channel"]: c for c in (await asyncio.to_thread(admin, "GET", "/admin/channels"))[1]}[self.ch]
-            self.assertNotIn("home", mine)
-            self.assertNotIn("homeAt", mine)
+        # (the keeper's list: no home, nor when it changed)
+        mine = {c["channel"]: c for c in (await asyncio.to_thread(admin, "GET", "/admin/channels"))[1]}[self.ch]
+        self.assertNotIn("home", mine)
+        self.assertNotIn("homeAt", mine)
 
 
 class Aether(Base):
@@ -4479,7 +4403,7 @@ class Aether(Base):
     name and a device id, an outstation with its channel and key; a line may be several rows (ASCII art); the keeper
     takes lines back and bans. The room is the relay's one, shared by every test, so each test gives each visitor a
     device of its own and finds its own lines by their words. (The cleaning and the rate in full, 15 a minute among
-    them: relay-py/test_relay.py's AetherWords and AetherRate.)"""
+    them: relay-py's own tests, retired 11/17/2026.)"""
 
     async def visitor(self, name=None, device=None, extra=""):
         """A visitor's socket (its .name and .device as it gave them)."""
@@ -4592,14 +4516,11 @@ class Aether(Base):
         self.assertEqual((line["text"], line["name"], line["from"]), (text, self.ch, "outstation"))
 
     async def test_a_wrong_or_short_key_is_refused_as_a_desks_would_be(self):
-        if not WORKER:
-            await next_of(await self.station(), "aether_so_far")       # (relay.py: the first key claims it, as a desk's)
         wrong = await self.station(key="wrong-key-" + secrets.token_hex(3))
         self.assertEqual(await wrong.recv_close(), ("close", 4003))
         short = await self.station(key="short")
         self.assertEqual(await short.recv_close(), ("close", 4001))
 
-    @unittest.skipUnless(WORKER, "channels handed out by the keeper: the Worker only")
     async def test_an_outstation_nobody_handed_out_is_refused(self):
         c = await Client().open("%s/aether?channel=free%s&key=some-key-at-all" % (RELAY, secrets.token_hex(4)))
         self.clients.append(c)
@@ -4616,8 +4537,6 @@ class Aether(Base):
         self.assertIsInstance(await next_of(new, "aether_so_far"), list)
 
     async def test_a_visitor_cant_take_an_outstations_name_whatever_its_case_and_spaces(self):
-        if not WORKER:
-            await next_of(await self.station(), "aether_so_far")       # (relay.py: claimed)
         taken = await self.visitor(name=self.ch[:4].upper() + " " + self.ch[4:])
         self.assertEqual(await taken.recv_close(), ("close", 4009))
         self.assertIn("belongs to an outstation", taken.reason)
@@ -4669,7 +4588,6 @@ class Aether(Base):
         self.assertEqual((await next_of(v, "chat"))["text"], other)
         self.assertEqual(await self.lines(s), [])
 
-    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
     async def test_the_keeper_takes_a_line_back_off_everyones_page(self):
         a, b = await self.visitor(), await self.visitor()
         await next_of(b, "aether_so_far")
@@ -4687,7 +4605,6 @@ class Aether(Base):
         self.assertNotIn(line["id"], [x["id"] for x in await next_of(late, "aether_so_far")])
         self.assertEqual(admin_json("POST", "/admin/aether/unsay", {"id": line["id"]})[0], 404)
 
-    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
     async def test_the_keeper_bans_a_visitor_by_its_device_and_takes_back_all_its_lines(self):
         a, b = await self.visitor(), await self.visitor()
         await next_of(b, "aether_so_far")
@@ -4709,7 +4626,6 @@ class Aether(Base):
         self.assertIsInstance(await next_of(back, "aether_so_far"), list)
         self.assertEqual(admin_json("POST", "/admin/aether/unban", {"who": "device:" + a.device})[0], 404)
 
-    @unittest.skipUnless(AETHER_KEEPER, "the keeper's routes need the relay's token")
     async def test_the_keeper_bans_an_outstation_by_its_channel(self):
         s = await self.station()
         await next_of(s, "aether_so_far")
@@ -4731,7 +4647,6 @@ class Aether(Base):
             self.assertEqual(e.exception.code, 403, path)
 
 
-@unittest.skipUnless(WORKER, "channels handed out by an owner: the Worker only")
 class Channels(Base):
     async def test_a_channel_nobody_handed_out_cant_be_taken(self):
         c = await Client().open("%s/transmit/%s?key=some-key-at-all" % (RELAY, "free" + secrets.token_hex(4)))
@@ -4785,7 +4700,6 @@ class Channels(Base):
 
 
 
-@unittest.skipUnless(WORKER, "the keeper's notice: the Worker only (the keeper's relay)")
 class Notices(Base):
     """One line from the keeper to every portal: every desk connected hears it at once, each that connects later
     hears it on connecting, and taking it down says so. Viewers never get it."""
@@ -4819,7 +4733,6 @@ class Notices(Base):
         self.assertEqual(e.exception.code, 403)
 
 
-@unittest.skipUnless(WORKER, "asking for a portal: the Worker only (the keeper's relay)")
 class Requests(unittest.IsolatedAsyncioTestCase):
     """A friend's client asks for its player's channel with a secret of its own (the pickup); the keeper hands it
     out or turns it down from his list; the client collects the answer once."""
@@ -4925,7 +4838,6 @@ class Requests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(codes[codes.index(429):], [429] * (len(codes) - codes.index(429)))
 
 
-@unittest.skipUnless(WORKER, "anomaly reports: the Worker only (the keeper's relay)")
 class Reports(unittest.IsolatedAsyncioTestCase):
     """A friend's outstation sends a report (their words and the station log); its channel is named only when its key
     checks out; the keeper lists them, newest first, and deletes each when read."""
@@ -4990,7 +4902,7 @@ class Lookups(unittest.TestCase):
     and metric icons, asked by the relay (here, from Upstream: tests/fixtures/lookup) and shared by every reader. On
     both relays: the source's own body, kept while fresh (one request upstream for many reads), a name read as Wise Old
     Man reads it, not-there as 404, a failing source as 503 with Retry-After, only the shapes passed on, and the relay's
-    own User-Agent. (The schedule of asking, on a clock of its own: relay-py/test_lookup.py, relay/test/lookup_test.mts.)"""
+    own User-Agent. (The schedule of asking, on a clock of its own: relay/test/lookup_test.mts.)"""
 
     def asked(self, path):
         return UPSTREAM.paths().count(path)
@@ -5099,7 +5011,7 @@ class Almanac(unittest.TestCase):
     {"at", "updates", "worlds", "market", "sources"} exactly as tests/fixtures/almanac/expected.json has them, on both
     relays; a read never asks a source (but the first, cold); a source that fails keeps its last good data; /24h's day
     before is asked once, then rolled over from the kept day. (The schedule itself, a day of it on a clock of its own:
-    relay-py/test_almanac.py and relay/test/almanac_test.mts.)"""
+    relay/test/almanac_test.mts.)"""
 
     expected = json.loads(fixture("expected.json"))
 
@@ -5231,7 +5143,7 @@ class Almanac(unittest.TestCase):
         for src in got["sources"].values():
             self.assertEqual(set(src), {"at", "tried", "ok", "fails", "next_in_s", "error"})
 
-    @unittest.skipUnless(MODE == "worker", "the Worker's Cron Trigger (relay.py's schedule: its own tests)")
+    @unittest.skipUnless(MODE == "worker", "the Worker's Cron Trigger")
     def test_the_cron_asks_only_whats_due(self):
         n = len(UPSTREAM.paths())
         with urllib.request.urlopen(http_url() + "/__scheduled?cron=*/5+*+*+*+*", timeout=30) as r:

@@ -38,8 +38,8 @@ import java.util.Map;
 /**
  * A shooting star's landing site by name (11/09/2026, Jace: "named landing sites: yes"): the tile a crashed star stands
  * on, as Shooting Star Info has them (the licence above; plugin/README.md, "Credits"). The plugin sends the name with the
- * star's square; the relays take only these names, each with its own square (game.ts's STAR_SITES, relay.py's;
- * relay-py/test_relay.py checks the three match). A star on a tile not here goes with its square alone.
+ * star's square; the relays take only these names, each with its own square (game.ts's STAR_SITES;
+ * tests/lists_match.py checks the two match). A star on a tile not here goes with its square alone.
  */
 final class Sites
 {

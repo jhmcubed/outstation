@@ -22,7 +22,7 @@ const lines = [
   { t: 1794067301000, event: { kind: "level", skill: "Mining", level: 72 } },
   { t: 1794067500000, where: null },
 ];
-// (each line as relay.py and the app write JSON: ", " and ": ")
+// (each line as the app writes JSON: ", " and ": ")
 const py = (v) => JSON.stringify(v).replace(/,"/g, ', "').replace(/":/g, '": ').replace(/,\{/g, ", {");
 const plaintext = lines.map(py).join("\n") + "\n";
 

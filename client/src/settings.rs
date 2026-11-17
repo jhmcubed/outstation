@@ -112,7 +112,7 @@ impl Dink {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Settings {
-    /// the relay: wss://… (Cloudflare) or ws://127.0.0.1:8786 (a relay-py of your own)
+    /// the relay: wss://… (Cloudflare), or ws://127.0.0.1:… (the Worker under `wrangler dev` on this PC, for testing)
     #[serde(default = "d_relay")]
     pub relay: String,
     #[serde(default)]

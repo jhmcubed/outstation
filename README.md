@@ -117,39 +117,33 @@ Your channel stays yours until Jace takes it back: ask him if you want it gone. 
   - The keeper's own build, the field station: `cargo build --release --features station` (ghillie's `tools/launcher/build_station.py`). The same outstation, with the keeper's tools in its tray (what ghillie's `launcher.json` starts, modes, links) and friends' station keys issued from a drawer (`client/src/station.rs`, `keeper.rs`). A release is never built with it.
 
 - `relay/`: the relay on Cloudflare: a Worker, with a Durable Object for each channel (TypeScript). Its README says how to run it and deploy it.
-- `relay-py/`: the same relay in Python, standard library only, for running on your own PC (`py relay-py/relay.py`). It's also the reference.
+- The Python relay (`relay-py/`), the same relay for running on your own PC, was retired 11/17/2026 (Jace: "i would rather just use the client everybody else is using"): the Worker's the only relay. It's in git history before that day.
 - `docs/protocol.md`: what the client, the relay and the page say to each other. `docs/record.md`: your year's design and format (the record, its encryption, sync, the public summary).
-- `tests/fixtures/record/`: your year's known-key vectors (`vectors.json`, made with WebCrypto by `make_vectors.mjs`), which the client's unit tests, both relays' tests and the page check against.
-- `tests/protocol_test.py`: the same tests run against either relay.
-- `tests/fixtures/almanac/`: what the almanac's sources answer (made up, in their formats: an RSS feed, a world list built by `make_slr.py`, the Wiki's `/24h` and `/mapping`; and Jagex's real feed and world list of 11/09/2026, cut down by `trim_real.py`), and `expected.json`, what both relays make of them.
+- `tests/fixtures/record/`: your year's known-key vectors (`vectors.json`, made with WebCrypto by `make_vectors.mjs`), which the client's unit tests, the relay's tests and the page check against.
+- `tests/protocol_test.py`: the protocol tested from outside, against the Worker under `wrangler dev`. `tests/lists_match.py`: the plugin's closed lists (bosses, raids, minigames, landing sites) against the relay's. `tests/fixtures/dink/`: a Dink export the client's forwarding rules are tested on.
+- `tests/fixtures/almanac/`: what the almanac's sources answer (made up, in their formats: an RSS feed, a world list built by `make_slr.py`, the Wiki's `/24h` and `/mapping`; and Jagex's real feed and world list of 11/09/2026, cut down by `trim_real.py`), and `expected.json`, what the relay makes of them.
 - `tests/fanout_bench.py`, `tests/fanout_local.py`: how one channel holds up with many viewers and some stalled ones.
-- `tests/client_live.py`: the client end to end against either relay, with RuneLite open. `tests/client_screens.py` takes pictures of its screens.
+- `tests/client_live.py`: the client end to end against the Worker under `wrangler dev`, with RuneLite open. `tests/client_screens.py` takes pictures of its screens.
 - `tests/safety_check.py`: what the built program can call in Windows, read from the file itself (SAFETY.md).
 
 ### Tests
+
+The protocol, against the Worker under `wrangler dev` (after `npm install` in `relay/`):
 
 ```bash
 py tests/protocol_test.py
 ```
 
-That runs against the Python relay. To run against the Worker under `wrangler dev` (after `npm install` in `relay/`):
-
-```bash
-PORTAL_RELAY=worker py tests/protocol_test.py
-```
-
-```bash
-py relay-py/test_relay.py
-```
-
-The almanac (`GET /almanac`, 11/09/2026: Jagex's news, the world list and the Wiki's prices for outside.wiki's globe) has its own: the parsing and a day of its schedule, against `tests/fixtures/almanac`, nothing asked of the real hosts:
-
-```bash
-py relay-py/test_almanac.py
-```
+The Worker's own tests: the almanac (`GET /almanac`, 11/09/2026: Jagex's news, the world list and the Wiki's prices for outside.wiki's globe; the parsing and a day of its schedule, against `tests/fixtures/almanac`, nothing asked of the real hosts), the open list, the lookups, the keep, and what a snapshot adds to the Array:
 
 ```bash
 cd relay && npm test
+```
+
+The plugin's lists against the relay's:
+
+```bash
+py tests/lists_match.py
 ```
 
 (that also opens your year's known-key vectors with WebCrypto, as the page will; the client's `recordfmt.rs` tests match them byte for byte)

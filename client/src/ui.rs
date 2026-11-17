@@ -3170,7 +3170,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     }
     if app.by_hand {
         ui.add_space(8.0);
-        ui.label(rich("a relay of your own (relay-py), or one you were told about:", 16.0, GREY()));
+        ui.label(rich("a relay you were told about (or the relay under wrangler dev on this PC, for testing):", 16.0, GREY()));
         let (r, c, k, w) = &mut app.hand;
         egui::Grid::new("hand").num_columns(2).show(ui, |ui| {
             ui.label(rich("relay", 16.0, GREY())); field(ui, r, 300.0, "ws://127.0.0.1:8786", false); ui.end_row();

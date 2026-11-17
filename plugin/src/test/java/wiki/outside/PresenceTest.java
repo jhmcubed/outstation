@@ -15,7 +15,7 @@ import static org.junit.Assert.assertTrue;
 /** What they're doing, as RuneLite's Discord plugin shows it (11/16/2026; Presence). */
 public class PresenceTest
 {
-	/** the relays' own checks of a presence (game.ts's AREA_NAME, PRESENCE_KINDS, PRESENCE_GRID; relay.py's the same) */
+	/** the relays' own checks of a presence (game.ts's AREA_NAME, PRESENCE_KINDS, PRESENCE_GRID) */
 	private static final Pattern AREA_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9 '.()&-]{0,47}");
 	private static final Set<String> KINDS = new HashSet<>(java.util.Arrays.asList("boss", "city", "dungeon", "minigame", "raid", "region"));
 

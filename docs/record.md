@@ -10,7 +10,7 @@ what they did most, and a replay. Jace's decisions (11/10/2026):
 - A launch feature, built to last.
 
 This file is the format and the routes, for the app (client/src/record.rs, recordfmt.rs), both relays
-(relay/src/record.ts, relay-py/relay.py) and the page that draws the year (another repository). docs/protocol.md
+(relay/src/record.ts; relay-py/relay.py too, till it was retired 11/17/2026: where this page names relay.py or relay-py, that's how it stood then) and the page that draws the year (another repository). docs/protocol.md
 has the routes in its own words; SAFETY.md says what's kept and by whom.
 
 ## What the record holds

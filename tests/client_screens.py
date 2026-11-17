@@ -1,5 +1,5 @@
 """Pictures of the client's screens, for looking at: the window with chat and a poll, the settings drawer, the dink
-drawer, and the attach screen. Against relay-py on a spare port; needs RuneLite open for the sample.
+drawer, and the attach screen. Against the Worker (wrangler dev) on a spare port; needs RuneLite open for the sample.
 
     py tests/client_screens.py      (the pictures go to a temporary folder, printed at the end)
 """
@@ -14,7 +14,6 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "relay-py"))
 import client_live as cl  # noqa: E402
 import protocol_test as pt  # noqa: E402
 from wsmini import Client  # noqa: E402

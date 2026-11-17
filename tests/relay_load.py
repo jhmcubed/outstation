@@ -1,7 +1,6 @@
 """The relay's own CPU under a stream as heavy as the shared relay allows, for before/after numbers (11/07/2026).
 
-    py tests/relay_load.py                       # relay-py/relay.py, started on a spare port
-    PORTAL_RELAY=worker py tests/relay_load.py   # the Worker under `wrangler dev` (workerd on this PC)
+    py tests/relay_load.py                       # the Worker, under `wrangler dev` on a spare port
         [--seconds 20] [--fps 60] [--kb 35] [--viewers 20] [--lookers 2]
 
 One transmitter (frames at --fps, a small "TH" copy once a second, {"state"} every 5 s, as the client sends them since
@@ -23,7 +22,6 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "relay-py"))
 import protocol_test as pt  # noqa: E402  (its relay starting and stopping)
 from wsmini import Client  # noqa: E402
 

@@ -1,6 +1,6 @@
 # the relay on Cloudflare (⊂λ,ｍ⊙ outstation's)
 
-A Worker (`src/index.ts`) routes each socket to its channel's Durable Object (`src/channel.ts`). The protocol is `../docs/protocol.md`, and it's the same as `../relay-py/relay.py`'s.
+A Worker (`src/index.ts`) routes each socket to its channel's Durable Object (`src/channel.ts`). The protocol is `../docs/protocol.md`. (The Python relay that spoke it too, `relay-py`, was retired 11/17/2026.)
 
 It uses WebSocket Hibernation. A channel that's off air, with only viewers and the chat waiting, sleeps between messages. What has to survive a sleep is kept in the object's own storage:
 - the key's hash and the watch code
@@ -118,7 +118,7 @@ The Python relay does the same in a task of its own (a look each minute), with `
 The `vars` in `wrangler.jsonc`:
 - `MAX_VIEWERS`: a ceiling on any channel's viewers ("0": none beyond each channel's own cap).
 - `MIN_CLIENT`: the oldest client let in (e.g. "0.2.0"; "" lets every version in). Older clients are turned away with 4026 and told to get a newer one (`../docs/protocol.md`, "The client's version"). Look at `GET /admin/channels` first: each channel's `client` is the version that last transmitted on it.
-- `OPEN_CLAIM`: "1" lets the first transmitter claim a channel, as `relay.py` does. For local tests only; never on Cloudflare.
+- `OPEN_CLAIM`: "1" lets the first transmitter claim a channel (as the retired Python relay did). For local tests only; never on Cloudflare.
 - `POLL_MIN_SECONDS`, `POLL_KEPT_SECONDS`: shorter polls, for the tests.
 - `WHERE_FRESH_SECONDS`: how long a player's square (following, and its world) and what they're doing show on `GET /channels` after the plugin said them (240 when unset), shorter for the tests.
 - `LOOKUP_UPSTREAM`: the lookups' sources (Wise Old Man, RuneProfile, the icons) all fetched under this address (at the real ones' paths). For the tests only; never on Cloudflare.

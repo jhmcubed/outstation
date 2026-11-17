@@ -1,7 +1,11 @@
 # ⊂λ,ｍ⊙ outstation's protocol
 
-Both relays speak it: the Cloudflare Worker (`relay/`) and the self-hosted Python relay (`relay-py/relay.py`).
-`tests/protocol_test.py` runs the same tests against either, so they stay the same.
+The relay speaks it: the Cloudflare Worker (`relay/`). `tests/protocol_test.py` tests it from outside, as a client sees it.
+
+The self-hosted Python relay (`relay-py/relay.py`) spoke it too until it was retired, 11/17/2026 (Jace: "i would rather
+just use the client everybody else is using"; it's in git history before that day). Where this page still says "both
+relays", "either relay" or names relay.py, relay-py or a Python name beside the Worker's, that's how it stood then: only
+the Worker's half is true now.
 
 ## The sockets
 

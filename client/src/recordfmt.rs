@@ -133,7 +133,7 @@ pub fn open(k: &Key, id: &str, sealed: &[u8]) -> Result<Vec<u8>, String> {
 
 // ---- the lines ----
 
-/// JSON as relay.py and the relays write it (", " and ": "), so the record reads the same wherever it's looked at.
+/// JSON as the relay writes it (", " and ": "), so the record reads the same wherever it's looked at.
 pub fn pyjson(v: &Value) -> String {
     match v {
         Value::Array(a) => format!("[{}]", a.iter().map(pyjson).collect::<Vec<_>>().join(", ")),
