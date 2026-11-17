@@ -18,7 +18,7 @@ public interface OutsideConfig extends Config
 	@ConfigSection(name = "On your page", description = "What goes on your page, each its own switch", position = 1)
 	String shownSection = "shown";
 
-	@ConfigSection(name = "What you're doing", description = "What your page and outside.wiki's globe say you're doing", position = 2)
+	@ConfigSection(name = "What you're doing", description = "What your page and Outside.wiki's globe say you're doing", position = 2)
 	String doingSection = "doing";
 
 	// hub:cut reports
@@ -62,7 +62,7 @@ public interface OutsideConfig extends Config
 		name = "Send to my Outside page",
 		// hub:cut live
 		description = "What's switched on below goes to the Outside relay (on Cloudflare, unless your key names another),"
-			+ " and your Outside page shows it to anyone. While you play, you also show on outside.wiki's globe and feed,"
+			+ " and your Outside page shows it to anyone. While you play, you also show on Outside.wiki's globe and feed,"
 			+ " unless your page is friends only (the Outside side tab). Off: nothing more is sent, and your gear, stats and progress come off your page.",
 		// hub:end live
 		// hub:only description = "What's switched on below goes to the Outside relay (on Cloudflare) when you press Update my page in the"
@@ -141,7 +141,7 @@ public interface OutsideConfig extends Config
 		name = "What I'm doing",
 		description = "The skill you're training and the area you're in by name (a city, a dungeon, a boss, a raid, a minigame"
 			+ " or a region), as RuneLite's own Discord plugin shows them: sent as they change (once a minute at most) and with"
-			+ " each update. Your page shows it, and outside.wiki's globe lights you in that area. Never your tile or your"
+			+ " each update. Your page shows it, and Outside.wiki's globe lights you in that area. Never your tile or your"
 			+ " world, and nothing from the Wilderness or a PvP world.",
 		position = 0,
 		section = doingSection
@@ -180,7 +180,7 @@ public interface OutsideConfig extends Config
 			+ " minutes late; never where you are, your world or a star there.",
 		warning = "On, anyone who opens your Outside page can see what you carry while you're in the Wilderness or on a"
 			+ " PvP world, and what's in your looting bag; and, with \"What I'm doing, on the globe\" on, anyone on"
-			+ " outside.wiki's globe can see what you were doing in the Wilderness two minutes before.",
+			+ " Outside.wiki's globe can see what you were doing in the Wilderness two minutes before.",
 		position = 6,
 		section = doingSection
 	)
@@ -208,14 +208,14 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "follow",
 		name = "Follow me on the globe",
-		description = "Off (to begin with). On, your light on outside.wiki's globe travels to the rough area"
+		description = "Off (to begin with). On, your light on Outside.wiki's globe travels to the rough area"
 			+ " you were in two minutes ago (a square of the map about 128 tiles a side), at most once a minute, while"
 			+ " you're logged in with this plugin (or your outstation's transmitting). In an instance (a raid, a boss room), the area it's opened from. Never in"
 			+ " the Wilderness (whatever \"In the Wilderness too\" says), a PvP area, or on a PvP or Deadman world: there,"
 			+ " what was sent is cleared at once. Ferox Enclave and the PvP minigames are safe.",
 		warning = "On, the rough area you were in two minutes ago (a square of the map about 128 tiles a side) goes to"
 			+ " the Outside relay, a server not controlled or verified by the RuneLite developers, at most once a"
-			+ " minute, and anyone who opens outside.wiki's globe can see it while you're logged in with this plugin or your"
+			+ " minute, and anyone who opens Outside.wiki's globe can see it while you're logged in with this plugin or your"
 			+ " outstation's transmitting.",
 		position = 1,
 		section = doingSection
@@ -234,7 +234,7 @@ public interface OutsideConfig extends Config
 			+ " the square, so the globe can show which world your light's on. Never on a PvP, Deadman or other"
 			+ " dangerous world, and never without following.",
 		warning = "On, the world you were on two minutes ago goes with the rough area (a square of the map about 128"
-			+ " tiles a side), so anyone who opens outside.wiki's globe while you're logged in with this plugin can see which"
+			+ " tiles a side), so anyone who opens Outside.wiki's globe while you're logged in with this plugin can see which"
 			+ " world and roughly where you were two minutes before.",
 		position = 2,
 		section = doingSection
@@ -249,14 +249,14 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "activity",
 		name = "What I'm doing, on the globe",
-		description = "Off (to begin with). On, your light on outside.wiki's globe shows what you were doing"
+		description = "Off (to begin with). On, your light on Outside.wiki's globe shows what you were doing"
 			+ " two minutes ago, only as one word: skilling (and which skill), a boss, a raid or a minigame (and which),"
 			+ " fighting, or idle. At most once a minute, while you're logged in with this plugin. Never in a PvP area or on"
 			+ " a PvP or Deadman world (Ferox Enclave and the PvP minigames are safe), nor in the Wilderness unless"
 			+ " \"In the Wilderness too\" is on: there, what was sent is cleared at once. It doesn't need following on.",
 		warning = "On, what you were doing two minutes ago (skilling and which skill, a boss, raid or minigame and"
 			+ " which, fighting, or idle) goes to the Outside relay, a server not controlled or verified by the RuneLite developers,"
-			+ " at most once a minute, and anyone who opens outside.wiki's globe can see it while you're logged in with"
+			+ " at most once a minute, and anyone who opens Outside.wiki's globe can see it while you're logged in with"
 			+ " this plugin.",
 		position = 3,
 		section = doingSection
@@ -271,13 +271,13 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "stars",
 		name = "Shooting stars I find",
-		description = "Off (to begin with). On, a crashed shooting star you see goes on outside.wiki's list of stars:"
+		description = "Off (to begin with). On, a crashed shooting star you see goes on Outside.wiki's list of stars:"
 			+ " its size, its world, its landing site and the rough area it's in (a square about 128 tiles a side), two"
 			+ " minutes late (with your name as its finder only if you say so, below). Never one in the Wilderness, or"
 			+ " seen from it, a PvP area or world, or Deadman (Ferox Enclave and the PvP minigames are safe).",
 		warning = "On, each shooting star you see (its size, world, landing site and rough area, two minutes late) goes"
 			+ " to the Outside relay, a server not controlled or verified by the RuneLite developers, which shows it"
-			+ " to anyone on outside.wiki's list of stars (your name with it only with \"Name me as a star's"
+			+ " to anyone on Outside.wiki's list of stars (your name with it only with \"Name me as a star's"
 			+ " finder\" on).",
 		position = 4,
 		section = doingSection
@@ -293,9 +293,9 @@ public interface OutsideConfig extends Config
 		keyName = "starsCredit",
 		name = "Name me as a star's finder",
 		description = "Off (to begin with). Only with \"Shooting stars I find\" on: your name goes on"
-			+ " outside.wiki's list of stars beside each star you told of first. Off, your stars still go on the list,"
+			+ " Outside.wiki's list of stars beside each star you told of first. Off, your stars still go on the list,"
 			+ " with no finder named.",
-		warning = "On, outside.wiki's list of stars shows your name beside each shooting star you told of"
+		warning = "On, Outside.wiki's list of stars shows your name beside each shooting star you told of"
 			+ " first (its world, landing site and rough area, two minutes after you saw it), to anyone who opens it.",
 		position = 5,
 		section = doingSection
@@ -329,7 +329,7 @@ public interface OutsideConfig extends Config
 		keyName = "yearCopy",
 		name = "Keep an encrypted copy on the relay",
 		description = "Off (to begin with). On, your year's record goes to your relay sealed with a key only this PC (and"
-			+ " any you give it to) holds, so \"Open my year\" in the Outside tab can show it on outside.wiki. The relay"
+			+ " any you give it to) holds, so \"Open my year\" in the Outside tab can show it on Outside.wiki. The relay"
 			+ " can't read it, nor can anyone else without the key.",
 		warning = "On, your year's record (where you've been, what you did, and with the exact path on, the tiles you"
 			+ " walked) goes to the Outside relay, a server not controlled or verified by the RuneLite developers,"
@@ -382,7 +382,7 @@ public interface OutsideConfig extends Config
 		keyName = "reports",
 		name = "Levels, kills, drops and log slots",
 		description = "Your levels as you gain them, kill counts, collection log slots, pets, clue counts, quests, diary tiers,"
-			+ " combat tasks, slayer tasks and drops worth at least the amount below, as the game tells you them, for your page's event log and outside.wiki's feed (as"
+			+ " combat tasks, slayer tasks and drops worth at least the amount below, as the game tells you them, for your page's event log and Outside.wiki's feed (as"
 			+ " Dink would send them; while your outstation transmits, Dink's go through it instead)",
 		position = 0,
 		section = reportsSection

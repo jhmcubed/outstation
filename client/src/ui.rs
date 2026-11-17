@@ -1896,7 +1896,7 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
                 .on_hover_text(tip("the year this outstation kept before v0.2.0. The Outside plugin keeps your year now; this is what's left of the old one, on this PC and (if you kept a copy) on the relay."));
             ui.horizontal_wrapped(|ui| {
                 if let Some(k) = &old_key {
-                    if button(ui, "open it ▸", true, None).on_hover_text(tip("the relay's encrypted copy, on outside.wiki, its key in the address's fragment (after #), which your browser never sends to any server")).clicked() {
+                    if button(ui, "open it ▸", true, None).on_hover_text(tip("the relay's encrypted copy, on Outside.wiki, its key in the address's fragment (after #), which your browser never sends to any server")).clicked() {
                         let url = format!("https://outside.wiki/{}/year/mine#k={}", crate::settings::enc(&s.channel), k);
                         if !win::open_page(&url) { flash(ui, "old year", "couldn't open your old year", true); }
                     }
@@ -2315,7 +2315,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 ui.label(wrapped("no channel: nothing is ever sent anywhere but your own Discord, and only the clips you'd want there.", 16.0, TEXT(), w));
             } else {
                 ui.label(rich(&format!("attached: {}", s.channel), 18.0, LIME()));
-                ui.label(wrapped(&format!("your outstation opens on your Outside page: outside.wiki/{}", s.channel), 16.0, TEXT(), w));
+                ui.label(wrapped(&format!("your outstation opens on your Outside page: Outside.wiki/{}", s.channel), 16.0, TEXT(), w));
             }
             ui.add_space(8.0);
             ui.label(wrapped(if s.clips_mode() { "clips only: the clips themselves, Dink, Discord, then the Start menu. Each can be skipped, and each is there again later (clips ▸, dink ▸ and settings ▸)." }
@@ -2922,7 +2922,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
                     let _ = app.settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.on_air = false; s.setup_step = Some(0); });
                     app.attach_note.clear();
                     app.attach_code.clear();
-                    app.note(format!("attached: {} · outside.wiki/{}", channel, channel));
+                    app.note(format!("attached: {} · Outside.wiki/{}", channel, channel));
                 }
                 Err(e) => app.attach_note = e,
             }
@@ -3113,7 +3113,7 @@ fn ask_section(app: &mut App, ui: &mut egui::Ui) {
             });
             let channel = crate::ask::channel_of(&app.asker.player);
             match &channel {
-                Ok(ch) => { ui.label(rich(&format!("your outstation would open at outside.wiki/{}", ch), 14.0, QUIET())); }
+                Ok(ch) => { ui.label(rich(&format!("your outstation would open at Outside.wiki/{}", ch), 14.0, QUIET())); }
                 Err(e) if !app.asker.player.trim().is_empty() => { ui.label(rich(e, 14.0, PINK())); }
                 Err(_) => {}
             }
@@ -3240,7 +3240,7 @@ impl eframe::App for App {
         }
         let came = self.asked_attached.lock().unwrap().take();
         if let Some(ch) = came {
-            self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at outside.wiki/{}", ch, ch));
+            self.note(format!("the listening post issued your station key: attached to {} · your outstation opens at Outside.wiki/{}", ch, ch));
         }
         crate::stuck::at("the frame: the tray");
         self.sync_tray(ctx);

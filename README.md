@@ -1,6 +1,6 @@
 # ⊂λ,ｍ⊙ outstation
 
-An outstation on your PC, transmitting your RuneLite to your Outside page on [outside.wiki](https://outside.wiki) (`outside.wiki/<you>`): a few frames a second of your game, its sound if you want, and a chat with whoever's observing.
+An outstation on your PC, transmitting your RuneLite to your Outside page on [Outside.wiki](https://outside.wiki) (`outside.wiki/<you>`): a few frames a second of your game, its sound if you want, and a chat with whoever's observing.
 
 **Released, and still being built.** The outstation, its relay and the Outside plugin (on RuneLite's Plugin Hub) are in use; each release is on the Releases page.
 
@@ -134,7 +134,7 @@ The protocol, against the Worker under `wrangler dev` (after `npm install` in `r
 py tests/protocol_test.py
 ```
 
-The Worker's own tests: the almanac (`GET /almanac`, 11/09/2026: Jagex's news, the world list and the Wiki's prices for outside.wiki's globe; the parsing and a day of its schedule, against `tests/fixtures/almanac`, nothing asked of the real hosts), the open list, the lookups, the keep, and what a snapshot adds to the Array:
+The Worker's own tests: the almanac (`GET /almanac`, 11/09/2026: Jagex's news, the world list and the Wiki's prices for Outside.wiki's globe; the parsing and a day of its schedule, against `tests/fixtures/almanac`, nothing asked of the real hosts), the open list, the lookups, the keep, and what a snapshot adds to the Array:
 
 ```bash
 cd relay && npm test

@@ -172,7 +172,7 @@ import org.slf4j.LoggerFactory;
  */
 @PluginDescriptor(
 	name = "Outside",
-	description = "Your gear, stats, quests, diaries and slayer task on your own page at outside.wiki",
+	description = "Your gear, stats, quests, diaries and slayer task on your own page at Outside.wiki",
 	tags = {"outside", "loadout", "inventory", "profile", "quests", "diaries", "slayer", "discord"}
 )
 public class OutsidePlugin extends Plugin
@@ -969,7 +969,7 @@ public class OutsidePlugin extends Plugin
 			}
 			JsonObject body = snapshotBody(System.currentTimeMillis(), false);
 			String text = gson.newBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(body);
-			String to = a == null ? "your page, once it's made" : "outside.wiki/" + a.getChannel() + " (through " + HOME_RELAY.replaceAll("^https?://", "") + ")";
+			String to = a == null ? "your page, once it's made" : "Outside.wiki/" + a.getChannel() + " (through " + HOME_RELAY.replaceAll("^https?://", "") + ")";
 			panel.showSent(to, text, config.send());
 		});
 	}
@@ -2599,7 +2599,7 @@ public class OutsidePlugin extends Plugin
 						configManager.unsetConfiguration(OutsideConfig.GROUP, "stationKey");
 					}
 					syncDue = true;
-					say("your Outside page moved to outside.wiki/" + name + " (your name as the game has it)");
+					say("your Outside page moved to Outside.wiki/" + name + " (your name as the game has it)");
 					http.newCall(new Request.Builder().url(old.takeDownUrl()).header("User-Agent", "outside-plugin/" + VERSION)
 						.delete().build()).enqueue(new Callback()
 					{
@@ -2667,20 +2667,20 @@ public class OutsidePlugin extends Plugin
 						if (back)
 						{
 							// (taking a name back: someone else claimed it first and hasn't proven it)
-							panel.claiming(false, "outside.wiki/" + name + " was claimed by someone who hasn't proven it. Gain any experience,"
+							panel.claiming(false, "Outside.wiki/" + name + " was claimed by someone who hasn't proven it. Gain any experience,"
 								+ " press Update my page, wait a minute, then log out: when the official hiscores show it, the page is yours.");
-							say("you're taking back outside.wiki/" + name + ": gain any experience, press Update my page, wait a minute, then log out");
+							say("you're taking back Outside.wiki/" + name + ": gain any experience, press Update my page, wait a minute, then log out");
 						}
 						else
 						{
-							panel.claiming(false, "your page: outside.wiki/" + name + " (marked unproven till it's proven yours)");
-							say("your Outside page is made: outside.wiki/" + name);
+							panel.claiming(false, "your page: Outside.wiki/" + name + " (marked unproven till it's proven yours)");
+							say("your Outside page is made: Outside.wiki/" + name);
 						}
 						return;
 					}
 					if (res.code() == 409)
 					{
-						panel.claiming(false, "outside.wiki/" + name + " is proven or vouched for already. If it's yours, paste its station key in the plugin's settings.");
+						panel.claiming(false, "Outside.wiki/" + name + " is proven or vouched for already. If it's yours, paste its station key in the plugin's settings.");
 						return;
 					}
 					String why = o != null && o.has("error") ? o.get("error").getAsString() : "the relay said " + res.code();
@@ -4090,7 +4090,7 @@ public class OutsidePlugin extends Plugin
 			javax.swing.SwingUtilities.invokeLater(() ->
 			{
 				int yes = javax.swing.JOptionPane.showConfirmDialog(panel,
-					"<html><div style='width:280px'>Your year is kept on this PC. To see it on outside.wiki, an encrypted copy"
+					"<html><div style='width:280px'>Your year is kept on this PC. To see it on Outside.wiki, an encrypted copy"
 						+ " goes to the relay, sealed with a key only your own computers hold: the relay can't read it, and"
 						+ " lose the key and nobody can.<br><br>Keep an encrypted copy on the relay?</div></html>",
 					"Your year", javax.swing.JOptionPane.YES_NO_OPTION);
@@ -4422,7 +4422,7 @@ public class OutsidePlugin extends Plugin
 				if (!toldConnected)
 				{
 					toldConnected = true;
-					say(challenging ? "your claim on outside.wiki/" + attach.getChannel() + " is being proven: gain any experience, then log out"
+					say(challenging ? "your claim on Outside.wiki/" + attach.getChannel() + " is being proven: gain any experience, then log out"
 						: "your Outside page is live: " + attach.page().replaceFirst("^https://", ""));
 				}
 			}
@@ -4464,7 +4464,7 @@ public class OutsidePlugin extends Plugin
 		{
 			// (taking a name back, 11/15/2026: proven, the page is theirs now; its key opens it as the holder's)
 			challenging = false;
-			say("your Outside page is proven yours: outside.wiki/" + attach.getChannel());
+			say("your Outside page is proven yours: Outside.wiki/" + attach.getChannel());
 			readProof();
 			retry = executor.schedule(this::connect, 1, TimeUnit.SECONDS);
 			return;
