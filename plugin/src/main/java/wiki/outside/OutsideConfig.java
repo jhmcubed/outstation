@@ -374,9 +374,15 @@ public interface OutsideConfig extends Config
 		keyName = "bank",
 		name = "My bank on my page",
 		description = "Off (to begin with). On, your whole bank (every item, how many, and its tabs) goes to your Outside"
+			// hub:cut live
 			+ " page each time you use it, where anyone can see it",
+			// hub:end live
+			// hub:only + " page with your next update after you use it (Update my page, or the hourly one), where anyone can see it",
 		warning = "On, your whole bank (every item and how many) goes to the Outside relay, a server not controlled"
+			// hub:cut live
 			+ " or verified by the RuneLite developers, each time you use your bank, and your Outside page shows it to"
+			// hub:end live
+			// hub:only + " or verified by the RuneLite developers, with your next update after you use your bank, and your Outside page shows it to"
 			+ " anyone who opens it. Switching it off takes it off your page.",
 		position = 14
 	)
@@ -392,9 +398,15 @@ public interface OutsideConfig extends Config
 		name = "My deathbank on my page",
 		description = "Off (to begin with). On, when a death makes a deathbank (the Item Retrieval Service's, as at"
 			+ " Hespori, Zulrah or Vorkath), what it took and which one it is go to your Outside page, where anyone"
+			// hub:cut live
 			+ " can see them, and again as its window shows it when you look in it. Emptied, it comes off your page",
+			// hub:end live
+			// hub:only + " can see them, with your next update (and again as its window shows it after you look in it). Emptied, it comes off your page",
 		warning = "On, each time a death makes a deathbank or you look in one, what's in it (every item and how many) and which boss or place"
+			// hub:cut live
 			+ " it's for go to the Outside relay, a server not controlled or verified by the RuneLite developers, and"
+			// hub:end live
+			// hub:only + " it's for go to the Outside relay, a server not controlled or verified by the RuneLite developers, with your next update, and"
 			+ " your Outside page shows them to anyone who opens it. Switching it off takes it off your page.",
 		position = 14
 	)
