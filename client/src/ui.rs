@@ -2829,7 +2829,7 @@ fn attach_screen(app: &mut App, ui: &mut egui::Ui) {
     let _ = rich;
     ui.add_space(10.0);
     ui.label(rich("this outstation is not attached to a channel yet.", 16.0, GREY()));
-    ui.label(rich(&format!("paste your station key (from the listening post, or a friend's invite: it starts {}).", settings::KEY_PREFIX), 16.0, GREY()));
+    ui.label(rich(&format!("paste your station key (from the listening post, a friend's invite, or a card: it starts {}).", settings::KEY_PREFIX), 16.0, GREY()));
     ui.add_space(8.0);
     ui.add(egui::TextEdit::multiline(&mut app.attach_code).desired_rows(3).desired_width(f32::INFINITY).font(body(14.0)));
     ui.add_space(6.0);
