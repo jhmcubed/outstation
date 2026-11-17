@@ -2382,7 +2382,8 @@ fn discord_webhook_ui(ui: &mut egui::Ui, s: &mut crate::settings::Settings) {
             s.dink.clip_webhook = v.trim().to_string();
         }
     });
-    if !now.is_empty() && !now.starts_with("https://discord.com/api/webhooks/") {
+    // (Discord's older domain, discordapp.com, still makes and takes webhooks: 11/17/2026, Jace's is one)
+    if !now.is_empty() && !now.starts_with("https://discord.com/api/webhooks/") && !now.starts_with("https://discordapp.com/api/webhooks/") {
         ui.label(rich("that doesn't look like a Discord webhook address", 14.0, PINK()));
     }
 }
