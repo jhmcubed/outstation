@@ -49,6 +49,7 @@ export interface Env {
   LOOKUP_UPSTREAM?: string; // (tests) the lookups' sources all fetched under this address instead of the real hosts (lookup.ts's want)
   WITNESS_WAIT_S?: string; // (tests) the wait before the hiscores are asked again after a logout, every time (witness.ts's WITNESS_WAITS)
   WITNESS_LOOK_S?: string; // (tests) the wait before a look while logged in (witness.ts's WITNESS_LOOK)
+  NOTES_PAGE?: string; // (tests) the register sends and pages this many notes (11/17/2026)
   RECORD_CHUNKS?: string; // (tests) a channel's record chunks at most (record.ts's RECORD_CHUNKS: 2000)
   ADMIN_TOKEN?: string;
   OPEN_CLAIM?: string; // "1": the first transmitter claims a channel, as relay.py does (local tests only)
@@ -72,12 +73,14 @@ export interface Env {
 
 const MAX_MESSAGE = 512 * 1024; // a frame is 10-70 KB; anything bigger is thrown away
 const VIEWER_TEXT = 2048; // anything longer from a viewer is thrown away unread
-// (the register, 11/17/2026, Jace: "build it and call it the register": a page's chat, while nothing transmits, is its
-// guestbook, so its lines are kept far longer than a chat needs. Someone just come gets the last CHAT_SENT; older ones
-// are read as asked, GET /chat/<channel>?before=<id>, CHAT_PAGE at a time)
-const CHAT_KEPT = 500;
+const CHAT_KEPT = 50;
 const CHAT_SENT = 50;
 const CHAT_PAGE = 50;
+// the register (11/17/2026, Jace: "build it and call it the register"; then "yes, separate them": the page's guestbook,
+// its notes kept apart from the chat's lines): NOTES_KEPT kept; someone just come gets the last NOTES_SENT, older ones
+// as asked (GET /register/<channel>?before=<id>, NOTES_PAGE at a time; the tests' NOTES_PAGE sets both); NOTE_BURST a
+// socket's notes in NOTE_WINDOW at most
+const NOTES_KEPT = 500, NOTES_SENT = 50, NOTES_PAGE = 50, NOTE_BURST = 3, NOTE_WINDOW = 60_000;
 const SAY_MAX = 300, SAY_BURST = 20, SAY_WINDOW = 10_000;
 const NAME_MAX = 20;
 const TITLE_MAX = 100; // the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
@@ -178,6 +181,7 @@ interface Att {
   device?: string;
   name?: string;
   says?: number[];
+  notes?: number[]; // (when its last notes went, 11/17/2026)
   lastPing?: number;
   host?: string; // a desk's name in the chat
   talk?: boolean; // a desk that said &talk=1: the Outside plugin's chat in the game (11/16/2026)
@@ -223,6 +227,7 @@ interface Meta {
   code: string;
   cap: number; // the channel's own cap on viewers (the desk's {"cap"}): 0 none
   chatId: number;
+  noteId?: number; // (the register's, 11/17/2026)
   pollId: number;
   nextWho: number;
   seq: number;
@@ -295,6 +300,8 @@ export class Channel extends DurableObject<Env> {
   name = "";
   meta!: Meta;
   chat: [number, string][] = [];
+  // the register's notes: id, its line, and the device it came from (never sent: what a ban holds on to)
+  notes: [number, string, string][] = [];
   poll: Poll | null = null;
   guess: Guess | null = null;
   reports: string[] = [];
@@ -361,7 +368,7 @@ export class Channel extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const got = await ctx.storage.get(["name", "meta", "chat", "poll", "reports", "guess", "game", "witness", "cwit", "presence"]);
+      const got = await ctx.storage.get(["name", "meta", "chat", "notes", "poll", "reports", "guess", "game", "witness", "cwit", "presence"]);
       const pr = got.get("presence") as { presence: Presence | null; at: number; seen: number } | undefined;
       if (pr) { this.presence = pr.presence; this.presenceAt = pr.at || 0; this.seenAt = pr.seen || 0; }
       this.wit = (got.get("witness") as Wit) || {};
@@ -379,6 +386,9 @@ export class Channel extends DurableObject<Env> {
       delete old.homeAt;
       delete old.settle;
       this.chat = (got.get("chat") as [number, string][]) || [];
+      this.notes = (got.get("notes") as [number, string, string][]) || [];
+      // (the chat kept 500 lines for the register's few hours: back to its own 50)
+      if (this.chat.length > CHAT_KEPT) this.chat = this.chat.slice(-CHAT_KEPT);
       this.poll = (got.get("poll") as Poll) || null;
       this.reports = (got.get("reports") as string[]) || [];
       this.game = new GameState(got.get("game") as { kept: Fields; at: number; snap?: number } | undefined);
@@ -389,6 +399,9 @@ export class Channel extends DurableObject<Env> {
 
   saveMeta() { this.ctx.storage.put("meta", this.meta); }
   saveChat() { this.ctx.storage.put("chat", this.chat); }
+  saveNotes() { this.ctx.storage.put("notes", this.notes); }
+  notesPage(): number { const n = parseInt(this.env.NOTES_PAGE || "", 10); return n > 0 ? n : NOTES_PAGE; }
+  notesSent(): number { const n = parseInt(this.env.NOTES_PAGE || "", 10); return n > 0 ? n : NOTES_SENT; }
   savePoll() { this.poll ? this.ctx.storage.put("poll", this.poll) : this.ctx.storage.delete("poll"); }
   saveGuess() { this.guess ? this.ctx.storage.put("guess", this.guess) : this.ctx.storage.delete("guess"); }
 
@@ -643,6 +656,7 @@ export class Channel extends DurableObject<Env> {
 
   lateJoiner(ws: WebSocket, role: Role) {
     for (const [, line] of this.chat.slice(-CHAT_SENT)) this.send(ws, line);
+    for (const [, line] of this.notes.slice(-this.notesSent())) this.send(ws, line);
     if (this.poll) this.send(ws, this.pollLine());
     if (this.guess) this.send(ws, this.guessLine());
     if (this.meta.soundInfo && role !== "desk") this.send(ws, this.meta.soundInfo);
@@ -751,6 +765,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "_invites") return this.invites(request, q, ip);
     if (role === "_game") return this.readGame(q);
     if (role === "_chat") return this.readChat(q);
+    if (role === "_register") return this.readRegister(q);
     if (role === "_gamepost") return this.postGame(request, q, ip);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
@@ -883,6 +898,7 @@ export class Channel extends DurableObject<Env> {
   openTend(ws: WebSocket) {
     this.send(ws, this.status());
     for (const [, line] of this.chat) this.send(ws, line);
+    for (const [, line] of this.notes) this.send(ws, line);   // (every note: it's the register they're tending)
     this.send(ws, this.bannedLine());
   }
 
@@ -917,7 +933,7 @@ export class Channel extends DurableObject<Env> {
     let m: any;
     try { m = JSON.parse(msg); } catch { return; }
     if (!m || typeof m !== "object" || Array.isArray(m)) return;
-    for (const k of ["hide", "block", "unblock", "ban", "unban"]) {
+    for (const k of ["hide", "hide_note", "block", "unblock", "ban", "unban"]) {
       if (Number.isInteger(m[k])) { this.fromDesk(this.name, JSON.stringify({ [k]: m[k] })); return; }
     }
   }
@@ -1024,6 +1040,10 @@ export class Channel extends DurableObject<Env> {
   lastName(who: number): string {
     for (let i = this.chat.length - 1; i >= 0; i--) {
       const c = JSON.parse(this.chat[i][1]).chat;
+      if (c.who === who) return c.name;
+    }
+    for (let i = this.notes.length - 1; i >= 0; i--) {
+      const c = JSON.parse(this.notes[i][1]).note;
       if (c.who === who) return c.name;
     }
     return "";
@@ -1332,12 +1352,22 @@ export class Channel extends DurableObject<Env> {
     return json({ lines: page.map(([, line]) => JSON.parse(line).chat), more: older.length > page.length });
   }
 
-  /** Visitors' lines in the register after the line `seen` (its id; none, all of them), and the newest's id. */
+  /** The register's older notes (11/17/2026; docs/protocol.md "The register"): up to NOTES_PAGE before the note `before`
+   *  (its id), oldest first, as a socket has them ({"note": {...}}'s insides), and whether there are older still. */
+  readRegister(q: URLSearchParams): Response {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+    const before = parseInt(q.get("before") || "", 10);
+    const older = Number.isFinite(before) ? this.notes.filter(([id]) => id < before) : this.notes;
+    const page = older.slice(-this.notesPage());
+    return json({ notes: page.map(([, line]) => JSON.parse(line).note), more: older.length > page.length });
+  }
+
+  /** The register's notes after the note `seen` (its id; none, all of them), and the newest's id. */
   notesSince(seen: string | null): { n: number; last: number } {
     const after = parseInt(seen || "", 10) || 0;
     let n = 0, last = 0;
-    for (const [id, line] of this.chat) {
-      if (JSON.parse(line).chat.host) continue;
+    for (const [id] of this.notes) {
       last = id;
       if (id > after) n++;
     }
@@ -1630,6 +1660,26 @@ export class Channel extends DurableObject<Env> {
     this.broadcast(line);
   }
 
+  note(name: string, text: string, who: number, device: string) {
+    this.meta.noteId = (this.meta.noteId || 0) + 1;
+    const id = this.meta.noteId;
+    const line = pyjson({ note: { id, name, text, who, at: Date.now() } });
+    this.notes.push([id, line, device]);
+    this.notes = this.notes.slice(-NOTES_KEPT);
+    this.saveMeta();
+    this.saveNotes();
+    this.broadcast(line);
+  }
+
+  unnote(id: number) {
+    const before = this.notes.length;
+    this.notes = this.notes.filter(([i]) => i !== id);
+    if (this.notes.length !== before) {
+      this.saveNotes();
+      this.broadcast(pyjson({ unnote: id }));
+    }
+  }
+
   unsay(id: number) {
     const before = this.chat.length;
     this.chat = this.chat.filter(([i]) => i !== id);
@@ -1667,6 +1717,17 @@ export class Channel extends DurableObject<Env> {
     // in line for a seat: chat and votes all the same; pings only once seated, with a frame to point at
     if (!a.seated && "ping" in m) return;
     const blocked = this.isBlocked(a);
+    if ("note" in m) {
+      // (the register, 11/17/2026: a note signed on the page, NOTE_BURST a NOTE_WINDOW at most; never while banned)
+      const text = oneLine(m.note, SAY_MAX);
+      const notes = (a.notes || []).filter((t) => now - t <= NOTE_WINDOW);
+      if (!text || blocked || notes.length >= NOTE_BURST) { a.notes = notes; this.keep(ws, a); return; }
+      notes.push(now);
+      a.notes = notes;
+      this.keep(ws, a);
+      this.note(a.name || "visitor", text, a.who || 0, a.device || "");
+      return;
+    }
     if ("say" in m) {
       const text = oneLine(m.say, SAY_MAX);
       const says = (a.says || []).filter((t) => now - t <= SAY_WINDOW);
@@ -1722,6 +1783,8 @@ export class Channel extends DurableObject<Env> {
       if (text) this.say(host, text, true);
     } else if (Number.isInteger(m.hide)) {
       this.unsay(m.hide);
+    } else if (Number.isInteger(m.hide_note)) {
+      this.unnote(m.hide_note);
     } else if (Number.isInteger(m.block) || Number.isInteger(m.unblock)) {
       const who = Number.isInteger(m.block) ? m.block : m.unblock;
       const tags = new Set(["w:" + who]);
@@ -1764,10 +1827,13 @@ export class Channel extends DurableObject<Env> {
         }
       }
       name = name || this.lastName(who) || "visitor";
+      // (the register's notes are kept for days: the device each came from holds the ban after their socket's gone)
+      for (const [, line, dev] of this.notes) if (dev && JSON.parse(line).note.who === who) tags.add("d:" + dev);
       this.meta.blocked = [...new Set([...this.meta.blocked, ...tags])];
       this.meta.bans = [...(this.meta.bans || []).filter((b) => b.who !== who), { who, name, tags: [...tags] }];
       this.saveMeta();
       for (const [id] of this.chat.filter(([, line]) => JSON.parse(line).chat.who === who)) this.unsay(id);
+      for (const [id] of this.notes.filter(([, line]) => JSON.parse(line).note.who === who)) this.unnote(id);
       this.tellBanned();
     } else if (Number.isInteger(m.unban)) {
       const gone = (this.meta.bans || []).find((b) => b.who === m.unban);
@@ -2595,6 +2661,7 @@ export class Channel extends DurableObject<Env> {
     this.meta = { keyHash: null, code: "", cap: 0, chatId: 0, pollId: 0, nextWho: 0, seq: 0,
                   hostNames: [], blocked: [], soundInfo: null, state: "open" };
     this.chat = [];
+    this.notes = [];
     this.poll = null;
     this.reports = [];
     this.guess = null;

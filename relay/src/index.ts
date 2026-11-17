@@ -1018,11 +1018,12 @@ export default {
 
     // the game state kept (11/07/2026; game.ts): for Outside while the outstation's dark, with the watch code as watching
     // (and POSTed, 11/16/2026: the Plugin Hub's plugin's snapshot and presence, docs/protocol.md "The snapshot")
-    // the register's older lines (11/17/2026; docs/protocol.md "The register"), with the watch code as watching
-    if (parts[0] === "chat" && parts.length === 2 && !upgrade) {
+    // the chat's older lines, and the register's older notes (11/17/2026; docs/protocol.md "The register"), with the
+    // watch code as watching
+    if ((parts[0] === "chat" || parts[0] === "register") && parts.length === 2 && !upgrade) {
       if (request.method !== "GET") return new Response(null, { status: 405 });
       if (!NAME.test(parts[1])) return Response.json({ error: "which outstation?" }, { status: 400 });
-      return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_chat"));
+      return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], parts[0] === "chat" ? "/_chat" : "/_register"));
     }
     if (parts[0] === "game" && parts.length === 2 && !upgrade) {
       if (request.method !== "GET" && request.method !== "POST") return new Response(null, { status: 405 });
