@@ -157,7 +157,8 @@ pub fn line(c: &(String, bool)) -> String {
 pub fn check_add(s: &Settings, typed: &str) -> Result<String, String> {
     let name = typed.split_whitespace().collect::<Vec<_>>().join(" ");
     let ch = crate::ask::channel_of(&name)?;
-    if !s.channel.is_empty() && ch == s.channel { return Err("you can't add yourself to your own friends list.".into()); }
+    // (this outstation's own channel, in the name's form or, attached before 11/16/2026, the old flat one)
+    if !s.channel.is_empty() && crate::ask::channels_of(&name).contains(&s.channel) { return Err("you can't add yourself to your own friends list.".into()); }
     if s.friends.iter().any(|f| crate::ask::channel_of(f).ok().as_deref() == Some(ch.as_str())) {
         return Err(format!("{} is already on your friends list.", name));
     }
@@ -182,7 +183,10 @@ mod tests {
         s.friends = vec!["Moss Fern".into()];
         assert_eq!(check_add(&s, "  Birch   Bark ").unwrap(), "Birch Bark");
         assert!(check_add(&s, "moss_fern").unwrap_err().contains("already on your friends list"));
-        assert!(check_add(&s, "Lichen Ring").unwrap_err().contains("yourself"));
+        assert!(check_add(&s, "Lichen Ring").unwrap_err().contains("yourself"));   // (attached under the old flat form)
+        s.channel = "lichen_ring".into();
+        assert!(check_add(&s, "Lichen Ring").unwrap_err().contains("yourself"));   // (and the form)
+        s.channel = "lichenring".into();
         assert!(check_add(&s, "no/slash").is_err());
         assert_eq!(find(&s, "MOSS-FERN").as_deref(), Some("Moss Fern"));
         assert_eq!(page("mossfern"), "https://outside.wiki/mossfern");
