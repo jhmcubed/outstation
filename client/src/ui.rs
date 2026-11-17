@@ -7,7 +7,7 @@
 
 use crate::capture::{self, Image};
 use crate::desk::{Desk, In};
-use crate::settings::{self, Settings, Shared, REPORTS};
+use crate::settings::{self, Settings, Shared};
 use crate::transmit::Transmit;
 use crate::{dink, sound, theme, win};
 use eframe::egui::{self, Color32, FontId, RichText, Sense, Stroke, Vec2};
@@ -243,7 +243,6 @@ pub struct App {
     tray_rx: std::sync::mpsc::Receiver<tray_icon::menu::MenuEvent>,
     newer: Arc<Mutex<Option<String>>>,
     told_newer: bool,
-    webhook_shown: bool,
     // main's round two (11/05/2026)
     static_on: bool,
     signals: u32,
@@ -320,15 +319,10 @@ pub struct App {
     year_size: Option<(Instant, (usize, u64))>,
     year_done: Arc<Mutex<Option<Result<String, String>>>>,
     invites: crate::invites::Invites,
-    /// what reading their Dink export last said (dinksetup.rs): the steps left, or why not
-    dink_setup: Option<Result<(Vec<String>, Vec<String>), String>>,
     /// the Dink drawer's "the replay buffer ▸": the settings drawer opened at it
     go_replay: bool,
     /// an anomaly report being written (report.rs)
     report: crate::report::Report,
-    /// step 1's ways open again once it's set up ("change"), and its by-hand rules open
-    discord_change: bool,
-    discord_hand: bool,
     // the field station (the keeper's build): what it starts, its part of the tray, friends' portals
     #[cfg(feature = "station")]
     station: Option<crate::station::Station>,
@@ -507,7 +501,7 @@ impl App {
             attach_code: String::new(), attach_note: String::new(), by_hand: false,
             hand: (s.relay.clone(), s.channel.clone(), String::new(), s.code.clone()),
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
-            tray, tray_items, tray_rx, newer, told_newer: false, webhook_shown: false,
+            tray, tray_items, tray_rx, newer, told_newer: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
             over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, pings_last: None, stars_last: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
@@ -516,7 +510,7 @@ impl App {
             title_edit: s.stream_title.clone(),
             asker: crate::ask::Asker::new(), asked_attached: Arc::new(Mutex::new(None)), desk_stopped: None,
             ready_seen: (Instant::now() - Duration::from_secs(5), None),
-            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), emotes: crate::emotes::Emotes::new(), emote_tex: std::collections::HashMap::new(), emote_new: None, clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, year_ask: None, year_size: None, year_done: Arc::new(Mutex::new(None)), invites: crate::invites::Invites::new(), dink_setup: None, go_replay: false, report: crate::report::Report::new(), discord_change: false, discord_hand: false,
+            friendlist: crate::friendlist::FriendList::new(), peek, peek_tex: None, page_clips: crate::clipsup::PageClips::new(), emotes: crate::emotes::Emotes::new(), emote_tex: std::collections::HashMap::new(), emote_new: None, clip_stills: std::collections::HashMap::new(), pc_clips: None, clip_down: None, year_ask: None, year_size: None, year_done: Arc::new(Mutex::new(None)), invites: crate::invites::Invites::new(), go_replay: false, report: crate::report::Report::new(),
             #[cfg(feature = "station")]
             station, #[cfg(feature = "station")] station_tray,
             #[cfg(feature = "station")]
@@ -2155,47 +2149,14 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     let st = app.dink.lock().unwrap().clone();
     let mut s = app.settings.get();
     let before = serde_json::to_string(&s).unwrap_or_default();
-    ui.label(rich("Dink: what goes into your transmission", 16.0, LIME()));
-    ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts and the rest, for the field reports under your outstation. Three steps, Discord first, so it's kept as it is before Dink changes.", 14.0, GREY(), ui.available_width()));
+    let w = ui.available_width();
+    ui.label(rich("Dink: clips by themselves", 16.0, LIME()));
+    ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation when something big happens, so a clip saves itself.", 14.0, GREY(), w));
+    // (the Dink trim, 11/17/2026: field reports go from Dink to the page directly, through the Outside plugin's address)
+    ui.label(wrapped("your field reports (levels, kills, drops, pets…) go to your Outside page from Dink directly: in RuneLite, the Outside plugin's side tab, \"Copy my Dink address\", on a line of its own in Dink. The outstation doesn't pass them on.", 14.0, QUIET(), w));
     ui.add_space(8.0);
-    // (11/06/2026, Jace: "put the 'on to your discord too' under 'Dink..' and above 'on your portal' and ... make it
-    // more clear what its actually doing", and "should probably have someone set up their discord forwarding for dink
-    // before changing dink settings for the portal")
-    ui.label(rich("1. do you use Dink with Discord too?", 16.0, LIME()));
-    discord_step(app, ui, &mut s, st.listening.clone());
-    ui.add_space(12.0);
-    ui.label(rich("2. point Dink at the outstation", 16.0, LIME()));
+    ui.label(rich("point Dink at the outstation too", 16.0, LIME()));
     dink_address_ui(app, ui, &mut s, &st);
-    ui.add_space(12.0);
-    ui.horizontal(|ui| {
-        ui.label(rich("3. which field reports go out", 16.0, LIME()));
-        let plain = s.dink.kinds.values().all(|v| v.as_bool() != Some(false)) && s.dink.loot_min == 0 && s.dink.kc_every == 1;
-        if button(ui, "default", true, Some(plain)).on_hover_text(tip("everything ticked, every drop (0 gp) and every kill count")).clicked() {
-            s.dink.kinds.clear();
-            s.dink.loot_min = 0;
-            s.dink.kc_every = 1;
-        }
-    });
-    egui::Grid::new("kinds").num_columns(2).spacing(Vec2::new(18.0, 2.0)).show(ui, |ui| {
-        for (i, k) in REPORTS.iter().enumerate() {
-            let mut on = s.dink.kind_on(k);
-            let colour = if on { TEXT() } else { GREY() };
-            if tick(ui, &mut on, rich(&kind_label(k), 16.0, colour)).changed() {
-                s.dink.kinds.insert(k.to_string(), Value::Bool(on));
-            }
-            if i % 2 == 1 { ui.end_row(); }
-        }
-    });
-    ui.horizontal(|ui| {
-        ui.label(rich("loot: a stack worth at least", 16.0, GREY()));
-        ui.add(egui::DragValue::new(&mut s.dink.loot_min).range(0..=2_147_483_647u64).speed(1000.0).suffix(" gp"));
-    });
-    ui.horizontal(|ui| {
-        ui.label(rich("kill counts: every", 16.0, GREY()));
-        ui.add(egui::DragValue::new(&mut s.dink.kc_every).range(1..=1000));
-        ui.label(rich("(and always the first, and personal bests)", 16.0, GREY()));
-    });
-    ui.label(rich("never, whatever's ticked: anything naming another player (trades, chat, player kills, a PvP killer), and screenshots", 14.0, QUIET()));
     ui.add_space(10.0);
     auto_clips_ui(app, ui, &mut s, false);
     if serde_json::to_string(&s).unwrap_or_default() != before {
@@ -2236,8 +2197,11 @@ fn auto_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
         tick(ui, &mut s.tape_dark, rich("and while dark too (the tape keeps rolling, nothing's sent)", 16.0, colour))
             .on_hover_text(tip("dark but recording: while you're not transmitting, the outstation still keeps the tape (the same capture, sent nowhere), so a pet or a big drop still saves its clip, to this PC and Discord (never to your Outside page while dark). It uses a little of the PC while RuneLite's open, as transmitting does."));
         let colour = if s.dink.clips_discord { TEXT() } else { GREY() };
-        tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, colour))
-            .on_hover_text(tip("wherever Dink's post goes in Discord (dink ▸, step 1), the clip follows it a few seconds later: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Nowhere Dink's post isn't going already."));
+        tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord", 16.0, colour))
+            .on_hover_text(tip("each clip a few seconds after the moment, to the Discord webhook below: the same copy as the Outside page's (up to 17 s, 768 px, a few MB), playing in the channel. Dink's own posts go to Discord from Dink, as you have it set."));
+        if s.dink.clips_discord {
+            discord_webhook_ui(ui, s);
+        }
     }
     // (11/10/2026, Jace: the list of what's on the page was here, "kind of hidden away and not very accessible": it's
     // the clips drawer's now, and this one line goes there)
@@ -2251,60 +2215,6 @@ fn auto_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Sett
                 app.open_drawer(&ctx, Drawer::Clips);
             }
         });
-    }
-}
-
-/// Dink and Discord set up as the listening post has them, from Dink's own export (dinksetup.rs).
-fn dink_setup_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
-    let w = ui.available_width();
-    // (all four steps from the start, the last two dimmed till the button's done its part: 11/06/2026, Jace)
-    let read = matches!(&app.dink_setup, Some(Ok((lines, _))) if !lines.is_empty());
-    ui.label(wrapped("a. in RuneLite's chat, type ::dinkexport all (Dink copies its settings)", 14.0, TEXT(), w));
-    ui.label(wrapped("b. press this:", 14.0, TEXT(), w));
-    let Some(portal) = listening else {
-        ui.label(rich("(the outstation isn't listening for Dink yet: its port, above)", 14.0, PINK()));
-        return;
-    };
-    ui.horizontal(|ui| {
-        if button(ui, "read my Dink settings", true, None)
-            .on_hover_text(tip("reads Dink's export from the clipboard, makes the Discord rules below from it, keeps the export (to undo with), and puts an import for Dink on the clipboard")).clicked() {
-            app.dink_setup = Some(match win::paste_text() {
-                None => Err("the clipboard is empty: type ::dinkexport all in RuneLite's chat first".into()),
-                Some(text) => crate::dinksetup::plan(&text, &portal, s.dink.loot_min).and_then(|p| {
-                    let backup = app.settings.path.with_file_name("dink-before.json");
-                    std::fs::write(&backup, text.trim()).map_err(|e| format!("couldn't keep the export to undo with ({})", e))?;
-                    if !win::copy_text(&p.import) { return Err("couldn't put the import on the clipboard".into()); }
-                    s.forward = p.rules;
-                    crate::transmit::log(&format!("dink set-up: rules from the export, {} Discord address(es)", p.discord.len()));
-                    Ok((p.discord.iter().map(|(u, at)| format!("{} (in {})", crate::dinksetup::short(u), at.join(", "))).collect(), p.notes))
-                }),
-            });
-        }
-        let backup = app.settings.path.with_file_name("dink-before.json");
-        if backup.exists() && button(ui, "undo", true, None)
-            .on_hover_text(tip("puts the Dink settings you had before on the clipboard: ::dinkimport brings them back (your Discord line too; then delete the outstation's line if you like)")).clicked() {
-            let ok = std::fs::read_to_string(&backup).ok().is_some_and(|t| win::copy_text(&t));
-            app.dink_setup = Some(if ok { Ok((Vec::new(), vec!["your old Dink settings are on the clipboard: type ::dinkimport in RuneLite's chat".into()])) }
-                                  else { Err("couldn't read the settings kept from before".into()) });
-        }
-    });
-    match &app.dink_setup {
-        Some(Ok((lines, _))) if !lines.is_empty() => {
-            ui.label(wrapped("done: the Discord rules are what your Discord got, and the import is on the clipboard.", 14.0, TEAL(), w));
-        }
-        Some(Ok((_, notes))) => { for n in notes { ui.label(wrapped(n, 14.0, TEAL(), w)); } }
-        Some(Err(e)) => { ui.label(wrapped(e, 14.0, PINK(), w)); }
-        None => {}
-    }
-    // c and d once b has worked, not before (11/06/2026, Jace: shown dimmed from the start, they read as things to do
-    // first)
-    if let Some(Ok((lines, notes))) = &app.dink_setup {
-        if read {
-            ui.label(wrapped("c. in RuneLite's chat, type ::dinkimport (it adds the outstation to Dink)", 14.0, TEXT(), w));
-            ui.label(wrapped("d. in Dink's settings, delete your Discord address from its webhook lists (the outstation sends to it now; Dink's import can only add, never take away). It's in:", 14.0, TEXT(), w));
-            for l in lines { ui.label(rich(&format!("   {}", l), 14.0, LIME())); }
-            for n in notes { ui.label(wrapped(n, 13.0, QUIET(), w)); }
-        }
     }
 }
 
@@ -2333,23 +2243,26 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 ui.label(wrapped(&format!("your outstation opens on your Outside page: outside.wiki/{}", s.channel), 16.0, TEXT(), w));
             }
             ui.add_space(8.0);
-            ui.label(wrapped(if s.clips_mode() { "clips only: Dink and Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }
-                             else { "a few things before your first transmission: Dink and Discord, clips, and the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }, 16.0, GREY(), w));
+            ui.label(wrapped(if s.clips_mode() { "clips only: Dink, Discord, then the clips themselves, then the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }
+                             else { "a few things before your first transmission: Dink, Discord for clips, the clips themselves, and the Start menu. Each can be skipped, and each is there again later (dink ▸, clips ▸ and settings ▸)." }, 16.0, GREY(), w));
         }
         1 => {
-            ui.label(rich("Dink and Discord", 18.0, LIME()));
-            ui.label(wrapped(if s.clips_mode() { "Dink (a RuneLite plugin) tells the outstation when something big happens, so it knows when to save a clip, and the clip follows Dink's post into your Discord. Without Dink, the clip key (Insert) still saves the last seconds." }
-                             else { "Dink (a RuneLite plugin) tells the outstation as things happen: levels, drops, pets, kill counts, for the field reports under your outstation and for clips. If you don't use Dink, skip this and the next step." }, 14.0, GREY(), w));
+            ui.label(rich("Dink", 18.0, LIME()));
+            ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation when something big happens, so it knows when to save a clip. Without Dink, the clip key (Insert) still saves the last seconds; if you don't use Dink, skip this step.", 14.0, GREY(), w));
+            if !s.clips_mode() {
+                ui.label(wrapped("your field reports (levels, kills, drops…) go to your Outside page from Dink directly, with the Outside plugin's \"Copy my Dink address\": the outstation doesn't pass them on.", 14.0, QUIET(), w));
+            }
             ui.add_space(6.0);
-            ui.label(rich("do you use Dink with Discord too?", 16.0, LIME()));
-            discord_step(app, ui, &mut s, st.listening.clone());
+            ui.label(rich("point Dink at the outstation too", 16.0, LIME()));
+            dink_address_ui(app, ui, &mut s, &st);
         }
         2 => {
-            ui.label(rich("point Dink at the outstation", 18.0, LIME()));
-            dink_address_ui(app, ui, &mut s, &st);
+            ui.label(rich("Discord", 18.0, LIME()));
+            ui.label(wrapped("the clips that save themselves can go to a Discord channel of yours too, a few seconds after the moment, playing there. Dink's own posts stay as you have them in Dink. Skip this if you don't want clips in Discord.", 14.0, GREY(), w));
             ui.add_space(6.0);
-            if !s.clips_mode() {
-                ui.label(wrapped("every field report Dink sends goes out under your outstation to begin with: dink ▸, \"3. which field reports go out\", changes that.", 14.0, QUIET(), w));
+            tick(ui, &mut s.dink.clips_discord, rich("send the clips to Discord", 16.0, GREY()));
+            if s.dink.clips_discord {
+                discord_webhook_ui(ui, &mut s);
             }
         }
         3 => {
@@ -2366,9 +2279,8 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                     tick(ui, &mut s.dink.clips_up, rich("and put them on my Outside page", 16.0, GREY()))
                         .on_hover_text(tip("a copy of each goes to the relay too: anyone who opens your Outside page can watch them. The newest 20 stay, 30 days each, up to 3 filed for good."));
                 }
-                if s.dink.auto_clip {
-                    tick(ui, &mut s.dink.clips_discord, rich("and send them to Discord, under Dink's post", 16.0, GREY()))
-                        .on_hover_text(tip("wherever Dink's post goes in Discord, its clip follows a few seconds later, playing in the channel."));
+                if s.dink.auto_clip && s.dink.clips_discord && !s.clip_webhook().is_empty() {
+                    ui.label(wrapped("and to your Discord (the step before)", 14.0, QUIET(), w));
                 }
                 // (11/07/2026, Jace: "make sure during the normal outstation set up process there is an option to click to
                 // keep clips posting/recording while dark": a line of its own, not tucked under the others)
@@ -2438,9 +2350,7 @@ fn dink_address_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Se
     match (&st.listening, &st.error) {
         (Some(url), _) => {
             let w = ui.available_width();
-            let done_by_import = matches!(&app.dink_setup, Some(Ok((lines, _))) if !lines.is_empty());
-            ui.label(wrapped(if done_by_import { "the import in step 1 adds this address to Dink for you; for the record, it's:" }
-                             else { "in RuneLite: Dink's settings ▸ Primary Webhook URLs, this address on a line of its own:" }, 14.0, GREY(), w));
+            ui.label(wrapped("in RuneLite: Dink's settings ▸ Primary Webhook URLs, this address on a line of its own (beside your Discord's and the Outside plugin's, as they are):", 14.0, GREY(), w));
             ui.horizontal(|ui| {
                 ui.label(rich(&url, 16.0, LIME()));
                 if button(ui, "copy", true, None).clicked() {
@@ -2460,85 +2370,25 @@ fn dink_address_ui(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Se
         Some((kind, at, went)) => ui.label(rich(&format!("heard from Dink {} ago: {} (to {})", ago(at.elapsed()), kind, went), 16.0, TEAL())),
         None => ui.label(rich("nothing heard from Dink yet", 16.0, GREY())),
     };
-    if s.dink.discord == Some(true) && forward_has_hook(&s.forward) {
-        // (11/06/2026, Jace: "make this line more obvious ... its important if someone doesnt want duplicates")
-        ui.add_space(2.0);
-        ui.label(wrapped("⚠ delete any Discord address from that list: the outstation passes your Discord its posts now, so a Discord address left there gets every post twice.", 15.0, PINK(), ui.available_width()));
-    }
 }
 
-/// Whether the Discord rules have somewhere to send (the list, or a kind's own webhooks).
-fn forward_has_hook(rules: &Value) -> bool {
-    let list = |v: Option<&Value>| v.and_then(|x| x.as_array()).is_some_and(|a| a.iter().any(|u| u.as_str().is_some_and(|u| u.starts_with("http"))));
-    list(rules.get("discord")) || rules.get("forward").and_then(|f| f.as_object()).is_some_and(|f| f.values().any(|r| list(r.get("webhooks"))))
-}
-
-/// What Discord gets, in a line: how many kinds go, loot's rule, kill counts'.
-fn forward_summary(rules: &Value) -> String {
-    let f = rules.get("forward").and_then(|x| x.as_object()).cloned().unwrap_or_default();
-    let on: Vec<&String> = f.iter().filter(|(_, v)| match v { Value::Bool(b) => *b, Value::Object(_) => true, _ => false }).map(|(k, _)| k).collect();
-    let mut parts = vec![format!("{} kinds of post", on.len())];
-    if let Some(l) = f.get("LOOT").and_then(|x| x.as_object()) {
-        let n = l.get("allow").and_then(|x| x.as_array()).map_or(0, |a| a.len());
-        parts.push(format!("loot from {} gp{}", crate::dink::gp_words(l.get("minValue").and_then(|x| x.as_i64()).unwrap_or(0)),
-                           match n { 0 => String::new(), 1 => " (or 1 item by name)".to_string(), n => format!(" (or {} items by name)", n) }));
-    }
-    if let Some(k) = f.get("KILL_COUNT").and_then(|x| x.as_object()) {
-        parts.push(format!("every {} kill count", k.get("every").and_then(|x| x.as_i64()).unwrap_or(1)));
-    }
-    let hooks = rules.get("discord").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|u| u.as_str()).map(crate::dinksetup::short).collect::<Vec<_>>()).unwrap_or_default();
-    format!("{} · to {}", parts.join(" · "), if hooks.is_empty() { "each kind's own webhook".to_string() } else { hooks.join(", ") })
-}
-
-/// Step 1: Dink with Discord too? Answered no, it's put away; yes, the ways to set it up (from Dink's own settings,
-/// or by hand), and once set up, what Discord gets in a line. (The old Python portal's forward.json had a button too
-/// till 11/06/2026: only the keeper ever had one, and his is taken.)
-fn discord_step(app: &mut App, ui: &mut egui::Ui, s: &mut crate::settings::Settings, listening: Option<String>) {
+/// The Discord webhook the clips go to (11/17/2026, the Dink trim): a field that shows only its start once set (it's
+/// the key to the channel), and how to make one.
+fn discord_webhook_ui(ui: &mut egui::Ui, s: &mut crate::settings::Settings) {
     let w = ui.available_width();
-    let set_up = forward_has_hook(&s.forward);
-    if set_up && s.dink.discord != Some(false) {
-        s.dink.discord = Some(true);
-        ui.label(wrapped("yes: Dink tells the outstation everything, and the outstation passes your Discord what it got before, as Dink sent it (only while the outstation's open):", 14.0, GREY(), w));
-        ui.label(wrapped(&forward_summary(&s.forward), 14.0, LIME(), w));
-    } else if s.dink.discord == Some(false) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(rich("no: Dink tells only the outstation.", 14.0, GREY()));
-            if button(ui, "I do, after all", true, None).clicked() { s.dink.discord = None; }
-        });
-        return;
-    } else if s.dink.discord.is_none() {
-        ui.label(wrapped("if Dink posts to a Discord server of yours now, the outstation can keep that going just as it is, and still send out more field reports under your outstation than Discord gets.", 14.0, GREY(), w));
-        ui.horizontal(|ui| {
-            if button(ui, "yes, i do", true, None).clicked() { s.dink.discord = Some(true); }
-            if button(ui, "no, only the outstation", true, None).clicked() { s.dink.discord = Some(false); }
-        });
-        return;
+    let now = s.clip_webhook();
+    if now.is_empty() {
+        ui.label(wrapped("in Discord: the channel's settings ▸ Integrations ▸ Webhooks ▸ New Webhook ▸ Copy Webhook URL, then paste it here:", 14.0, GREY(), w));
     }
-    // the ways to set it up (open when nothing's set up yet; behind "change" once it is)
-    let open = !set_up || app.discord_change;
-    if set_up {
-        ui.horizontal(|ui| {
-            if button(ui, if app.discord_change { "change ◂" } else { "change ▸" }, true, None).clicked() { app.discord_change = !app.discord_change; }
-            if button(ui, "stop passing it on", true, None)
-                .on_hover_text(tip("the outstation stops sending to Discord (put your Discord address back in Dink if Dink should post there itself)")).clicked() {
-                s.forward = json!({"discord": [], "forward": {}});
-                s.dink.discord = None;
-            }
-        });
-    }
-    if !open { return; }
-    ui.add_space(4.0);
-    // from Dink's own settings
-    ui.label(rich("from your Dink settings (the easy way):", 14.0, TEXT()));
-    dink_setup_ui(app, ui, s, listening);
-    ui.add_space(4.0);
-    // or by hand
     ui.horizontal(|ui| {
-        ui.label(rich("or by hand:", 14.0, TEXT()));
-        if button(ui, if app.discord_hand { "◂" } else { "▸" }, true, None).clicked() { app.discord_hand = !app.discord_hand; }
+        ui.label(rich("webhook:", 16.0, GREY()));
+        let mut v = if s.dink.clip_webhook.is_empty() { now.clone() } else { s.dink.clip_webhook.clone() };
+        if field(ui, &mut v, 300.0, "https://discord.com/api/webhooks/…", true).changed() {
+            s.dink.clip_webhook = v.trim().to_string();
+        }
     });
-    if app.discord_hand {
-        forward_ui(ui, &mut s.forward, &mut app.webhook_shown);
+    if !now.is_empty() && !now.starts_with("https://discord.com/api/webhooks/") && !now.starts_with("https://discordapp.com/api/webhooks/") {
+        ui.label(rich("that doesn't look like a Discord webhook address", 14.0, PINK()));
     }
 }
 
@@ -3003,90 +2853,6 @@ fn pc_clips_ui(app: &mut App, ui: &mut egui::Ui, s: &crate::settings::Settings) 
     }
     if let Some(p) = play {
         if !crate::clip::play(&p) { app.note(format!("couldn't play {} (it may have been moved)", p.display())); }
-    }
-}
-
-fn forward_ui(ui: &mut egui::Ui, rules: &mut Value, shown: &mut bool) {
-    if !rules.is_object() {
-        *rules = json!({"discord": [], "forward": {}});
-    }
-    let mut url = rules.get("discord").and_then(|x| x.as_array()).and_then(|a| a.first()).and_then(|x| x.as_str()).unwrap_or("").to_string();
-    ui.horizontal(|ui| {
-        ui.label(rich("webhook:", 16.0, GREY()));
-        let was = url.clone();
-        field(ui, &mut url, 300.0, "https://discord.com/api/webhooks/…", !*shown);
-        if button(ui, if *shown { "hide" } else { "show" }, true, None).clicked() { *shown = !*shown; }
-        if url != was {
-            rules["discord"] = if url.trim().is_empty() { json!([]) } else { json!([url.trim()]) };
-        }
-    });
-    if url.trim().is_empty() {
-        ui.label(rich("(none: nothing goes to Discord. Anyone with a webhook's address can post to its server, so it stays on this PC.)", 14.0, QUIET()));
-        return;
-    }
-    let f = rules.get_mut("forward").filter(|x| x.is_object()).is_some();
-    if !f {
-        rules["forward"] = json!({});
-    }
-    let fw = rules["forward"].as_object_mut().unwrap();
-    let mut kinds: Vec<&str> = REPORTS.to_vec();
-    kinds.push("PLAYER_KILL");
-    egui::Grid::new("forward").num_columns(2).spacing(Vec2::new(18.0, 2.0)).show(ui, |ui| {
-        for (i, k) in kinds.iter().enumerate() {
-            let mut on = match fw.get(*k) { Some(Value::Bool(b)) => *b, Some(Value::Object(_)) => true, _ => false };
-            let colour = if on { TEXT() } else { GREY() };
-            if tick(ui, &mut on, rich(&kind_label(k), 16.0, colour)).changed() {
-                let v = match (*k, on) {
-                    ("LOOT", true) => json!({"minValue": 1000000, "allow": []}),
-                    ("KILL_COUNT", true) => json!({"every": 25, "lapsEvery": 1000, "first": true, "personalBest": true}),
-                    (_, b) => Value::Bool(b),
-                };
-                fw.insert(k.to_string(), v);
-            }
-            if i % 2 == 1 { ui.end_row(); }
-        }
-    });
-    if let Some(Value::Object(l)) = fw.get_mut("LOOT") {
-        ui.horizontal(|ui| {
-            ui.label(rich("loot to Discord: a stack worth", 16.0, GREY()));
-            let mut v = l.get("minValue").and_then(|x| x.as_u64()).unwrap_or(0);
-            if ui.add(egui::DragValue::new(&mut v).speed(10000.0).suffix(" gp")).changed() { l.insert("minValue".into(), json!(v)); }
-        });
-        let mut allow = l.get("allow").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.label(rich("or these items (commas, * wildcards):", 16.0, GREY()));
-            if field(ui, &mut allow, 220.0, "", false).changed() {
-                l.insert("allow".into(), json!(allow.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).collect::<Vec<_>>()));
-            }
-        });
-    }
-    if let Some(Value::Object(k)) = fw.get_mut("KILL_COUNT") {
-        ui.horizontal(|ui| {
-            ui.label(rich("kill counts to Discord: every", 16.0, GREY()));
-            let mut v = k.get("every").and_then(|x| x.as_u64()).unwrap_or(25);
-            if ui.add(egui::DragValue::new(&mut v).range(1..=10000)).changed() { k.insert("every".into(), json!(v)); }
-            ui.label(rich("laps every", 16.0, GREY()));
-            let mut l = k.get("lapsEvery").and_then(|x| x.as_u64()).unwrap_or(1000);
-            if ui.add(egui::DragValue::new(&mut l).range(1..=100000)).changed() { k.insert("lapsEvery".into(), json!(l)); }
-        });
-        ui.horizontal(|ui| {
-            let mut first = k.get("first").and_then(|x| x.as_bool()).unwrap_or(true);
-            if tick(ui, &mut first, rich("the first", 16.0, GREY())).changed() { k.insert("first".into(), json!(first)); }
-            let mut pb = k.get("personalBest").and_then(|x| x.as_bool()).unwrap_or(true);
-            if tick(ui, &mut pb, rich("personal bests", 16.0, GREY())).changed() { k.insert("personalBest".into(), json!(pb)); }
-        });
-    }
-    ui.label(rich("Discord gets Dink's own post, as Dink sent it, screenshot and all. Every kind ticked here goes whole, so keep those notifiers' thresholds in Dink as you want Discord to have them.", 14.0, QUIET()));
-}
-
-fn kind_label(k: &str) -> &'static str {
-    match k {
-        "LEVEL" => "levels", "XP_MILESTONE" => "XP milestones", "LOOT" => "loot", "QUEST" => "quests",
-        "CLUE" => "clues", "KILL_COUNT" => "kill counts", "COLLECTION" => "the collection log", "PET" => "pets",
-        "SLAYER" => "slayer tasks", "SPEEDRUN" => "speedruns", "COMBAT_ACHIEVEMENT" => "combat achievements",
-        "ACHIEVEMENT_DIARY" => "diaries", "BARBARIAN_ASSAULT_GAMBLE" => "BA gambles", "DEATH" => "deaths",
-        "LEAGUES_AREA" => "Leagues areas", "LEAGUES_RELIC" => "Leagues relics", "LEAGUES_TASK" => "Leagues tasks",
-        "GRAND_EXCHANGE" => "the GE", "PLAYER_KILL" => "player kills", _ => "other",
     }
 }
 
@@ -3996,12 +3762,12 @@ impl App {
             self.ready_seen = (Instant::now(), win::find_window(&s.title).map(|(_, t)| t));
         }
         let dink = self.dink.lock().unwrap().clone();
-        let discord = s.forward.get("discord").and_then(|x| x.as_array()).is_some_and(|a| !a.is_empty());
+        let discord = !s.clip_webhook().is_empty();
         let items = [
             ("RuneLite", Some(self.ready_seen.1.is_some()), "RuneLite's window, found by its title (settings ▸ more)"),
             ("Dink", if dink.last.is_some() { Some(true) } else if dink.error.is_some() { Some(false) } else { None },
-             "Dink pointed at the outstation (dink ▸, step 2): it tells the outstation when something big happens"),
-            ("Discord", Some(discord), "your Discord set up in dink ▸, step 1: the clips follow Dink's posts there"),
+             "Dink pointed at the outstation (dink ▸): it tells the outstation when something big happens"),
+            ("Discord", Some(discord), "a Discord webhook for the clips (dink ▸, \"and send them to Discord\")"),
         ];
         ui.horizontal_wrapped(|ui| {
             ui.label(rich("station check", 14.0, GREY()));
@@ -4048,7 +3814,7 @@ impl App {
         items.push(match (&dink.last, &dink.listening, &dink.error) {
             (Some((kind, at, _)), _, _) => ("Dink".into(), Some(true), format!("heard from Dink {} ago ({})", ago(at.elapsed()), kind)),
             (None, _, Some(e)) => ("Dink".into(), Some(false), format!("Dink can't reach the outstation: {}", e)),
-            _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (only for drops and level-ups under your outstation)".into()),
+            _ => ("Dink".into(), None, "not heard from Dink yet: dink ▸ has the address to add to Dink in RuneLite (for the clips that save themselves)".into()),
         });
         // the Outside plugin (11/07/2026): optional, so a dot till it's there
         items.push(if self.plugin_on == Some(true) {

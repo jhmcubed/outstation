@@ -1,13 +1,15 @@
-//! Dink's posts, taken on this PC (parity lines 33-34).
+//! Dink's posts, taken on this PC, for the clips that save themselves.
 //!
 //! Dink (RuneLite's notifier) posts here as it would to a Discord webhook: http://127.0.0.1:<port>/dink. Nothing
-//! listens beyond this PC. Each post:
-//!   - goes on to the broadcast if your switches let it (its kind on, a loot stack worth enough, a kill count on the
-//!     beat), as Dink's own JSON without the screenshot, to the relay's Dink route. The relay keeps only Dink's own
-//!     kinds and drops anything naming another player, so the same rules hold whichever relay it is.
-//!   - goes on to your Discord webhook, as Dink sent it (the embed and the screenshot), if forward.py's rules want it.
+//! listens beyond this PC. A post of something big (a pet, a new collection log slot, a 99, a drop worth enough) saves
+//! the tape as a clip a few seconds on, and, with their switches, puts a copy on the Outside page and sends it to
+//! Discord (the Dink drawer's webhook). Nothing else of the post goes anywhere.
+//!
+//! (The Dink trim, 11/17/2026, Jace: the Outside plugin's "Copy my Dink address" points Dink straight at the page, so
+//! the outstation no longer passes Dink's posts on: not to the relay (two copies of every field report, and the map
+//! region it took out let the relay's Wilderness check miss), and not to Discord (Dink keeps its own Discord address).)
 
-use crate::settings::{enc, Settings, Shared};
+use crate::settings::Shared;
 use serde_json::Value;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -88,39 +90,8 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
     let s = settings.get();
     let kind = payload.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let mut went = Vec::new();
-    // (where Dink's post went in Discord: the clip, if one saves itself, follows it there)
-    let mut discord_urls: Vec<String> = Vec::new();
-    if forward_wants(&s.forward, &payload) {
-        let urls = forward_urls(&s.forward, &kind);
-        discord_urls = urls.clone();
-        if !urls.is_empty() {
-            went.push("Discord");
-            let (body, ct) = (body.clone(), content_type.clone());
-            std::thread::spawn(move || {
-                for u in urls {
-                    if let Some(why) = post_discord(&u, &body, &ct) {
-                        // never the URL itself in the log: it's the key to the server
-                        crate::transmit::log(&format!("forward to Discord failed: {}", why));
-                    }
-                }
-            });
-        }
-    }
-    if s.attached() && portal_wants(&s, &payload) {
-        went.push("your Outside page");
-        let url = format!("{}/dink/{}?key={}", s.http_base(), enc(&s.channel), enc(&s.key));
-        // (only what the relay uses leaves this PC: for_relay; and when it came, so two drops alike in a few seconds
-        // stay two at the relay, whose own check for a post sent twice would take them for one)
-        let mut trimmed = for_relay(&payload);
-        trimmed["at"] = serde_json::json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
-        let json = trimmed.to_string();
-        std::thread::spawn(move || {
-            let r = ureq::post(&url).header("Content-Type", "application/json").send(json.as_bytes());
-            if let Err(e) = r {
-                crate::transmit::log(&format!("a report didn't reach the relay ({})", e));
-            }
-        });
-    }
+    // (where the clip goes in Discord, if one saves itself: the Dink drawer's webhook)
+    let webhook = s.clip_webhook();
     // something big (11/06/2026, Jace: "an auto clip when something big drops"): the replay buffer saved a few seconds
     // on, so the clip holds the moment and a little after it
     // (while transmitting, or dark with the tape rolling: dark but recording, 11/07/2026)
@@ -141,7 +112,7 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
         if let Some(what) = big {
             // (to the Outside page only while transmitting: a clip from while dark goes to this PC and Discord only)
             let up = s.dink.clips_up && s.on_air && s.attached();
-            let to_discord = s.dink.clips_discord && !discord_urls.is_empty();
+            let to_discord = s.dink.clips_discord && !webhook.is_empty();
             went.push(match (up, to_discord) {
                 (true, true) => "a clip, on your Outside page and in Discord too",
                 (true, false) => "a clip, on your Outside page too",
@@ -176,17 +147,10 @@ fn handle(mut req: tiny_http::Request, settings: &Shared, st: &Arc<Mutex<Status>
                 }
                 if to_discord {
                     let (body, ct) = discord_clip(&what, &page.mp4);
-                    let mut failed = None;
-                    for u in &discord_urls {
-                        if let Some(why) = post_discord(u, &body, &ct) {
-                            // (never the address itself in the log: it's the key to the server)
-                            crate::transmit::log(&format!("the clip didn't reach Discord: {}", why));
-                            failed = Some(why);
-                        }
-                    }
-                    crate::clip::say(match failed {
-                        None => format!("in Discord, under Dink's post: {} ({:.1} MB)", what, page.mp4.len() as f64 / 1048576.0),
-                        Some(why) => format!("the clip didn't reach Discord: {}", why),
+                    // (never the address itself in the log: it's the key to the server)
+                    crate::clip::say(match post_discord(&webhook, &body, &ct) {
+                        None => format!("in Discord: {} ({:.1} MB)", what, page.mp4.len() as f64 / 1048576.0),
+                        Some(why) => { crate::transmit::log(&format!("the clip didn't reach Discord: {}", why)); format!("the clip didn't reach Discord: {}", why) }
                     });
                 }
             });
@@ -336,147 +300,6 @@ fn stacks(p: &Value) -> Vec<(String, i64)> {
     }).unwrap_or_default()
 }
 
-/// What of Dink's post goes to the relay (11/06/2026): only what the relay uses of it, so nothing else leaves this PC.
-/// That's its kind, the line it shows (the embed's description, else its title, else the post's content: as the relay
-/// picks it), and the few numbers the readings and the drop guesses need for that kind (relay/src/text.ts's
-/// reportData and channel.ts's dinkCounts: the same fields, every loot stack
-/// and the loot's kill count included). Everything else in Dink's post stays here: your player's name and account type as
-/// Dink sends them, Dink's account hash, your Discord user if Dink adds it, the world and the region, the screenshot,
-/// a raid party's names, a PvP killer's name, the player a PvP drop came from. A PvP drop or death keeps no line (the
-/// relay would drop it: it names the other player), and a death says only that it was PvP, never who.
-pub fn for_relay(p: &Value) -> Value {
-    let kind = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
-    let e = extra(p);
-    let keep: &[&str] = match kind {
-        "KILL_COUNT" => &["boss", "count", "isPersonalBest"],
-        "LEVEL" => &["levelledSkills", "allSkills", "combatLevel"],
-        "LOOT" => &["category", "source", "killCount"],
-        "COLLECTION" => &["itemName", "itemId", "completedEntries", "totalEntries"],
-        "PET" => &["petName", "duplicate", "milestone"],
-        "QUEST" => &["questName", "completedQuests", "totalQuests"],
-        "CLUE" => &["clueType", "numberCompleted"],
-        "SLAYER" => &["slayerTask", "slayerCompleted", "slayerPoints"],
-        "COMBAT_ACHIEVEMENT" => &["tier", "task"],
-        "ACHIEVEMENT_DIARY" => &["area", "difficulty"],
-        _ => &[],
-    };
-    let mut out = serde_json::Map::new();
-    for k in keep {
-        if let Some(v) = e.get(*k) { out.insert(k.to_string(), v.clone()); }
-    }
-    let truthy = |v: Option<&Value>| match v {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Number(n)) => n.as_f64() != Some(0.0),
-        _ => true,
-    };
-    let from_player = kind == "LOOT" && e.get("category").and_then(|x| x.as_str()).is_some_and(|c| c.eq_ignore_ascii_case("PLAYER"));
-    let pvp_death = kind == "DEATH" && (truthy(e.get("isPvp")) || truthy(e.get("pvp")) || truthy(e.get("killerName")));
-    if kind == "LOOT" {
-        // (each stack's name, how many, their price and the item's id: the readings keep the first 12, a drop guess
-        // looks at every one)
-        let items: Vec<Value> = e.get("items").and_then(|x| x.as_array()).map(|a| a.iter().filter(|i| i.is_object()).map(|i| {
-            let mut it = serde_json::Map::new();
-            for k in ["name", "quantity", "priceEach", "id"] {
-                if let Some(v) = i.get(k) { it.insert(k.to_string(), v.clone()); }
-            }
-            Value::Object(it)
-        }).collect()).unwrap_or_default();
-        out.insert("items".into(), Value::Array(items));
-        if from_player { out.remove("source"); }
-    }
-    if pvp_death { out.insert("isPvp".into(), Value::Bool(true)); }
-    let said = |v: Option<&Value>| v.and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
-    let first = p.get("embeds").and_then(|x| x.as_array()).and_then(|a| a.first());
-    let text = if from_player || pvp_death { String::new() } else {
-        said(first.and_then(|f| f.get("description"))).or_else(|| said(first.and_then(|f| f.get("title"))))
-            .or_else(|| said(p.get("content"))).unwrap_or_default()
-    };
-    serde_json::json!({ "type": kind, "content": text, "extra": Value::Object(out) })
-}
-
-/// Your switches for the broadcast.
-pub fn portal_wants(s: &Settings, p: &Value) -> bool {
-    let kind = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
-    if !crate::settings::REPORTS.contains(&kind) || !s.dink.kind_on(kind) {
-        return false;
-    }
-    match kind {
-        "LOOT" => s.dink.loot_min == 0 || stacks(p).iter().any(|(_, v)| *v >= s.dink.loot_min as i64),
-        "KILL_COUNT" => {
-            let e = extra(p);
-            let count = int(e.get("count"));
-            let every = s.dink.kc_every.max(1) as i64;
-            every == 1 || count == 1 || e.get("isPersonalBest").and_then(|x| x.as_bool()).unwrap_or(false)
-                || (count > 0 && count % every == 0)
-        }
-        _ => true,
-    }
-}
-
-/// Where a kind goes on to: its own webhooks if its rule names some (a notifier with its own webhook in Dink:
-/// dinksetup.rs), else the rules' Discord list.
-pub fn forward_urls(rules: &Value, kind: &str) -> Vec<String> {
-    let own = rules.get("forward").and_then(|f| f.get(kind)).and_then(|r| r.get("webhooks")).and_then(|x| x.as_array());
-    own.or_else(|| rules.get("discord").and_then(|x| x.as_array())).map(|a| {
-        a.iter().filter_map(|u| u.as_str()).filter(|u| u.starts_with("https://") || u.starts_with("http://")).map(|u| u.to_string()).collect()
-    }).unwrap_or_default()
-}
-
-/// Would Discord have got this post under the rules? (forward.py's Forward.wants)
-pub fn forward_wants(rules: &Value, p: &Value) -> bool {
-    let kind = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
-    let Some(rule) = rules.get("forward").and_then(|f| f.get(kind)) else { return false };
-    match rule {
-        Value::Bool(b) => *b,
-        Value::Null => false,
-        Value::Object(r) if kind == "LOOT" => {
-            let least = int(r.get("minValue"));
-            let items = stacks(p);
-            if items.iter().any(|(_, v)| *v >= least) {
-                return true;
-            }
-            let allow: Vec<String> = r.get("allow").and_then(|x| x.as_array()).map(|a| {
-                a.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect()
-            }).unwrap_or_default();
-            items.iter().any(|(n, _)| allow.iter().any(|a| glob(a, n)))
-        }
-        Value::Object(r) if kind == "KILL_COUNT" => {
-            let e = extra(p);
-            let count = int(e.get("count"));
-            if r.get("personalBest").and_then(|x| x.as_bool()).unwrap_or(false)
-                && e.get("isPersonalBest").and_then(|x| x.as_bool()).unwrap_or(false) {
-                return true;
-            }
-            if r.get("first").and_then(|x| x.as_bool()).unwrap_or(false) && count == 1 {
-                return true;
-            }
-            let text = format!("{} {}", p.get("content").and_then(|x| x.as_str()).unwrap_or(""),
-                               e.get("gameMessage").and_then(|x| x.as_str()).unwrap_or("")).to_lowercase();
-            let every = int(r.get(if text.contains(" lap") { "lapsEvery" } else { "every" }).or(Some(&Value::from(1))));
-            every != 0 && count > 0 && count % every == 0
-        }
-        Value::Object(o) => !o.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Number(n) => n.as_f64() != Some(0.0),
-        Value::String(s) => !s.is_empty(),
-    }
-}
-
-/// fnmatch's * and ? (case already folded)
-fn glob(pat: &str, s: &str) -> bool {
-    let (p, t): (Vec<char>, Vec<char>) = (pat.chars().collect(), s.chars().collect());
-    fn go(p: &[char], t: &[char]) -> bool {
-        match p.first() {
-            None => t.is_empty(),
-            Some('*') => (0..=t.len()).any(|i| go(&p[1..], &t[i..])),
-            Some('?') => !t.is_empty() && go(&p[1..], &t[1..]),
-            Some(c) => t.first() == Some(c) && go(&p[1..], &t[1..]),
-        }
-    }
-    go(&p, &t)
-}
-
 fn post_discord(url: &str, body: &[u8], content_type: &str) -> Option<String> {
     let mut last = None;
     for _ in 0..3 {
@@ -504,10 +327,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn rules() -> Value {
-        // tests/fixtures/dink/forward.example.json: Jace's ::dinkexport of 11/04/2026 (relay-py's, till it was retired)
-        serde_json::from_str(include_str!("../../tests/fixtures/dink/forward.example.json")).unwrap()
-    }
     fn loot(stacks: &[(&str, i64, i64)]) -> Value {
         json!({"type": "LOOT", "content": "loot", "extra": {"items": stacks.iter().map(|(n, q, p)| json!({"name": n, "quantity": q, "priceEach": p})).collect::<Vec<_>>(), "source": "Vorkath"}})
     }
@@ -560,90 +379,6 @@ mod tests {
     }
 
     // (the Python relay's forwarding Rules' cases, kept here since it was retired, 11/17/2026)
-    #[test]
-    fn loot_needs_a_stack_worth_a_million_or_an_allowed_item() {
-        let f = rules();
-        assert!(!forward_wants(&f, &loot(&[("Dragon bones", 2, 3000)])));
-        assert!(forward_wants(&f, &loot(&[("Dragon bones", 2, 3000), ("Draconic visage", 1, 2500000)])));
-        assert!(forward_wants(&f, &loot(&[("Coins", 1000000, 1)])));
-        assert!(forward_wants(&f, &loot(&[("Blood quartz", 1, 0)])));
-        assert!(forward_wants(&f, &loot(&[("Awakener's orb", 1, 900000)])));
-    }
-
-    #[test]
-    fn kill_counts_every_25_the_first_and_personal_bests() {
-        let f = rules();
-        assert!(!forward_wants(&f, &kc(26, false, false)));
-        assert!(forward_wants(&f, &kc(50, false, false)));
-        assert!(forward_wants(&f, &kc(1, false, false)));
-        assert!(forward_wants(&f, &kc(37, true, false)));
-        assert!(!forward_wants(&f, &kc(25, false, true)));
-        assert!(forward_wants(&f, &kc(2000, false, true)));
-    }
-
-    #[test]
-    fn what_was_on_still_goes_and_what_was_off_doesnt() {
-        let f = rules();
-        for k in ["LEVEL", "DEATH", "QUEST", "PET", "COLLECTION", "PLAYER_KILL"] {
-            assert!(forward_wants(&f, &json!({"type": k})), "{}", k);
-        }
-        for k in ["SLAYER", "SPEEDRUN", "GRAND_EXCHANGE", "TRADE", "CHAT", "XP_MILESTONE", "SOMETHING_NEW"] {
-            assert!(!forward_wants(&f, &json!({"type": k})), "{}", k);
-        }
-    }
-
-    #[test]
-    fn the_portal_switches() {
-        let mut s = Settings::default();
-        assert!(portal_wants(&s, &json!({"type": "LEVEL"})));
-        assert!(!portal_wants(&s, &json!({"type": "TRADE"})));
-        s.dink.kinds.insert("LEVEL".into(), json!(false));
-        assert!(!portal_wants(&s, &json!({"type": "LEVEL"})));
-        s.dink.loot_min = 100000;
-        assert!(!portal_wants(&s, &loot(&[("Bones", 1, 100)])));
-        assert!(portal_wants(&s, &loot(&[("Bones", 1, 100), ("Visage", 1, 200000)])));
-        s.dink.kc_every = 10;
-        assert!(!portal_wants(&s, &kc(7, false, false)));
-        assert!(portal_wants(&s, &kc(20, false, false)) && portal_wants(&s, &kc(1, false, false)) && portal_wants(&s, &kc(7, true, false)));
-    }
-
-    #[test]
-    fn only_what_the_relay_keeps_leaves_this_pc() {
-        let kc = serde_json::json!({
-            "type": "KILL_COUNT", "playerName": "Lichen Ring", "accountType": "IRONMAN", "dinkAccountHash": "abc123",
-            "discordUser": {"id": "1234", "name": "someone"}, "world": 330, "regionId": 12345, "clanName": "moss",
-            "content": "", "embeds": [{"title": "kill count", "description": "**Lichen Ring** has defeated Vorkath with a completion count of 50",
-                                       "author": {"name": "Lichen Ring"}, "fields": [{"name": "x", "value": "y"}]}],
-            "extra": {"boss": "Vorkath", "count": 50, "isPersonalBest": false, "gameMessage": "...", "party": ["Moss Fern", "Bog"]}});
-        let t = for_relay(&kc);
-        assert_eq!(t, serde_json::json!({"type": "KILL_COUNT", "content": "**Lichen Ring** has defeated Vorkath with a completion count of 50",
-                                         "extra": {"boss": "Vorkath", "count": 50, "isPersonalBest": false}}));
-        let s = t.to_string();
-        for gone in ["abc123", "1234", "330", "12345", "Moss Fern", "IRONMAN", "moss\""] { assert!(!s.contains(gone), "{} went", gone); }
-        // a drop from another player: its stacks, never who it came from, and no line (it names them)
-        let pk = serde_json::json!({"type": "LOOT", "embeds": [{"description": "Lichen Ring has looted 1m from Moss Fern"}],
-            "extra": {"category": "PLAYER", "source": "Moss Fern", "items": [{"name": "Coins", "quantity": 1000000, "priceEach": 1, "id": 995, "rarity": null, "criteria": ["VALUE"]}, 7]}});
-        assert_eq!(for_relay(&pk), serde_json::json!({"type": "LOOT", "content": "",
-            "extra": {"category": "PLAYER", "items": [{"name": "Coins", "quantity": 1000000, "priceEach": 1, "id": 995}]}}));
-        // a death in PvP: that it was, never who
-        let d = serde_json::json!({"type": "DEATH", "content": "Lichen Ring was killed by Moss Fern", "extra": {"isPvp": true, "killerName": "Moss Fern", "valueLost": 9}});
-        assert_eq!(for_relay(&d), serde_json::json!({"type": "DEATH", "content": "", "extra": {"isPvp": true}}));
-        // a plain JSON post's own words, when there's no embed
-        // a boss's drop: every stack, and the kill count it came at (a drop guess decides on it)
-        let many: Vec<Value> = (0..15).map(|n| serde_json::json!({"name": format!("item {}", n), "quantity": 1, "priceEach": n, "id": n, "rarity": 0.1})).collect();
-        let boss = serde_json::json!({"type": "LOOT", "content": "drop", "extra": {"category": "NPC", "source": "Vorkath", "killCount": 51, "npcId": 8061, "party": ["Bog"], "items": many}});
-        let tb = for_relay(&boss);
-        assert_eq!(tb["extra"]["killCount"], 51);
-        assert_eq!(tb["extra"]["source"], "Vorkath");
-        assert_eq!(tb["extra"]["items"].as_array().unwrap().len(), 15);
-        assert_eq!(tb["extra"]["items"][14], serde_json::json!({"name": "item 14", "quantity": 1, "priceEach": 14, "id": 14}));
-        assert!(tb["extra"].get("party").is_none() && tb["extra"].get("npcId").is_none());
-        let lv = serde_json::json!({"type": "LEVEL", "content": "Lichen Ring has levelled Attack to 99",
-            "extra": {"levelledSkills": {"Attack": 99}, "allSkills": {"Attack": 99}, "combatLevel": {"value": 100, "increased": true}}});
-        assert_eq!(for_relay(&lv)["content"], "Lichen Ring has levelled Attack to 99");
-        assert_eq!(for_relay(&lv)["extra"]["combatLevel"]["value"], 100);
-    }
-
     #[test]
     fn a_multipart_post_gives_its_payload_and_leaves_the_screenshot() {
         let body = b"--b\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n{\"type\": \"LEVEL\"}\r\n--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"i.png\"\r\n\r\n\x89PNG--b junk\r\n--b--\r\n";

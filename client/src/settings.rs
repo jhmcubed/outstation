@@ -10,11 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
-pub const REPORTS: &[&str] = &[
-    "LEVEL", "XP_MILESTONE", "LOOT", "QUEST", "CLUE", "KILL_COUNT", "COLLECTION", "PET", "SLAYER", "SPEEDRUN",
-    "COMBAT_ACHIEVEMENT", "ACHIEVEMENT_DIARY", "BARBARIAN_ASSAULT_GAMBLE", "DEATH", "LEAGUES_AREA", "LEAGUES_RELIC",
-    "LEAGUES_TASK", "GRAND_EXCHANGE",
-];
 
 fn d_relay() -> String { String::new() }
 fn d_fps() -> u32 { 8 }
@@ -47,7 +42,6 @@ fn d_kbps() -> u32 { 128 }
 fn d_viewers() -> u32 { 10 }
 fn d_upload() -> f64 { 40.0 }
 fn d_dink_port() -> u16 { 8796 }
-fn d_one() -> u32 { 1 }
 fn d_clip_gp() -> u64 { 1_000_000 }
 
 /// A request for a portal, waiting for the keeper's answer (ask.rs): kept so it outlives closing the portal.
@@ -69,15 +63,6 @@ pub struct Dink {
     /// the local port Dink posts to (http://127.0.0.1:<port>/dink)
     #[serde(default = "d_dink_port")]
     pub port: u16,
-    /// which kinds go into the broadcast (missing: on)
-    #[serde(default)]
-    pub kinds: Map<String, Value>,
-    /// loot on the portal: a stack worth at least this (0: every drop Dink sends)
-    #[serde(default)]
-    pub loot_min: u64,
-    /// kill counts on the portal: every Nth (1: each), and always the first and personal bests
-    #[serde(default = "d_one")]
-    pub kc_every: u32,
     /// a clip saved by itself when Dink tells of something big (a pet, a new collection log slot, a 99, a drop worth
     /// clip_gp or more), while live and with the replay buffer on (dink.rs, big_moment)
     #[serde(default = "d_true")]
@@ -87,26 +72,22 @@ pub struct Dink {
     /// and each one put on the player's Outside page too (clipsup.rs): a standard copy, off to begin with
     #[serde(default)]
     pub clips_up: bool,
-    /// and each one sent to Discord under Dink's post, where that post went (dink.rs, 11/07/2026: "Dink, but with
-    /// video"): the same standard copy, on to begin with, and only ever where Dink's post was going anyway
+    /// and each one sent to Discord (dink.rs, 11/07/2026: "Dink, but with video"): the same standard copy, to
+    /// clip_webhook; on to begin with
     #[serde(default = "d_true")]
     pub clips_discord: bool,
-    /// the drawer's first question, "do you use Dink with Discord too?": not answered yet, yes or no
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub discord: Option<bool>,
+    /// the Discord webhook the clips go to (11/17/2026, the Dink trim: Dink keeps its own Discord address and posts
+    /// there itself; the outstation sends only its clips, here). A secret: never in the log. Empty: an outstation from
+    /// before keeps the first Discord address of its old forwarding rules (Settings::clip_webhook)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub clip_webhook: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl Default for Dink {
     fn default() -> Self {
-        Dink { port: d_dink_port(), kinds: Map::new(), loot_min: 0, kc_every: 1, auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, clips_discord: true, discord: None, extra: Map::new() }
-    }
-}
-
-impl Dink {
-    pub fn kind_on(&self, kind: &str) -> bool {
-        self.kinds.get(kind).and_then(|v| v.as_bool()).unwrap_or(true)
+        Dink { port: d_dink_port(), auto_clip: true, clip_gp: d_clip_gp(), clips_up: false, clips_discord: true, clip_webhook: String::new(), extra: Map::new() }
     }
 }
 
@@ -286,9 +267,6 @@ pub struct Settings {
     /// look on GitHub for a newer version when the window opens (it never updates itself)
     #[serde(default = "d_true")]
     pub check_updates: bool,
-    /// forward.py's rules: {"discord": [webhook…], "forward": {"LEVEL": true, "LOOT": {…}, …}}
-    #[serde(default)]
-    pub forward: Value,
     /// a request for a portal waiting for the keeper (the attach screen's "ask for one"; ask.rs)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<Asked>,
@@ -322,6 +300,16 @@ impl Settings {
     pub fn taping_dark(&self) -> bool {
         self.tape_dark && self.replay_seconds > 0
     }
+    /// Where the clips go in Discord: the Dink drawer's webhook, or, for an outstation from before the Dink trim
+    /// (11/17/2026), the first Discord address of the forwarding rules it kept ("forward", now among the extra fields).
+    pub fn clip_webhook(&self) -> String {
+        if !self.dink.clip_webhook.trim().is_empty() {
+            return self.dink.clip_webhook.trim().to_string();
+        }
+        self.extra.get("forward").and_then(|f| f.get("discord")).and_then(|d| d.as_array())
+            .and_then(|a| a.iter().filter_map(|u| u.as_str()).find(|u| u.starts_with("https://"))).unwrap_or("").to_string()
+    }
+
     pub fn attached(&self) -> bool {
         !self.relay.is_empty() && !self.channel.is_empty() && self.key.len() >= 8
     }
