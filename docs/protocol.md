@@ -246,19 +246,26 @@ take a page down. Both relays:
 ## The register (11/17/2026)
 
 Jace: "for people who haven't opened an outstation client/don't have a transmission on their page, should we re-brand
-the 'chat' into a guestbox where people can leave comments… build it and call it the register". A page's chat, while
-nothing transmits, is its register: visitors sign it, and the owner reads it later. It's the same lines (one store; a
-note left while the page is quiet is in the chat when it next transmits, and the other way round), shown on the page
-as entries newest first while it's quiet. Both are tended the same way (below).
+the 'chat' into a guestbox… build it and call it the register"; then, of the chat and the register sharing their lines,
+"yes, separate them". A page's register is its guestbook: notes left by visitors for the owner to read later, kept apart
+from the chat (the chat is for while the outstation transmits; the page shows its tab only then).
 
-- **Kept:** the last 500 lines (`CHAT_KEPT`; 50 before), visitors' and the host's. Someone just come gets the last 50
-  (`CHAT_SENT`), as the chat so far.
-- **Older ones:** `GET <relay>/chat/<channel>?before=<id>[&code=<watch code>]` → `{"lines": [...], "more": bool}`: up to 50
-  lines before that id, oldest first, each as a `{"chat"}` line's insides; `more` when there are older still. The watch
-  code as watching (403 without it on a friends-only page); 404 for no page.
+- **A note**, from a watching socket: `{"note": "<words>"}` (300 characters at most, one line), under the name its
+  `hello` gave. Three a minute a socket (`NOTE_BURST`, `NOTE_WINDOW`); never from a blocked or banned visitor. Everyone's
+  sockets (watchers, desks, tending) get `{"note": {"id", "name", "text", "who", "at"}}`.
+- **Kept:** the last 500 (`NOTES_KEPT`), with the device each came from (never sent: it's what a ban holds on to after the
+  visitor's socket has gone). Someone just come gets the last 50 (`NOTES_SENT`), after the chat so far; a tending socket
+  gets them all. The chat keeps its own last 50 lines, as before.
+- **Older ones:** `GET <relay>/register/<channel>?before=<id>[&code=<watch code>]` → `{"notes": [...], "more": bool}`: up
+  to 50 notes before that id, oldest first; `more` when there are older still. The watch code as watching (403 without
+  it on a friends-only page); 404 for no page. (`GET /chat/<channel>?before=` reads the chat's the same way, as
+  `{"lines"}`.)
+- **Taken back:** a desk's or a tending socket's `{"hide_note": <id>}`; everyone gets `{"unnote": <id>}`. A ban (`{"ban"}`)
+  takes back the banned visitor's notes as well as their lines.
 - **New notes, to the page's own key:** `GET /proof/<channel>?key=<key>&seen=<id>` adds
-  `"notes": {"n": <visitors' lines after that id>, "last": <the newest visitor's line's id>}`, for the plugin's side tab
-  ("3 new notes in your register"). It remembers `last` once the owner opens the register to tend it.
+  `"notes": {"n": <notes after that id>, "last": <the newest note's id>}`, for the plugin's side tab ("3 new notes in
+  your register"). It remembers `last` once the owner opens the register to tend it.
+- Tests: `NOTES_PAGE` (the Worker) sends and pages that many notes. protocol_test's `Talk`.
 
 ## Tending the page's chat from the page (11/16/2026)
 
