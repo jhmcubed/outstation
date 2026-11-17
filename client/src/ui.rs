@@ -1977,10 +1977,11 @@ fn invites_ui(app: &mut App, ui: &mut egui::Ui) {
             ui.label(wrapped(&format!("{}'s station key, made: send it to them (only to them: it attaches to their channel)", ch), 14.0, LIME(), w));
             ui.label(wrapped(&code, 13.0, TEXT(), w));
             ui.horizontal(|ui| {
-                if button(ui, "copy it with the download link", true, None)
-                    .on_hover_text(tip("the key, where the outstation comes from (its GitHub releases, the only official download), and what to do with it")).clicked() {
-                    win::copy_text(&crate::invites::message(&code));
-                    app.note(format!("{}'s key and the download link are on the clipboard", ch));
+                if button(ui, "copy the invite", true, None)
+                    .on_hover_text(tip("a link to the outstation's page carrying the key and that it's from you (their commission card shows \"through\" your channel, and the download), the official download named, and the key on its own")).clicked() {
+                    let by = app.settings.get().channel;
+                    win::copy_text(&crate::invites::message(&code, &by));
+                    app.note(format!("{}'s invite is on the clipboard", ch));
                 }
                 if button(ui, "copy the key", true, None).clicked() {
                     win::copy_text(&code);

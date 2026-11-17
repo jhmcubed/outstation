@@ -109,10 +109,22 @@ fn why(v: &Value, status: u16) -> String {
     }
 }
 
-/// What to send the friend: the key, where the outstation comes from, and what to do with it.
-pub fn message(code: &str) -> String {
-    format!("an outstation for you, from mine (⊂λ,ｍ⊙ outstation):\n{}\n\nget the outstation from its only official page, https://{}, open it, and paste the key on its first screen.",
-            code, crate::settings::RELEASES)
+/// The outstation's own page, where an invite lands (ghillie.wiki/outstation, 11/16/2026).
+pub const PAGE: &str = "https://ghillie.wiki/outstation";
+
+/// What to send the friend (11/17/2026, Jace: the invite link carrying who it's from): a link to the outstation's own
+/// page with the key and the inviter in its fragment (#k=<key>&by=<inviter's channel>; the fragment never reaches a
+/// server, and the page takes it out of the address once read), where the commission card shows the key, "through
+/// <inviter>" and the download; the official download named too; and the key on its own, in case the link won't open.
+pub fn message(code: &str, by: &str) -> String {
+    format!("an outstation for you, from mine (⊂λ,ｍ⊙ outstation):\n{}\n\nthat page has your key and the download (the only official one is https://{}). open the outstation and paste the key on its first screen.\n\nthe key on its own, if the link won't open:\n{}",
+            link(code, by), crate::settings::RELEASES, code)
+}
+
+/// The invite's link: the page, then #k=<the key>&by=<the inviter's channel> (by left out when there's none).
+pub fn link(code: &str, by: &str) -> String {
+    let by = by.trim();
+    if by.is_empty() { format!("{}#k={}", PAGE, enc(code)) } else { format!("{}#k={}&by={}", PAGE, enc(code), enc(by)) }
 }
 
 /// "one more every 10 hours on air", in words: how long to the next.
@@ -127,9 +139,16 @@ mod tests {
 
     #[test]
     fn the_message_carries_the_key_and_the_only_official_download() {
-        let m = message("outstation1:abc");
-        assert!(m.contains("outstation1:abc"));
+        let m = message("outstation1:abc", "sburb");
+        assert!(m.contains("\noutstation1:abc"));                     // (the key on its own too)
         assert!(m.contains("https://github.com/jhmcubed/outstation/releases"));
+    }
+
+    #[test]
+    fn the_link_carries_the_key_and_who_its_from() {
+        assert_eq!(link("outstation1:ab_c-d", "oran_berries"), "https://ghillie.wiki/outstation#k=outstation1%3Aab_c-d&by=oran_berries");
+        assert_eq!(link("outstation1:abc", " "), "https://ghillie.wiki/outstation#k=outstation1%3Aabc");
+        assert!(message("outstation1:abc", "sburb").contains("https://ghillie.wiki/outstation#k=outstation1%3Aabc&by=sburb"));
     }
 
     #[test]
