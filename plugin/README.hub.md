@@ -20,12 +20,14 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 - **Show what's sent:** exactly what Update my page would send now, every field of it, in a window. Nothing is sent by opening it.
 - **Copy my Dink address:** if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin, this copies your page's address for it. Paste it on its own line in Dink's **Primary Webhook URLs**, and the notifications you switch on in Dink (levels, kills, drops, pets, clues, collection log slots…) show on your page and on outside.wiki's globe as field reports as they happen. Outside itself sends nothing for this: Dink does, as it does to Discord. Nothing from the Wilderness or PvP is ever shown (a kill, death, drop or level there, a Wilderness boss, a player kill), nothing that names another player, and Dink's world, location and screenshot aren't kept. The address holds your page's key, so keep it to yourself; to stop, delete the line in Dink.
 - **Who sees it:** whether your page is open to anyone (and on outside.wiki's globe while you play) or friends only. **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (it asks first: everything on the page goes and the name is free again).
+- **Your character** (with "My character's model on my page" on): **Capture my character** records the next emote you do within 8 seconds, from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it. The motions on your page are listed: pick the one shown first, take one off with ✕, or **Take my model off my page**. `::outsidemodel`, `::outsidemotion <name>` and `::outsideforget <name>` do the same from the chat.
 - **Your page's chat:** visitors can leave lines on your page. **Tend my page's chat** opens your page in your browser with **take back** and **ban** beside each visitor's line, and who you've banned (with **unban**). The link works for 12 hours, only in that browser, and can do nothing else.
 
 ## Settings
 
 - **Send to my Outside page:** the main switch. Off, nothing is sent, and what it sent comes off your page.
 - **Worn and carried**, **Skills**, **Quests, diaries and combat achievements** (and the collection log's count, kill counts and clue counts), **My slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
+- **My bank on my page**, **My deathbank on my page**, **My character's model on my page** and **The ground under my model:** each off to begin with, behind its own warning; switching one off takes it off your page.
 
 ## What it sends, and only that
 
@@ -44,11 +46,18 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 - **Doom of Mokhaiotl delves:** when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level (as the Delve Calculator plugin reads it)
 - that you've logged out
 
+**With the next update after you look** (only with its switch on):
+
+- **my bank:** your whole bank, every item, how many and its tabs, read when you use your bank
+- **my deathbank:** the Item Retrieval Service's deathbank (as at Hespori, Zulrah or Vorkath), which one it is and what's in it: what a death put there, read once you're back on your feet, and again as its window shows it when you look in it; emptied, it comes off your page
+
+**When you capture your character** (only with "My character's model on my page" on, and only when you press Capture my character or use `::outsidemodel` or `::outsidemotion`): your character's model as you look then (its shape, colours and effects, nothing else), the motion's frames if you did an emote, your pet's the same; and, with "The ground under my model" on, the ground round you then, about five tiles each way (the tiles' paint and shape: no objects, people or items).
+
 **What I'm doing, as Discord shows it** (sent as it changes, once a minute at most, and with each update): only what RuneLite's own Discord plugin puts in your Discord status: the skill you're training, and the area you're in by its name (a boss, a city, a dungeon, a minigame, a raid or a region), with one fixed point of that area so the globe can light you there. Never your exact tile or your world.
 
 **In the Wilderness, a PvP area, or on a PvP or Deadman world**, no update is taken (pressed there, it waits and goes once you leave) and what you're doing says nothing. Ferox Enclave, the Wilderness's safe town, counts as safe.
 
-**Never sent:** your screen, your chat (only an item's charges, read from the game's own messages), your exact location or world, your hitpoints or prayer, your bank, other players, or anything you type.
+**Never sent:** your screen, your chat (only an item's charges, read from the game's own messages), your exact location or world, your hitpoints or prayer, your bank (unless you switch on My bank on my page), other players, or anything you type.
 
 Your page shows what was sent to anyone who opens it, unless you make it friends only.
 

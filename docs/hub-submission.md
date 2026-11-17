@@ -98,3 +98,18 @@ developers was also missing." The manifest now reads:
 So a later update changes only `commit=`: never the warning. Following (update 1's first idea, `globe` in
 `hub_cut.py`'s SUBMITTED) was never sent: the snapshot's Discord presence took its place, so open-panel.js's `FOLLOW`
 stays false.
+
+## Update 2: the model, the bank and the deathbank (11/17/2026, built, not yet sent)
+
+`hub_cut.py`'s SUBMITTED adds `model`, `bank` and `deathbank`, each off to begin with behind its own warning, under the
+reviewer's terms ("an 'Update my page' action and an hourly sync"):
+- **The model:** sent when the player presses Capture my character (or `::outsidemodel`, `::outsidemotion`), their own
+  press, as Update my page is. The live view (the model following their gear and animation every tick over the socket)
+  and the encounter (the boss fought) stay out: they're fenced as `live` inside the model's regions now.
+- **The bank and the deathbank:** read when the player uses the bank or a deathbank is made or looked in, as before, but
+  in the Hub's version held (the latest of each, `keepHeld`, `HOLD_KEEPS`) and sent after the next update's post
+  (Update my page, or the hourly one); the chat says so the first time. A switch turned off takes its part down at once.
+  The whole plugin still sends each at once.
+- `README.hub.md` says what each sends and when; the settings' descriptions and warnings say "with your next update" in
+  the Hub's version (`hub:only` lines).
+The manifest's warning stays as the reviewer wrote it; only `commit=` changes.

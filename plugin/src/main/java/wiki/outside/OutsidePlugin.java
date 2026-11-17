@@ -575,11 +575,11 @@ public class OutsidePlugin extends Plugin
 			// hub:cut delve
 			delveSeen = null;
 			// hub:end delve
-			// hub:cut model
+			// hub:cut live
 			liveGear = gearSeen = null;
 			liveRecorded.clear();
 			autoStart = -1;
-			// hub:end model
+			// hub:end live
 			// hub:cut globe
 			doing.forget();
 			doing.clear();
@@ -702,9 +702,12 @@ public class OutsidePlugin extends Plugin
 		look(ms, safe);
 		// hub:end globe
 		// hub:cut model
+		// hub:cut live
+		// (the live view's: the boss fought and the gear as it changes, every tick over the socket)
 		encounter(ms, safe);
 		liveSafe = safe && !paused;
 		liveGearTick(ms);
+		// hub:end live
 		// hub:end model
 		// hub:cut live
 		if (!open)
@@ -862,6 +865,9 @@ public class OutsidePlugin extends Plugin
 				{
 					clogNew.removeAll(named);
 				}
+				// hub:cut model,bank
+				sendHeldKeeps();   // (the Hub's version: the bank and the deathbank, held since they looked)
+				// hub:end model,bank
 				showSnap();
 			}
 		});
@@ -1165,7 +1171,7 @@ public class OutsidePlugin extends Plugin
 			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
 			m.put("charges", new JsonObject());
 		}
-		// hub:cut model
+		// hub:cut live
 		// (the live view, 11/15/2026: the animation they're doing now and the gear it's in)
 		if (config.model() && me != null && liveGear != null)
 		{
@@ -1179,7 +1185,7 @@ public class OutsidePlugin extends Plugin
 			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
 			m.put("anim", JsonNull.INSTANCE);
 		}
-		// hub:end model
+		// hub:end live
 		// hub:cut delve
 		if (config.delve() && delveSeen != null)
 		{
@@ -1657,6 +1663,7 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted e)
 	{
+		// hub:cut talk
 		// (the page's chat, 11/16/2026: ::o answers it, ::ochat off / on stops and starts visitors' lines)
 		if ("o".equalsIgnoreCase(e.getCommand()) || "ochat".equalsIgnoreCase(e.getCommand()))
 		{
@@ -1681,6 +1688,7 @@ public class OutsidePlugin extends Plugin
 			answerPage(String.join(" ", e.getArguments()));
 			return;
 		}
+		// hub:end talk
 		if ("outsideforget".equalsIgnoreCase(e.getCommand()))
 		{
 			String name = motionName(e.getArguments());
@@ -1726,7 +1734,7 @@ public class OutsidePlugin extends Plugin
 	// hub:end talk,model
 
 	// hub:cut model
-	/** The character's model as it is now (the client's thread). */
+	// hub:cut live
 	// ---- the live view (11/15/2026, Jace: "allow them to have a static set of gear/animation of their choosing while also
 	// having the ability for the viewer to show the 'live view' that shows what they are currently wearing and what they
 	// are doing in game"; "yes, build the live view that way"): the model in the gear they wear now, sent a few seconds
@@ -1950,6 +1958,7 @@ public class OutsidePlugin extends Plugin
 			encounterName = null;
 		}
 	}
+	// hub:end live
 	// hub:end model
 
 	/** The side tab's icon: a lime ✼, drawn here (no picture to ship). */
@@ -3186,11 +3195,13 @@ public class OutsidePlugin extends Plugin
 	{
 		if (motionArmed < 0)
 		{
+			// hub:cut live
 			Player lp = client.getLocalPlayer();
 			if (lp != null && client.getGameState() == GameState.LOGGED_IN)
 			{
 				liveRecordTick(lp, client.getGameCycle());
 			}
+			// hub:end live
 			return;
 		}
 		Player me = client.getLocalPlayer();
@@ -3454,6 +3465,51 @@ public class OutsidePlugin extends Plugin
 	// hub:end deathbank
 
 	// hub:cut model,bank
+	/* (11/17/2026, the Hub's update 2: the bank and the deathbank on the page, under the reviewer's terms, "an 'Update my
+	   page' action and an hourly sync": in the Hub's version each is read as now, when they look in it, and held here,
+	   the latest of each, till the next update takes it (Update my page, or the hourly one); the model, captured by their
+	   own press, goes at once, and a switch turned off takes its part down at once. The whole plugin sends each at once.) */
+	private final Map<String, JsonObject> keepHeld = new LinkedHashMap<>();
+	// hub:cut live
+	static final boolean HOLD_KEEPS = false;
+	// hub:end live
+	// hub:only static final boolean HOLD_KEEPS = true;
+
+	/** Whether this keep waits for the next update (the Hub's version): the bank's or the deathbank's, not a take-down. */
+	private boolean holdKeep(String what, JsonObject body)
+	{
+		if (body == null || !("bank".equals(what) || "deathbank".equals(what)))
+		{
+			synchronized (keepHeld)
+			{
+				keepHeld.remove(what);   // (a take-down: nothing held of it goes later)
+			}
+			return false;
+		}
+		boolean first;
+		synchronized (keepHeld)
+		{
+			first = keepHeld.put(what, body) == null;
+		}
+		if (first)
+		{
+			say("your " + what + " goes up with your next update (Update my page, or the hourly one)");
+		}
+		return true;
+	}
+
+	/** What's held goes, after an update's gone. */
+	private void sendHeldKeeps()
+	{
+		Map<String, JsonObject> due;
+		synchronized (keepHeld)
+		{
+			due = new LinkedHashMap<>(keepHeld);
+			keepHeld.clear();
+		}
+		due.forEach(this::sendKeep);
+	}
+
 	/** Sent to the relay's keep (POST; null: DELETE), off the client's thread; a failure said in the chat. */
 	private void keep(String what, JsonObject body)
 	{
@@ -3462,7 +3518,24 @@ public class OutsidePlugin extends Plugin
 
 	private void keep(String what, String name, JsonObject body)
 	{
+		if (name == null && HOLD_KEEPS && holdKeep(what, body))
+		{
+			return;
+		}
+		sendKeep(what, name, body);
+	}
+
+	private void sendKeep(String what, JsonObject body)
+	{
+		sendKeep(what, null, body);
+	}
+
+	private void sendKeep(String what, String name, JsonObject body)
+	{
+		// hub:cut live
 		Attach a = attach != null ? attach : key();
+		// hub:end live
+		// hub:only Attach a = key();
 		if (a == null || !config.send())
 		{
 			return;
