@@ -242,6 +242,7 @@ ADDRESSES = {
     "http://127.0.0.1": "Dink's address on this PC, shown to you",
     "ws://127.0.0.1": "a relay on this PC (the Worker under wrangler dev, for testing), only when you choose one by hand",
     "https://discord.com/api/webhooks/": "the webhook box's hint, an example only",
+    "https://discordapp.com/api/webhooks/": "the webhook box's check: Discord's older domain, whose webhooks still work",
 }
 
 
