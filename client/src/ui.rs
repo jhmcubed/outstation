@@ -1862,7 +1862,7 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
         if s.attached() {
             ui.horizontal_wrapped(|ui| {
                 if button(ui, "copy my station key", true, None)
-                    .on_hover_text(tip("for the Outside plugin in RuneLite (its settings, \"Station key\"): what you wear and carry, live on your Outside page. It's this outstation's key: give it to nobody else.")).clicked() {
+                    .on_hover_text(tip("for the Outside plugin in RuneLite (its settings ▸ Advanced, \"Station key\"): it puts the plugin's updates (what you wear and carry, your stats, your bank…) on this outstation's page. It's this outstation's key: give it to nobody else.")).clicked() {
                     win::copy_text(&crate::settings::make_attach(&s.relay, &s.channel, &s.key));
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("key copied"), Instant::now()));
                 }
@@ -3727,9 +3727,9 @@ impl App {
         });
         // the Outside plugin (11/07/2026): optional, so a dot till it's there
         items.push(if self.plugin_on == Some(true) {
-            ("Outside plugin".into(), Some(true), "connected: what you wear and carry is live on your Outside page".into())
+            ("Outside plugin".into(), Some(true), "connected live (the whole plugin, in RuneLite's developer mode): what you wear and carry, as it changes, on your Outside page".into())
         } else {
-            ("Outside plugin".into(), None, "optional: the Outside plugin for RuneLite puts what you wear and carry, live, on your Outside page. In its settings, paste your station key (settings ▸ more: \"copy my station key\")".into())
+            ("Outside plugin".into(), None, "optional: the Outside plugin (RuneLite's Plugin Hub) puts what you wear and carry, your stats, your bank and more on your Outside page, each time you press Update my page and once an hour. In its settings ▸ Advanced, paste your station key (settings ▸ more: \"copy my station key\") so it's this outstation's page".into())
         });
         let sound = match s.sound.as_str() { "game" => "the game", "all" => "game + desktop", _ => "off" };
         items.push((format!("sound: {}", sound), None, "the sound row below: off, the game, or game + desktop (never a microphone)".into()));
