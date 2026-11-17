@@ -67,7 +67,7 @@ pub fn make(settings_path: &std::path::Path) -> Result<(), String> {
             let made = (|| -> windows::core::Result<()> {
                 let sl: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
                 let (path, dir, icon) = (wide(&exe.to_string_lossy()), wide(&exe.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()), wide(&ico.to_string_lossy()));
-                let about = wide("⊂λ,ｍ⊙ outstation: your RuneLite, transmitting to your Outside page (ghillie.wiki)");
+                let about = wide("⊂λ,ｍ⊙ outstation: your RuneLite, transmitting to your Outside page (outside.wiki)");
                 sl.SetPath(PCWSTR(path.as_ptr()))?;
                 sl.SetWorkingDirectory(PCWSTR(dir.as_ptr()))?;
                 sl.SetDescription(PCWSTR(about.as_ptr()))?;

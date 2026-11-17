@@ -846,9 +846,13 @@ export class Channel extends DurableObject<Env> {
     this.tellSummary();
     this.meta.state = "open";
     this.saveMeta();
-    // viewers whose code no longer matches go
-    for (const v of this.sockets("watch")) {
-      if ((this.att(v).code || "") !== code) this.close(v, 4003, "the watch code changed");
+    // viewers whose code no longer matches the page's go (11/17/2026, the review before the outstation's v0.2.0: the
+    // page's own code, not the transmitter's, which a v0.2.0 outstation never sends: going live had closed every friend
+    // watching a friends-only page)
+    if (this.meta.code) {
+      for (const v of this.sockets("watch")) {
+        if ((this.att(v).code || "") !== this.meta.code) this.close(v, 4003, "the watch code changed");
+      }
     }
     this.tellViewers();
     if (!this.uploadTimer) {
@@ -962,6 +966,8 @@ export class Channel extends DurableObject<Env> {
 
   /** Your year (11/10/2026; docs/record.md): one of the owner's own things, {"mine": {...}}, to this channel's desks
    *  only (the app's chat window, which only the station key opens): never a viewer, a looker or anything else. */
+  /** (Unused since 11/17/2026: the outstation no longer keeps a year, and v0.2.0 throws these away, desk.rs. Kept for
+   *  now, as the protocol tests read the owner's own feed through them; only ever the owner's own desks.) */
   tellMine(m: Record<string, unknown>) {
     const desks = this.sockets("desk");
     if (!desks.length) return;
@@ -1068,6 +1074,7 @@ export class Channel extends DurableObject<Env> {
   /** Whether the outstation's app is here (a desk not the plugin's chat), to the plugin's game socket as {"app": bool}
    *  (11/16/2026, the permissions review): the exact path goes only while it is, since only the app takes it (the plugin
    *  keeps its own record). To one socket just opened, or to every game socket as a desk comes or goes. */
+  /** (Unused since 11/17/2026: the plugin no longer sends its exact tile, which this told it it could.) */
   tellApp(only?: WebSocket) {
     const line = pyjson({ app: this.sockets("desk").some((d) => !this.att(d).talk) });
     for (const g of only ? [only] : this.sockets("game")) this.send(g, line);
@@ -2189,13 +2196,19 @@ export class Channel extends DurableObject<Env> {
 
   dinkSeen = new Map<string, number>(); // a Dink post -> when: the same one again within 10 s is dropped
 
-  // (fromPlugin, 11/15/2026: the Outside plugin's own reports, for a player with no outstation; while the outstation
-  // transmits, Dink's come through it, so the plugin's are dropped and nothing's told twice)
+  // (fromPlugin, 11/15/2026: the Outside plugin's own reports. Till 11/17/2026 they were dropped while the outstation
+  // transmitted, as Dink's came through it then; since the Dink trim the outstation passes nothing on, so they're kept)
   async dink(request: Request, key: string, ip: string, fromPlugin = false): Promise<Response> {
     const no = await this.checkKey(key, ip);
     if (no) return new Response(null, { status: 403 });
-    if (fromPlugin && this.live()) return new Response(null, { status: 204 });
+    void fromPlugin;
     const payload = await dinkPayload(request);
+    // (an outstation from before v0.2.0 passing Dink's posts on, trimmed, with its own "at" and without the region the
+    // Wilderness is told by: dropped, as it can't be checked; Dink's own posts never carry "at". 11/17/2026, the review
+    // before v0.2.0. The player's Dink pointed at the page itself, by the plugin's Copy my Dink address, reports all)
+    if (payload && typeof payload === "object" && typeof (payload as any).at === "number" && (payload as any).regionId === undefined) {
+      return new Response(null, { status: 204 });
+    }
     // (Dink posts each event once to each address it lists: listed twice, every event came twice)
     const now = Date.now(), seen = JSON.stringify(payload);
     for (const [k, t] of this.dinkSeen) if (now - t > 10_000) this.dinkSeen.delete(k);

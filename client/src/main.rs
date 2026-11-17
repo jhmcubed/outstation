@@ -1,5 +1,5 @@
 //! ⊂λ,ｍ⊙ outstation (outside-portal until 11/06/2026). RuneLite's window, its sound and the chat, to the relay
-//! (docs/protocol.md), for your Outside page on ghillie.wiki.
+//! (docs/protocol.md), for your Outside page on outside.wiki.
 //!
 //!     outstation.exe                      the window (and the tray)
 //!     outstation.exe --once frame.png     one frame to a file, nothing sent
@@ -9,7 +9,7 @@
 //!     outstation.exe --settings <file>    another settings file (one window per file)
 //!     outstation.exe --show-settings      open with the settings drawer out
 //!
-//! The settings are %APPDATA%\outstation\settings.json, and the log is portal.log beside it.
+//! The settings are %APPDATA%\outstation\settings.json, and the log is outstation.log beside it (portal.log before v0.2.0).
 //!
 //! Built with `--features station` it's the field station too (station.rs): `--station <launcher.json>`, and `--tray`
 //! to open in the tray. It opens off air: going live is asked for (go live, or a mode with the portal in it).
@@ -61,8 +61,14 @@ fn main() {
     win::dpi_aware();
     let args: Vec<String> = std::env::args().collect();
     let path = arg_after(&args, "--settings").map(PathBuf::from).unwrap_or_else(settings::default_path);
-    transmit::set_log(path.with_file_name("portal.log"));
-    crash::install(path.with_file_name("portal.log"));
+    // (the log's name was portal.log till v0.2.0: moved to outstation.log once, its .old with it)
+    let log = path.with_file_name("outstation.log");
+    for (old, new) in [("portal.log", "outstation.log"), ("portal.log.old", "outstation.log.old")] {
+        let (o, n) = (path.with_file_name(old), path.with_file_name(new));
+        if o.exists() && !n.exists() { let _ = std::fs::rename(&o, &n); }
+    }
+    transmit::set_log(log.clone());
+    crash::install(log);
     // the program's id (notify.rs, AUMID), so the taskbar groups its window with its Start menu shortcut and calls it by
     // the shortcut's name and icon (11/07/2026, Jace: it had shown an old name and a blank icon)
     unsafe {

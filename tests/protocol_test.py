@@ -1528,9 +1528,10 @@ class ArrayEvents(Base):
         await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})
         await self.none_of_mine()
 
-    async def test_the_plugins_own_reports_show_while_its_connected_and_not_twice_while_live(self):
-        # (11/15/2026, the plugin first: the Outside plugin's own reports (from=plugin) for a player with no outstation;
-        # while the outstation transmits, Dink's come through it, so the plugin's are dropped)
+    async def test_the_plugins_own_reports_show_while_its_connected_and_while_live(self):
+        # (11/15/2026, the plugin first: the Outside plugin's own reports (from=plugin). Till 11/17/2026 they were dropped
+        # while the outstation transmitted, as Dink's came through it; since the Dink trim it passes nothing on, so
+        # they show then too. A pre-v0.2.0 outstation's forwarded post (its own "at", no region) is dropped.)
         g = await Client().open("%s/game/%s?key=%s&v=0.2.0" % (RELAY, self.ch, self.key))
         self.clients.append(g)
         await self.pause(2)
@@ -1539,10 +1540,12 @@ class ArrayEvents(Base):
         self.assertEqual(self.what(await self.mine(1)), [{"kind": "kill", "boss": "Vorkath", "kc": 412}])
         tx = await self.tx()
         await self.pause(2)
-        self.assertEqual(await plugin({"type": "PET", "content": "", "extra": {"petName": "Vorki"}}), 204)  # (dropped)
+        self.assertEqual(await plugin({"type": "PET", "content": "", "extra": {"petName": "Vorki"}}), 204)  # (kept now)
         await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 99}}})     # (Dink's)
-        got = self.what(await self.mine(2))
-        self.assertEqual(got, [{"kind": "kill", "boss": "Vorkath", "kc": 412}, {"kind": "level", "skill": "Magic", "level": 99}])
+        await self.dink({"type": "LEVEL", "content": "", "extra": {"levelledSkills": {"Magic": 98}}, "at": 1794900000000})  # (an old outstation's: dropped)
+        got = self.what(await self.mine(3))
+        self.assertEqual(got, [{"kind": "kill", "boss": "Vorkath", "kc": 412}, {"kind": "pet", "name": "Vorki"},
+                               {"kind": "level", "skill": "Magic", "level": 99}])
 
     async def test_a_watch_coded_outstations_reports_never_show(self):
         await self.tx("a-code")
@@ -3323,9 +3326,16 @@ class OwnPage(Base):
         # it with its key. An outstation from before that sends a code of its own still sets it.)
         name, key = self.claim()
         self.assertEqual(self.code(name, key, {"code": "friends1"}), (200, {"code": True}))
+        # (a friend already there, with the friends' code, stays when the outstation goes live: 11/17/2026, the review
+        # before v0.2.0 found the relay compared them against the transmitter's empty code and closed them)
+        friend = await Client().open("%s/watch/%s?code=friends1" % (RELAY, name))
+        self.clients.append(friend)
+        await next_of(friend, "relay")
         tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, urllib.parse.quote(key)))
         self.clients.append(tx)
         await next_of(tx, "relay")
+        with self.assertRaises(asyncio.TimeoutError):
+            await friend.recv_close(timeout=1.5)
         st, h, out = raw("GET", "/code/%s?key=%s" % (name, urllib.parse.quote(key)))
         self.assertEqual((st, json.loads(out)), (200, {"code": "friends1"}))
         self.assertEqual(raw("GET", "/game/" + name)[0], 403)               # (still friends only)

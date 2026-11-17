@@ -59,28 +59,48 @@ pub fn watched() -> bool {
     WATCHED.load(Ordering::Relaxed)
 }
 
-static LOG: std::sync::OnceLock<Mutex<Option<std::fs::File>>> = std::sync::OnceLock::new();
+/// The open log, its path, and how much has gone into it since it was opened or last measured.
+struct Log { file: Option<std::fs::File>, path: std::path::PathBuf, since: u64 }
+static LOG: std::sync::OnceLock<Mutex<Log>> = std::sync::OnceLock::new();
+/// a log past this starts again (the last one kept as .log.old)
+const LOG_MOST: u64 = 2_000_000;
 
-/// The log: portal.log beside the settings (and the console, when there is one).
+fn log_open(path: &std::path::Path) -> Option<std::fs::File> {
+    // a log past LOG_MOST starts again
+    if std::fs::metadata(path).map(|m| m.len() > LOG_MOST).unwrap_or(false) {
+        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    }
+    std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+}
+
+/// The log: outstation.log beside the settings (and the console, when there is one).
 pub fn set_log(path: std::path::PathBuf) {
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    // a log past 2 MB starts again
-    if std::fs::metadata(&path).map(|m| m.len() > 2_000_000).unwrap_or(false) {
-        let _ = std::fs::rename(&path, path.with_extension("log.old"));
-    }
-    let f = std::fs::OpenOptions::new().create(true).append(true).open(path).ok();
-    let _ = LOG.set(Mutex::new(f));
+    let file = log_open(&path);
+    let _ = LOG.set(Mutex::new(Log { file, path, since: 0 }));
 }
 
 pub fn log(s: &str) {
     eprintln!("{}", s);
     if let Some(m) = LOG.get() {
-        if let Some(f) = m.lock().unwrap().as_mut() {
+        let mut g = m.lock().unwrap();
+        if let Some(f) = g.file.as_mut() {
             use std::io::Write;
             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             let _ = writeln!(f, "{} {}", t, s);
+        }
+        // (11/17/2026, the review before v0.2.0: measured again every 64 KB written, not only at the start, so a window
+        // left open for days keeps its log under LOG_MOST)
+        g.since += s.len() as u64 + 12;
+        if g.since > 64_000 {
+            g.since = 0;
+            if std::fs::metadata(&g.path).map(|m| m.len() > LOG_MOST).unwrap_or(false) {
+                g.file = None;   // (closed before it's moved: Windows won't move an open file)
+                let path = g.path.clone();
+                g.file = log_open(&path);
+            }
         }
     }
 }

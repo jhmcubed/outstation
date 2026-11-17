@@ -249,8 +249,8 @@ pub fn open_page(url: &str) -> bool {
     r.0 as usize > 32
 }
 
-/// Whether open_page opens this: ghillie.wiki's pages, outside.wiki's (players' pages and the year, since 11/16/2026,
-/// when the outstation's links moved there: friendlist::page, the year view), SAFETY.md, and the repository's form
+/// Whether open_page opens this: ghillie.wiki's pages, outside.wiki's (players' pages since 11/16/2026, when the
+/// outstation's links moved there: friendlist::page; and an old year record's, settings ▸ more), SAFETY.md, and the repository's form
 /// for a report. (A page on this computer was let through for settling, 11/08/2026 to 11/10/2026: nothing opens it now.)
 pub fn opens(url: &str) -> bool {
     let ours = url.starts_with("https://ghillie.wiki/") || url.starts_with("https://outside.wiki/")

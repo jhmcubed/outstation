@@ -309,7 +309,7 @@ fn post_discord(url: &str, body: &[u8], content_type: &str) -> Option<String> {
             Ok(resp) if resp.status().is_success() => return None,
             Ok(resp) if resp.status().as_u16() == 429 => {
                 let wait = resp.headers().get("Retry-After").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
-                std::thread::sleep(Duration::from_secs_f64(wait.min(10.0)));
+                std::thread::sleep(Duration::from_secs_f64(if wait.is_finite() { wait.clamp(0.0, 10.0) } else { 1.0 }));
                 last = Some("rate limited".to_string());
             }
             Ok(resp) => return Some(format!("HTTP {}", resp.status().as_u16())),
