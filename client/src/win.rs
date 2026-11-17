@@ -7,7 +7,6 @@ use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub fn wide(s: &str) -> Vec<u16> {
@@ -57,10 +56,6 @@ pub fn minimised(hwnd: HWND) -> bool {
 }
 pub fn alive(hwnd: HWND) -> bool {
     unsafe { IsWindow(Some(hwnd)).as_bool() }
-}
-pub fn dpi_scale(hwnd: HWND) -> f64 {
-    let d = unsafe { GetDpiForWindow(hwnd) };
-    if d == 0 { 1.0 } else { d as f64 / 96.0 }
 }
 
 /// The largest visible top-level window whose title starts with prefix.

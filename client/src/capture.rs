@@ -25,11 +25,6 @@ use windows_capture::window::Window as GpuWindow;
 pub const FIXED: (f64, f64) = (765.0, 503.0);
 // fixed mode, in the game's own pixels
 pub const FIXED_VIEWPORT: (f64, f64, f64, f64) = (4.0, 4.0, 512.0, 334.0);
-const FIXED_CHAT: (f64, f64, f64, f64) = (0.0, 338.0, 519.0, 165.0);
-const FIXED_SIDE: (f64, f64, f64, f64) = (540.0, 200.0, 210.0, 280.0);
-// resizable: corners, in the game's pixels
-const RESIZABLE_CHAT: (f64, f64) = (520.0, 190.0);
-const RESIZABLE_SIDE: (f64, f64) = (250.0, 410.0);
 /// every frame waits this long before it goes, and is dropped if the gate shuts meanwhile
 pub const HOLD_BACK: f64 = 0.5;
 pub const MAX_FPS: u32 = 60;
@@ -525,7 +520,8 @@ impl Drop for Gpu {
 
 pub struct Options {
     pub view: String,
-    pub mask: String,
+    /// nothing rather than the screen when the window comes back black (settings' never_screen; 11/17/2026)
+    pub never_screen: bool,
     pub width: u32,
     pub method: String,
     pub interval_ms: f64,
@@ -542,8 +538,8 @@ pub struct Options {
 impl Options {
     pub fn of(s: &crate::settings::Settings) -> Options {
         // (the fixed-size "blacked out" boxes are retired, 11/05/2026, Jace: a fixed size whatever the client's; your
-        // own masks do it. An old settings file's "mask" is kept as it was but no longer used.)
-        Options { view: s.view.clone(), mask: "none".into(), width: s.width.max(16),
+        // own masks do it. Their setting went too, 11/17/2026: an old settings file's "mask" is ignored.)
+        Options { view: s.view.clone(), width: s.width.max(16), never_screen: s.never_screen,
                   method: s.method.clone(), interval_ms: 1000.0 / s.fps.clamp(1, MAX_FPS) as f64,
                   boxes: if s.masks_on { s.masks.clone() } else { Vec::new() }, cursor: s.show_cursor,
                   chat: s.chat_in_picture, chat_over: s.game_chat }
@@ -617,28 +613,19 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
         }
     };
     if canvas.is_some() && img.black() {
-        // drew nothing through PrintWindow (some GPU paths): take it off the screen instead
+        // drew nothing through PrintWindow (some GPU paths): take it off the screen instead, unless never_screen
+        if o.never_screen {
+            return Err(NO_SCREEN_WHY.into());
+        }
         img = from_screen(l + sx, t + sy, sw, sh, ow, oh);
         source = "the screen (the window's own drawing came back black)".into();
     }
     let t1 = Instant::now();
-    // the masks, in the frame's own pixels: s is frame pixels per game pixel
-    let (chat, side) = (o.mask == "chat" || o.mask == "both", o.mask == "side" || o.mask == "both");
-    let f = ow as f64 / sw as f64;
-    let mut black = |x: f64, y: f64, w: f64, h: f64, s: f64| {
-        img.fill((x * s) as i64 - 1, (y * s) as i64 - 1, ((x + w) * s) as i64 + 2, ((y + h) * s) as i64 + 2);
-    };
     let mut layout = if fixed && o.view == "viewport" {
         "fixed, the 3D view only".to_string()
     } else if fixed {
-        if chat { let (a, b, c, d) = FIXED_CHAT; black(a, b, c, d, k * f); }
-        if side { let (a, b, c, d) = FIXED_SIDE; black(a, b, c, d, k * f); }
         "fixed".to_string()
     } else {
-        let d = crate::win::dpi_scale(hwnd);
-        let (gw, gh) = (cw as f64 / d, ch as f64 / d);
-        if chat { black(0.0, gh - RESIZABLE_CHAT.1, RESIZABLE_CHAT.0, RESIZABLE_CHAT.1, d * f); }
-        if side { black(gw - RESIZABLE_SIDE.0, gh - RESIZABLE_SIDE.1, RESIZABLE_SIDE.0, RESIZABLE_SIDE.1, d * f); }
         "resizable".to_string()
     };
     // your own masks: blacked out here, so nothing under them ever leaves this PC
@@ -654,8 +641,7 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
         crate::chatpic::onto(&mut img);
         layout += ", the chat in it";
     }
-    layout += &format!(", {}x{} canvas, {}", cw, ch,
-                       if o.mask == "none" { "nothing blacked out".to_string() } else { format!("{} blacked out", o.mask) });
+    layout += &format!(", {}x{} canvas", cw, ch);
     if let Some(tm) = times {
         tm.grab += (t1 - t0).as_secs_f64() * 1000.0;
         tm.scale += t1.elapsed().as_secs_f64() * 1000.0;
@@ -663,6 +649,9 @@ pub fn frame(hwnd: HWND, o: &Options, gpu: &mut Gpu, gdi: &mut Grabber, wait: f6
     }
     Ok((img, layout))
 }
+
+/// why nothing goes out when the window came back black and the screen's switched off (never_screen)
+pub const NO_SCREEN_WHY: &str = "the window came back black, and the screen's switched off (settings ▸ more)";
 
 /// why nothing goes out while the static key is down (viewers see static, and the sound goes on)
 pub const STATIC_WHY: &str = "static (the static key)";

@@ -131,7 +131,9 @@ Checked 11/05/2026 on Jace's PC with his RuneLite open:
 - ✓ **The viewer list:** "watching: n ▸", from the relays' `{"viewers"}` (names as given, never a device); right-click to ban.
 - ✓ **A window of its own:** its own title bar, edges and border, and ghillie.wiki's cursor (`cursor.rs`), on the portal's own windows only.
 - ✓ **jute's look** (`theme.rs`): the browns, plates and tint strip, and anyone's own colours.
-- ✓ **"blacked out" retired:** the fixed-size chat and side boxes, in favour of your own masks (an old setting is ignored).
+- ✓ **"blacked out" retired:** the fixed-size chat and side boxes, in favour of your own masks; the setting itself went 11/17/2026 (an old settings file's `mask` is ignored).
+- ✓ **Never the screen** (11/17/2026): settings ▸ more's "never the screen": a window that comes back black both other ways sends nothing, not the screen.
+- ✓ **The sound stops with the picture** (11/17/2026; on to begin with): minimised, closed or logged out (with "nothing while logged out"), no sound goes or goes onto the tape; static still keeps it.
 - ✓ **Dink posted twice** (an address listed twice in Dink): the same post within 10 s is one event, in the client and every relay.
 - ◐ **The broadcast's title** (11/06/2026): "title:" on the stream's plate, sent on Enter (the desk's `{"title"}`, in every relay's status line and `/channels`). On Outside it sits beside "✼ portal" in the portal's bar, running slowly past when it's too long; on the open portals, under the name. The relays: the shared suite (58, both). Not yet seen in the real window.
 - ◐ **"my cursor in the picture"** (11/06/2026): Windows Graphics Capture's own cursor drawn into the frames (the capture starts again when it's switched). PrintWindow, the fallback, can't draw it. Not yet seen on a real stream.

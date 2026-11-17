@@ -21,7 +21,6 @@ fn d_fps() -> u32 { 8 }
 fn d_width() -> u32 { 384 }
 fn d_quality() -> u8 { 60 }
 fn d_view() -> String { "canvas".into() }
-fn d_mask() -> String { "none".into() }
 fn d_method() -> String { "auto".into() }
 fn d_title() -> String { "RuneLite".into() }
 fn d_static_key() -> String { "pause".into() }
@@ -139,9 +138,6 @@ pub struct Settings {
     /// "canvas" (the whole game) or "viewport" (fixed mode's 3D view only)
     #[serde(default = "d_view")]
     pub view: String,
-    /// "none", "chat", "side" or "both"
-    #[serde(default = "d_mask")]
-    pub mask: String,
     /// "auto", "gpu" (Windows Graphics Capture) or "gdi" (PrintWindow)
     #[serde(default = "d_method")]
     pub method: String,
@@ -180,6 +176,15 @@ pub struct Settings {
     pub clip_folder: String,
     #[serde(default)]
     pub only_logged_in: bool,
+    /// the sound stops with the picture (11/17/2026, Jace: "add an option/toggle to gate it when it is minimized or
+    /// logged out"): while RuneLite's minimised, gone, or logged out with only_logged_in on, no sound goes (nor onto the
+    /// tape); static still keeps it, as ever. On to begin with.
+    #[serde(default = "d_true")]
+    pub sound_with_picture: bool,
+    /// never the screen (11/17/2026, Jace): when RuneLite's window comes back black both other ways, nothing goes,
+    /// instead of that part of the screen (which shows whatever's over RuneLite). Off to begin with.
+    #[serde(default)]
+    pub never_screen: bool,
     /// the mouse pointer in the picture, where it's over RuneLite (11/06/2026; off: the picture never has it).
     /// Windows Graphics Capture draws it; PrintWindow, the fallback, can't.
     #[serde(default)]

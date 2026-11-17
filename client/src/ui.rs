@@ -1814,6 +1814,8 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ("auto", "the first that works", "Windows Graphics Capture, else PrintWindow, else the screen"),
             ("gpu", "Windows Graphics Capture", "the graphics card's own copy of RuneLite's window: the quickest, and it never needs the window in front"),
             ("gdi", "PrintWindow", "the older way, for a PC without Windows Graphics Capture: slower")]);
+        tick(ui, &mut s.never_screen, rich("never the screen", 16.0, GREY()))
+            .on_hover_text(tip("when RuneLite's window comes back black both other ways, send nothing, rather than that part of the screen (which shows whatever's over RuneLite: a browser, Discord, a notification)"));
         tick(ui, &mut s.check_updates, rich("look for a newer version on GitHub when this opens", 16.0, GREY()))
             .on_hover_text(tip("once, as it opens: asks GitHub's public page of releases for the newest version's number, and says so in the chat if there's a newer one. Nothing of yours is sent (GitHub sees what any web visit shows: your IP address). It never downloads or installs anything."));
         tick(ui, &mut s.auto_live, rich("transmit by itself whenever RuneLite opens", 16.0, GREY()))
@@ -1831,6 +1833,8 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             .on_hover_text(tip("the window goes to the ✼ by the clock; a click on it brings the window back"));
         tick(ui, &mut s.only_logged_in, rich("nothing while logged out (needs RuneLite's \"username in title\")", 16.0, GREY()))
             .on_hover_text(tip("the picture stops at the login screen (your username never shows): RuneLite has to put it in its title for the outstation to tell"));
+        tick(ui, &mut s.sound_with_picture, rich("the sound stops with the picture", 16.0, GREY()))
+            .on_hover_text(tip("while RuneLite's minimised, closed, or logged out (with \"nothing while logged out\" on), no sound goes either, nor onto the tape. Static still keeps the sound going, as it always has."));
         ui.horizontal(|ui| {
             ui.label(rich("clips go to:", 16.0, GREY())).on_hover_text(tip("the folder the clip key and \"clip\" save to (empty: Videos\\outstation)"));
             let hint = crate::clip::default_folder().display().to_string();
