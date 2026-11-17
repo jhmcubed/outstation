@@ -2060,6 +2060,18 @@ public class OutsidePlugin extends Plugin
 				keep("model", null);
 				panel.status("taking your model off your page");
 			}
+
+			@Override
+			public boolean ground()
+			{
+				return config.ground();
+			}
+
+			@Override
+			public void setGround(boolean on)
+			{
+				configManager.setConfiguration(OutsideConfig.GROUP, "ground", on);
+			}
 			// hub:end model
 
 			// hub:cut year
