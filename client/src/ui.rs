@@ -59,6 +59,31 @@ fn job(text: &str, size: f32, colour: Color32) -> egui::text::LayoutJob {
     j
 }
 
+/// A line's words cut at its emotes: `:name:` for a name among `faces` becomes that picture, the rest stays words. None
+/// when it has none (it's drawn as words alone, as ever).
+enum Piece { Words(String), Face(egui::TextureHandle) }
+fn emote_pieces(text: &str, faces: &std::collections::HashMap<String, egui::TextureHandle>) -> Option<Vec<Piece>> {
+    if faces.is_empty() || !text.contains(':') { return None; }
+    let (mut out, mut words, mut any) = (Vec::new(), String::new(), false);
+    let mut rest = text;
+    while let Some(a) = rest.find(':') {
+        let after = &rest[a + 1..];
+        match after.find(':').map(|b| &after[..b]).filter(|n| crate::emotes::name_ok(n)).and_then(|n| faces.get(n).map(|t| (n.len(), t))) {
+            Some((len, t)) => {
+                words.push_str(&rest[..a]);
+                if !words.is_empty() { out.push(Piece::Words(std::mem::take(&mut words))); }
+                out.push(Piece::Face(t.clone()));
+                any = true;
+                rest = &after[len + 1..];
+            }
+            None => { words.push_str(&rest[..a + 1]); rest = after; }
+        }
+    }
+    words.push_str(rest);
+    if !words.is_empty() { out.push(Piece::Words(words)); }
+    any.then_some(out)
+}
+
 fn append(j: &mut egui::text::LayoutJob, text: &str, size: f32, colour: Color32, strike: bool) {
     let mut run = String::new();
     let mut sym = false;
@@ -3971,6 +3996,25 @@ impl App {
         ui.add_space(4.0);
     }
 
+    /// Your emotes as pictures, by name, for the chat window (11/17/2026, Jace: an emote typed in the outstation's chat,
+    /// or coming in from the page, showed only as its words): the list the emotes drawer reads, read again every five
+    /// minutes while attached, each picture made a texture once (the drawer's own, by its id).
+    fn emote_faces(&mut self, ctx: &egui::Context) -> std::collections::HashMap<String, egui::TextureHandle> {
+        let s = self.settings.get();
+        if s.attached() && self.emotes.read_at.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
+            let c = ctx.clone();
+            self.emotes.read(&s, move || c.request_repaint());
+        }
+        let rows = match &*self.emotes.rows.lock().unwrap() { Some(Ok(r)) => r.clone(), _ => Vec::new() };
+        let mut out = std::collections::HashMap::new();
+        for e in rows {
+            let tex = self.emote_tex.entry(e.id.clone())
+                .or_insert_with(|| e.picture.as_ref().and_then(|b| picture_tex(ctx, &format!("emote {}", e.id), b))).clone();
+            if let Some(t) = tex { out.insert(e.name.clone(), t); }
+        }
+        out
+    }
+
     fn chat(&mut self, ui: &mut egui::Ui) {
         let mut act: Option<Value> = None;
         let mut notes = Vec::new();
@@ -4008,6 +4052,7 @@ impl App {
         }
         egui::Frame::new().fill(FIELD()).stroke(Stroke::new(1.0, DIM())).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.set_min_size(ui.available_size());
+            let faces = self.emote_faces(ui.ctx());
             egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
                 let size = self.settings.get().chat_size.clamp(10.0, 40.0);
                 let banned: Vec<i64> = self.banned.iter().map(|b| b.0).collect();
@@ -4030,8 +4075,31 @@ impl App {
                         append(&mut job, &format!("  {}", l.when), size * 0.85, c(WHEN()), l.hidden);
                     }
                     job.wrap.max_width = ui.available_width();
+                    // (a line with your emotes in it: its words and pictures in a row, wrapping; 11/17/2026)
+                    let pieces = if l.note || l.hidden { None } else { emote_pieces(&l.text, &faces) };
+                    let words = |ui: &mut egui::Ui, t: &str, sz: f32, col: Color32| {
+                        let mut j = egui::text::LayoutJob::default();
+                        append(&mut j, t, sz, col, false);
+                        ui.add(egui::Label::new(j));
+                    };
+                    let r0 = match pieces {
+                        Some(pieces) => ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            words(ui, &l.name, size, if l.host { LIME() } else { CYAN() });
+                            if l.queued { words(ui, " (on standby)", size, Color32::from_rgb(0x77, 0x77, 0x77)); }
+                            words(ui, "  ", size, TEXT());
+                            for p in pieces {
+                                match p {
+                                    Piece::Words(t) => words(ui, &t, size, TEXT()),
+                                    Piece::Face(t) => { ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(size * 1.6))); }
+                                }
+                            }
+                            words(ui, &format!("  {}", l.when), size * 0.85, WHEN());
+                        }).response.interact(Sense::click()),
+                        None => ui.add(egui::Label::new(job).sense(Sense::click())),
+                    };
                     // (right-clickable, but not a button: the plain star over it)
-                    let mut r = ui.add(egui::Label::new(job).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::Default);
+                    let mut r = r0.on_hover_cursor(egui::CursorIcon::Default);
                     if let Some(id) = l.id {
                         let (who, host, name) = (l.who, l.host, l.name.clone());
                         if !l.hidden {
@@ -4821,5 +4889,23 @@ mod tests {
             assert!(((a * 6.0).round() - a * 6.0).abs() < 1e-4);
         }
         assert_eq!(over_alpha(20.0 + OVER_FADE_S, 20), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod emote_tests {
+    use super::*;
+
+    #[test]
+    fn a_line_cut_at_its_emotes() {
+        let ctx = egui::Context::default();
+        let tex = ctx.load_texture("t", egui::ColorImage::new([1, 1], vec![Color32::WHITE]), egui::TextureOptions::NEAREST);
+        let faces: std::collections::HashMap<String, egui::TextureHandle> = [("cat".to_string(), tex)].into_iter().collect();
+        let words = |p: &[Piece]| p.iter().map(|x| match x { Piece::Words(w) => w.clone(), Piece::Face(_) => "[face]".into() }).collect::<Vec<_>>();
+        assert_eq!(words(&emote_pieces(":cat:", &faces).unwrap()), vec!["[face]"]);
+        assert_eq!(words(&emote_pieces("hi :cat: there :cat:", &faces).unwrap()), vec!["hi ", "[face]", " there ", "[face]"]);
+        assert_eq!(words(&emote_pieces("10:30 :cat: :dog:", &faces).unwrap()), vec!["10:30 ", "[face]", " :dog:"]);
+        assert!(emote_pieces("no emotes: here", &faces).is_none());
+        assert!(emote_pieces(":dog:", &faces).is_none());
     }
 }
