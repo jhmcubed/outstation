@@ -215,6 +215,12 @@ public class OutsidePlugin extends Plugin
 	@Inject
 	private ItemManager itemManager;
 
+	// hub:cut goal
+	// (the game's own item search in the chatbox, as the bank tags' icon picker: the goal item's, 11/17/2026)
+	@Inject
+	private net.runelite.client.game.chatbox.ChatboxItemSearch goalSearch;
+	// hub:end goal
+
 	@Inject
 	private ChatMessageManager chat;
 
@@ -505,6 +511,20 @@ public class OutsidePlugin extends Plugin
 			}
 		}
 		// hub:end model
+		// hub:cut goal
+		// (the goal: off, it's taken down; on, the one set goes again)
+		if (e.getKey().equals("goal"))
+		{
+			if (config.goal())
+			{
+				clientThread.invokeLater(this::sendGoal);
+			}
+			else
+			{
+				keep("goal", null);
+			}
+		}
+		// hub:end goal
 		// hub:cut talk
 		if (e.getKey().equals("chat"))
 		{
@@ -1581,6 +1601,12 @@ public class OutsidePlugin extends Plugin
 			deathbankLine(Text.removeTags(e.getMessage()));
 		}
 		// hub:end deathbank
+		// hub:cut goal
+		if ((e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM) && config.goal())
+		{
+			goalLine(clogAdded(Text.removeTags(e.getMessage())));
+		}
+		// hub:end goal
 		// hub:cut reports
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
@@ -1684,6 +1710,21 @@ public class OutsidePlugin extends Plugin
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted e)
 	{
+		// hub:cut goal
+		// (::outsidegoal opens the item search for the goal; ::outsidegoal clear takes it off)
+		if ("outsidegoal".equalsIgnoreCase(e.getCommand()))
+		{
+			if (e.getArguments().length > 0 && "clear".equalsIgnoreCase(e.getArguments()[0]))
+			{
+				goalClear();
+			}
+			else
+			{
+				goalPick();
+			}
+			return;
+		}
+		// hub:end goal
 		// hub:cut talk
 		// (the page's chat, 11/16/2026: ::o answers it, ::ochat off / on stops and starts visitors' lines)
 		if ("o".equalsIgnoreCase(e.getCommand()) || "ochat".equalsIgnoreCase(e.getCommand()))
@@ -2001,10 +2042,137 @@ public class OutsidePlugin extends Plugin
 		return im;
 	}
 
+	// hub:cut goal
+	// ---- the goal item (Goal.java; 11/17/2026, update 3) ----
+
+	/** The game's item search in the chatbox, for the goal: as you type, only the items that match, a click sets it. */
+	private void goalPick()
+	{
+		clientThread.invokeLater(() ->
+		{
+			if (!config.goal())
+			{
+				say("switch on \"Goal item\" in the plugin's settings first");
+				return;
+			}
+			if (client.getGameState() != net.runelite.api.GameState.LOGGED_IN)
+			{
+				say("log in first: the goal is your account's own");
+				return;
+			}
+			goalSearch.tooltipText("Set as my Outside goal")
+				.onItemSelected(id -> clientThread.invokeLater(() -> goalChosen(id)))
+				.build();
+		});
+	}
+
+	/** An item chosen: kept for this account, sent with its model (on the client's thread). */
+	private void goalChosen(int id)
+	{
+		int item = itemManager.canonicalize(id);
+		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, item);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
+		sendGoal();
+		say("your goal is " + itemManager.getItemComposition(item).getName() + ": your Outside page shows it, your kill count and how dry you are");
+	}
+
+	private void goalClear()
+	{
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
+		keep("goal", null);
+		say("your goal's off your Outside page");
+	}
+
+	/** The goal set for this account to the keep: the item, its model as the game draws it (its own recolours and
+	 *  retextures), and when it was got with the counts then (on the client's thread). */
+	private void sendGoal()
+	{
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (!config.goal() || item == null || item <= 0)
+		{
+			return;
+		}
+		net.runelite.api.ItemComposition c = itemManager.getItemComposition(item);
+		JsonObject model = null;
+		try
+		{
+			net.runelite.api.ModelData md = client.loadModelData(c.getInventoryModel());
+			if (md != null)
+			{
+				md = md.cloneColors().cloneTextures();
+				short[] from = c.getColorToReplace(), to = c.getColorToReplaceWith();
+				for (int i = 0; from != null && to != null && i < Math.min(from.length, to.length); i++)
+				{
+					md.recolor(from[i], to[i]);
+				}
+				short[] tf = c.getTextureToReplace(), tt = c.getTextureToReplaceWith();
+				for (int i = 0; tf != null && tt != null && i < Math.min(tf.length, tt.length); i++)
+				{
+					md.retexture(tf[i], tt[i]);
+				}
+				Model m = md.light();
+				if (m != null)
+				{
+					model = wholeModel(modelJson(m), null, null, null);
+				}
+			}
+		}
+		catch (RuntimeException ex)
+		{
+			log.debug("outside: the goal's model", ex);
+		}
+		Long got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class);
+		String then = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
+		JsonObject countsThen = null;
+		try
+		{
+			countsThen = then == null ? null : gson.fromJson(then, JsonObject.class);
+		}
+		catch (RuntimeException ex)
+		{
+			countsThen = null;
+		}
+		keep("goal", Goal.body(item, c.getName(), model, got == null ? 0 : got, countsThen));
+	}
+
+	/** The game's collection log line: the goal's, it's got (once), the counts then kept with it. */
+	private void goalLine(String added)
+	{
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (added == null || item == null || item <= 0)
+		{
+			return;
+		}
+		if (configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null)
+		{
+			return;
+		}
+		if (!Goal.isIt(added, itemManager.getItemComposition(item).getName()))
+		{
+			return;
+		}
+		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, System.currentTimeMillis());
+		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS, gson.toJson(counts.json()));
+		sendGoal();
+		say("your goal's got: your Outside page says so");
+	}
+	// hub:end goal
+
 	private OutsidePanel.Hooks panelHooks()
 	{
 		return new OutsidePanel.Hooks()
 		{
+			// hub:cut goal
+			@Override
+			public void setGoal()
+			{
+				goalPick();
+			}
+			// hub:end goal
+
 			// hub:cut model
 			@Override
 			public void capture(String name)
