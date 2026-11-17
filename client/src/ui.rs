@@ -3691,6 +3691,27 @@ impl App {
             ui.add(egui::Label::new(wrapped(&text, 14.0, if share > 0.8 { PINK() } else { GREY() }, ui.available_width())))
                 .on_hover_text(tip("lime: what the outstation sends; teal: the rest of this PC's upload; pink: past 80% of your upload (its speed is set in settings ▸ more)"));
         });
+        // how much of your frame rate is going out (11/17/2026, Jace: "show a meter or a fluctuating number that shows
+        // the percentage at which you are streaming at your full selected settings to know when the stream is being
+        // throttled"): the last few seconds, and why when it's short (transmit.rs: the back-off, the shared relay's
+        // ceiling, or RuneLite drawing fewer frames); only while someone's watching, when every frame goes
+        let tx = self.tx.status.lock().unwrap().clone();
+        if let (true, Some(full)) = (self.up && self.live && self.open, tx.full) {
+            ui.horizontal_wrapped(|ui| {
+                let cells = 22;
+                let on = ((cells as f64 * full).round() as usize).min(cells);
+                let colour = if full >= 0.9 { LIME() } else if full >= 0.6 { TEAL() } else { PINK() };
+                blocks(ui, cells, |i| if i < on { colour } else { TRACK() }, 12.0);
+                let pc = (full * 100.0).round();
+                let text = match &tx.short_why {
+                    None => format!("at {:.0}% of your settings", pc),
+                    Some(w) => format!("at {:.0}% of your settings: {}", pc, w),
+                };
+                if text_w(ui, &text, 14.0) > ui.available_width() { ui.end_row(); }
+                ui.add(egui::Label::new(wrapped(&text, 14.0, if full >= 0.9 { GREY() } else { colour }, ui.available_width())))
+                    .on_hover_text(tip("how much of the frame rate you chose (settings) is going out to observers, the last few seconds. When the line to the relay can't keep up, the outstation sends fewer frames for a while instead of choking, then climbs back to all of them once it clears; every frame is still kept for clips"));
+            });
+        }
         self.live_view(ui);
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
