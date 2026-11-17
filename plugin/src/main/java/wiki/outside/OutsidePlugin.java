@@ -245,8 +245,6 @@ public class OutsidePlugin extends Plugin
 	private final Follow follow = new Follow();
 	// hub:end globe
 	// hub:cut year
-	/** whether the outstation's app is attached, as the relay says ({"app"}; 11/16/2026): the exact path goes only then */
-	private volatile boolean appHere;
 	/** the exact path, for the player's own year (11/10/2026; Track) */
 	private final Track track = new Track();
 	// hub:end year
@@ -724,12 +722,8 @@ public class OutsidePlugin extends Plugin
 			send(what);
 		}
 		// hub:end globe
-		// hub:cut year
-		if (path != null && appHere)
-		{
-			send(path);
-		}
-		// hub:end year
+		// (the exact path stays on this PC, in the year's record: it went to the relay only for the outstation's own
+		// year, which went 11/17/2026, Jace: "plugin owns the year")
 		// hub:cut globe
 		JsonObject star = config.stars() ? stars.due(ms, config.starsCredit()) : null;
 		if (star != null)
@@ -4306,9 +4300,6 @@ public class OutsidePlugin extends Plugin
 				open = true;
 				retryIn = 5;
 				resend = true;
-				// hub:cut year
-				appHere = false;
-				// hub:end year
 				// hub:cut talk
 				talkOpen();
 				// hub:end talk
@@ -4320,30 +4311,6 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 
-			// hub:cut year
-			@Override
-			public void onMessage(WebSocket ws, String text)
-			{
-				// (whether the outstation's app is here, {"app": bool}: the exact path goes only while it is; come, the
-				// tile goes again at once)
-				try
-				{
-					JsonObject o = gson.fromJson(text, JsonObject.class);
-					if (o != null && o.has("app") && o.get("app").isJsonPrimitive())
-					{
-						boolean now = o.get("app").getAsBoolean();
-						if (now && !appHere)
-						{
-							clientThread.invokeLater(() -> track.forget());
-						}
-						appHere = now;
-					}
-				}
-				catch (RuntimeException ignored)
-				{
-				}
-			}
-			// hub:end year
 
 			@Override
 			public void onClosing(WebSocket ws, int code, String reason)

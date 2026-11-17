@@ -1,6 +1,6 @@
 // Your year's test vectors (docs/record.md, "Encryption"): a fixed record key, device, day, nonce and plaintext, and
 // every value made from them, computed by WebCrypto (Node's, the same as a browser's) and Node's zlib. The app's unit
-// tests (client/src/recordfmt.rs), both relays' tests and the page check against what this writes.
+// tests (the Outside plugin's RecordTest; the outstation's recordfmt.rs till 11/17/2026), the relay's tests and the page check against what this writes.
 //
 //   node tests/fixtures/record/make_vectors.mjs > tests/fixtures/record/vectors.json
 import { webcrypto as wc } from "node:crypto";

@@ -3262,7 +3262,8 @@ class OwnPage(Base):
         self.assertEqual(self.code(name, key, {"code": "no"})[0], 400)
         self.assertEqual(self.code(name, key, {"code": "has space"})[0], 400)
         self.assertEqual(self.code(name, key, {})[0], 400)
-        self.assertEqual(raw("GET", "/code/" + name)[0], 405)
+        self.assertEqual(raw("GET", "/code/" + name)[0], 403)              # (read only with the key: 11/17/2026)
+        self.assertEqual(raw("POST", "/code/" + name)[0], 405)
         self.assertEqual(self.code("o" + secrets.token_hex(5), key, {"code": "friends1"})[0], 404)
         # (set: the viewer without it let go, the game's read refused without it, a viewer with it let in)
         self.assertEqual(self.code(name, key, {"code": "friends1"}), (200, {"code": True}))
@@ -3276,6 +3277,28 @@ class OwnPage(Base):
         anyone = await Client().open("%s/watch/%s?code=" % (RELAY, name))
         self.clients.append(anyone)
         await next_of(anyone, "relay")
+
+    async def test_an_outstation_going_live_keeps_the_plugins_friends_only(self):
+        # (11/17/2026, Jace: "the who-sees-it fix": the plugin owns who sees the page. An outstation transmitting with an
+        # empty code made a friends-only page public again; now it's left as the plugin set it, and the outstation reads
+        # it with its key. An outstation from before that sends a code of its own still sets it.)
+        name, key = self.claim()
+        self.assertEqual(self.code(name, key, {"code": "friends1"}), (200, {"code": True}))
+        tx = await Client().open("%s/transmit/%s?key=%s&code=" % (RELAY, name, urllib.parse.quote(key)))
+        self.clients.append(tx)
+        await next_of(tx, "relay")
+        st, h, out = raw("GET", "/code/%s?key=%s" % (name, urllib.parse.quote(key)))
+        self.assertEqual((st, json.loads(out)), (200, {"code": "friends1"}))
+        self.assertEqual(raw("GET", "/game/" + name)[0], 403)               # (still friends only)
+        stranger = await Client().open("%s/watch/%s?code=" % (RELAY, name))
+        self.clients.append(stranger)
+        self.assertEqual(await stranger.recv_close(timeout=5), ("close", 4003))
+        tx.close()
+        await asyncio.sleep(0.3)
+        old = await Client().open("%s/transmit/%s?key=%s&code=moss1" % (RELAY, name, urllib.parse.quote(key)))
+        self.clients.append(old)
+        await next_of(old, "relay")
+        self.assertEqual(json.loads(raw("GET", "/code/%s?key=%s" % (name, urllib.parse.quote(key)))[2]), {"code": "moss1"})
 
     async def test_a_page_taken_down_by_its_own_key_frees_the_name(self):
         name, key = self.claim()

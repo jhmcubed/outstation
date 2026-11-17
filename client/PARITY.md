@@ -1,5 +1,9 @@
 # Parity with the Python portal
 
+(11/17/2026, the split with the Outside plugin: Dink only for clips, its posts no longer passed to the relay or to
+Discord; the watch code the plugin's, read here; your year the plugin's, no longer recorded here. Lines below about
+those are how they stood before.)
+
 (11/17/2026: the Python relay, `relay-py`, that this list ran the client against beside the Worker was retired; the
 Worker's the only relay, and `client_live.py` runs against it under `wrangler dev`.)
 

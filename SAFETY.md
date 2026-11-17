@@ -29,7 +29,7 @@ The window's own words, where this page quotes them: your **station key** is the
 | let viewers control anything? | **No.** Viewers can chat, vote, guess, point at a spot and send a ✼. Nothing they send can press a key, click, open a page, change a setting or reach RuneLite. The ring, the ✼ and the chat over the game are drawn in see-through windows of the outstation's own, over RuneLite, never in it, and clicks pass through them. Each can be switched off ("pings: the site" keeps the ring off your screen, "✼ on my screen" and "chat over the game" the others), and "pings: off" and "observers may chat" switch pings and the chat off altogether. |
 | need admin, install a service, or start with Windows? | **No.** It's one program. It runs when you open it, and closing it ends it. If you say yes on its first screen, it puts one shortcut in your own Start menu (settings ▸ more takes it out). |
 | need anything else installed? | **No.** Everything it needs comes with Windows 10 and 11: the safety check below fails a release that would need anything more. |
-| keep a record of where I play? | **Only on your PC, and only if you leave it on.** The Outside plugin keeps your year itself ("Record my year", on to begin with); the outstation's own "record my year on this PC" (settings ▸ your year) adds what only it sees while it's open (your field reports from Dink), into the same record. Both keep the 128-tile square you were in two minutes before and what you were doing, and your exact tile only with the plugin's "Record my exact path for my year" on. A copy goes to the relay only if you switch that on, and then **encrypted on your PC with a key only your PCs hold: the relay can't read it, and neither can ⊂λ,ｍ⊙** ([What the relay keeps](#what-the-relay-keeps), "Your year"). |
+| keep a record of where I play? | **The outstation doesn't** (since 11/17/2026: the Outside plugin keeps your year, with its "Record my year"). It reads the square the relay says you were in only to pass it to nothing; your PC's record from before stays where it was, in `%APPDATA%\outstation\record`, until you delete it. |
 | update itself, or download anything? | **No.** Once on opening it asks GitHub whether there's a newer version, and says so if there is. Getting it is up to you. Settings ▸ more turns the asking off. |
 
 ## What's in the picture
@@ -45,7 +45,7 @@ Everything drawn in RuneLite's game area goes out while you're live. The outstat
 
 ## What leaves your PC
 
-This is everything the outstation sends. Before it's attached to a channel (a station key from Jace, or requesting one), it sends only the version check, a request for a station key when you press **request**, an anomaly report when you press its send, and your friends list's look at the open outstations; and, in "clips only" (dink ▸), Dink's posts and their clips to your own Discord (below, "To your Discord").
+This is everything the outstation sends. Before it's attached to a channel (a station key from Jace, or requesting one), it sends only the version check, a request for a station key when you press **request**, an anomaly report when you press its send, and your friends list's look at the open outstations; and, in "clips only" (dink ▸), its clips to your own Discord (below, "To your Discord").
 
 **To the relay in your station key, while you're transmitting** (Jace's, on Cloudflare, unless your code names another), and from there to whoever opens your Outside page (anyone with the link, or only those with your watch code if you set one):
 - **The picture:** RuneLite's game area, shrunk (to begin with 384 px wide and 8 frames a second, which measured about half a megabit a second), as JPEG pictures, with your redactions already blacked out. On the shared relay one transmission's pictures go up to 20 Mbit/s at most (the relay sends every observer a copy); a frame past that waits for the next. Once a second, a smaller copy too (192 px wide), for the little live pictures: the outstations page, a friend's peek, your own monitor.
@@ -59,8 +59,6 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - The sound carries on through static (Pause). With "the sound stops with the picture" on (settings ▸ more, on to begin with) it stops while RuneLite's minimised, closed or logged out (with "nothing while logged out" on), as the picture does, and none goes onto the tape; switched off, only going dark stops it.
   - With nobody watching, one picture goes every 10 seconds (so whoever opens your page first sees a recent one) and no sound at all; the rest is kept on your PC for the tape.
 
-**Your year, to the relay,** only with "keep an encrypted copy on the relay" on (off to begin with; 11/10/2026): each day of your record, hourly, when you go dark and when you press "open my year" or "send it now", **encrypted on your PC** before it goes, under a name that says nothing (not the day, not which PC). Once each time it opens, the two tokens made from your record key that let a page read it and post your public year (never the key). Below, [What the relay keeps](#what-the-relay-keeps), "Your year".
-
 **To the relay, whenever the outstation's open and attached,** live or not:
 - **The chat window's side:**
   - the lines you write, under your chat name, and the lines you take back
@@ -68,12 +66,10 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - your polls and drop guesses
   - your broadcast's title and your cap on viewers
   - whether viewers may chat and ping
-- **Your field reports,** only if you point Dink at the outstation, and only the kinds your switches let through (dink ▸, "which field reports go out"; all on to begin with): levels and experience milestones, drops, kill counts, the collection log, pets, clues, quests, diaries, combat tasks, slayer tasks, speedruns, deaths, Barbarian Assault gambles, Grand Exchange trades (yours with the exchange, never a trade with another player) and the Leagues':
-  - each one's kind and its line ("Lichen Ring has defeated Vorkath with a completion count of 50")
-  - a few numbers for your page's readings: the boss and its count, the levels, the loot's items (their ids, names, how many and value) and what it dropped from, the collection log's count, and the quest's, clue's, slayer task's, diary's or combat task's own fields
-  - Nothing else in Dink's post leaves your PC: not the screenshot, not the details Dink adds about your account or your Discord, not a raid party's names, a PvP killer's name or the player a PvP drop came from. The relay checks again as each arrives.
+- **Your field reports:** never from the outstation (since 11/17/2026). Dink sends them to your page itself, through the Outside plugin's "Copy my Dink address"; the outstation only hears Dink to know when to save a clip.
 - **Messages to a friend's outstation** (friends ▸, right-click a name, "message"): your words, with your chat name and channel. They go to their outstation's window only, never on either stream.
 - **The monitor:** a socket to the relay with your channel and watch code, while you're attached, dark too, so the window can show what goes out.
+- **Who sees your page:** once a minute while you're attached, a request with your key for your page's watch code (the Outside plugin sets it: friends only, or anyone; 11/17/2026), so the monitor, the clips and the emotes can open a friends-only page. The outstation no longer sets it.
 - **Your emotes,** only those you drop on settings ▸ emotes: each picture and its name, for your page's chat (at most 30, each at most 256 KB).
 - **Your outstation's version,** on every connection, so a relay can turn away one too old for it.
 
@@ -105,11 +101,9 @@ This is everything the outstation sends. Before it's attached to a channel (a st
 - a request for the relay's list of open outstations, every minute (every 20 seconds while the list is open). Nothing about you or your list goes with it: the names are matched on your PC.
 - With the hand over a live friend's name, it watches their outstation through the relay for a small picture of it, the way the outstations page does: not counted as watching, and stopped when the hand moves away.
 
-**To your Discord,** only if you set the outstation to pass Dink's posts on (dink ▸, "do you use Dink with Discord too?"):
-- each post just as Dink made it, its embed and screenshot included
-- to your own webhook addresses, by the rules taken from your Dink settings, so your Discord gets what it got before
-- and, while you're transmitting with the tape on (or dark with the tape rolling), the clip of a big moment (a pet, a new log slot, a 99, a big drop) a few seconds later, under that same post and only where it went: a copy of what you transmitted round that moment (up to 17 s, at most 768 px wide, under 8 MB), the same copy your Outside page would get. dink ▸, "and send them to Discord, under Dink's post", turns it off (11/07/2026).
-- Nowhere else ever gets a screenshot.
+**To your Discord,** only the clips, and only with "and send them to Discord" on (dink ▸) and a webhook address of yours given there (11/17/2026: Dink posts to Discord itself, as you have it set; the outstation no longer passes Dink's posts on):
+- when a big moment's clip saves itself (a pet, a new log slot, a 99, a drop worth what you set), while you're transmitting with the tape on or dark with the tape rolling, a copy of the tape round that moment (up to 17 s, at most 768 px wide, under 8 MB), the same copy your Outside page would get, to that webhook.
+- Nowhere else ever gets a screenshot or a clip.
 
 **To GitHub,** once on opening (settings ▸ more turns it off): "is there a newer version?". Nothing about you goes with it.
 
@@ -152,7 +146,7 @@ Here's everything the outstation hears back, and what it does with each. All of 
 
 **From GitHub:** the newest version's number. If it's newer, a line in the window says so.
 
-**From Dink, on your own PC:** its posts, at `127.0.0.1`, an address nothing beyond your PC can reach.
+**From Dink, on your own PC:** its posts, at `127.0.0.1`, an address nothing beyond your PC can reach. Read only to know when something big happened; none of a post goes anywhere.
 
 **None of it can:**
 - press a key or click
@@ -180,20 +174,19 @@ Here's everything the outstation hears back, and what it does with each. All of 
 - **The clipboard,** only:
   - when you paste (Ctrl+V, or a paste button)
   - once on opening, while it isn't attached yet, to see whether a station key is waiting there (anything else on the clipboard is left alone)
-  - when you press "read my Dink settings" (Dink's own export)
 - **The pictures you drop on settings ▸ emotes,** only those.
 - **What you type into its own window,** as any program does. While you're changing one of its keys in the settings, it reads the next key pressed in its window.
 
 **It writes, and nowhere else:**
 - `%APPDATA%\outstation`:
-  - `settings.json`, its settings. **This file holds your channel's key and your Discord webhook addresses:** anyone with it could stream on your channel or post to your Discord, so keep it to yourself.
+  - `settings.json`, its settings. **This file holds your channel's key and your clips' Discord webhook address:** anyone with it could stream on your channel or post to that Discord channel, so keep it to yourself.
   - `portal.log`, the station log: what it did (started again past 2 MB). "copy the station log" (settings ▸ more) copies its last lines with the key, codes and webhook addresses taken out.
   - `crash.txt` after a crash (and `crash.txt.seen` once it's been mentioned), `portal.log.old` (the log before it started again), and `outstation.ico`, its icon.
-  - `dink-before.json`, only when you press "read my Dink settings": Dink's own export as it was, so "undo" can put it back. **Like the settings, it holds your Discord webhook addresses:** keep it to yourself.
-- `%APPDATA%\outstation\record` (your year, 11/10/2026; with "record my year on this PC" on, as it is to begin with): a file a month of plain JSON lines, each a time and one of: the square the relay says you were in, your exact tile (only with the plugin's "Record my exact path for my year" on, 11/10/2026), what you were doing, a kill, level, pet, big drop, log slot or clue, or whether you went live or dark; `device`, a random id for this PC; `sent.json`, what's been sent. Not encrypted: it's yours, on your PC. Your record key is in `settings.json`, so keep that to yourself as ever.
+  - (`dink-before.json`, from an outstation before 11/17/2026 that read your Dink settings: no longer written; delete it if it's there, it holds your Discord webhook addresses.)
+- (`%APPDATA%\outstation\record`, your year as the outstation recorded it from 11/10 to 11/17/2026: no longer written; it stays until you delete it.)
 - `Videos\outstation` (or the folder you pick): your clips. A clip's copy for your Outside page passes through a file in your temporary folder, deleted once read.
 - The Start menu: one shortcut, only if you say yes.
-- The clipboard: only when you copy (Ctrl+C, or a copy button), and Dink's import when you press "read my Dink settings" ("undo" puts your old Dink settings back on it).
+- The clipboard: only when you copy (Ctrl+C, or a copy button).
 
 **It listens** only on `127.0.0.1` (port 8796 to begin with), for Dink. Nothing beyond your PC can reach it.
 
@@ -218,7 +211,7 @@ The relay (Jace's, on Cloudflare) passes your stream on to whoever's watching. H
 
 **For you, streaming:**
 - your channel's name, and the SHA-256 of its key (never the key itself)
-- your watch code, if you set one, and your broadcast's title
+- your watch code, if the Outside plugin set one (friends only), and your broadcast's title
 - your cap on viewers, whether viewers may chat and ping, and the chat names your outstation has used (so no viewer can take one)
 - the version of the outstation you run, and your time on air by month (the last four months, so Jace can see what the relay costs)
 - the chat so far (its last 50 lines), the poll and the drop guess going on, and who you've banned
@@ -255,7 +248,7 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 
 **Following** (only with the plugin's "Follow me on the globe" on; 11/08/2026): the last square of the map the plugin said you were in two minutes before (its middle, a square about 128 tiles a side, or Zanaris, as one place), and when it came. In memory only, never saved: a restart of the relay forgets it. That holds for the list of open outstations too, which the relay keeps in its storage since 11/10/2026: it stores your row without the square and without when it came, and keeps those beside it in memory only (after that part of the relay sleeps, it asks your outstation for them again, or waits till it's next told). The relay takes one every 50 seconds at most and ignores the rest. It's dropped when the plugin disconnects, when you log out, when the plugin holds back for your safety (the Wilderness, a PvP area or world; not Ferox Enclave or the PvP minigames), when the plugin clears it (somewhere dangerous, or following switched off), and when your channel is taken away or given a new key. It never goes to your page's viewers, its game panel, the Array's feed or the aether; since 11/10/2026 it goes to your own outstation's chat window (only your station key opens one), for your year's record on your PC (below, "Your year"). With "and my world" on, the world you were on is kept with the square, the same way.
 
-**Your exact path: not kept** (only with the plugin's "Record my exact path for my year" on, off to begin with, behind its own warning; 11/10/2026). While it's on, the exact tile you're on (with its floor and your world) passes through the relay every few seconds while you move: **in its memory only for the moment it takes to pass it on, and only to your own outstation's app** (the chat window, which only your station key opens), which writes it into your year's record on your PC and, if you keep one, the encrypted copy. The relay keeps nothing of it, not even the last tile: it never goes to your page's viewers, its game panel, the list of open outstations, the globe, the Array, the aether or anyone else, and nothing of it is saved. It isn't two minutes late, since only you see it; it never comes from the Wilderness, a PvP area or world or Deadman (Ferox Enclave and the PvP minigames are safe), and logging out or switching it off clears it. Your public year, if you post one, has it only as finely as you choose there (11/10/2026): its heat in cells as small as 8 tiles, and its paths and replay at the exact tiles, or coarser; and only the parts you include.
+**Your exact path: never sent** (since 11/17/2026). The plugin's "Record my exact path for my year" keeps your exact tile in your year's record on your PC only. (From 11/10 to 11/17/2026 it passed through the relay, kept nowhere, to your own outstation's app, for the year the outstation recorded; the outstation no longer keeps a year, so the plugin no longer sends it.)
 
 **What you're doing** (only with the plugin's "What I'm doing, on the globe" on; 11/08/2026): the last word the plugin said for it (skilling and which skill, a boss, raid or minigame and which, fighting or idle), and when it came. Kept, dropped and shown exactly as following's square: in memory only (never in the stored list of open outstations either), one every 50 seconds at most, dropped when the plugin disconnects, you log out, it holds back for your safety or clears it, and when your channel's taken away or given a new key.
 
@@ -267,14 +260,14 @@ A viewer's address (IP) isn't written down, and the relay never learns their nam
 
 **Your year** (only with "keep an encrypted copy on the relay" on; 11/10/2026; `docs/record.md`):
 - each day of your record from each of your PCs, **encrypted on your PC** with AES-256-GCM under a key made from your record key, which is made on your PC, kept in its settings, and never sent: not to the relay, not to ⊂λ,ｍ⊙, not to anyone. Without it nobody can read your year, Jace and Cloudflare included.
-- the SHA-256 of the two tokens your outstation makes from the key: one lets your page read the encrypted copy (it proves it holds the key without sending it), the other lets your page post or take down your public year.
+- the SHA-256 of the two tokens made from the key (by the Outside plugin; an outstation before 11/17/2026 made them too): one lets your page read the encrypted copy (it proves it holds the key without sending it), the other lets your page post or take down your public year.
 - what it can see: how many days there are, how big each is, and when each was sent, so roughly which days you played and how much; never where, what, or which day each one is.
-- At most 2,000 days, each kept 400 days after it was last sent. **delete my record…** (settings ▸ your year) takes all of it at once, tokens and public year included; so does Jace taking your channel back. A new station key from Jace leaves it as it is.
+- At most 2,000 days, each kept 400 days after it was last sent. the Outside plugin's "Take my page down" takes all of it at once, tokens and public year included; so does Jace taking your channel back. A new station key from Jace leaves it as it is.
 - If you lose the record key on every PC, the copy can never be read again, by you or anyone; each PC's own record stays on it, and a new key starts the copy again from them.
 
 **Your public year**, only if you post one (from your year's page): the parts you chose (where you spent your time, paths, what you did most, your hours, places, moments, a replay, with or without their times; since 11/10/2026 also your days (how long you played each day, and at what), and your time zone, if you include it, so your hours show in your clock; where you spent your time as finely as 8-tile cells, and paths and a replay at exact tiles, if you choose them; and your collection log's slots, each with what it was, and if you choose when, what you were doing, the clip of it on your page and where, never finer than the heat you posted (128-tile squares without one)), kept as they are, **unencrypted, because you chose to make them public**, and shown on your Outside page to anyone who opens it, even with a watch code. Take it down whenever you like (your year's page, or delete my record…). It holds no words but your field reports' own (a boss's, a pet's or an item's name).
 
-When "open my year" opens your year in your browser, the record key goes in the address after `#`, which a browser never sends to any server (docs/record.md asks the page to take it out of the address bar once it's read it). It does stay in that browser's history.
+When the Outside plugin's "Open my year" opens your year in your browser, the record key goes in the address after `#`, which a browser never sends to any server (docs/record.md asks the page to take it out of the address bar once it's read it). It does stay in that browser's history.
 
 **The aether** (everyone's room; 11/07/2026): its last 100 lines (each one's name, words and when, and for a visitor the random number their browser made, which a ban holds on to), and who's banned from it. A visitor's address isn't written down.
 
@@ -323,7 +316,7 @@ Nobody but Jagex can promise what Jagex will decide; their rules say they "may c
 
 > **The only official download is this repository's [Releases](https://github.com/jhmcubed/outstation/releases) page** (github.com/jhmcubed/outstation). ⊂λ,ｍ⊙ never sends the outstation any other way: a copy passed round in Discord, a DM, a forum or another website isn't ours, whatever it's called and however it looks. Never run an .exe you don't trust. RuneScape players are a favourite target of programs that pretend to be game tools and steal accounts, so before you run any copy, check its SHA-256 against the release's ([SAFETY.md](SAFETY.md), "Checking it yourself"). If someone offers you an outstation from anywhere else, don't open it, and tell the listening post (research@ghillie.wiki).
 
-1. **The code is all here**, under the MIT licence. The client is `client/src`, 34 files. Each one says at its top what it does.
+1. **The code is all here**, under the MIT licence. The client is `client/src`, 32 files. Each one says at its top what it does.
 2. **Releases are built by GitHub, from this code.** Each release lists the commit it was built from and the program's SHA-256. Once the repository is public, each also carries GitHub's build attestation: [GitHub CLI](https://cli.github.com) can confirm the file came from this repository's own build, unchanged:
 
    ```bash
@@ -376,20 +369,19 @@ Everything it touches in Windows and on the network, by file:
 - `win.rs`:
   - finding RuneLite's window and its process (window titles, the process list)
   - your network's byte counter (`GetIfTable2`)
-  - the clipboard (when you copy or paste with Ctrl+C, X and V or the copy buttons; for the station key, and once on opening while not attached; and Dink's own export, read only when you press "read my Dink settings", with an import for Dink put back in its place)
+  - the clipboard (when you copy or paste with Ctrl+C, X and V or the copy buttons; for the station key, and once on opening while not attached)
   - opening a page in your browser (`ShellExecuteW`), refused for anything but ghillie.wiki's and outside.wiki's pages, this one and the repository's report forms
   - blinking the outstation's own taskbar button (`FlashWindowEx`)
 - `hotkeys.rs`: `RegisterHotKey` for its four keys (and, while you're changing one in the settings, a press of one of them handed to the window instead of acting).
 - `autolive.rs`: going live by itself when RuneLite's window appears, and ending the stream 30 s after it's gone (both only if you switch them on).
 - `desk.rs`, `net.rs`: the chat window's socket to the relay, and the sockets themselves (TLS from rustls).
-- `dink.rs`: a web server on `127.0.0.1` only; what of each post goes to the relay (`for_relay`), and each post on to your Discord under your rules.
-- `dinksetup.rs`: reading Dink's export and writing its import (the clipboard, only when you press the button).
+- `dink.rs`: a web server on `127.0.0.1` only, for Dink's posts, read to know when a clip should save itself; the clip to your Discord webhook.
 - `clip.rs`: the replay buffer, written as an .mp4 by Windows' Media Foundation (its H.264 and AAC encoders), into your Videos folder; and, for your Outside page, the copy of its own (through a file in your temporary folder, deleted once read).
 - `clipsup.rs`: with "put them on my Outside page" on, that copy sent to your relay, and the list of what's there.
 - `aether.rs`: the aether, one chat room for every outstation and visitor, through the relay, while its window is open.
 - `emotes.rs`: your own emotes: pictures you drop on settings ▸ emotes, sent to the relay for your page's chat.
 - `invites.rs`: a station key made for a friend through the relay, and the invite text to send them.
-- `record.rs`, `recordfmt.rs`: your year on this PC, and its encrypted copy on the relay with that switch on.
+- `whosees.rs`: your page's watch code, read from the relay with your key once a minute.
 - `chatpic.rs`: the game's chat drawn into the picture, with that switch on. Nothing of Windows or the network.
 - `stuck.rs`: a watch on its own window, so a stall is written in the log.
 - `feed.rs`: the monitor (a socket to the relay with your channel and watch code, while you're attached, dark too), and a friend's peek: a channel watched through the relay as a looker (not counted as watching).
