@@ -16,18 +16,18 @@ Your gear, stats, quests, diaries and slayer task on a page of your own at **out
 ## The side tab
 
 - Whose page it is, **Open my page**, **Make my Outside page**, and whether it's proven yours.
-- **Update my page**, and when it was last updated. **Refresh** asks again whether it's proven.
+- **Update my page**, and when it was last updated.
 - **Show what's sent:** exactly what Update my page would send now, every field of it, in a window. Nothing is sent by opening it.
 - **Copy my Dink address:** if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin, this copies your page's address for it. Paste it on its own line in Dink's **Primary Webhook URLs**, and the notifications you switch on in Dink (levels, kills, drops, pets, clues, collection log slots…) show on your page and on outside.wiki's globe as field reports as they happen. Outside itself sends nothing for this: Dink does, as it does to Discord. Nothing from the Wilderness or PvP is ever shown (a kill, death, drop or level there, a Wilderness boss, a player kill), nothing that names another player, and Dink's world, location and screenshot aren't kept. The address holds your page's key, so keep it to yourself; to stop, delete the line in Dink.
 - **Who sees it:** whether your page is open to anyone (and on outside.wiki's globe while you play) or friends only. **Make it friends only** / **Open it to anyone**, **Copy the friends' link**, and **Take my page down** (it asks first: everything on the page goes and the name is free again).
-- **Your character** (with "My character's model on my page" on): **Capture my character** records the next emote you do within 8 seconds, from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it. The motions on your page are listed: pick the one shown first, take one off with ✕, or **Take my model off my page**. `::outsidemodel`, `::outsidemotion <name>` and `::outsideforget <name>` do the same from the chat.
+- **Your character** (with "My character's model on my page" on): **Capture my character** records the next emote you do within 8 seconds, from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it. The motions on your page are listed: pick the one shown first, take one off with ✕, or **Take my model off my page**. **Refresh** reads the list again, and whether your page is proven yours; it sends nothing. `::outsidemodel`, `::outsidemotion <name>` and `::outsideforget <name>` do the same from the chat.
 - **Your page's chat:** visitors can leave lines on your page. **Tend my page's chat** opens your page in your browser with **take back** and **ban** beside each visitor's line, and who you've banned (with **unban**). The link works for 12 hours, only in that browser, and can do nothing else.
 
 ## Settings
 
 - **Send to my Outside page:** the main switch. Off, nothing is sent, and what it sent comes off your page.
 - **Worn and carried**, **Skills**, **Quests, diaries and combat achievements** (and the collection log's count, kill counts and clue counts), **My slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **What I'm doing, as Discord shows it:** what goes with each update, each its own switch.
-- **My bank on my page**, **My deathbank on my page**, **My character's model on my page** and **The ground under my model:** each off to begin with, behind its own warning; switching one off takes it off your page.
+- **My bank on my page**, **My deathbank on my page**, **My character's model on my page** and **The ground under my model:** each on to begin with (11/17/2026), with a warning when it's switched back on; switching one off takes it off your page.
 
 ## What it sends, and only that
 
