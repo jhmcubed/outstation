@@ -498,7 +498,10 @@ public interface OutsideConfig extends Config
 			+ " to the Outside relay, a server not controlled or verified by the RuneLite developers, and your"
 			+ " Outside page shows it to anyone who opens it.",
 		position = 9,
-		section = shownSection
+		section = shownSection,
+		// (11/17/2026, Jace: "this setting should be in the model section": a box in the side tab's Model tab, by the
+		// capture it goes with, not here)
+		hidden = true
 	)
 	default boolean ground()
 	{

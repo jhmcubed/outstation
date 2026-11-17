@@ -68,6 +68,11 @@ public class OutsidePanel extends PluginPanel
 		void forget(String name);
 
 		void removeModel();
+
+		/** "Ground under my model": whether it's on, and switching it */
+		boolean ground();
+
+		void setGround(boolean on);
 		// hub:end model
 
 		void openPage();
@@ -127,6 +132,7 @@ public class OutsidePanel extends PluginPanel
 	// hub:cut model
 	private final JTextField name = new JTextField();
 	private final JButton capture = new JButton("Capture my character");
+	private final javax.swing.JCheckBox ground = new javax.swing.JCheckBox("Ground under my model");
 	private final JPanel motions = new JPanel();
 	// hub:end model
 	private final JPanel start = new JPanel();
@@ -271,6 +277,29 @@ public class OutsidePanel extends PluginPanel
 		charTab.add(Box.createVerticalStrut(6));
 		capture.addActionListener(e -> hooks.capture(name.getText().trim()));
 		charTab.add(wide(capture));
+		// (11/17/2026, Jace: the ground's switch here, by the capture it goes with, not in the plugin's settings)
+		ground.setSelected(hooks.ground());
+		ground.setToolTipText("<html><div style='width:220px'>When you capture your character, the ground round you then"
+			+ " (about five tiles each way: its paint and its shape, no objects or people) goes with it, and your page draws"
+			+ " you standing on it.</div></html>");
+		ground.addActionListener(e ->
+		{
+			boolean on = ground.isSelected();
+			if (on && javax.swing.JOptionPane.showConfirmDialog(this, "<html><div style='width:260px'>Each time you capture your"
+				+ " character, the ground round you then (about five tiles each way) goes to the Outside relay, a server not"
+				+ " controlled or verified by the RuneLite developers, and your Outside page shows it to anyone who opens"
+				+ " it.</div></html>", "Ground under my model", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+				javax.swing.JOptionPane.WARNING_MESSAGE) != javax.swing.JOptionPane.OK_OPTION)
+			{
+				ground.setSelected(false);
+				return;
+			}
+			hooks.setGround(on);
+		});
+		JPanel groundRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 2));
+		groundRow.add(ground);
+		groundRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+		charTab.add(groundRow);
 		status.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		charTab.add(left(status));
 		charTab.add(Box.createVerticalStrut(12));
