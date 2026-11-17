@@ -35,9 +35,7 @@
     "MAX_VIEWERS": "0",
     // the oldest client let in ("" lets every version in): raise it when the protocol changes in a way older
     // clients can't follow; they're told to get a newer one (4026) instead of trying again
-    // (11/17/2026, Jace: "nobody is left on v0.1.x. you may set the minimum to 0.2.0": set once v0.2.0's release is
-    // up, so whoever's told to update finds it)
-    "MIN_CLIENT": "0.2.0"
+    "MIN_CLIENT": ""
   },
   // (11/07/2026: every message a transmitting outstation sends is an invocation, and each was logged: an hour or two
   // at 60 a second used the free plan's whole day of logs. One in a hundred is plenty to look into a fault.)
