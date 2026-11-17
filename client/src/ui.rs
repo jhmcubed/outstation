@@ -284,6 +284,8 @@ pub struct App {
     plugin_on: Option<bool>,
     /// the moving box put where the chat sits, once as moving starts (it's dragged from there)
     moving_placed: bool,
+    /// the emotes as pictures for the chat over the game and in the picture (chatpic's Faces), by the ids they're of
+    chat_faces: Option<(Vec<String>, crate::chatpic::Faces)>,
     history_until: Instant,
     moving_chat: bool,
     zoom: f32,
@@ -520,7 +522,7 @@ impl App {
             pings: Vec::new(), asking_close: false, quitting: false, hidden: false, shown_at: None,
             tray, tray_items, tray_rx, newer, told_newer: false,
             static_on: false, signals: 0, stars: Vec::new(), guess: None, guess_form: None, banned: Vec::new(),
-            over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
+            over: Vec::new(), aether: crate::aether::Aether::new(), flash_wanted: false, plugin_on: None, moving_placed: false, chat_faces: None, history_until: Instant::now(), moving_chat: false, zoom: 1.0, top_h: 400.0,
             feed, feed_tex: None, acked: None, tray_live: None, inbox_new: false, tray_click, editing_masks: false, mask_drag: None,
             min_sent: None, edge: None, born: Instant::now(), viewer_list: Vec::new(), show_viewers: false,
             look: (s.tint, s.colours.clone()),
@@ -1213,6 +1215,9 @@ fn fonts(ctx: &egui::Context) {
     if let Ok(bytes) = std::fs::read(std::path::Path::new(&windir).join("Fonts").join("seguisym.ttf")) {
         f.font_data.insert("seguisym".into(), Arc::new(egui::FontData::from_owned(bytes)));
         symbols.push("seguisym".into());
+        // (and behind the monospace the aether's art is drawn in: egui's has no braille, so a braille drawing came out
+        // as boxes; 11/17/2026, Jace, an ASCII dog "turned all of the characters into plain squares")
+        f.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("seguisym".into());
     }
     symbols.push("large".into());
     symbols.extend(f.families[&egui::FontFamily::Proportional].iter().skip(1).cloned());
@@ -2533,9 +2538,15 @@ const PC_MOST: usize = 10;
 /// newest clips on this PC, to play.
 /// A picture (PNG, JPEG, or a GIF's first look: none, it's named instead) as a texture, or None.
 fn picture_tex(ctx: &egui::Context, key: &str, b: &[u8]) -> Option<egui::TextureHandle> {
+    let (px, w, h) = picture_rgba(b)?;
+    Some(ctx.load_texture(key, egui::ColorImage::from_rgba_unmultiplied([w, h], &px), egui::TextureOptions::NEAREST))
+}
+
+/// A picture (PNG, JPEG; not a GIF) as RGBA, its width and height.
+fn picture_rgba(b: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
     match crate::emotes::kind(b)? {
         "jpg" => decode(b).filter(|(px, w, h)| px.len() == (*w as usize) * (*h as usize) * 3)
-            .map(|(px, w, h)| ctx.load_texture(key, egui::ColorImage::from_rgb([w as usize, h as usize], &px), egui::TextureOptions::NEAREST)),
+            .map(|(px, w, h)| (px.chunks(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(), w as usize, h as usize)),
         "png" => {
             let mut d = png::Decoder::new(std::io::Cursor::new(b));
             d.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
@@ -2550,7 +2561,7 @@ fn picture_tex(ctx: &egui::Context, key: &str, b: &[u8]) -> Option<egui::Texture
                 png::ColorType::Grayscale => buf[..w * h].iter().flat_map(|&g| [g, g, g, 255]).collect(),
                 _ => return None,
             };
-            Some(ctx.load_texture(key, egui::ColorImage::from_rgba_unmultiplied([w, h], &px), egui::TextureOptions::NEAREST))
+            Some((px, w, h))
         }
         _ => None,
     }
@@ -4639,7 +4650,7 @@ impl App {
     /// The chat over the game as the windows over the game draw it (overlay.rs): where it sits, how big, its lines (or,
     /// a size just changed in the settings, two lines to show how big for a few seconds; 11/07/2026, Jace: "there is no
     /// indicator of the size of the actual text"). None while it's off, being moved, or empty.
-    fn chat_scene(&self, ppp: f32) -> Option<crate::overlay::Chat> {
+    fn chat_scene(&self, ppp: f32, faces: crate::chatpic::Faces) -> Option<crate::overlay::Chat> {
         let s = self.settings.get();
         let sample = self.panel.as_ref().and_then(|p| p.sample_chat).is_some_and(|at| at.elapsed() < Duration::from_secs(4));
         if self.moving_chat || (!s.game_chat && !sample) {
@@ -4663,8 +4674,33 @@ impl App {
         let (x, y, wide, tall) = over_place(&s, (l, t, r, b), ppp);
         Some(crate::overlay::Chat {
             x: x.round() as i32, y: y.round() as i32, w: (wide * ppp).round() as i32, h: (tall * ppp).round() as i32,
-            px: (s.game_chat_size.clamp(10.0, 48.0) * ppp).round() as i32, sc: ppp, fade: s.game_chat_fade, lines,
+            px: (s.game_chat_size.clamp(10.0, 48.0) * ppp).round() as i32, sc: ppp, fade: s.game_chat_fade, lines, faces,
         })
+    }
+
+    /// Your emotes as pictures for the chat over the game and in the picture (11/17/2026, Jace: "emotes also do not
+    /// show in the overlay text"): the same set kept while the emotes are the same, made again when they change. GIFs
+    /// stay their words, as in the chat window.
+    fn chat_faces(&mut self, ctx: &egui::Context) -> crate::chatpic::Faces {
+        let s = self.settings.get();
+        if s.attached() && self.emotes.read_at.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
+            let c = ctx.clone();
+            self.emotes.read(&s, move || c.request_repaint());
+        }
+        let rows = match &*self.emotes.rows.lock().unwrap() { Some(Ok(r)) => r.clone(), _ => Vec::new() };
+        let ids: Vec<String> = rows.iter().filter(|e| e.picture.is_some()).map(|e| e.id.clone()).collect();
+        if let Some((had, f)) = &self.chat_faces {
+            if *had == ids {
+                return f.clone();
+            }
+        }
+        let map = rows.iter().filter_map(|e| {
+            let (rgba, w, h) = picture_rgba(e.picture.as_ref()?)?;
+            Some((e.name.clone(), Arc::new(crate::chatpic::Face { w: w as u32, h: h as u32, rgba })))
+        }).collect();
+        let f = crate::chatpic::Faces(Arc::new(map));
+        self.chat_faces = Some((ids, f.clone()));
+        f
     }
 
     /// Drawing your own masks, in a window laid over the game: drag on the game to cover a part of it, drag a box to
@@ -4772,7 +4808,7 @@ impl App {
 
     /// The chat in the picture (11/07/2026): what's over the game, told to the capture to draw into each frame
     /// (chatpic.rs), where it sits and as big; nothing while it's off or there's no chat.
-    fn chat_in_picture(&self, ctx: &egui::Context) {
+    fn chat_in_picture(&mut self, ctx: &egui::Context) {
         let s = self.settings.get();
         if !s.chat_in_picture || self.over.is_empty() {
             crate::chatpic::set(None);
@@ -4789,7 +4825,7 @@ impl App {
         }).collect();
         crate::chatpic::set(Some(crate::chatpic::Plan {
             fx: (x - l as f32) / gw, fy: (y - t as f32) / gh, w_pt: wide, h_pt: tall,
-            size_pt: s.game_chat_size.clamp(10.0, 48.0), pt: ppp / gw, lines,
+            size_pt: s.game_chat_size.clamp(10.0, 48.0), pt: ppp / gw, lines, faces: self.chat_faces(ctx),
         }));
     }
 
@@ -4802,12 +4838,13 @@ impl App {
         let s = self.settings.get();
         let ppp = ctx.pixels_per_point();
         let p = theme::pal();
+        let faces = self.chat_faces(ctx);
         crate::overlay::set(crate::overlay::Scene {
             game: frame_rect(&s),
             ppp,
             pings: self.pings.iter().map(|x| crate::overlay::Ping { at: x.at, x: x.x, y: x.y, name: x.name.clone() }).collect(),
             stars: self.stars.iter().map(|x| crate::overlay::Star { at: x.at, x: x.x, name: x.name.clone() }).collect(),
-            chat: self.chat_scene(ppp),
+            chat: self.chat_scene(ppp, faces),
             lime: [p.lime.r(), p.lime.g(), p.lime.b()],
             dim: [p.lime_dim.r(), p.lime_dim.g(), p.lime_dim.b()],
         });

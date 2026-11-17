@@ -56,6 +56,8 @@ pub struct Chat {
     pub sc: f32,
     pub fade: u32,
     pub lines: Vec<ChatLine>,
+    /// the emotes, drawn where a word is `:name:`
+    pub faces: crate::chatpic::Faces,
 }
 
 /// Everything over the game: the game's place on the screen, the screen's pixels a point, and what's in it.
@@ -417,9 +419,9 @@ fn draw_chat(c: &Chat, alphas: &[u8], cache: &mut Option<crate::chatpic::Drawn>)
     let lines: Vec<crate::chatpic::Line> = c.lines.iter().map(|l| crate::chatpic::Line {
         name: l.name.clone(), text: l.text.clone(), name_rgb: l.rgb, alpha: 1.0,
     }).collect();
-    let key = (c.lines.iter().map(|l| (l.name.clone(), l.text.clone())).collect::<Vec<_>>(), c.w, c.h, c.px);
+    let key = crate::chatpic::key_of(&lines, &c.faces, c.w, c.h, c.px);
     if cache.as_ref().is_none_or(|d| d.key != key) {
-        *cache = crate::chatpic::draw(&lines, c.w, c.h, c.px, c.sc, key);
+        *cache = crate::chatpic::draw(&lines, &c.faces, c.w, c.h, c.px, c.sc, key);
     }
     let d = cache.as_ref()?;
     let mut cv = Canvas::new(c.x, c.y, d.w, d.h);
@@ -441,6 +443,10 @@ fn draw_chat(c: &Chat, alphas: &[u8], cache: &mut Option<crate::chatpic::Drawn>)
                 cv.over(c.x + x, c.y + y, crate::chatpic::WORDS_RGB, w as f32 / 255.0 * a);
             }
         }
+    }
+    for (x0, y0, w, h, i, face) in &d.faces {
+        let a = alphas.get(*i).map_or(0.0, |&a| a as f32 / 255.0);
+        crate::chatpic::each_face_pixel(face, *w, *h, |x, y, rgb, k| cv.over(c.x + x0 + x, c.y + y0 + y, rgb, k * a));
     }
     Some(cv)
 }
