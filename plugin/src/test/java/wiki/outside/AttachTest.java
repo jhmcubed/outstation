@@ -22,7 +22,7 @@ public class AttachTest
 		// hub:end reports
 		// (the page's address for the Dink plugin's webhooks, 11/16/2026: copied for the player, never fetched)
 		assertEquals("https://relay.ghillie.workers.dev/dink/jhmcubed?key=k3y-k3y-k3y", a.dinkAddress());
-		assertEquals("https://relay.ghillie.workers.dev/game/jhmcubed?key=k3y-k3y-k3y&v=0.3.0", a.postUrl("0.3.0"));
+		assertEquals("https://relay.ghillie.workers.dev/game/jhmcubed?key=k3y-k3y-k3y&v=0.3.0&proof=1", a.postUrl("0.3.0"));
 		assertEquals("https://relay.ghillie.workers.dev/proof/jhmcubed", a.proofUrl());
 	}
 

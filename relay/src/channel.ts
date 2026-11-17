@@ -1191,6 +1191,20 @@ export class Channel extends DurableObject<Env> {
       return json({ error: "send {\"game\": {...}}" }, 400);
     }
     const fields = gameFields(m.game);
+    // (11/17/2026: a post's skills are looked at at once (no socket's stream to wait out; the hiscores can't have this
+    // session's experience while they're logged in), and a plugin that asks (&proof=1) hears in the answer what its
+    // proof did, "ready" meaning that logging out now proves it: two friends played for hours on the Hub's plugin and
+    // stayed unproven, their last update's figures out of date by logout and nothing to tell them)
+    const proofNow = async (p: string): Promise<Response> => {
+      if (fields.skills && this.witOpen(p) && this.witOf(p).look) {
+        await Promise.race([this.witLook(p), new Promise((r) => setTimeout(r, 6000))]);
+        this.saveWit();
+        this.schedule();
+      }
+      if (q.get("proof") !== "1" || !this.witOpen(p)) return new Response(null, { status: 204 });
+      const why = this.witOf(p).last;
+      return json({ proof: p ? "challenging" : "unproven", ...(why ? { why } : {}) });
+    };
     if (party) {
       if (this.witOpen(party)) {
         this.witStart(party, fields);
@@ -1198,7 +1212,7 @@ export class Channel extends DurableObject<Env> {
         w.said = { ...(w.said || {}), ...(typeof fields.name === "string" ? { name: fields.name } : {}), ...(fields.skills ? { skills: fields.skills } : {}) };
         if (fields.off === true) this.witOff(party);
       }
-      return new Response(null, { status: 204 });
+      return proofNow(party);
     }
     this.witnessGame(fields);
     this.seenAt = fields.off === true ? 0 : now;
@@ -1230,7 +1244,7 @@ export class Channel extends DurableObject<Env> {
       this.saveGame(); // (now: the object may sleep before a timer would)
     }
     this.tellListing(); // (seenAt moved: the Directory's row says when the plugin was last heard)
-    return new Response(null, { status: 204 });
+    return proofNow("");
   }
 
   /** A shooting star the plugin found (game.ts, gameStar): to the Directory's list (stars.ts), which counts this
@@ -1929,6 +1943,24 @@ export class Channel extends DurableObject<Env> {
     }
   }
 
+  /** A look, while they're logged in: what the hiscores don't show yet is hidden, and the side tab is told whether
+   *  logging out now would prove it. (11/17/2026: a post's look is taken at once, postGame; the socket's still
+   *  WITNESS_LOOK after its last change.) Left due if the hiscores can't be read, so the alarm tries again. */
+  async witLook(party: string) {
+    const w = this.witOf(party);
+    if (!w.look || !w.name || !w.seen || !this.witOpen(party)) { w.look = undefined; return; }
+    const at = Date.now();
+    const h = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
+    if (!w.seen) return;
+    if (!h) { w.last = "the hiscores couldn't be read just now; trying again in a minute"; w.look = Math.max(w.look || 0, Date.now() + 60_000); return; }
+    w.look = undefined;
+    noteLook(w.seen, h, at);
+    const hidden = Object.values(w.seen).filter((v) => v.hidden).length;
+    w.last = hidden ? `ready: ${hidden} skill${hidden > 1 ? "s" : ""} gained that the hiscores don't have yet. Log out now, without`
+      + " gaining more experience, and it's checked within a few minutes"
+      : "nothing in this update is new to the hiscores yet: gain some experience, stop, then press Update my page";
+  }
+
   witnessLook(): number {
     const t = parseFloat(this.env.WITNESS_LOOK_S || "");
     return t > 0 ? t * 1000 : WITNESS_LOOK;
@@ -1940,9 +1972,13 @@ export class Channel extends DurableObject<Env> {
     if (!this.witOpen(party) || !w.name || !w.seen) return;
     const claims = claimsFrom(w.seen), n = Object.keys(claims).length;
     const keep = party ? { said: w.said } : {};
+    // (11/17/2026: each way it can end said apart, with what to do; the agent's read of two friends left unproven)
+    const again = "gain some experience, stop, press Update my page, then log out once the side tab says ready";
     const last = n ? `logged out: ${n} skill${n > 1 ? "s" : ""} gained that the hiscores didn't have yet; asking them in a minute`
-      : Object.keys(w.seen).length ? "logged out before the experience gained was looked at: next time, wait a minute after your last experience before logging out"
-      : "logged out with no experience gained this time";
+      : w.look ? "logged out before the hiscores were looked at: next time, wait a minute after your last experience (or, with"
+        + " the Hub's plugin, till the side tab says ready) before logging out"
+      : Object.keys(w.seen).length ? "logged out with nothing new to the hiscores in what your page last heard: " + again
+      : "no update reached your page while you played: " + again;
     const next: Wit = n ? { ...keep, name: w.name, claims, tries: 0, next: Date.now() + this.witnessWait(0), last } : { ...keep, last };
     if (party) { if (this.witOpen(party)) this.cwit[party] = next; } else this.wit = next;
     this.saveWit();
@@ -1970,17 +2006,7 @@ export class Channel extends DurableObject<Env> {
     const now = Date.now();
     for (const party of ["", ...Object.keys(this.cwit)]) {
       const w = this.witOf(party);
-      if (w.look && now >= w.look - 5 && w.name && w.seen && this.witOpen(party)) {
-        // (a look, while they're logged in: what the hiscores don't show yet is hidden)
-        w.look = undefined;
-        const h = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
-        if (h && w.seen) {
-          noteLook(w.seen, h, now);
-          const hidden = Object.values(w.seen).filter((v) => v.hidden).length;
-          w.last = hidden ? `${hidden} skill${hidden > 1 ? "s" : ""} gained that the hiscores don't have yet: log out, and it's checked`
-            : "the hiscores already show this experience";
-        } else w.last = "the hiscores couldn't be read just now";
-      }
+      if (w.look && now >= w.look - 5) await this.witLook(party);
       if (!w.claims || !w.next || now < w.next - 5) continue;
       if (!w.name || !this.witOpen(party)) { this.witClear(party); continue; }
       const h1 = await readXp(w.name, true, this.env.LOOKUP_UPSTREAM || null, USER_AGENT).catch(() => null);
@@ -1991,8 +2017,11 @@ export class Channel extends DurableObject<Env> {
                            last: h1 ? "the hiscores haven't caught up yet; asking again later" : "the hiscores couldn't be read; asking again later" });
       } else {
         this.witClear(party);
-        this.witOf(party).last = said === "no" ? "the hiscores moved past what was claimed (played elsewhere since?): play, then log out to try again"
-          : "the hiscores never showed what was claimed: play, then log out to try again";
+        this.witOf(party).last = said === "no" ? "the hiscores went past what your page last heard: you gained experience after"
+          + " your last update (or played somewhere else since). Next time: gain some, stop, press Update my page, then log out"
+          + " once the side tab says ready"
+          : "the hiscores never showed what was claimed: gain some experience, stop, press Update my page, then log out once"
+          + " the side tab says ready";
       }
     }
     this.saveWit();

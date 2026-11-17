@@ -585,12 +585,13 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() ->
 		{
 			boolean un = "unproven".equals(proof) || "challenging".equals(proof);
+			// (11/17/2026: the steps as they have to go, "stop" among them, and "ready" from the relay's own answer to the update)
+			String steps = " Gain some experience, stop, press Update my page, then log out once this says ready.";
 			proofLine.setText("challenging".equals(proof)
-				? "<html><div style='width:155px'>Someone claimed this name first and hasn't proven it. Gain any experience, press Update"
-				+ " my page, wait a minute, then log out: when the official hiscores show it, the page is yours, and their key stops working." + whyLine(why) + "</div></html>"
-				: un ? "<html><div style='width:155px'>Your page is marked unproven. Gain any experience, press Update my page, wait a"
-				+ " minute, then log out:"
-				+ " within a few minutes the official hiscores show it, and your page is proven yours." + whyLine(why) + "</div></html>" : " ");
+				? "<html><div style='width:155px'>Someone claimed this name first and hasn't proven it." + steps
+				+ " When the official hiscores show it, the page is yours, and their key stops working." + whyLine(why) + "</div></html>"
+				: un ? "<html><div style='width:155px'>Your page is marked unproven." + steps
+				+ " Within a few minutes the official hiscores show it, and your page is proven yours." + whyLine(why) + "</div></html>" : " ");
 			proofLine.setVisible(un);
 			infoProof.setText(proof == null ? "…" : un ? proof : "proven");
 			infoProof.setForeground(un ? new Color(0xff, 0x69, 0xb4) : proof == null ? ColorScheme.LIGHT_GRAY_COLOR : LIME);
