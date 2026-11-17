@@ -28,7 +28,7 @@
 // itself is kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
-import { attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
+import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
@@ -1726,7 +1726,9 @@ export class Channel extends DurableObject<Env> {
     const blocked = this.isBlocked(a);
     if ("note" in m) {
       // (the register, 11/17/2026: a note signed on the page, NOTE_BURST a NOTE_WINDOW at most; never while banned)
-      const text = oneLine(m.note, SAY_MAX);
+      // (as the aether's lines are, 11/17/2026: up to AETHER_ROWS rows of AETHER_WIDTH, so a drawing signs it whole;
+      // one line of the chat's had made Jace's ASCII dog one row, cut off at 300)
+      const text = aetherText(m.note);
       const notes = (a.notes || []).filter((t) => now - t <= NOTE_WINDOW);
       if (!text || blocked || notes.length >= NOTE_BURST) { a.notes = notes; this.keep(ws, a); return; }
       notes.push(now);

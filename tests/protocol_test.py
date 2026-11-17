@@ -839,6 +839,13 @@ class Talk(Base):
         self.assertEqual(await next_of(b, "unnote"), got[8]["id"])
         st, notes = http("GET", "/proof/%s?key=%s&seen=%d" % (self.ch, urllib.parse.quote(self.key), got[5]["id"]))
         self.assertEqual(notes["notes"], {"n": 2, "last": got[7]["id"]})
+        # (a drawing signs it whole, as in the aether: its rows kept, each row's end trimmed, 12 rows of 80 at most;
+        # 11/17/2026, Jace's ASCII dog had come out one row, cut off)
+        d = await self.watch()                         # (a socket with notes to spare)
+        art = "\n".join(["\u2800\u28c0\u28e4  ", "\u28ff" * 90] + ["row %d" % i for i in range(14)])
+        await d.send(json.dumps({"note": art}))
+        drawn = (await next_of(desk, "note"))["text"].split("\n")
+        self.assertEqual((len(drawn), drawn[0], len(drawn[1]), drawn[-1]), (12, "\u2800\u28c0\u28e4", 80, "row 9"))
 
     async def test_a_flood_is_cut_off_and_nothing_long_gets_through(self):
         tx, desk, a, b = await self.setup_room()
