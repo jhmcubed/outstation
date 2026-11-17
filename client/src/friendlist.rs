@@ -8,7 +8,7 @@
 //! in."). A click on a name opens their Outside page in the browser; a right-click offers it and "delete".
 //!
 //! What it knows comes from the relay's open portals (`GET /channels`, docs/protocol.md): a channel there is live or
-//! off air; one not there has no portal, or a friends-only one (a watch code). It's read every 20 s while the list is
+//! off air; one not there has no portal, or a friends-only one (their friends' link). It's read every 20 s while the list is
 //! open and every minute otherwise, and only while the list has someone on it. Nothing is sent but that request.
 
 use crate::settings::Settings;
@@ -96,11 +96,22 @@ impl FriendList {
         });
     }
 
+    /// The channel a friend's page is under: the one the open portals' list has (their name's form, or the old flat
+    /// one of a page not moved yet), else the form.
+    pub fn channel(&self, name: &str) -> String {
+        let all = crate::ask::channels_of(name);
+        if let Some(Ok(m)) = &*self.seen.lock().unwrap() {
+            if let Some(c) = all.iter().find(|c| m.contains_key(*c)) { return c.clone(); }
+        }
+        all.into_iter().next().unwrap_or_default()
+    }
+
     /// A friend's state, by their name as it's kept.
     pub fn state(&self, name: &str) -> State {
-        let Ok(ch) = crate::ask::channel_of(name) else { return State::NoPortal };
+        let all = crate::ask::channels_of(name);
+        if all.is_empty() { return State::NoPortal };
         match &*self.seen.lock().unwrap() {
-            Some(Ok(m)) => match m.get(&ch) {
+            Some(Ok(m)) => match all.iter().find_map(|c| m.get(c)) {
                 Some(x) if x.live => State::Live(x.clone()),
                 Some(_) => State::OffAir,
                 None => State::NoPortal,
@@ -117,7 +128,7 @@ impl FriendList {
     /// Who went live (true) or off air (false) since the last read, as their names are kept.
     pub fn changes(&mut self, s: &Settings) -> Vec<(String, bool)> {
         let live: HashSet<String> = match &*self.seen.lock().unwrap() {
-            Some(Ok(m)) => s.friends.iter().filter(|n| crate::ask::channel_of(n).ok().and_then(|c| m.get(&c)).is_some_and(|x| x.live)).cloned().collect(),
+            Some(Ok(m)) => s.friends.iter().filter(|n| crate::ask::channels_of(n).iter().find_map(|c| m.get(c)).is_some_and(|x| x.live)).cloned().collect(),
             _ => return Vec::new(),
         };
         let mut out = Vec::new();

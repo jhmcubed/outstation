@@ -2463,7 +2463,20 @@ public class OutsidePlugin extends Plugin
 	private String stationKey()
 	{
 		String own = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "stationKey");
-		return own != null && !own.trim().isEmpty() ? own : config.stationKey();
+		// (11/17/2026, the review before the outstation's v0.2.0: a key pasted in the settings, for the character
+		// logged in, wins over the one Make my Outside page kept with the account, so a player who made a page here
+		// first and was issued an outstation later can put its key in Advanced, as the outstation's setup says)
+		String pasted = config.stationKey();
+		if (pasted != null && !pasted.trim().isEmpty())
+		{
+			Attach p = Attach.parse(pasted, gson);
+			String c = character;
+			if (p != null && (c == null || isOwn(p.getChannel(), c)))
+			{
+				return pasted;
+			}
+		}
+		return own != null && !own.trim().isEmpty() ? own : pasted;
 	}
 
 	/** The key read, or null: none, or one whose page isn't the character logged in (another account's). */

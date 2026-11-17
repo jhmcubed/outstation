@@ -19,15 +19,30 @@ pub const HOME_RELAY: &str = "https://relay.ghillie.workers.dev";
 /// how often a request is looked at again while it waits
 const EVERY: Duration = Duration::from_secs(20);
 
-/// A player's name as its channel (the page's own rule: lower case, no spaces, - or _), or why not.
+/// A player's name as its channel, as the relay and the plugin have it since 11/16/2026 (relay/src/witness.ts's
+/// channelForm): lower case, each run of spaces, hyphens and underscores (the game takes them as one) one "_", none at
+/// either end: "Oran Berries" is oran_berries. Or why not. (Till v0.2.0 the outstation dropped them, "oranberries",
+/// which is someone else now; the review before v0.2.0.)
 pub fn channel_of(player: &str) -> Result<String, String> {
-    let raw = player.split_whitespace().collect::<Vec<_>>().join(" ");
+    let raw = player.replace('\u{a0}', " ").split_whitespace().collect::<Vec<_>>().join(" ");
     let ok = !raw.is_empty() && raw.chars().count() <= 12
         && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '_' || c == '-');
     if !ok { return Err("a name is 1 to 12 letters, numbers, spaces, hyphens or underscores".into()); }
-    let ch: String = raw.to_lowercase().chars().filter(|c| !matches!(c, ' ' | '_' | '-')).collect();
+    let mut ch = String::new();
+    for c in raw.to_lowercase().chars() {
+        if matches!(c, ' ' | '_' | '-') { if !ch.ends_with('_') { ch.push('_'); } } else { ch.push(c); }
+    }
+    let ch = ch.trim_matches('_').to_string();
     if ch.is_empty() { return Err("a name needs a letter or number in it".into()); }
     Ok(ch)
+}
+
+/// The channels a page for this player can be under: its form, and (a page made before 11/16/2026 that hasn't moved)
+/// the old flat one, with nothing between the words. For finding a friend's page, never for making one.
+pub fn channels_of(player: &str) -> Vec<String> {
+    let Ok(ch) = channel_of(player) else { return Vec::new() };
+    let flat = ch.replace('_', "");
+    if flat == ch { vec![ch] } else { vec![ch, flat] }
 }
 
 /// A relay's address as http(s), for its routes (wss:// as https://; a bare address as https://).
@@ -180,7 +195,7 @@ impl Asker {
                 Ok(Answer::Waiting) => {}
                 Ok(Answer::Given(code)) => match crate::settings::parse_attach(&code) {
                     Ok((relay, channel, key)) => {
-                        let _ = settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.asked = None; s.setup_step = Some(0); });
+                        let _ = settings.update(|s| { s.relay = relay; s.channel = channel.clone(); s.key = key; s.on_air = false; s.asked = None; s.setup_step = Some(0); });
                         *attached.lock().unwrap() = Some(channel);
                     }
                     Err(e) => *said.lock().unwrap() = Some((e, true)),
@@ -207,8 +222,11 @@ mod tests {
 
     #[test]
     fn a_players_name_as_its_channel() {
-        assert_eq!(channel_of("  Moss  Fern ").unwrap(), "mossfern");
-        assert_eq!(channel_of("ja_ck-1").unwrap(), "jack1");
+        assert_eq!(channel_of("  Moss  Fern ").unwrap(), "moss_fern");
+        assert_eq!(channel_of("ja_ck-1").unwrap(), "ja_ck_1");
+        assert_eq!(channel_of("Oran\u{a0}Berries").unwrap(), "oran_berries");
+        assert_eq!(channels_of("Oran Berries"), vec!["oran_berries".to_string(), "oranberries".to_string()]);
+        assert_eq!(channels_of("sburb"), vec!["sburb".to_string()]);
         assert!(channel_of("").is_err());
         assert!(channel_of("- _").is_err());
         assert!(channel_of("thirteen chars").is_err());

@@ -87,8 +87,15 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
         let s = settings.get();
         // (dark but recording: the sound onto the tape too, nothing sent; 11/07/2026)
         let taping = (!s.attached() || !s.on_air) && s.taping_dark();
-        if (!s.attached() || !s.on_air) && !taping {
+        // (the sound off while transmitting: no socket at all, 11/17/2026, the review before v0.2.0; the relay's told
+        // "off" once as it goes, below, and keeps that for the page)
+        if ((!s.attached() || !s.on_air) && !taping) || (!taping && mode_of(&s.sound) == "off") {
             for (_, b) in std::mem::take(&mut buses) { b.stop(); }
+            {
+                let mut st = status.lock().unwrap();
+                st.mode = mode_of(&s.sound).into();
+                st.buses.clear();
+            }
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
@@ -106,7 +113,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
                 continue;
             }
         };
-        failures = 0;
+        let opened_at = Instant::now();
         let mut queue: VecDeque<Vec<u8>> = VecDeque::new();
         let (mut told, mut told_at) = (String::new(), Instant::now() - Duration::from_secs(10));
         let why = loop {
@@ -119,6 +126,10 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
                 break "the stream ended".to_string();
             }
             let mode = mode_of(&s.sound);
+            if !taping && mode == "off" {
+                let _ = ws.text("{\"sound\": {\"mode\": \"off\", \"buses\": []}}");
+                break "the sound went off".to_string();
+            }
             if pid_at.elapsed().as_secs_f64() > 1.0 {
                 pid = win::runelite_pid(&s.title);
                 held = if s.sound_with_picture { picture_held(&s) } else { None };
@@ -191,6 +202,9 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
             if let Some(e) = failed { break e; }
             match ws.recv() {
                 Ok(Got::Closed(4026, why)) => break format!("too old: {}", why),
+                // (refused: replaced by another copy, a key it won't take, too many wrong keys; as the picture's, no
+                // more tries till the settings change, 11/17/2026: it had tried every 2 s, and kept the address on 4029)
+                Ok(Got::Closed(code @ (4000 | 4001 | 4003 | 4029), why)) => break format!("refused: ({}) {}", code, why),
                 Ok(Got::Closed(code, _)) => break format!("the relay closed it ({})", code),
                 Err(e) => break e,
                 _ => {}
@@ -206,14 +220,27 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>) {
             }
             continue;
         }
+        if let Some(reason) = why.strip_prefix("refused: ") {
+            crate::transmit::log(&format!("sound: the relay refused it {}; no more tries till the settings change", reason));
+            for (_, b) in std::mem::take(&mut buses) { b.stop(); }
+            while { let s = settings.get(); s.on_air && (s.relay.clone(), s.channel.clone(), s.key.clone()) == who } {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            continue;
+        }
         if taping {
             // (the tape gave way to a transmission, or was turned off: at once, no wait)
             while rx.try_recv().is_ok() {}
             continue;
         }
-        crate::transmit::log(&format!("sound: the relay went ({}); again in 2 s", why));
         while rx.try_recv().is_ok() {}
-        std::thread::sleep(Duration::from_secs(if why == "the stream ended" { 0 } else { 2 }));
+        if why == "the stream ended" || why == "the sound went off" { failures = 0; continue; }
+        // (further apart each time it goes soon after opening, as the other sockets' WAITS; a long one starts again)
+        if opened_at.elapsed() > Duration::from_secs(30) { failures = 0; }
+        let wait = WAITS[failures.min(WAITS.len() - 1)];
+        failures += 1;
+        crate::transmit::log(&format!("sound: the relay went ({}); again in {} s", why, wait));
+        std::thread::sleep(Duration::from_secs(wait));
     }
 }
 

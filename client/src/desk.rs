@@ -43,6 +43,9 @@ impl Desk {
 fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
        up: std::sync::Arc<std::sync::atomic::AtomicBool>, wake: impl Fn()) {
     use std::sync::atomic::Ordering;
+    // (further apart each time the relay's not there: net's WAITS, 11/17/2026, the review before v0.2.0; back to the
+    // first once a connection's held)
+    let mut failures = 0usize;
     loop {
         let s = settings.get();
         if !s.attached() {
@@ -63,10 +66,12 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<In>,
             Err(_) => {
                 let _ = inbox.send(In::Down);
                 wake();
-                std::thread::sleep(Duration::from_secs(3));
+                std::thread::sleep(Duration::from_secs(crate::net::WAITS[failures.min(crate::net::WAITS.len() - 1)]));
+                failures += 1;
                 continue;
             }
         };
+        failures = 0;
         ws.timeout(Duration::from_millis(30));
         while out.try_recv().is_ok() {} // (what was typed while it was down stays unsent)
         // "connected" waits for the relay's first line (or a moment), so a socket it turns away at once (a wrong key,

@@ -111,7 +111,7 @@ impl Aether {
         } else if let Some(id) = v.get("aether_unsay").and_then(|x| x.as_i64()) {
             self.lines.retain(|l| l.id != id);
         } else if let Some(s) = v.get("aether_slow").and_then(|x| x.as_f64()) {
-            self.slow_until = Some(Instant::now() + Duration::from_secs_f64(s.max(0.5)));
+            self.slow_until = Some(Instant::now() + Duration::from_secs_f64(if s.is_finite() { s.clamp(0.5, 3600.0) } else { 0.5 }));
         }
         if self.lines.len() > KEPT {
             let extra = self.lines.len() - KEPT;
@@ -150,6 +150,8 @@ pub fn tidy(text: &str) -> String {
 
 fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<Value>, notes: mpsc::Sender<String>,
        up: Arc<AtomicBool>, wake: impl Fn()) {
+    // (further apart each time the relay's not there: net's WAITS, 11/17/2026, the review before v0.2.0)
+    let mut failures = 0usize;
     loop {
         let s = settings.get();
         if !s.attached() {
@@ -160,10 +162,12 @@ fn run(settings: Shared, out: mpsc::Receiver<String>, inbox: mpsc::Sender<Value>
         let mut ws = match Socket::open(&url(&s.relay, &s.channel, &s.key)) {
             Ok(ws) => ws,
             Err(_) => {
-                std::thread::sleep(Duration::from_secs(5));
+                std::thread::sleep(Duration::from_secs(crate::net::WAITS[failures.min(crate::net::WAITS.len() - 1)]));
+                failures += 1;
                 continue;
             }
         };
+        failures = 0;
         ws.timeout(Duration::from_millis(50));
         while out.try_recv().is_ok() {}
         up.store(true, Ordering::Relaxed);

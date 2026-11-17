@@ -20,6 +20,7 @@ pub struct Feed {
 pub fn start(settings: Shared, wake: impl Fn() + Send + 'static) -> Arc<Mutex<Feed>> {
     let feed = Arc::new(Mutex::new(Feed::default()));
     let f = feed.clone();
+    let mut failures = 0usize;
     std::thread::spawn(move || loop {
         let s = settings.get();
         if !s.live_view || !s.attached() {
@@ -28,10 +29,13 @@ pub fn start(settings: Shared, wake: impl Fn() + Send + 'static) -> Arc<Mutex<Fe
             continue;
         }
         let who = (s.relay.clone(), s.channel.clone(), s.code.clone());
+        // (further apart each time the relay's not there, as the other sockets' WAITS; 11/17/2026, the review)
         let Ok(mut ws) = Socket::open(&s.socket_url("watch", &format!("look=1&code={}", enc(&s.code)))) else {
-            std::thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(crate::net::WAITS[failures.min(crate::net::WAITS.len() - 1)]));
+            failures += 1;
             continue;
         };
+        let opened = Instant::now();
         pump(&mut ws, &f, &wake, || {
             let s = settings.get();
             s.live_view && (s.relay.clone(), s.channel.clone(), s.code.clone()) == who
@@ -39,7 +43,9 @@ pub fn start(settings: Shared, wake: impl Fn() + Send + 'static) -> Arc<Mutex<Fe
         ws.close();
         f.lock().unwrap().connected = false;
         wake();
-        std::thread::sleep(Duration::from_secs(2));
+        if opened.elapsed() > Duration::from_secs(30) { failures = 0; }
+        std::thread::sleep(Duration::from_secs(crate::net::WAITS[failures.min(crate::net::WAITS.len() - 1)].max(2)));
+        failures += 1;
     });
     feed
 }
@@ -105,12 +111,15 @@ impl Peek {
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
             };
+            let opened = Instant::now();
             pump(&mut ws, &f, &wake, || {
                 want.lock().unwrap().as_ref().is_some_and(|(r, c, at)| *r == relay && *c == ch && at.elapsed() < PEEK_STAYS)
             });
             ws.close();
             f.lock().unwrap().connected = false;
             wake();
+            // (closed at once, refused or nothing there: a second before asking again, not at once, 11/17/2026)
+            if opened.elapsed() < Duration::from_secs(1) { std::thread::sleep(Duration::from_secs(1)); }
         });
         p
     }

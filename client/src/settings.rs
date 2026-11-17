@@ -2,7 +2,7 @@
 //!
 //! %APPDATA%\outstation\settings.json (or --settings <file>). Anything in the file this version doesn't know is
 //! kept as it was. The fields are those of ghillie's start.py settings, as the parity list asks
-//! (claude/the-portal.md, "Parity"), with the capture's options as fields of their own instead of a "capture" list.
+//! (claude/outstation.md, "Parity"), with the capture's options as fields of their own instead of a "capture" list.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -64,7 +64,7 @@ pub struct Dink {
     #[serde(default = "d_dink_port")]
     pub port: u16,
     /// a clip saved by itself when Dink tells of something big (a pet, a new collection log slot, a 99, a drop worth
-    /// clip_gp or more), while live and with the replay buffer on (dink.rs, big_moment)
+    /// clip_gp or more), while live (or dark with tape_dark on) and with the replay buffer on (dink.rs, big_moment)
     #[serde(default = "d_true")]
     pub auto_clip: bool,
     #[serde(default = "d_clip_gp")]
@@ -377,8 +377,24 @@ pub struct Shared {
 
 impl Shared {
     pub fn open(path: PathBuf) -> Shared {
-        let (s, t) = read(&path);
-        Shared { path: Arc::new(path), inner: Arc::new(RwLock::new((s, t))) }
+        let (mut s, t) = match read(&path) {
+            Some(st) => st,
+            None => {
+                // (a file that can't be read as settings: kept beside, never written over, and the outstation starts
+                // as new; 11/17/2026, the review before v0.2.0)
+                let stamp = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let _ = std::fs::rename(&path, path.with_extension(format!("json.bad-{}", stamp)));
+                (Settings::default(), None)
+            }
+        };
+        let shared = Shared { path: Arc::new(path), inner: Arc::new(RwLock::new((Settings::default(), t))) };
+        if migrate(&mut s) {
+            *shared.inner.write().unwrap() = (s, t);
+            let _ = shared.update(|_| {});
+        } else {
+            *shared.inner.write().unwrap() = (s, t);
+        }
+        shared
     }
     pub fn get(&self) -> Settings {
         self.inner.read().unwrap().0.clone()
@@ -396,8 +412,11 @@ impl Shared {
         let now = modified(&self.path);
         let seen = self.inner.read().unwrap().1;
         if now.is_some() && now != seen {
-            let (s, t) = read(&self.path);
-            *self.inner.write().unwrap() = (s, t);
+            // (one that doesn't read, half written by another program or a hand: the last good kept, and tried again
+            // next time, never the defaults, which the next change would have saved over the key)
+            if let Some((s, t)) = read(&self.path) {
+                *self.inner.write().unwrap() = (s, t);
+            }
         }
     }
 }
@@ -406,9 +425,28 @@ fn modified(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
-fn read(p: &Path) -> (Settings, Option<SystemTime>) {
-    let s = std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    (s, modified(p))
+/// The settings as the file has them: the defaults when there's no file yet; None when there's one that can't be read.
+fn read(p: &Path) -> Option<(Settings, Option<SystemTime>)> {
+    match std::fs::read_to_string(p) {
+        Ok(t) => serde_json::from_str(&t).ok().map(|s| (s, modified(p))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some((Settings::default(), None)),
+        Err(_) => None,
+    }
+}
+
+/// What an older outstation's settings leave behind, put right once (11/17/2026, the review before v0.2.0): the Dink
+/// forwarding rules it no longer follows (their first Discord webhook kept as the clips' own, and a note shown once, in
+/// the Dink drawer, that Dink now posts to Discord and the page itself). Whether anything changed.
+fn migrate(s: &mut Settings) -> bool {
+    let Some(forward) = s.extra.remove("forward") else { return false };
+    if s.dink.clip_webhook.trim().is_empty() {
+        if let Some(u) = forward.get("discord").and_then(|d| d.as_array())
+            .and_then(|a| a.iter().filter_map(|u| u.as_str()).find(|u| u.starts_with("https://"))) {
+            s.dink.clip_webhook = u.to_string();
+        }
+    }
+    s.extra.insert("forward_note".into(), Value::Bool(true));
+    true
 }
 
 fn write(p: &Path, s: &Settings) -> std::io::Result<()> {

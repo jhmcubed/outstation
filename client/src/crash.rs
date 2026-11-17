@@ -1,5 +1,5 @@
 //! When something goes wrong (11/06/2026): the release is a windowed program with no console, so a crash would
-//! otherwise close it without a word. A crash (a panic, in any of the portal's threads) is written into portal.log
+//! otherwise close it without a word. A crash (a panic, in any of the portal's threads) is written into outstation.log
 //! with where it happened, a box says so and where the log is, and the next start says it happened (crash.txt beside
 //! the log, read once). "copy my log" (the settings, under more) puts the log's last lines on the clipboard to send, with keys
 //! and webhook addresses taken out.
@@ -46,7 +46,7 @@ pub fn install(log_path: PathBuf) {
             let _ = std::fs::write(f, format!("{}\n{} at {}", t, one_line(&what), at));
         }
         if !SHOWN.swap(true, Ordering::SeqCst) {
-            let log = LOG_PATH.get().map(|p| p.display().to_string()).unwrap_or_else(|| "portal.log".into());
+            let log = LOG_PATH.get().map(|p| p.display().to_string()).unwrap_or_else(|| "outstation.log".into());
             message(&format!("the outstation hit a fault and part of it stopped:\n\n{}\n\nclose it and open it again. \
                               what happened is written in\n{}\n\n\"report an anomaly\" (pink, at the foot of the outstation's window) sends it to the listening post.",
                              one_line(&what), log));

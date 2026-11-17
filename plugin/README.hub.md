@@ -35,7 +35,7 @@ Under four headings, each switch on to begin with:
 - **Your page:** **Send to my Outside page**, the main switch. Off, nothing is sent, and what it sent comes off your page.
 - **On your page:** **Gear and inventory**, **Skills**, **Quests, diaries and progress** (and the collection log's count, kill counts and clue counts), **Slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **Bank**, **Deathbank** and **Character model**: each its own switch, and switching one off takes it off your page. Bank, Deathbank and Character model show a warning when they're switched back on. (**Ground under my model** isn't here: it's a box in the side tab's Model tab, under Capture my character, and asks before it's switched back on.)
 - **What you're doing:** **What I'm doing**, as RuneLite's Discord plugin shows it.
-- **Advanced** (closed): **Station key**, your page's key, only if you were given one.
+- **Advanced** (closed): **Station key**, your page's key, only if you were given one: an outstation's (its settings ▸ more ▸ copy my station key) puts your updates on the outstation's page, in place of a page you made here.
 
 ## What it sends, and only that
 

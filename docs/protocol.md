@@ -37,7 +37,7 @@ Closing codes:
 ## The client's version
 
 The client says its version (`client/Cargo.toml`'s, which a release's tag must match) as `v=` on its transmit, desk and sound sockets, its aether socket, and on its monitor's and a friend's peek's watch sockets.
-- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`, `--min-client` for `relay-py/relay.py`) turns a transmit, desk or sound socket, or an outstation's aether socket, from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
+- A relay started with a minimum (`MIN_CLIENT` in the Worker's `wrangler.jsonc`; relay-py, retired 11/17/2026, had `--min-client`) turns a transmit, desk or sound socket, or an outstation's aether socket, from an older client away with 4026, before its key is looked at. That doesn't count as a wrong key.
 - Versions are compared by number (`0.10.0` is newer than `0.9.0`), and a pre-release's suffix is left out (`0.5.0-rc.1` counts as `0.5.0`).
 - A socket that says no version is let in: ghillie's Python portal predates it.
 - Viewers never need one.
@@ -53,7 +53,7 @@ The client says its version (`client/Cargo.toml`'s, which a release's tag must m
   - `{"report": {"type", "text", "at"}}`: a field report (from Dink), as ghillie's Python portal sends them. The outstation client posts to the Dink route instead (below, "Dink"). The last 8 are kept for late joiners.
 - **It hears:** the status line (below).
 
-The first transmitter sets the channel's watch code. Viewers whose code no longer matches are let go.
+The page's watch code is the Outside plugin's (PUT /code, below, "A page's own key"); a transmitter's empty code leaves it as it is, and an older outstation's own code still sets it. As a transmitter connects, viewers whose code doesn't match the page's are let go (11/17/2026: against the page's code, not the transmitter's, which a v0.2.0 outstation never sends).
 
 ### Who's watching (11/10/2026)
 
@@ -177,7 +177,7 @@ The relay holds sound half a second (as the capture holds frames back). It lets 
 
 Each report reaches viewers as `{"report": {"type", "text", "at", "data"}}`: `text` its line (at most 200 characters, Discord's markdown taken out), `data` the numbers the page's readings use (`relay/src/text.ts`'s `reportData`, relay-py's `report_data`: the boss and its count, the levels, the loot's items and value, the collection log's count).
 
-The outstation client takes Dink's posts on its own PC (`127.0.0.1`) and posts only what the relay keeps of each to this route (`client/src/dink.rs`, `for_relay`): its `type`, the line as `content`, and the `extra` fields `reportData` reads. The rest of Dink's post never leaves the PC. ghillie's Python portal sent reports over its transmit socket instead.
+Dink posts to this route itself: the player's Dink, given the page's address by the Outside plugin's Copy my Dink address; the whole plugin's own reports come here too, with `&from=plugin` (kept while the outstation transmits, since 11/17/2026). The outstation takes Dink's posts on its own PC (`127.0.0.1`) only to save clips, and since v0.2.0 (the Dink trim) passes nothing on. An outstation from before it posted trimmed copies here (`client/src/dink.rs`'s `for_relay` then), with an `at` of its own and no `regionId`, so the Wilderness can't be told from them: the relay drops those (11/17/2026).
 
 ## Handing out channels (Cloudflare)
 
@@ -212,12 +212,12 @@ The keeper (`Authorization: Bearer <ADMIN_TOKEN>`):
 
 A request nobody answers goes after 14 days, and an answer nobody collects after 7.
 
-## The app, told to the plugin (11/16/2026)
+## The app, told to the plugin (11/16/2026; unused since 11/17/2026)
 
 The relay tells the plugin's game socket whether the outstation's app is attached: `{"app": true | false}`, once as the
-socket opens and again whenever a desk that isn't the plugin's own chat (`&talk=1`) comes or goes. The plugin sends the
-exact path (`{"here"}`, below) only while it's true, since only the app takes it; the plugin keeps its own record of the
-path on the player's PC either way. Both relays.
+socket opens and again whenever a desk that isn't the plugin's own chat (`&talk=1`) comes or goes. The plugin sent the
+exact path (`{"here"}`, below) only while it was true; since 11/17/2026 (the plugin owns the year) it keeps the path on
+the player's PC and never sends it, so nothing reads this any more. It's still sent, for now.
 
 ## A page's own key: friends only, and taking it down (11/16/2026)
 
@@ -761,13 +761,14 @@ the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the stil
 
 ## Your year (11/10/2026)
 
-A year of the player's own travels and activity, recorded by their app, kept on the relay **encrypted with a key only
+A year of the player's own travels and activity, recorded by the Outside plugin (by the outstation's app till v0.2.0), kept on the relay **encrypted with a key only
 their own computers hold**, and a public summary they may choose to post. The design, with the exact format the page
 must match: `docs/record.md`. Both relays: the Worker in a Durable Object of its own per channel (`Records`,
 relay/src/record.ts; binding `RECORD`, migration `v3`), relay-py in a folder (`--records`, ~/Documents/ghillie
 portal/records; "" keeps none).
 
-**The owner's own feed, to the desk only.** The relay passes the channel's own following square, activity and Array
+**The owner's own feed, to the desk only** (the outstation's app kept a year from it till v0.2.0, and throws it away
+since; the relay still sends it, and the protocol tests read the owner's events through it). The relay passes the channel's own following square, activity and Array
 events to its desk sockets (the app's chat window: only the station key opens one), live or dark, with or without a
 watch code, and to nothing else (no viewer, looker, transmitter, game socket, GET /game or the aether; GET /channels is
 as it was):
