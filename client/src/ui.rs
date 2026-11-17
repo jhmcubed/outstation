@@ -736,8 +736,6 @@ impl App {
             let _ = self.settings.update(|s| s.on_air = false);
             self.note("the transmission's ended: Outside shows the outstation dark");
         } else {
-            #[cfg(feature = "station")]
-            self.station_relay();
             if let Err(e) = self.settings.update(|s| s.on_air = true) {
                 self.note(format!("couldn't transmit: {}", e));
             }
@@ -979,24 +977,6 @@ impl App {
         if let Some(st) = &mut self.station {
             st.refresh(true);
             if let Some(t) = &self.station_tray { t.sync(st); }
-        }
-    }
-
-    /// Going live: while the portal's relay is this PC's (ws://127.0.0.1, ghillie's relay.py until his channel moves to
-    /// Cloudflare), the station's "relay" starts it first if it isn't running.
-    fn station_relay(&mut self) {
-        let r = self.settings.get().relay;
-        let local = r.starts_with("ws://127.0.0.1");
-        let Some(st) = &mut self.station else { return };
-        if !local { return; }
-        if let Some(k) = st.index("relay") {
-            st.refresh(true);
-            if st.states[k] == crate::station::State::Off {
-                match st.start(k) {
-                    Ok(()) => self.note("the relay on this PC is starting"),
-                    Err(e) => self.note(e),
-                }
-            }
         }
     }
 }
@@ -3455,10 +3435,8 @@ impl eframe::App for App {
                 if let Some(line) = crate::keeper::anomaly_line(&who, req) { self.note(line); }
             }
         }
-        crate::stuck::at("the frame: transmitting by itself (the station's relay)");
+        crate::stuck::at("the frame: transmitting by itself");
         if crate::autolive::WENT_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            #[cfg(feature = "station")]
-            self.station_relay();
             self.started = Instant::now();
         }
         {

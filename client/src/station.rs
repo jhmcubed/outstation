@@ -11,13 +11,12 @@
 //!     page, its log. Something started elsewhere (Release Kit.bat) is seen by its port (Windows' table of listening
 //!     ports) or its mutex, and can be opened but not stopped from here. Each runs hidden, its output in
 //!     tools/launcher/out/<id>.log, from this checkout, the main one, or (an unshipped tool) a worktree.
-//!   - **modes**: a set started together. "portal" in one means the portal itself: the relay on this PC (while the
-//!     portal's relay is this PC's), the window, and going live.
+//!   - **modes**: a set started together. "portal" in one means the portal itself: the window, and going live.
 //!   - **links**: pages and folders ({root}: the repo, {documents}: Documents).
 //!   - **stop all I started**, and **close the station**: everything it started stopped, and the portal off air.
 //!
-//! Services marked `"only": "python"` (the Python portal, start.py) are the Python station's alone; `"only": "station"`
-//! (the relay by itself) this one's alone.
+//! Services marked `"only": "python"` are the Python station's alone; `"only": "station"` this one's alone. (The Python
+//! portal and the relay on ghillie's PC, the services they marked, were retired 11/17/2026.)
 //!
 //! What it never does: open another program (it starts its own children and stops them with Windows' own taskkill),
 //! press keys, read another program. tests/safety_check.py reads this file as it reads the rest of client/src.
