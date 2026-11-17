@@ -49,6 +49,7 @@ mod station;
 mod stuck;
 mod theme;
 mod transmit;
+mod whosees;
 mod ui;
 mod win;
 
@@ -128,6 +129,7 @@ fn main() {
     let dk = dink::start(shared.clone());
     autolive::start(shared.clone());
     record::start(shared.clone());
+    whosees::start(shared.clone());
     stuck::watch();
     stuck::begin("opening the window");
     let (rgba, w, h) = ui::icon_rgba();

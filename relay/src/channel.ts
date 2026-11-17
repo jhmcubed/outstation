@@ -801,7 +801,10 @@ export class Channel extends DurableObject<Env> {
     for (const old of this.sockets("transmit")) {
       if (old !== ws) this.close(old, 4000, "replaced by a newer transmitter");
     }
-    this.meta.code = code;
+    // (11/17/2026, the who-sees-it fix: the plugin owns the watch code (PUT /code). A transmitter's empty one no longer
+    // clears it, so a page made friends only stays so when an outstation goes live; an outstation from before the fix
+    // that has a code of its own still sets it, never opening a page.)
+    if (code) this.meta.code = code;
     this.meta.client = oneLine(version || "", 32);
     // time on air: a stretch left open by an object that went before its transmitter said goodbye ends where it
     // was last seen; then a new stretch begins (unless another transmitter is already on)
@@ -2537,14 +2540,17 @@ export class Channel extends DurableObject<Env> {
     return new Response(null, { status: 204 });
   }
 
-  /** PUT /code/<channel>?key= {"code"} (index.ts; 11/16/2026, the permissions review): friends only from the plugin, as
-   *  a transmitter's code sets it: a watch code ("" for anyone), viewers whose code no longer matches let go. Whoever
-   *  set it last wins: an outstation transmitting sets its own as it connects. Answers {"code": true | false}. */
+  /** PUT /code/<channel>?key= {"code"} (index.ts; 11/16/2026, the permissions review): friends only from the plugin: a
+   *  watch code ("" for anyone), viewers whose code no longer matches let go. Answers {"code": true | false}.
+   *  (11/17/2026, Jace: "the who-sees-it fix"; the plugin owns who sees the page.) GET, with the key: {"code": "<it>"},
+   *  so the outstation reads the code the plugin set rather than keeping one of its own. A transmitter's empty code no
+   *  longer clears it (openTransmit). */
   async setCode(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
-    if (request.method !== "PUT") return new Response(null, { status: 405 });
+    if (request.method !== "PUT" && request.method !== "GET") return new Response(null, { status: 405 });
     if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
     const no = await this.checkKey(q.get("key") || "", ip);
     if (no) return json({ error: no[1] }, 403);
+    if (request.method === "GET") return json({ code: this.meta.code || "" });
     let code: unknown;
     try { code = ((await request.json()) as { code?: unknown }).code; } catch { code = undefined; }
     if (typeof code !== "string" || code.length > 64 || (code !== "" && !/^[A-Za-z0-9_-]{4,64}$/.test(code))) {

@@ -136,7 +136,8 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
             log("going live");
             told_off = false;
         }
-        let url = s.socket_url("transmit", &format!("key={}&code={}", crate::settings::enc(&s.key), crate::settings::enc(&s.code)));
+        // (no code: the Outside plugin owns who sees the page, and the relay leaves its code as it is; 11/17/2026)
+        let url = s.socket_url("transmit", &format!("key={}", crate::settings::enc(&s.key)));
         let ws = match Socket::open(&url) {
             Ok(ws) => ws,
             Err(e) => {
@@ -205,7 +206,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
     let mut last_full_out = Instant::now() - Duration::from_secs(60);
     let mut taken = 0u32;
     let first = settings.get();
-    let who = (first.relay.clone(), first.channel.clone(), first.key.clone(), first.code.clone());
+    let who = (first.relay.clone(), first.channel.clone(), first.key.clone());
     let mut windows = WindowCache::new(&first.title);
     let mut due = Instant::now();
     let (mut last_state, mut last_state_at, mut last_print) = (String::new(), Instant::now() - Duration::from_secs(10), Instant::now());
@@ -261,7 +262,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             if !s.on_air {
                 return "the stream ended".into();
             }
-            if (s.relay.clone(), s.channel.clone(), s.key.clone(), s.code.clone()) != who {
+            if (s.relay.clone(), s.channel.clone(), s.key.clone()) != who {
                 return "the settings changed".into();
             }
         }

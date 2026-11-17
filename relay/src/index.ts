@@ -907,7 +907,8 @@ export default {
 
     // a page taken down by its own key, and friends only from the plugin (11/16/2026, the permissions review):
     // DELETE /channels/<channel>?key= (204; the name free again: its row, its record and its year go too);
-    // PUT /code/<channel>?key= {"code"} ({"code": true | false}; "" for anyone)
+    // PUT /code/<channel>?key= {"code"} ({"code": true | false}; "" for anyone); GET /code/<channel>?key= {"code": "<the
+    // code>"}, the owner's own (11/17/2026: the plugin sets it, the outstation reads it)
     if (parts[0] === "channels" && parts.length === 2 && request.method === "DELETE") {
       const name = parts[1];
       if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
@@ -929,7 +930,7 @@ export default {
     if (parts[0] === "code" && parts.length === 2) {
       const name = parts[1];
       if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
-      if (request.method !== "PUT") return new Response(null, { status: 405 });
+      if (request.method !== "PUT" && request.method !== "GET") return new Response(null, { status: 405 });
       return channelStub(env, name).fetch(toChannel(request, name, "/_code"));
     }
 

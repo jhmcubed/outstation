@@ -1840,10 +1840,9 @@ fn more(ui: &mut egui::Ui, settings: &Shared) {
             ui.label(rich("your name in the chat:", 16.0, GREY()));
             field(ui, &mut s.chat_name, 160.0, &s.channel.clone(), false);
         });
-        ui.horizontal(|ui| {
-            ui.label(rich("watch code (empty: anyone):", 16.0, GREY())).on_hover_text(tip("a code observers need in their link to watch. Empty: anyone with your Outside page can."));
-            field(ui, &mut s.code, 140.0, "", false);
-        });
+        // (who sees the page: the Outside plugin's, read from the relay; 11/17/2026, whosees.rs)
+        ui.label(rich(&format!("who sees it: {}", if s.code.is_empty() { "anyone with your Outside page" } else { "friends only (with your friends' link)" }), 16.0, GREY()))
+            .on_hover_text(tip("set in the Outside plugin's side tab in RuneLite (\"Who sees it\": make it friends only, or open it to anyone); the outstation reads it from the relay"));
         ui.label(rich(&format!("relay {} · channel {}", s.relay, s.channel), 14.0, QUIET()));
         // (for the Outside plugin's settings, 11/07/2026: the key it attached with, made again)
         if s.attached() {
