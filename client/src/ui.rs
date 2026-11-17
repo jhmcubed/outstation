@@ -4741,7 +4741,7 @@ impl App {
     /// Each ✼ a viewer sends, rising over RuneLite with their name (as many as they like), in one see-through window
     /// over the game that clicks pass through.
     fn stars_ui(&mut self, ctx: &egui::Context) {
-        if self.stars.is_empty() && !self.stars_last.is_some_and(|t| t.elapsed() < LINGER) {
+        if self.stars.is_empty() && !self.stars_last.is_some_and(|t| t.elapsed() < LINGER) && !self.overlays_held() {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
@@ -4794,6 +4794,13 @@ impl App {
         }));
     }
 
+    /// Whether the pings' and the ✼s' windows are kept over the game whether or not there's anything in them: while
+    /// transmitting, when observers can send them.
+    fn overlays_held(&self) -> bool {
+        let s = self.settings.get();
+        s.on_air && s.attached()
+    }
+
     /// A ring that grows over the spot, with the viewer's name, in a see-through window that clicks pass through.
     fn pings_ui(&mut self, ctx: &egui::Context) {
         crate::stuck::at("the windows over RuneLite (pings, ✼, the chat over the game, redactions)");
@@ -4802,7 +4809,12 @@ impl App {
         self.masks_ui(ctx);
         // (11/07/2026: all of them in one window over the game, as the ✼s are; a window for each ping had Windows
         // making and dropping windows several a second, and one it wouldn't give stopped the outstation)
-        if self.pings.is_empty() && !self.pings_last.is_some_and(|t| t.elapsed() < LINGER) {
+        // (kept while transmitting, empty when there's nothing in it, rather than made again on a click after LINGER had let
+        // it go: a window made new showed its border for a moment before its first frame (11/17/2026, Jace: "on the first
+        // time a visitor clicks on my stream, a transparent outline thing pops up for a split second... after waiting a
+        // certain amount of seconds... i see it happen again"). Made hidden and shown after, it was never shown at all
+        // (Jace: "i don't see the pings at all now"))
+        if self.pings.is_empty() && !self.pings_last.is_some_and(|t| t.elapsed() < LINGER) && !self.overlays_held() {
             return;
         }
         let Some((l, t, r, b)) = frame_rect(&self.settings.get()) else { return };
@@ -4971,23 +4983,6 @@ fn overlay(ctx: &egui::Context, id: egui::ViewportId, builder: egui::ViewportBui
     if RESTING.with(|r| r.borrow().get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(3))) {
         return;
     }
-    // (made hidden, and shown only once it has drawn two frames of its own: Windows put a new window on the screen
-    // before its first frame was drawn, its border there for a moment, each time one was made again after LINGER had
-    // let it go: 11/17/2026, Jace: "on the first time a visitor clicks on my stream, a transparent outline thing pops up
-    // for a split second... after waiting a certain amount of seconds, and then clicking a single time again, i see it
-    // happen again". A window not shown on the last pass is a new one, its count started over)
-    thread_local! {
-        static SHOWN: std::cell::RefCell<std::collections::HashMap<egui::ViewportId, (u64, u32)>> = Default::default();
-    }
-    let pass = ctx.cumulative_pass_nr();
-    let frames = SHOWN.with(|m| {
-        let mut m = m.borrow_mut();
-        let e = m.entry(id).or_insert((pass, 0));
-        e.1 = if e.0 + 1 >= pass && e.0 != pass { e.1.saturating_add(1) } else if e.0 == pass { e.1 } else { 0 };
-        e.0 = pass;
-        e.1
-    });
-    let builder = builder.with_visible(frames >= 2);
     // (Windows' frame off it at the very start of its first frame, before it's drawn and shown on the screen's next
     // refresh: taken off after, at the end of the window's frame, a new one's border and shadow had shown for that
     // moment; 11/07/2026, Jace: "when clicks appear on my screen i can sometimes see their border for a split second")
