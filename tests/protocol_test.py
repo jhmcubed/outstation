@@ -801,6 +801,35 @@ class Talk(Base):
         late = await self.watch()
         self.assertEqual([(await next_of(late, "chat"))["text"] for _ in range(2)], ["one", "two"])
 
+    async def test_the_register_keeps_more_than_someone_just_come_is_given_and_the_rest_is_read_as_asked(self):
+        # (the register, 11/17/2026; docs/protocol.md "The register": 500 kept, the last 50 to someone just come, older
+        # ones by GET /chat/<channel>?before=<id>, and the page's own key told how many are new since it last looked)
+        tx, desk, a, b = await self.setup_room()
+        c = await self.watch()
+        await c.send(json.dumps({"hello": {"name": "ivy", "device": "device-cccc"}}))
+        await self.pause()
+        n = 0
+        for who in (a, b, c):
+            for i in range(SAY_BURST):
+                await who.send(json.dumps({"say": "note %d" % n}))
+                n += 1
+            await self.pause()
+        got = []
+        try:
+            while True:
+                got.append(await next_of(desk, "chat", timeout=0.6))
+        except asyncio.TimeoutError:
+            pass
+        self.assertEqual(len(got), 60)
+        late = await self.watch()
+        first = [await next_of(late, "chat") for _ in range(50)]
+        self.assertEqual([l["text"] for l in first], ["note %d" % i for i in range(10, 60)])
+        st, older = http("GET", "/chat/%s?before=%d" % (self.ch, first[0]["id"]))
+        self.assertEqual(st, 200)
+        self.assertEqual(([l["text"] for l in older["lines"]], older["more"]), (["note %d" % i for i in range(10)], False))
+        st, notes = http("GET", "/proof/%s?key=%s&seen=%d" % (self.ch, urllib.parse.quote(self.key), first[-6]["id"]))
+        self.assertEqual(notes["notes"], {"n": 5, "last": first[-1]["id"]})
+
     async def test_a_flood_is_cut_off_and_nothing_long_gets_through(self):
         tx, desk, a, b = await self.setup_room()
         for i in range(SAY_BURST + 4):
