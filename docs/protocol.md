@@ -847,8 +847,17 @@ and `Relay.aether_socket`. Outside shows it as a tab beside a transmission's cha
 - A visitor: `name`, with its runs of spaces made one and its ends trimmed, must then be 1 to 20 letters, digits, spaces,
   `_`, `-` or `.`, ASCII only; `device` is the random id its page keeps, 8 to 64 printable characters with no spaces
   (what a ban holds on to). Either wrong: 4002. A name that's an outstation's, case and spaces aside ("Moss Fern" is
-  `mossfern`'s), is refused with 4009, "that name belongs to an outstation": on Cloudflare any channel handed out (the
-  Directory's list), on the Python relay any channel claimed. A visitor's `v=` is never looked at.
+  `moss_fern`'s, or `mossfern`'s from before 11/16/2026), is refused with 4009, "that name belongs to an outstation": on
+  Cloudflare any channel handed out (the Directory's list), on the Python relay any channel claimed. A visitor's `v=` is
+  never looked at.
+- **An outstation's owner, from a page** (11/18/2026, a friend: "in the aether i can't choose my username but that's how
+  i'd like to go by in osrs related things"): `ws(s)://<relay>/aether?name=<name>&device=<id>&key=<key>`. On Cloudflare,
+  when the name is an outstation's and `key` is that outstation's key, checked by its channel as its own socket's is
+  (4001, 4003, 4029 as above), the visitor is in under the name as typed, as the outstation: its lines `from`
+  `"outstation"`, its rate counted and its bans held as the channel's. Without `key`, 4009 as before. Outside's page
+  asks for the key when it's turned away with 4009 and keeps it on that device (outside-portal.js, `aetherKeyAsk`). The
+  Directory's `/taken` answers which channel the name is (`{"taken", "channel"}`), so an old flat channel's key is the
+  one checked. (Not on the Python relay.)
 - Banned (below, the keeper): 4033 "banned from the aether", a visitor by its device, an outstation by its channel.
 - On Cloudflare, 1013 when the relay couldn't check the key or the name just then: try again.
 
