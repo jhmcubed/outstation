@@ -103,6 +103,9 @@ public class OutsidePanel extends PluginPanel
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
 		void showSent();
 
+		/** "Talk in the aether as me": the page opened with its key, for the aether under the page's own name. */
+		void aetherAsMe();
+
 		/** "Copy my address for Dink": the page's address for the Dink plugin's webhooks, to the clipboard. */
 		void copyDink();
 
@@ -335,6 +338,15 @@ public class OutsidePanel extends PluginPanel
 		pageTab.add(wide(button("Read and tend my register", hooks::tendChat)));
 		tendStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		pageTab.add(left(tendStatus));
+		pageTab.add(Box.createVerticalStrut(12));
+		// (11/18/2026, Jace: "a button to the plugin that opens up their page and embeds the key into it so they dont have
+		// to manually paste it": the aether takes an outstation's own name with its key, asked for on the page otherwise)
+		pageTab.add(left(heading("The aether")));
+		pageTab.add(left(small("<html><div style='width:155px'>Outside.wiki's chat across every page. Your name is"
+			+ " yours there: this opens your page in your browser with your key, kept in that browser, so the aether"
+			+ " lets you in under your own name.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Talk in the aether as me", hooks::aetherAsMe)));
 		pageTab.add(Box.createVerticalStrut(12));
 		// hub:cut talk
 		// (11/16/2026: the page chat's emotes, from here as from the outstation's settings; Emotes)

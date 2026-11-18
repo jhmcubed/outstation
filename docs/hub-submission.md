@@ -152,3 +152,5 @@ down last), so two tabs, Page and Model; and the line under Capture my character
 Jace updated the pull request's title ("Update Outside: goal fixes and the side tab's Page tab") and description to list all of it (11/18/2026, after the bot's cooldown, before any review).
 
 And Capture a still (11/18/2026, Cranky, a friend, through Jace: "a 'capture still' capturing the frame i click it like runeprofile does"): a button under Capture my character sends the model as it is the moment it's pressed (mid-emote too) as the page's still, on the player's press like ::outsidemodel, which now does the same. Until one is set, the still is the last capture's first moment, as before; once one is, captures leave it alone (an RS-profile flag, stillSet, cleared when the model's taken off or its switch turned off).
+
+And Talk in the aether as me (11/18/2026, Jace): the Page tab's "The aether", after the register: opens the page with its key in the fragment (#aether=<key>, no server sees it; the page takes it out of the address at once), so the aether lets its owner in under the page's name without pasting the key. On the press only; nothing sent by the plugin.

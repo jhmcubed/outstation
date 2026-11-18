@@ -248,6 +248,13 @@ public final class Attach
 		return keepUrl("x").replaceFirst("/keep/.*$", "/game/" + enc(channel));
 	}
 
+	/** The page with its key in the fragment, for the aether under the page's own name (11/18/2026): no server sees a
+	 *  fragment, and the page takes it out of the address at once. */
+	public String aetherPage(String code)
+	{
+		return page(code) + "#aether=" + enc(key);
+	}
+
 	/** The page with a watch code, for friends (11/16/2026). */
 	public String page(String code)
 	{

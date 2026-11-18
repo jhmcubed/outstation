@@ -2563,6 +2563,18 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
+			public void aetherAsMe()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					say("log in on a character with a page first");
+					return;
+				}
+				net.runelite.client.util.LinkBrowser.browse(a.aetherPage(friendsOnly ? watchCode(false) : null));
+			}
+
+			@Override
 			public void openPage()
 			{
 				Attach a = key();
