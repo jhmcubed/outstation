@@ -1759,11 +1759,11 @@ public class OutsidePlugin extends Plugin
 			String name = motionName(e.getArguments());
 			if (name == null || e.getArguments().length == 0)
 			{
-				say("which motion? ::outsideforget and its name");
+				sayModel("which motion? ::outsideforget and its name");
 				return;
 			}
 			keep("motion", name, null);
-			say("taking the motion \"" + name + "\" off your page");
+			sayModel("taking the motion \"" + name + "\" off your page");
 			return;
 		}
 		if ("outsidemotion".equalsIgnoreCase(e.getCommand()))
@@ -1773,14 +1773,14 @@ public class OutsidePlugin extends Plugin
 				String name = motionName(e.getArguments());
 				if (e.getArguments().length > 0 && name == null)
 				{
-					say("a motion's name: up to 24 letters, numbers, spaces, - or _");
+					sayModel("a motion's name: up to 24 letters, numbers, spaces, - or _");
 					return;
 				}
 				armMotion(name);
 			}
 			else
 			{
-				say("switch on \"Character model\" in the plugin's settings first");
+				sayModel("switch on \"Character model\" in the plugin's settings first");
 			}
 			return;
 		}
@@ -1792,7 +1792,7 @@ public class OutsidePlugin extends Plugin
 			}
 			else
 			{
-				say("switch on \"Character model\" in the plugin's settings first");
+				sayModel("switch on \"Character model\" in the plugin's settings first");
 			}
 		}
 	}
@@ -2095,7 +2095,7 @@ public class OutsidePlugin extends Plugin
 			return;
 		}
 		boolean got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null;
-		panel.goal("Goal: " + itemManager.getItemComposition(item).getName() + (got ? " (got)" : ""));
+		panel.goal(itemManager.getItemComposition(item).getName() + (got ? " (got)" : ""));
 	}
 
 	private void goalClear()
@@ -3175,7 +3175,7 @@ public class OutsidePlugin extends Plugin
 		Model m = me == null ? null : me.getModel();
 		if (m == null)
 		{
-			say("your model isn't there to send yet: try ::outsidemodel in a moment");
+			sayModel("your model isn't there to send yet: try ::outsidemodel in a moment");
 			return;
 		}
 		// (each written out the moment it's read: the client hands out one shared model for anything animated, so reading
@@ -3583,7 +3583,7 @@ public class OutsidePlugin extends Plugin
 			panel.capturing(true);
 		}
 		motionStart = -1;
-		say("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
+		sayModel("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
 	}
 
 	@Subscribe
@@ -3670,10 +3670,10 @@ public class OutsidePlugin extends Plugin
 		JsonObject frames = Kept.frames(motionFrames, 1000.0 / (MOTION_EVERY * 20));
 		motionFx.into(frames);
 		JsonObject petFrames = motionPet != null && !motionPetFrames.contains(null) ? Kept.frames(motionPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
-		say("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
+		sayModel("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
 		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
 		String name = motionAs != null ? motionAs : motionIdle ? "idle" : "motion";
-		say("it goes on your page as \"" + name + "\"");
+		sayModel("it goes on your page as \"" + name + "\"");
 		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment)
 		keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
 		keep("motion", name, wholeModel(motionBase, motionPet, frames, petFrames));
@@ -3889,7 +3889,7 @@ public class OutsidePlugin extends Plugin
 		}
 		if (first)
 		{
-			say("your " + what + " goes up with your next update (Update my page, or the hourly one)");
+			sayAbout(what, "your " + what + " goes up with your next update (Update my page, or the hourly one)");
 		}
 		return true;
 	}
@@ -3972,12 +3972,12 @@ public class OutsidePlugin extends Plugin
 				{
 					if (!"encounter".equals(what))
 					{
-						say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
+						sayAbout(what, "model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
 					}
 				}
 				else if (body != null && code != 200)
 				{
-					say("your " + what + " didn't go up (the relay said " + code + why + ")");
+					sayAbout(what, "your " + what + " didn't go up (the relay said " + code + why + ")");
 				}
 			}
 		});
@@ -4926,11 +4926,31 @@ public class OutsidePlugin extends Plugin
 
 	private void say(String words)
 	{
+		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
+			.runeLiteFormattedMessage("Outside: " + words).build()));
+	}
+
+	/** A line about the character model or its motions: in the chat, and under Capture my character in the side tab's
+	 *  Model tab (11/18/2026: every line went there, so the goal's turned up under the capture button). */
+	private void sayModel(String words)
+	{
 		if (panel != null)
 		{
 			panel.status(words);
 		}
-		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
-			.runeLiteFormattedMessage("Outside: " + words).build()));
+		say(words);
+	}
+
+	/** A keep's line: under Capture my character only when it's the model's or a motion's. */
+	private void sayAbout(String what, String words)
+	{
+		if ("model".equals(what) || "motion".equals(what))
+		{
+			sayModel(words);
+		}
+		else
+		{
+			say(words);
+		}
 	}
 }

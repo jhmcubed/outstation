@@ -242,10 +242,29 @@ public class OutsidePanel extends PluginPanel
 		page.add(wide(button("Open my page", hooks::openPage)));
 		page.add(Box.createVerticalStrut(4));
 		page.add(wide(button("Show what's sent", () -> hooks.showSent())));
+		snapClock.start();
+		page.add(Box.createVerticalStrut(10));
+
+		JPanel display = new JPanel();
+		display.setLayout(new BorderLayout());
+		MaterialTabGroup tabs = new MaterialTabGroup(display);
+		tabs.setLayout(new GridLayout(1, 0, 4, 0));
+		tabs.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+
+		// the page: when it goes, and what goes with it
+		JPanel pageTab = tab();
+		pageTab.add(left(small("<html><div style='width:155px'>Your page updates when you press Update my page, and by itself"
+			+ " every hour you're logged in; never from the Wilderness or a PvP world. What goes on it is in the plugin's"
+			+ " settings, each part its own switch.</div></html>")));
 		// hub:cut goal
-		// (the goal item, 11/17/2026: here, by the page's own buttons, so it's found without looking for it)
-		page.add(Box.createVerticalStrut(4));
-		page.add(wide(button("Set my goal item", hooks::setGoal)));
+		// (the goal item, 11/17/2026; in the Page tab since 11/18/2026, update 4, Jace: set once and left, not one of
+		// the buttons pressed every session, which stay above)
+		pageTab.add(Box.createVerticalStrut(12));
+		pageTab.add(left(heading("Your goal")));
+		pageTab.add(left(small("<html><div style='width:155px'>An item you're after: your page shows its 3D model, your kill"
+			+ " count where it drops and how dry you are for it.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Set my goal item", hooks::setGoal)));
 		// (the goal set, with ✕ to take it off: 11/18/2026, update 4; ::outsidegoal clear was the only way)
 		JPanel goalRow = new JPanel(new BorderLayout(6, 0));
 		goalRow.setOpaque(false);
@@ -261,22 +280,9 @@ public class OutsidePanel extends PluginPanel
 		goalRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
 		goalRow.setVisible(false);
 		goalBox = goalRow;
-		page.add(goalRow);
+		pageTab.add(Box.createVerticalStrut(4));
+		pageTab.add(goalRow);
 		// hub:end goal
-		snapClock.start();
-		page.add(Box.createVerticalStrut(10));
-
-		JPanel display = new JPanel();
-		display.setLayout(new BorderLayout());
-		MaterialTabGroup tabs = new MaterialTabGroup(display);
-		tabs.setLayout(new GridLayout(1, 0, 4, 0));
-		tabs.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
-
-		// the page: when it goes, and what goes with it
-		JPanel pageTab = tab();
-		pageTab.add(left(small("<html><div style='width:155px'>Your page updates when you press Update my page, and by itself"
-			+ " every hour you're logged in; never from the Wilderness or a PvP world. What goes on it is in the plugin's"
-			+ " settings, each part its own switch.</div></html>")));
 		// hub:cut year
 		// (11/15/2026: your year, kept by this plugin; docs/record.md)
 		pageTab.add(Box.createVerticalStrut(12));
