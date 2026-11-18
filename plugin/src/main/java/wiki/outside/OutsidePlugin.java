@@ -507,6 +507,7 @@ public class OutsidePlugin extends Plugin
 			}
 			else
 			{
+				configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET);
 				keep("model", null);
 			}
 		}
@@ -1788,7 +1789,7 @@ public class OutsidePlugin extends Plugin
 		{
 			if (config.model())
 			{
-				sendModel();
+				sendStill();
 			}
 			else
 			{
@@ -2375,8 +2376,28 @@ public class OutsidePlugin extends Plugin
 
 			// hub:cut model
 			@Override
+			public void captureStill()
+			{
+				clientThread.invokeLater(() ->
+				{
+					if (!config.model())
+					{
+						sayModel("switch on \"Character model\" in the plugin's settings first");
+						return;
+					}
+					if (client.getLocalPlayer() == null)
+					{
+						panel.status("log in first");
+						return;
+					}
+					sendStill();
+				});
+			}
+
+			@Override
 			public void removeModel()
 			{
+				configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET);
 				keep("model", null);
 				panel.status("taking your model off your page");
 			}
@@ -3169,13 +3190,29 @@ public class OutsidePlugin extends Plugin
 		});
 	}
 
+	/** The account's own still, set (Capture a still, ::outsidemodel): a capture no longer replaces it. */
+	static final String STILL_SET = "stillSet";
+
+	/** Capture a still (11/18/2026, update 4, Cranky): the model as it is the moment it's pressed, mid-emote too, as the
+	 *  page's still, kept until another still or the model's taken off. */
+	private void sendStill()
+	{
+		if (client.getLocalPlayer() == null || client.getLocalPlayer().getModel() == null)
+		{
+			sayModel("your model isn't there to send yet: try Capture a still in a moment");
+			return;
+		}
+		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET, true);
+		sendModel();
+	}
+
 	private void sendModel()
 	{
 		Player me = client.getLocalPlayer();
 		Model m = me == null ? null : me.getModel();
 		if (m == null)
 		{
-			sayModel("your model isn't there to send yet: try ::outsidemodel in a moment");
+			sayModel("your model isn't there to send yet: try Capture a still in a moment");
 			return;
 		}
 		// (each written out the moment it's read: the client hands out one shared model for anything animated, so reading
@@ -3674,8 +3711,12 @@ public class OutsidePlugin extends Plugin
 		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
 		String name = motionAs != null ? motionAs : motionIdle ? "idle" : "motion";
 		sayModel("it goes on your page as \"" + name + "\"");
-		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment)
-		keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
+		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment; since
+		// 11/18/2026 only while they haven't set a still of their own with Capture a still)
+		if (configManager.getRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET) == null)
+		{
+			keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
+		}
 		keep("motion", name, wholeModel(motionBase, motionPet, frames, petFrames));
 		if (panel != null)
 		{
@@ -3972,7 +4013,7 @@ public class OutsidePlugin extends Plugin
 				{
 					if (!"encounter".equals(what))
 					{
-						sayAbout(what, "model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
+						sayAbout(what, "model".equals(what) ? "your still is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
 					}
 				}
 				else if (body != null && code != 200)

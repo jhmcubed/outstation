@@ -150,3 +150,5 @@ down last), so two tabs, Page and Model; and the line under Capture my character
 (every line the plugin said had gone there, so "your goal is on your page" sat under the capture button).
 
 Jace updated the pull request's title ("Update Outside: goal fixes and the side tab's Page tab") and description to list all of it (11/18/2026, after the bot's cooldown, before any review).
+
+And Capture a still (11/18/2026, Cranky, a friend, through Jace: "a 'capture still' capturing the frame i click it like runeprofile does"): a button under Capture my character sends the model as it is the moment it's pressed (mid-emote too) as the page's still, on the player's press like ::outsidemodel, which now does the same. Until one is set, the still is the last capture's first moment, as before; once one is, captures leave it alone (an RS-profile flag, stillSet, cleared when the model's taken off or its switch turned off).

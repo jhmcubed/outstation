@@ -58,6 +58,9 @@ public class OutsidePanel extends PluginPanel
 	{
 		// hub:cut model
 		void capture(String name);
+
+		/** "Capture a still": the model as it is now, as the page's still (update 4). */
+		void captureStill();
 		// hub:end model
 
 		void refresh();
@@ -388,7 +391,9 @@ public class OutsidePanel extends PluginPanel
 		// your character: the model on the page, its motions
 		JPanel charTab = tab();
 		charTab.add(left(small("<html><div style='width:155px'>Press capture, then do an emote within 8 seconds: it's recorded from its start to its end, your pet's"
-			+ " with it. Do nothing, and it records you and your pet standing. Your page shows it, and keeps it under its name.</div></html>")));
+			+ " with it. Do nothing, and it records you and your pet standing. Your page shows it, and keeps it under its name."
+			+ " Capture a still keeps you as you are the moment you press it, as your page's still; until you do, your still is"
+			+ " your last capture's first moment.</div></html>")));
 		charTab.add(Box.createVerticalStrut(6));
 		JPanel named = new JPanel(new BorderLayout(6, 0));
 		JLabel nl = small("Name");
@@ -400,6 +405,13 @@ public class OutsidePanel extends PluginPanel
 		charTab.add(Box.createVerticalStrut(6));
 		capture.addActionListener(e -> hooks.capture(name.getText().trim()));
 		charTab.add(wide(capture));
+		// (11/18/2026, update 4, Cranky: "a 'capture still' capturing the frame i click it like runeprofile does": the still
+		// was a capture's first moment, each capture's, so it followed whatever was recorded last)
+		charTab.add(Box.createVerticalStrut(4));
+		JButton stillButton = button("Capture a still", hooks::captureStill);
+		stillButton.setToolTipText("<html><div style='width:220px'>You, as you are the moment you press it (mid-emote too),"
+			+ " as your page's still. A capture doesn't change it after that.</div></html>");
+		charTab.add(wide(stillButton));
 		// (11/17/2026, Jace: the ground's switch here, by the capture it goes with, not in the plugin's settings)
 		ground.setSelected(hooks.ground());
 		ground.setToolTipText("<html><div style='width:220px'>When you capture your character, the ground round you then"
