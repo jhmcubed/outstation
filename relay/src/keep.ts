@@ -9,6 +9,10 @@
 //     in it (the Item Retrieval Service's window), at most DEATHBANK_SLOTS items; taken away when it's emptied. Or,
 //     "from": "death", worked out as the death made it (what they carried less what they kept), till they look in it
 //   - "encounter" (11/15/2026): the last boss they fought, {"name", "model"}, sent as the fight ends
+//   - "goal" (11/17/2026, update 3; Goji Berries: "what if you could set a goal item from the plugin then it shows your kc
+//     and dryness on the top of ur profile"): the item they're after, {"id", "name", "model"?, "got"?: {"at": ms,
+//     "counts"?: the plugin's kill and clue counts then, {"kills": {name: n}, "clues": {tier: n}}}}; the page works out
+//     how dry they are from the wiki's drop rates
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
@@ -29,6 +33,7 @@
 // page fetches it again. Forgotten with the channel's game (a new key, or the channel taken back).
 
 export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, deathbank: 64 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
+  goal: 2 * 1024 * 1024,
   live: 4 * 1024 * 1024, livemotion: 4 * 1024 * 1024 };
 // (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
 export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
@@ -93,6 +98,41 @@ export function keepShape(what: string, d: unknown): unknown | string {
     const m = modelShape(d.model, true);
     if (typeof m === "string") return "model's " + m;
     return { name: d.name, model: m, ...(whole(d.kc) ? { kc: d.kc } : {}) };
+  }
+  if (what === "goal") {
+    if (!whole(d.id) || (d.id as number) < 1 || (d.id as number) > 200_000) return "id: the item's";
+    if (typeof d.name !== "string") return "name: the item's";
+    const name = d.name.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 60);
+    if (!name) return "name: the item's";
+    const out: Record<string, unknown> = { id: d.id, name };
+    if (d.model !== undefined) {
+      if (!isObj(d.model)) return "model: the item's";
+      const m = modelShape(d.model, true);
+      if (typeof m === "string") return "model's " + m;
+      out.model = m;
+    }
+    if (d.got !== undefined) {
+      const g = d.got as Record<string, unknown>;
+      if (!isObj(g) || !whole(g.at, Number.MAX_SAFE_INTEGER) || (g.at as number) < 1_262_304_000_000) return "got: {\"at\": when, \"counts\"?}";
+      const got: Record<string, unknown> = { at: g.at };
+      if (g.counts !== undefined) {
+        if (!isObj(g.counts)) return "got's counts: {\"kills\", \"clues\"}";
+        const counts: Record<string, Record<string, number>> = {};
+        for (const k of ["kills", "clues"]) {
+          const src = (g.counts as Record<string, unknown>)[k];
+          if (src === undefined) continue;
+          if (!isObj(src)) return "got's counts' " + k + ": {name: count}";
+          const kept: Record<string, number> = {};
+          for (const [n, c] of Object.entries(src as Record<string, unknown>).slice(0, 400)) {
+            if (typeof n === "string" && n.length <= 60 && whole(c)) kept[n.replace(/[\x00-\x1f\x7f]/g, " ")] = c as number;
+          }
+          counts[k] = kept;
+        }
+        got.counts = counts;
+      }
+      out.got = got;
+    }
+    return out;
   }
   if (what === "live") return modelShape(d, true);
   if (what === "motion" || what === "livemotion") {

@@ -9,6 +9,7 @@ only (wsmini.py, beside this, plays every client).
 """
 
 import asyncio
+import re
 import base64
 import hashlib
 import hmac
@@ -128,6 +129,7 @@ class Upstream(http.server.ThreadingHTTPServer):
     def __init__(self):
         self.seen, self.broken, self.day = [], {}, "24h-latest.json"
         self.hiscores = {}    # (proving a name, 11/15/2026: a player's name -> {skill: xp}, as Jagex's index_lite.json)
+        self.posts = []       # (Wise Old Man's updates asked, 11/17/2026: each POST's path)
         self.lock = threading.Lock()
         super().__init__(("127.0.0.1", 0), UpstreamHandler)
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -144,6 +146,17 @@ class Upstream(http.server.ThreadingHTTPServer):
 class UpstreamHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
+
+    def do_POST(self):
+        # (Wise Old Man's update of a player, POST /v2/players/<name>: noted, answered as it answers, its player)
+        up = self.server
+        with up.lock:
+            up.posts.append(self.path)
+        body = b'{"id": 1}'
+        self.send_response(200 if self.path.startswith("/v2/players/") else 404)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self):
         up = self.server
@@ -839,6 +852,13 @@ class Talk(Base):
         self.assertEqual(await next_of(b, "unnote"), got[8]["id"])
         st, notes = http("GET", "/proof/%s?key=%s&seen=%d" % (self.ch, urllib.parse.quote(self.key), got[5]["id"]))
         self.assertEqual(notes["notes"], {"n": 2, "last": got[7]["id"]})
+        # (a drawing signs it whole, as in the aether: its rows kept, each row's end trimmed, 12 rows of 80 at most;
+        # 11/17/2026, Jace's ASCII dog had come out one row, cut off)
+        d = await self.watch()                         # (a socket with notes to spare)
+        art = "\n".join(["\u2800\u28c0\u28e4  ", "\u28ff" * 90] + ["row %d" % i for i in range(14)])
+        await d.send(json.dumps({"note": art}))
+        drawn = (await next_of(desk, "note"))["text"].split("\n")
+        self.assertEqual((len(drawn), drawn[0], len(drawn[1]), drawn[-1]), (12, "\u2800\u28c0\u28e4", 80, "row 9"))
 
     async def test_a_flood_is_cut_off_and_nothing_long_gets_through(self):
         tx, desk, a, b = await self.setup_room()
@@ -1980,6 +2000,30 @@ class Game(Base):
         await next_of(v, "game")
         self.assertEqual([self.read(code)[0] for code in ("lichen", "")], [403, 403])
         self.assertEqual(self.read("moss")[1]["game"], {"world": 302})
+
+    @unittest.skipUnless(MODE == "worker", "the Worker's Cron Trigger")
+    async def test_the_arrays_players_are_kept_current_on_wise_old_man(self):
+        # (11/17/2026, Jace: friends new to the game who aren't on RuneProfile: each player on the open list is updated
+        # on Wise Old Man, a few a tick, a day apart, which starts tracking one it didn't know)
+        await self.game()
+        await self.pause(2)
+        self.assertIn(self.ch, {c["channel"] for c in http("GET", "/channels")[1]["channels"]})
+        mine = "/v2/players/" + urllib.parse.quote(re.sub(r"[ _-]+", " ", self.ch.lower()).strip())
+        for _ in range(80):
+            with urllib.request.urlopen(http_url() + "/__scheduled?cron=*/5+*+*+*+*", timeout=30) as r:
+                r.read()
+            await asyncio.sleep(0.3)                   # (the tick's asks, in the background, given their moment)
+            with UPSTREAM.lock:
+                if mine in UPSTREAM.posts:
+                    break
+        with UPSTREAM.lock:
+            self.assertEqual(UPSTREAM.posts.count(mine), 1)
+        # (and not again within its day)
+        for _ in range(3):
+            with urllib.request.urlopen(http_url() + "/__scheduled?cron=*/5+*+*+*+*", timeout=30) as r:
+                r.read()
+        with UPSTREAM.lock:
+            self.assertEqual(UPSTREAM.posts.count(mine), 1)
 
     async def test_the_status_line_and_the_open_outstations_say_whether_its_connected(self):
         def row():

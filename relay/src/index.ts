@@ -153,6 +153,16 @@ async function sha256(text: string): Promise<string> {
 }
 
 // the channels handed out, for the owner's list; and the requests for one
+/** How often each of the Array's players is updated on Wise Old Man (womTick), and how many a tick at most. */
+const WOM_UPDATE_EVERY = 20 * 3_600_000, WOM_UPDATES_A_TICK = 4;
+
+/** The names whose Wise Old Man update is due (never, or `every` ago), the longest waiting first, `most` at most. */
+export function womDue(names: string[], last: Record<string, number>, now: number, every: number, most: number): string[] {
+  const seen = new Set<string>();
+  return names.filter((n) => { const k = n.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return now - (last[k] || 0) >= every; })
+    .sort((a, b) => (last[a.toLowerCase()] || 0) - (last[b.toLowerCase()] || 0)).slice(0, most);
+}
+
 export class Directory extends DurableObject<Env> {
   asks = new Map<string, number[]>(); // an address -> when it asked (in memory: a sleep forgets, which only loosens it)
   reportsFrom = new Map<string, number[]>(); // an address -> when it sent a report (the same)
@@ -252,6 +262,7 @@ export class Directory extends DurableObject<Env> {
       const list = await this.starList();
       list.expire(Date.now());
       await this.saveStars(list);
+      await this.womTick();
       return Response.json((await this.almanacRefresh(false)).status());
     }
     if (url.pathname === "/almanac/force") return Response.json((await this.almanacRefresh(true)).status());
@@ -378,6 +389,44 @@ export class Directory extends DurableObject<Env> {
     const rows = await this.listedRows();
     if (rows.drop(name)) await this.saveListed(rows);
     return new Response(null, { status: 204 });
+  }
+
+  /** Wise Old Man kept current for the Array's own players (11/17/2026, Jace: friends new to the game "haven't bought
+   *  into the runeprofile ecosystem yet. how can we capture those people?"): each tick (every 5 minutes) a few of those
+   *  on the open list whose update is due (womDue: WOM_UPDATE_EVERY apart) are updated there through the lookups'
+   *  object, which starts tracking a player Wise Old Man didn't know, and gives everyone a week's gains to read. Only
+   *  the open list's: never a friends-only outstation (a watch code) or an invite not taken up. A refusal (a 429, its
+   *  minute used up) tries again next tick; anything else waits its day. */
+  async womTick(): Promise<void> {
+    // (one at a time: a tick's asks wait on Wise Old Man, and a tick that came meanwhile would read the same names as
+    // due and ask them again)
+    if (!this.env.LOOKUPS || this.womBusy) return;
+    this.womBusy = true;
+    try { await this.womTickNow(); } finally { this.womBusy = false; }
+  }
+  womBusy = false;
+  async womTickNow(): Promise<void> {
+    if (!this.env.LOOKUPS) return;
+    const given = await this.givenNames(), listed = await this.listedRows(), now = Date.now();
+    const open = [...given.keys()].map((n) => listed.rows.get(n)?.row).filter((r): r is Listing => !!r && r.set && !r.code && !r.pending)
+      .map((r) => (typeof r.name === "string" && r.name ? r.name : r.channel));
+    const last = (await this.ctx.storage.get<Record<string, number>>("wom:updated")) || {};
+    const every = (parseFloat(this.env.WOM_UPDATE_EVERY_SECONDS || "") * 1000) || WOM_UPDATE_EVERY;
+    const due = womDue(open, last, now, every, WOM_UPDATES_A_TICK);
+    if (!due.length) return;
+    const lookups = this.env.LOOKUPS.get(this.env.LOOKUPS.idFromName("lookups"));
+    for (const name of due) {
+      let status = 0;
+      try {
+        const r = await lookups.fetch(new Request("https://lookups/track/wom/" + encodeURIComponent(name), { method: "POST" }));
+        status = ((await r.json()) as { status: number }).status;
+      } catch { status = 0; }
+      if (status !== 429) last[name.toLowerCase()] = now;
+    }
+    // (only the names still on the list kept)
+    const keep: Record<string, number> = {};
+    for (const n of open) if (last[n.toLowerCase()]) keep[n.toLowerCase()] = last[n.toLowerCase()];
+    await this.ctx.storage.put("wom:updated", keep);
   }
 
   /** The channels handed out, each with whose invite it came from: read from storage once, till one's handed out or

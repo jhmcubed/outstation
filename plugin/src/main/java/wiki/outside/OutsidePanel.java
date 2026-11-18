@@ -89,6 +89,11 @@ public class OutsidePanel extends PluginPanel
 
 		void update();
 
+		// hub:cut goal
+		/** "Set my goal item": the game's item search, the item picked goes to the page (update 3). */
+		void setGoal();
+		// hub:end goal
+
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
 		void showSent();
 
@@ -234,6 +239,11 @@ public class OutsidePanel extends PluginPanel
 		page.add(wide(button("Open my page", hooks::openPage)));
 		page.add(Box.createVerticalStrut(4));
 		page.add(wide(button("Show what's sent", () -> hooks.showSent())));
+		// hub:cut goal
+		// (the goal item, 11/17/2026: here, by the page's own buttons, so it's found without looking for it)
+		page.add(Box.createVerticalStrut(4));
+		page.add(wide(button("Set my goal item", hooks::setGoal)));
+		// hub:end goal
 		snapClock.start();
 		page.add(Box.createVerticalStrut(10));
 

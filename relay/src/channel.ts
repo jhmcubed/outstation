@@ -28,7 +28,7 @@
 // itself is kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
-import { attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
+import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
@@ -45,6 +45,7 @@ export interface Env {
   AETHER: DurableObjectNamespace; // the aether (aether.ts, 11/07/2026): one room for every outstation and visitor
   RECORD?: DurableObjectNamespace; // your year (record.ts, 11/10/2026): each channel's encrypted record and public summary
   LOOKUPS?: DurableObjectNamespace; // the lookups (lookup.ts, lookups.ts, 11/10/2026): Wise Old Man, RuneProfile and the icons, kept and shared
+  WOM_UPDATE_EVERY_SECONDS?: string; // (tests) how often each of the Array's players is updated on Wise Old Man (index.ts, womTick)
   WOM_API_KEY?: string; // Wise Old Man's API key (11/11/2026): a secret (`wrangler secret put WOM_API_KEY`), sent only to api.wiseoldman.net (lookup.ts)
   LOOKUP_UPSTREAM?: string; // (tests) the lookups' sources all fetched under this address instead of the real hosts (lookup.ts's want)
   WITNESS_WAIT_S?: string; // (tests) the wait before the hiscores are asked again after a logout, every time (witness.ts's WITNESS_WAITS)
@@ -1332,8 +1333,9 @@ export class Channel extends DurableObject<Env> {
     this.gameDirty = false;
     this.game = new GameState();
     this.ctx.storage.delete("game");
-    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter"]); // (the bank, the model and the encounter, keep.ts)
+    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter", "keep:goal"]); // (the bank, the model, the encounter and the goal, keep.ts)
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("encounter")) ?? Promise.resolve());
+    this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("goal")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
     this.ctx.waitUntil(this.ctx.storage.get<{ anims: { anim: string }[] }>("keep:live").then((l) => {
       this.ctx.storage.delete("keep:live");
@@ -1726,7 +1728,9 @@ export class Channel extends DurableObject<Env> {
     const blocked = this.isBlocked(a);
     if ("note" in m) {
       // (the register, 11/17/2026: a note signed on the page, NOTE_BURST a NOTE_WINDOW at most; never while banned)
-      const text = oneLine(m.note, SAY_MAX);
+      // (as the aether's lines are, 11/17/2026: up to AETHER_ROWS rows of AETHER_WIDTH, so a drawing signs it whole;
+      // one line of the chat's had made Jace's ASCII dog one row, cut off at 300)
+      const text = aetherText(m.note);
       const notes = (a.notes || []).filter((t) => now - t <= NOTE_WINDOW);
       if (!text || blocked || notes.length >= NOTE_BURST) { a.notes = notes; this.keep(ws, a); return; }
       notes.push(now);
@@ -2461,7 +2465,7 @@ export class Channel extends DurableObject<Env> {
     const shaped = keepShape(what, d);
     if (typeof shaped === "string") return json({ error: shaped }, 400);
     this.keepUploads.push(now);
-    if ((what === "model" || what === "encounter") && this.env.CLIPS) {
+    if ((what === "model" || what === "encounter" || what === "goal") && this.env.CLIPS) {
       await this.env.CLIPS.put(this.keepKey(what), JSON.stringify(shaped), { httpMetadata: { contentType: "application/json" } });
       await this.ctx.storage.put("keep:" + what, { at: now, r2: true });
     } else {

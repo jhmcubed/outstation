@@ -27,6 +27,11 @@ pub struct Status {
     pub stopped: Option<String>,
     /// dark but recording: the tape rolling while dark, nothing sent
     pub taping: bool,
+    /// how much of the frame rate asked for is going out, the last few seconds (1: all of it); None while nobody's
+    /// watching (one frame now and then goes out) or nothing's going
+    pub full: Option<f64>,
+    /// why it's less than all, when it is
+    pub short_why: Option<String>,
 }
 
 pub struct Transmit {
@@ -54,6 +59,52 @@ impl Transmit {
 // Nothing changes on this computer: every frame and every packet is still taken and kept for clips.
 static WATCHED: AtomicBool = AtomicBool::new(false);
 pub const IDLE_FRAME_EVERY: f64 = 10.0;
+
+/// The back-off (run): past this share of a second spent waiting on the line, fewer frames go out…
+const BACK_OFF: f64 = 0.3;
+/// …down to no fewer than this share of the rate asked…
+const MIN_RATE: f64 = 0.15;
+/// …and after this many quiet seconds (under 8% of each spent waiting) it climbs back a tenth.
+const CALM_S: u32 = 3;
+
+/// The line to the relay, weighed (11/17/2026): how long each frame waited to go, and what share of the frame rate
+/// asked should go out (`rate`).
+struct BackOff {
+    rate: f64,
+    waited: f64,
+    calm: u32,
+}
+
+impl BackOff {
+    fn new() -> BackOff {
+        BackOff { rate: 1.0, waited: 0.0, calm: 0 }
+    }
+    /// A frame's wait to go out, in seconds: one held up half a second means the line's choked, so down by half now.
+    fn sent(&mut self, wait: f64) {
+        self.waited += wait;
+        if wait > 0.5 {
+            self.rate = (self.rate * 0.5).max(MIN_RATE);
+            self.calm = 0;
+        }
+    }
+    /// Each second or so (`span` of them): past BACK_OFF of it spent waiting, down; quiet for CALM_S, up a step.
+    fn weigh(&mut self, span: f64) {
+        let share = self.waited / span.max(1e-3);
+        if share > BACK_OFF {
+            self.rate = (self.rate * 0.7).max(MIN_RATE);
+            self.calm = 0;
+        } else if share < 0.08 {
+            self.calm += 1;
+            if self.calm >= CALM_S && self.rate < 1.0 {
+                self.rate = (self.rate + 0.1).min(1.0);
+                self.calm = CALM_S - 1;
+            }
+        } else {
+            self.calm = 0;
+        }
+        self.waited = 0.0;
+    }
+}
 /// whether anyone's seated watching, as the relay last said (the sound's loop sends only then)
 pub fn watched() -> bool {
     WATCHED.load(Ordering::Relaxed)
@@ -177,7 +228,7 @@ fn run(settings: Shared, status: Arc<Mutex<Status>>, paused: Arc<AtomicBool>) {
         let closed = live(&settings, &status, &paused, &mut ws, &mut gpu, &mut gdi);
         ws.close();
         log(&format!("off air: {}", closed));
-        say(&status, |st| { st.connected = false; st.viewers = 0; st.lookers = None; st.note = format!("off air: {}", closed); });
+        say(&status, |st| { st.connected = false; st.viewers = 0; st.lookers = None; st.full = None; st.short_why = None; st.note = format!("off air: {}", closed); });
         if closed.contains("(4000)") {
             // another capture started on this channel: the newest one wins, this one steps aside (reconnecting would
             // only knock that one off in turn)
@@ -241,6 +292,16 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
     let ceiling = SHARED_CEILING_MBIT * 1e6 / 8.0;
     let (mut allowance, mut allowance_at) = (ceiling, Instant::now());
     let mut over_ceiling = 0u32;
+    // the line to the relay (11/17/2026, Jace, a stream gone choppy and then dropped: "if you think building it is a good
+    // idea but show a meter… the percentage at which you are streaming at your full selected settings"): each frame
+    // goes out only as fast as the line takes it, so a line that can't keep up held the whole loop back, a frame at a
+    // time, till the relay's connection gave way. Now the time spent waiting on it is counted each second; past
+    // BACK_OFF of the second, fewer frames go out (`rate`, a share of the rate asked: each one still kept for clips),
+    // and after CALM_S quiet seconds it climbs back a step at a time.
+    let mut line = BackOff::new();
+    let mut weighed_at = Instant::now();
+    let mut next_out = Instant::now();
+    let mut held_back = 0u32;
     loop {
         // the relay's lines: how many watch, or a close (only those already here: the frames never wait on them)
         loop {
@@ -346,13 +407,26 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                 if !taping && !WATCHED.load(Ordering::Relaxed) && last_full_out.elapsed().as_secs_f64() < IDLE_FRAME_EVERY {
                     continue;
                 }
+                // (backed off: only as many as the line's taking)
+                if line.rate < 1.0 && Instant::now() < next_out {
+                    held_back += 1;
+                    continue;
+                }
+                next_out = Instant::now() + Duration::from_secs_f64(every / line.rate * 0.95);
                 last_full_out = Instant::now();
                 bytes_sent += data.len();
                 sent += 1;
             }
+            let t = Instant::now();
             if let Err(e) = ws.binary(data) {
                 return e;
             }
+            line.sent(t.elapsed().as_secs_f64());
+        }
+        let span = weighed_at.elapsed().as_secs_f64();
+        if span >= 1.0 {
+            line.weigh(span);
+            weighed_at = Instant::now();
         }
         // (static: the static key, which viewers see as static, the sound still going; shut: anything else)
         let state = match &why { None => "open", Some(w) if w == capture::STATIC_WHY => "static", _ => "shut" };
@@ -373,19 +447,31 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
                 // (frames still taken at the rate asked, for clips; the KB a frame from those sent, else as it was)
                 let f = taken as f64 / span;
                 let k = if sent > 0 { bytes_sent as f64 / sent as f64 / 1024.0 } else { status.lock().unwrap().kb };
-                say(status, |st| { st.fps = f; st.kb = k; });
+                say(status, |st| { st.fps = f; st.kb = k; st.full = None; st.short_why = None; });
                 format!("live: nobody watching, so a frame every {:.0} s and no sound go out ({:.1} frames a second kept for clips){}",
                         IDLE_FRAME_EVERY, f, if why.is_some() { "; shut" } else { "" })
             } else if sent > 0 {
                 let (f, k) = (sent as f64 / span, bytes_sent as f64 / sent as f64 / 1024.0);
-                say(status, |st| { st.fps = f; st.kb = k; });
-                let over = if over_ceiling > 0 {
+                // (how much of the rate asked is going out, and if not all, why: the line, the shared relay's ceiling,
+                // or RuneLite drawing fewer frames than that)
+                let asked = s.fps.clamp(1, MAX_FPS) as f64;
+                let full = (f / asked).min(1.0);
+                let short = if full >= 0.9 { None }
+                    else if line.rate < 1.0 || held_back > 0 { Some(format!("the line to the relay is slow: backed off to {:.0}% of your frame rate till it clears", line.rate * 100.0)) }
+                    else if over_ceiling > 0 { Some(format!("the shared relay's {:.0} Mbit/s ceiling: a lower width or quality keeps them", SHARED_CEILING_MBIT)) }
+                    else if (taken as f64 / span) < asked * 0.9 { Some("RuneLite is drawing fewer frames than that".into()) }
+                    else { Some("the frames are waiting on this PC".into()) };
+                say(status, |st| { st.fps = f; st.kb = k; st.full = if taping { None } else { Some(full) }; st.short_why = short.clone(); });
+                let mut over = if over_ceiling > 0 {
                     format!(" ({} skipped for the shared relay's {:.0} Mbit/s ceiling: a lower width or quality keeps them)", over_ceiling, SHARED_CEILING_MBIT)
                 } else { String::new() };
+                if held_back > 0 {
+                    over += &format!(" (backed off to {:.0}%: {} held back while the line was slow)", line.rate * 100.0, held_back);
+                }
                 if taping { format!("the tape: {:.1} frames a second, {:.0} KB a frame, nothing sent", f, k) }
                 else { format!("live: {:.1} frames a second, {:.0} KB a frame, {} watching{}", f, k, viewers, over) }
             } else if let Some(w) = &why {
-                say(status, |st| { st.fps = 0.0; });
+                say(status, |st| { st.fps = 0.0; st.full = None; st.short_why = None; });
                 format!("shut: {}; {} watching", w, viewers)
             } else {
                 format!("starting; {} watching", viewers)
@@ -397,6 +483,7 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
             taken = 0;
             bytes_sent = 0;
             over_ceiling = 0;
+            held_back = 0;
         }
         if gpu_on && why.is_none() {
             // back the moment the GPU's next kept frame lands (at most 20 ms, for the relay's lines meanwhile)
@@ -413,5 +500,45 @@ fn live(settings: &Shared, status: &Arc<Mutex<Status>>, paused: &Arc<AtomicBool>
         if due > now {
             std::thread::sleep(due - now);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_slow_line_backs_off_and_a_clear_one_climbs_back() {
+        let mut b = BackOff::new();
+        // (a clear line: all of it, always)
+        for _ in 0..10 {
+            for _ in 0..50 { b.sent(0.002); }
+            b.weigh(1.0);
+        }
+        assert_eq!(b.rate, 1.0);
+        // (half of each second waiting on the line: down, and down again, never below MIN_RATE)
+        for _ in 0..3 {
+            for _ in 0..50 { b.sent(0.01); }
+            b.weigh(1.0);
+        }
+        assert!(b.rate < 0.4 && b.rate >= MIN_RATE, "{}", b.rate);
+        for _ in 0..20 {
+            for _ in 0..10 { b.sent(0.09); }
+            b.weigh(1.0);
+        }
+        assert_eq!(b.rate, MIN_RATE);
+        // (one frame held up over half a second: halved at once)
+        let mut c = BackOff::new();
+        c.sent(0.6);
+        assert_eq!(c.rate, 0.5);
+        // (clear again: back a tenth every second after CALM_S quiet ones, to all of it)
+        let mut secs = 0;
+        while b.rate < 1.0 && secs < 60 {
+            for _ in 0..20 { b.sent(0.001); }
+            b.weigh(1.0);
+            secs += 1;
+        }
+        assert_eq!(b.rate, 1.0);
+        assert!(secs >= CALM_S as usize + 8 && secs <= CALM_S as usize + 10, "{} s to climb back", secs);
     }
 }

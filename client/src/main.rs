@@ -37,6 +37,7 @@ mod invites;
 mod keeper;
 mod net;
 mod notify;
+mod overlay;
 mod report;
 mod settings;
 mod shortcut;
