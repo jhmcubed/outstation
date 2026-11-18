@@ -148,3 +148,5 @@ And Jace's look at the side tab (11/18/2026): Set my goal item moved from the to
 goal"; the More tab folded into the Page tab (his order: your goal, who sees it, Dink, the register, then Take my page
 down last), so two tabs, Page and Model; and the line under Capture my character keeps to the model's own messages
 (every line the plugin said had gone there, so "your goal is on your page" sat under the capture button).
+
+Jace updated the pull request's title ("Update Outside: goal fixes and the side tab's Page tab") and description to list all of it (11/18/2026, after the bot's cooldown, before any review).
