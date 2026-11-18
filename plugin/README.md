@@ -44,7 +44,7 @@ Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on O
 
 **Update my page** counts down to when it can be pressed again, and the tab shows when it last went (11/16/2026).
 **Show what's sent** opens exactly what Update my page would send now, every field of it, in a window to read before
-sending. **Copy my Dink address** (11/16/2026): if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin,
+sending. **Copy my address for Dink** (11/16/2026): if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin,
 this copies your page's address for it, to paste on its own line in Dink's Primary Webhook URLs; what you switch on in
 Dink then shows on your page and Outside.wiki's globe as field reports as they happen. This plugin sends nothing for
 it (Dink does); nothing from the Wilderness or PvP is shown, nor anything that names another player, and Dink's world,

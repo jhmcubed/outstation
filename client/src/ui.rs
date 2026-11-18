@@ -2217,7 +2217,7 @@ fn dink_drawer(app: &mut App, ui: &mut egui::Ui) {
     forward_note_ui(ui, &mut s);
     ui.label(wrapped("Dink (a RuneLite plugin) tells the outstation when something big happens, so a clip saves itself.", 14.0, GREY(), w));
     // (the Dink trim, 11/17/2026: field reports go from Dink to the page directly, through the Outside plugin's address)
-    ui.label(wrapped("your field reports (levels, kills, drops, pets…) go to your Outside page from Dink directly: in RuneLite, the Outside plugin's side tab, \"Copy my Dink address\", on a line of its own in Dink. The outstation doesn't pass them on.", 14.0, QUIET(), w));
+    ui.label(wrapped("your field reports (levels, kills, drops, pets…) go to your Outside page from Dink directly: in RuneLite, the Outside plugin's side tab, \"Copy my address for Dink\", on a line of its own in Dink. The outstation doesn't pass them on.", 14.0, QUIET(), w));
     ui.add_space(8.0);
     ui.label(rich("point Dink at the outstation too", 16.0, LIME()));
     dink_address_ui(app, ui, &mut s, &st);
@@ -2336,7 +2336,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
                 flash_show(ui, "setup key");
             });
             ui.add_space(6.0);
-            ui.label(wrapped("who sees your page is set there too: its side tab ▸ More ▸ Who sees it (anyone, or friends only). The outstation follows it.", 14.0, QUIET(), w));
+            ui.label(wrapped("who sees your page is set there too: its side tab ▸ Page ▸ Who sees it (anyone, or friends only). The outstation follows it.", 14.0, QUIET(), w));
         }
         Part::Clips => {
             ui.label(rich("clips", 18.0, LIME()));
@@ -2379,7 +2379,7 @@ fn setup_screen(app: &mut App, ui: &mut egui::Ui, step: u8) {
             dink_address_ui(app, ui, &mut s, &st);
             if !s.clips_mode() {
                 ui.add_space(6.0);
-                ui.label(wrapped("your field reports (levels, kills, drops, pets…) go to your Outside page from Dink directly, not through the outstation: in RuneLite, the Outside plugin's side tab ▸ More ▸ Copy my Dink address, and that on a line of its own in Dink's Primary Webhook URLs too.", 14.0, QUIET(), w));
+                ui.label(wrapped("your field reports (levels, kills, drops, pets…) go to your Outside page from Dink directly, not through the outstation: in RuneLite, the Outside plugin's side tab ▸ Page ▸ Copy my address for Dink, and that on a line of its own in Dink's Primary Webhook URLs too.", 14.0, QUIET(), w));
             }
         }
         Part::Discord => {
@@ -2454,7 +2454,7 @@ fn settings_dir(settings: &crate::settings::Shared) -> std::path::PathBuf {
 fn forward_note_ui(ui: &mut egui::Ui, s: &mut crate::settings::Settings) {
     if s.extra.get("forward_note").and_then(|v| v.as_bool()) != Some(true) { return; }
     let w = ui.available_width();
-    ui.label(wrapped("this outstation used to pass Dink's posts on, to your Discord and your Outside page. It doesn't now: in RuneLite, add your Discord webhook to Dink's Primary Webhook URLs, and the Outside plugin's Dink address (its side tab ▸ More ▸ Copy my Dink address), each on a line of its own. The clips keep going to your Discord from here.", 14.0, PINK(), w));
+    ui.label(wrapped("this outstation used to pass Dink's posts on, to your Discord and your Outside page. It doesn't now: in RuneLite, add your Discord webhook to Dink's Primary Webhook URLs, and the Outside plugin's Dink address (its side tab ▸ Page ▸ Copy my address for Dink), each on a line of its own. The clips keep going to your Discord from here.", 14.0, PINK(), w));
     if button(ui, "got it", true, None).clicked() { s.extra.remove("forward_note"); }
     ui.add_space(6.0);
 }
@@ -4326,7 +4326,7 @@ impl App {
                 self.poll_form = Some(PollForm { question: String::new(), options: String::new(), seconds: 60 });
             }
             if button(ui, "a guess…", false, None)
-                .on_hover_text(tip("observers guess the kill count a drop comes on. The relay hears the kills and the drop from Dink pointed at your page (the Outside plugin's side tab ▸ More ▸ Copy my Dink address), with kill counts and loot on in Dink; without it, \"it dropped\" ends it by hand.")).clicked() {
+                .on_hover_text(tip("observers guess the kill count a drop comes on. The relay hears the kills and the drop from Dink pointed at your page (the Outside plugin's side tab ▸ Page ▸ Copy my address for Dink), with kill counts and loot on in Dink; without it, \"it dropped\" ends it by hand.")).clicked() {
                 self.guess_form = Some((String::new(), String::new()));
             }
             if button(ui, "clip", false, None).on_hover_text("the tape saved as a clip (the clip key does the same)").clicked() {
@@ -4412,7 +4412,7 @@ impl App {
                             if winners.is_empty() { "no guesses".to_string() } else { format!("closest: {} ({} off)", winners.join(", "), r.get("off").map(|x| x.to_string()).unwrap_or_default()) })
                 }
                 None => format!("kill count now: {} · {} guessed{}",
-                                g.get("kc").filter(|x| !x.is_null()).map(|x| x.to_string()).unwrap_or_else(|| "not heard yet (Dink pointed at your page: the Outside plugin's Copy my Dink address, with kill counts on)".into()),
+                                g.get("kc").filter(|x| !x.is_null()).map(|x| x.to_string()).unwrap_or_else(|| "not heard yet (Dink pointed at your page: the Outside plugin's Copy my address for Dink, with kill counts on)".into()),
                                 g.get("count").and_then(|x| x.as_u64()).unwrap_or(0),
                                 if open { "" } else { " · guesses closed, waiting for the drop" }),
             };

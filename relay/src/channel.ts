@@ -2209,7 +2209,7 @@ export class Channel extends DurableObject<Env> {
     const payload = await dinkPayload(request);
     // (an outstation from before v0.2.0 passing Dink's posts on, trimmed, with its own "at" and without the region the
     // Wilderness is told by: dropped, as it can't be checked; Dink's own posts never carry "at". 11/17/2026, the review
-    // before v0.2.0. The player's Dink pointed at the page itself, by the plugin's Copy my Dink address, reports all)
+    // before v0.2.0. The player's Dink pointed at the page itself, by the plugin's Copy my address for Dink, reports all)
     if (payload && typeof payload === "object" && typeof (payload as any).at === "number" && (payload as any).regionId === undefined) {
       return new Response(null, { status: 204 });
     }

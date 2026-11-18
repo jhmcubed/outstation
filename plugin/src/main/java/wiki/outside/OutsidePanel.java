@@ -100,7 +100,7 @@ public class OutsidePanel extends PluginPanel
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
 		void showSent();
 
-		/** "Copy my Dink address": the page's address for the Dink plugin's webhooks, to the clipboard. */
+		/** "Copy my address for Dink": the page's address for the Dink plugin's webhooks, to the clipboard. */
 		void copyDink();
 
 		void friendsOnly(boolean on);
@@ -315,7 +315,7 @@ public class OutsidePanel extends PluginPanel
 			+ " Webhook URLs: what you switch on in Dink then shows on your page and the globe as it happens. Nothing from the"
 			+ " Wilderness or PvP is ever shown. It holds your page's key: keep it to yourself.</div></html>")));
 		pageTab.add(Box.createVerticalStrut(6));
-		pageTab.add(wide(button("Copy my Dink address", () -> hooks.copyDink())));
+		pageTab.add(wide(button("Copy my address for Dink", () -> hooks.copyDink())));
 		dinkStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		pageTab.add(left(dinkStatus));
 		pageTab.add(Box.createVerticalStrut(12));
@@ -673,7 +673,7 @@ public class OutsidePanel extends PluginPanel
 		});
 	}
 
-	/** A line under "Copy my Dink address". */
+	/** A line under "Copy my address for Dink". */
 	public void dinkStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> dinkStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));

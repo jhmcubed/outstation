@@ -5,7 +5,7 @@
 //! the tape as a clip a few seconds on, and, with their switches, puts a copy on the Outside page and sends it to
 //! Discord (the Dink drawer's webhook). Nothing else of the post goes anywhere.
 //!
-//! (The Dink trim, 11/17/2026, Jace: the Outside plugin's "Copy my Dink address" points Dink straight at the page, so
+//! (The Dink trim, 11/17/2026, Jace: the Outside plugin's "Copy my address for Dink" points Dink straight at the page, so
 //! the outstation no longer passes Dink's posts on: not to the relay (two copies of every field report, and the map
 //! region it took out let the relay's Wilderness check miss), and not to Discord (Dink keeps its own Discord address).)
 
