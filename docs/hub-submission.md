@@ -137,3 +137,9 @@ his page without its model: `sendGoal` copied the model's textures (`cloneTextur
 and an item with none threw there, the whole model let go. Now each copy only as the item needs it (its recolours,
 its retextures), the model sent unlit if lighting it fails, and why it couldn't be read said in the chat. Only
 `commit=` changes.
+
+Then, before its review, three more in the same update (Jace, 11/18/2026, "do all three"): the goal got from the loot
+itself as well as the collection log's line (RuneLite's `NpcLootReceived`, and the Loot Tracker's `LootReceived` for a
+raid's chest or a casket when that plugin is on; the counts then still held for the next update, as the Hub's terms
+ask); the goal shown on the Outside side tab with a ✕ that clears it; and the note when a goal has no drop rate, which
+is the page's (outside.wiki's `listed`, from tools/drop_sources.py), not the plugin's: the plugin never knows the rates.

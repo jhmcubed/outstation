@@ -561,6 +561,9 @@ public class OutsidePlugin extends Plugin
 	{
 		if (e.getGameState() == GameState.LOGGED_IN)
 		{
+			// hub:cut goal
+			goalPanel();
+			// hub:end goal
 			readProof();   // (proven since the last logout? the side tab says so)
 			sceneDue = true;   // (a scene loaded: its area, as Discord reads it, on the next tick)
 		}
@@ -2074,7 +2077,25 @@ public class OutsidePlugin extends Plugin
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
 		sendGoal();
+		goalPanel();
 		say("your goal is " + itemManager.getItemComposition(item).getName() + ": your Outside page shows it, your kill count and how dry you are");
+	}
+
+	/** The side tab's goal line, as this account's goal stands (on the client's thread). */
+	private void goalPanel()
+	{
+		if (panel == null)
+		{
+			return;
+		}
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (item == null || item <= 0)
+		{
+			panel.goal(null);
+			return;
+		}
+		boolean got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null;
+		panel.goal("Goal: " + itemManager.getItemComposition(item).getName() + (got ? " (got)" : ""));
 	}
 
 	private void goalClear()
@@ -2083,6 +2104,7 @@ public class OutsidePlugin extends Plugin
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
 		keep("goal", null);
+		goalPanel();
 		say("your goal's off your Outside page");
 	}
 
@@ -2200,25 +2222,60 @@ public class OutsidePlugin extends Plugin
 		keep("goal", body);
 	}
 
-	/** The game's collection log line: the goal's, it's got (once), the counts then kept with it. */
+	/** The game's collection log line: the goal's, it's got. */
 	private void goalLine(String added)
 	{
 		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
-		if (added == null || item == null || item <= 0)
+		if (added != null && item != null && item > 0 && Goal.isIt(added, itemManager.getItemComposition(item).getName()))
+		{
+			goalGot();
+		}
+	}
+
+	/** Loot as RuneLite reads it (a kill's, or the Loot Tracker's: a raid's chest, a casket, a minigame's reward): the
+	 *  goal among it, it's got (11/18/2026, update 4: the collection log's line shows only the first time, and only
+	 *  with its notification on in the game's settings). */
+	private void goalLoot(java.util.Collection<net.runelite.client.game.ItemStack> items)
+	{
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (items == null || item == null || item <= 0 || !config.goal())
 		{
 			return;
 		}
+		for (net.runelite.client.game.ItemStack it : items)
+		{
+			if (it != null && itemManager.canonicalize(it.getId()) == item)
+			{
+				goalGot();
+				return;
+			}
+		}
+	}
+
+	@Subscribe
+	public void goalOnNpcLoot(net.runelite.client.events.NpcLootReceived e)
+	{
+		goalLoot(e.getItems());
+	}
+
+	@Subscribe
+	public void goalOnLoot(net.runelite.client.plugins.loottracker.LootReceived e)
+	{
+		goalLoot(e.getItems());
+	}
+
+	/** The goal's got (once): when, and the counts then, kept with it and sent (in the Hub's version, with the next
+	 *  update). */
+	private void goalGot()
+	{
 		if (configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null)
-		{
-			return;
-		}
-		if (!Goal.isIt(added, itemManager.getItemComposition(item).getName()))
 		{
 			return;
 		}
 		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, System.currentTimeMillis());
 		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS, gson.toJson(counts.json()));
 		sendGoal(true);
+		goalPanel();
 		say(HOLD_KEEPS ? "your goal's got: your Outside page says so with your next update" : "your goal's got: your Outside page says so");
 	}
 	// hub:end goal
@@ -2232,6 +2289,12 @@ public class OutsidePlugin extends Plugin
 			public void setGoal()
 			{
 				goalPick();
+			}
+
+			@Override
+			public void clearGoal()
+			{
+				clientThread.invokeLater(() -> goalClear());
 			}
 			// hub:end goal
 

@@ -92,6 +92,9 @@ public class OutsidePanel extends PluginPanel
 		// hub:cut goal
 		/** "Set my goal item": the game's item search, the item picked goes to the page (update 3). */
 		void setGoal();
+
+		/** The ✕ beside the goal: taken off the page (update 4). */
+		void clearGoal();
 		// hub:end goal
 
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
@@ -243,6 +246,22 @@ public class OutsidePanel extends PluginPanel
 		// (the goal item, 11/17/2026: here, by the page's own buttons, so it's found without looking for it)
 		page.add(Box.createVerticalStrut(4));
 		page.add(wide(button("Set my goal item", hooks::setGoal)));
+		// (the goal set, with ✕ to take it off: 11/18/2026, update 4; ::outsidegoal clear was the only way)
+		JPanel goalRow = new JPanel(new BorderLayout(6, 0));
+		goalRow.setOpaque(false);
+		goalLine.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		goalRow.add(goalLine, BorderLayout.CENTER);
+		goalClear.setToolTipText("Take the goal off your page");
+		// (the game's own font has no ✕: a system font's, or × or x where that has none either)
+		goalClear.setFont(new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12));
+		goalClear.setText(goalClear.getFont().canDisplay('\u2715') ? "\u2715" : goalClear.getFont().canDisplay('\u00d7') ? "\u00d7" : "x");
+		goalClear.setMargin(new java.awt.Insets(0, 6, 0, 6));
+		goalClear.addActionListener(ev -> hooks.clearGoal());
+		goalRow.add(goalClear, BorderLayout.EAST);
+		goalRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
+		goalRow.setVisible(false);
+		goalBox = goalRow;
+		page.add(goalRow);
 		// hub:end goal
 		snapClock.start();
 		page.add(Box.createVerticalStrut(10));
@@ -737,6 +756,26 @@ public class OutsidePanel extends PluginPanel
 			claimStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>");
 		});
 	}
+
+	// hub:cut goal
+	private final JLabel goalLine = small(" ");
+	private final JButton goalClear = new JButton("x");
+	private JPanel goalBox;
+
+	/** The goal under its button: its name and how it stands (null: none set, the line hidden). */
+	public void goal(String words)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (goalBox == null)
+			{
+				return;
+			}
+			goalBox.setVisible(words != null);
+			goalLine.setText(words == null ? " " : "<html><div style='width:130px'>" + esc(words) + "</div></html>");
+		});
+	}
+	// hub:end goal
 
 	/** A line under the capture button. */
 	public void status(String words)
