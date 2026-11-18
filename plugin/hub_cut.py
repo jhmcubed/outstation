@@ -60,7 +60,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal"]
-SUBMITTED = ["delve", "model", "bank", "deathbank"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update)
+SUBMITTED = ["delve", "model", "bank", "deathbank", "goal"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update)
 
 # whole files that belong to a part (paths under this folder)
 J = "src/main/java/wiki/outside/"

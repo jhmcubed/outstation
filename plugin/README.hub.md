@@ -34,7 +34,7 @@ Under four headings, each switch on to begin with:
 
 - **Your page:** **Send to my Outside page**, the main switch. Off, nothing is sent, and what it sent comes off your page.
 <!-- hub:cut goal -->
-- **Goal item:** **Set my goal item** (on the Page tab, or `::outsidegoal`) opens the game's own item search in the chatbox: type part of a name, click the item you're after. Your page shows it under your character with its 3D model, your kill count where it drops, and how dry you are for it from the wiki's drop rates. When the game's collection log says you got it, your page says when, and at how many kills. `::outsidegoal clear` takes it off.
+- **Goal item:** **Set my goal item** (on the Page tab, or `::outsidegoal`) opens the game's own item search in the chatbox: type part of a name, click the item you're after. Your page shows it under your character with its 3D model, your kill count where it drops, and how dry you are for it from the wiki's drop rates. When the game's collection log says you got it, your page says when, and at how many kills, with your next update. `::outsidegoal clear` takes it off.
 <!-- hub:end goal -->
 - **On your page:** **Gear and inventory**, **Skills**, **Quests, diaries and progress** (and the collection log's count, kill counts and clue counts), **Slayer task**, **Item charges**, **Doom of Mokhaiotl delves**, **Bank**, **Deathbank** and **Character model**: each its own switch, and switching one off takes it off your page. Bank, Deathbank and Character model show a warning when they're switched back on. (**Ground under my model** isn't here: it's a box in the side tab's Model tab, under Capture my character, and asks before it's switched back on.)
 - **What you're doing:** **What I'm doing**, as RuneLite's Discord plugin shows it.
@@ -63,7 +63,7 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 - **my deathbank:** the Item Retrieval Service's deathbank (as at Hespori, Zulrah or Vorkath), which one it is and what's in it: what a death put there, read once you're back on your feet, and again as its window shows it when you look in it; emptied, it comes off your page
 
 <!-- hub:cut goal -->
-**When you set a goal item** (only with "Goal item" on): the item's name and its 3D model as the game draws it; and, when the collection log says you got it, your kill and clue counts then.
+**When you set a goal item** (only with "Goal item" on): the item's name and its 3D model as the game draws it; and, when the collection log says you got it, your kill and clue counts then (sent with your next update).
 
 <!-- hub:end goal -->
 **When you capture your character** (only with "Character model" on, and only when you press Capture my character or use `::outsidemodel` or `::outsidemotion`): your character's model as you look then (its shape, colours and effects, nothing else), the motion's frames if you did an emote, your pet's the same; and, with "Ground under my model" on, the ground round you then, about five tiles each way (the tiles' paint and shape: no objects, people or items).

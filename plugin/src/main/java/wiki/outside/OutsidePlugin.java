@@ -517,7 +517,7 @@ public class OutsidePlugin extends Plugin
 		{
 			if (config.goal())
 			{
-				clientThread.invokeLater(this::sendGoal);
+				clientThread.invokeLater(() -> sendGoal(false));
 			}
 			else
 			{
@@ -2090,6 +2090,13 @@ public class OutsidePlugin extends Plugin
 	 *  retextures), and when it was got with the counts then (on the client's thread). */
 	private void sendGoal()
 	{
+		sendGoal(false);
+	}
+
+	/** byItself: the game's collection log line sent it, not the player's press, so in the Hub's version it waits for the
+	 *  next update (Update my page, or the hourly one), as the bank does: the reviewer's terms, a press or the hourly sync. */
+	private void sendGoal(boolean byItself)
+	{
 		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
 		if (!config.goal() || item == null || item <= 0)
 		{
@@ -2135,7 +2142,16 @@ public class OutsidePlugin extends Plugin
 		{
 			countsThen = null;
 		}
-		keep("goal", Goal.body(item, c.getName(), model, got == null ? 0 : got, countsThen));
+		JsonObject body = Goal.body(item, c.getName(), model, got == null ? 0 : got, countsThen);
+		if (byItself && HOLD_KEEPS)
+		{
+			synchronized (keepHeld)
+			{
+				keepHeld.put("goal", body);
+			}
+			return;
+		}
+		keep("goal", body);
 	}
 
 	/** The game's collection log line: the goal's, it's got (once), the counts then kept with it. */
@@ -2156,8 +2172,8 @@ public class OutsidePlugin extends Plugin
 		}
 		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, System.currentTimeMillis());
 		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS, gson.toJson(counts.json()));
-		sendGoal();
-		say("your goal's got: your Outside page says so");
+		sendGoal(true);
+		say(HOLD_KEEPS ? "your goal's got: your Outside page says so with your next update" : "your goal's got: your Outside page says so");
 	}
 	// hub:end goal
 

@@ -113,3 +113,14 @@ reviewer's terms ("an 'Update my page' action and an hourly sync"):
 - `README.hub.md` says what each sends and when; the settings' descriptions and warnings say "with your next update" in
   the Hub's version (`hub:only` lines).
 The manifest's warning stays as the reviewer wrote it; only `commit=` changes.
+
+## Update 3: the goal item (11/18/2026)
+
+Update 2 merged as runelite/plugin-hub#20872 (11/17/2026 23:24 UTC). Update 3 adds `goal` to `hub_cut.py`'s SUBMITTED
+(Goji Berries' idea; Jace: "Cut update 3 as it stands"): **Set my goal item** on the side tab's Page tab, or
+`::outsidegoal`, opens RuneLite's own item search in the chatbox (`ChatboxItemSearch`); the item picked goes to the
+page's keep with its model, as the game draws it, on that press. When the game's collection log line names it, its "got"
+(the time, the kill and clue counts then) is held in the Hub's version and sent after the next update's post, as the
+bank's is: the reviewer's terms, a press or the hourly sync. Its own switch, "Goal item", on to begin with, with its
+warning. And Outside.wiki with its capital O in what the player reads (no change to what's sent). The manifest's
+warning stays as the reviewer wrote it; only `commit=` changes.
