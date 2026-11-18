@@ -3063,8 +3063,8 @@ public class OutsidePlugin extends Plugin
 						if (count > 0 && !notesSaid)
 						{
 							notesSaid = true;
-							say(count == 1 ? "1 new note in your Outside page's register (the side tab's More)"
-								: count + " new notes in your Outside page's register (the side tab's More)");
+							say(count == 1 ? "1 new note in your Outside page's register (the side tab's Page tab)"
+								: count + " new notes in your Outside page's register (the side tab's Page tab)");
 						}
 					}
 				}

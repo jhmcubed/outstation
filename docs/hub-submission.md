@@ -143,3 +143,8 @@ itself as well as the collection log's line (RuneLite's `NpcLootReceived`, and t
 raid's chest or a casket when that plugin is on; the counts then still held for the next update, as the Hub's terms
 ask); the goal shown on the Outside side tab with a ✕ that clears it; and the note when a goal has no drop rate, which
 is the page's (outside.wiki's `listed`, from tools/drop_sources.py), not the plugin's: the plugin never knows the rates.
+
+And Jace's look at the side tab (11/18/2026): Set my goal item moved from the top buttons into the Page tab under "Your
+goal"; the More tab folded into the Page tab (his order: your goal, who sees it, Dink, the register, then Take my page
+down last), so two tabs, Page and Model; and the line under Capture my character keeps to the model's own messages
+(every line the plugin said had gone there, so "your goal is on your page" sat under the capture button).
