@@ -169,7 +169,18 @@ export class Aether extends DurableObject<Env> {
       try {
         const r = await this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"))
           .fetch("https://dir/taken?name=" + encodeURIComponent(channelForm(name)));
-        if (((await r.json()) as { taken: boolean }).taken) no = [4009, "that name belongs to an outstation"];
+        const t = (await r.json()) as { taken: boolean; channel?: string | null };
+        // (11/18/2026, a friend with an outstation, on the aether from its page: "i can't choose my username but that's
+        // how i'd like to go by in osrs related things". An outstation's name is its owner's: a visitor who brings that
+        // outstation's key, checked by its channel's object as the outstation's own socket's is (4001, 4003, 4029), is
+        // in under it, as the outstation: its lines from "outstation", its rate and its bans the channel's)
+        const key = q.get("key");
+        if (t.taken && t.channel && key) {
+          const k = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(t.channel)).fetch(new Request(
+            "https://channel/_key?key=" + encodeURIComponent(key), { headers: { "x-channel": t.channel, "cf-connecting-ip": ip } }));
+          no = ((await k.json()) as { no: [number, string] | null }).no;
+          if (!no) { from = "outstation"; who = "channel:" + t.channel; }
+        } else if (t.taken) no = [4009, "that name belongs to an outstation"];
       } catch {
         no = [1013, "the relay couldn't check the name: try again"];
       }
