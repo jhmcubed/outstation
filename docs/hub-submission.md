@@ -124,3 +124,8 @@ page's keep with its model, as the game draws it, on that press. When the game's
 bank's is: the reviewer's terms, a press or the hourly sync. Its own switch, "Goal item", on to begin with, with its
 warning. And Outside.wiki with its capital O in what the player reads (no change to what's sent). The manifest's
 warning stays as the reviewer wrote it; only `commit=` changes.
+
+Cut into outside-plugin (jhmcubed/outside-plugin#18) at `63d66ae097dac04bc1a4daf4da4d851fa0f37f69`; `plugins/outside`'s
+`commit=` set to it on jhmcubed/plugin-hub's branch `claude/keen-hopper-89gwe5` (1f332d1, from runelite/plugin-hub's
+master), the pull request to runelite/plugin-hub opened from it by Jace. Once it's merged: ghillie's
+`public/outside-portal.js` `ON_THE_HUB.goal` on (the profile's "no goal set" line).
