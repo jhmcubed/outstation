@@ -2103,33 +2103,79 @@ public class OutsidePlugin extends Plugin
 			return;
 		}
 		net.runelite.api.ItemComposition c = itemManager.getItemComposition(item);
+		// (11/18/2026, the first goal on the Hub came without its model: its textures were copied whether it had any or
+		// not, and an item with none, most of them, threw there; now each step only as the item needs it, the model sent
+		// unlit if lighting it fails, and why it couldn't be read said in the chat)
 		JsonObject model = null;
+		String why = null;
+		net.runelite.api.ModelData md = null;
 		try
 		{
-			net.runelite.api.ModelData md = client.loadModelData(c.getInventoryModel());
-			if (md != null)
+			md = client.loadModelData(c.getInventoryModel());
+			if (md == null)
 			{
-				md = md.cloneColors().cloneTextures();
+				why = "the game gave no model for it";
+			}
+			else
+			{
 				short[] from = c.getColorToReplace(), to = c.getColorToReplaceWith();
-				for (int i = 0; from != null && to != null && i < Math.min(from.length, to.length); i++)
+				if (from != null && to != null && from.length > 0)
 				{
-					md.recolor(from[i], to[i]);
+					md = md.cloneColors();
+					for (int i = 0; i < Math.min(from.length, to.length); i++)
+					{
+						md.recolor(from[i], to[i]);
+					}
 				}
 				short[] tf = c.getTextureToReplace(), tt = c.getTextureToReplaceWith();
-				for (int i = 0; tf != null && tt != null && i < Math.min(tf.length, tt.length); i++)
+				if (tf != null && tt != null && tf.length > 0 && md.getFaceTextures() != null)
 				{
-					md.retexture(tf[i], tt[i]);
+					md = md.cloneTextures();
+					for (int i = 0; i < Math.min(tf.length, tt.length); i++)
+					{
+						md.retexture(tf[i], tt[i]);
+					}
 				}
+			}
+		}
+		catch (RuntimeException ex)
+		{
+			why = ex.getClass().getSimpleName() + (ex.getMessage() == null ? "" : ": " + ex.getMessage());
+			md = null;
+		}
+		if (md != null)
+		{
+			try
+			{
 				Model m = md.light();
 				if (m != null)
 				{
 					model = wholeModel(modelJson(m), null, null, null);
 				}
 			}
+			catch (RuntimeException ex)
+			{
+				why = ex.getClass().getSimpleName() + (ex.getMessage() == null ? "" : ": " + ex.getMessage());
+			}
+			if (model == null)
+			{
+				// (unlit, its own colours: the page lights it)
+				try
+				{
+					model = Kept.model(md.getVerticesX(), md.getVerticesY(), md.getVerticesZ(), md.getVerticesCount(),
+						md.getFaceIndices1(), md.getFaceIndices2(), md.getFaceIndices3(), md.getFaceCount(),
+						null, null, md.getFaceColors(), md.getFaceTransparencies(), md.getFaceTextures());
+				}
+				catch (RuntimeException ex)
+				{
+					why = ex.getClass().getSimpleName() + (ex.getMessage() == null ? "" : ": " + ex.getMessage());
+				}
+			}
 		}
-		catch (RuntimeException ex)
+		if (model == null)
 		{
-			log.debug("outside: the goal's model", ex);
+			log.debug("outside: the goal's model: {}", why);
+			say("your goal goes to your page as its picture: its 3D model couldn't be read (" + (why == null ? "no reason given" : why) + ")");
 		}
 		Long got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class);
 		String then = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);

@@ -129,3 +129,11 @@ Cut into outside-plugin (jhmcubed/outside-plugin#18) at `63d66ae097dac04bc1a4daf
 `commit=` set to it on jhmcubed/plugin-hub's branch `claude/keen-hopper-89gwe5` (1f332d1, from runelite/plugin-hub's
 master), the pull request to runelite/plugin-hub opened from it by Jace. Once it's merged: ghillie's
 `public/outside-portal.js` `ON_THE_HUB.goal` on (the profile's "no goal set" line).
+
+## Update 4: the goal's model (11/18/2026)
+
+Update 3 merged as runelite/plugin-hub#20919 (11/18/2026 07:58 UTC). Jace's first goal (the Ascension crossbows) reached
+his page without its model: `sendGoal` copied the model's textures (`cloneTextures`) whether the item had any or not,
+and an item with none threw there, the whole model let go. Now each copy only as the item needs it (its recolours,
+its retextures), the model sent unlit if lighting it fails, and why it couldn't be read said in the chat. Only
+`commit=` changes.
