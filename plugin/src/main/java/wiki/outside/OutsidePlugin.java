@@ -2253,14 +2253,20 @@ public class OutsidePlugin extends Plugin
 		}
 	}
 
+	// (RuneLite's event bus takes a listener only when it's named "on" and its event's name: anything else and the plugin
+	// won't start. 11/19/2026: update 4 named these goalOnNpcLoot and goalOnLoot, to keep clear of the field reports'
+	// own listener, and the Hub's version wouldn't switch on. One listener now, which hands the reports theirs.)
 	@Subscribe
-	public void goalOnNpcLoot(net.runelite.client.events.NpcLootReceived e)
+	public void onNpcLootReceived(net.runelite.client.events.NpcLootReceived e)
 	{
 		goalLoot(e.getItems());
+		// hub:cut reports
+		reportLoot(e);
+		// hub:end reports
 	}
 
 	@Subscribe
-	public void goalOnLoot(net.runelite.client.plugins.loottracker.LootReceived e)
+	public void onLootReceived(net.runelite.client.plugins.loottracker.LootReceived e)
 	{
 		goalLoot(e.getItems());
 	}
@@ -4117,9 +4123,9 @@ public class OutsidePlugin extends Plugin
 	}
 
 	// hub:cut reports
-	/** A monster's loot (RuneLite's own reading of it, as Dink's): worth "Drops worth at least" or more, a report. */
-	@Subscribe
-	public void onNpcLootReceived(NpcLootReceived e)
+	/** A monster's loot (RuneLite's own reading of it, as Dink's): worth "Drops worth at least" or more, a report.
+	 *  (Handed it by the goal's onNpcLootReceived: the event bus takes one listener of that name.) */
+	private void reportLoot(NpcLootReceived e)
 	{
 		if (!config.reports() || e.getNpc() == null)
 		{

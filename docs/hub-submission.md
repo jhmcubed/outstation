@@ -156,3 +156,7 @@ And Capture a still (11/18/2026, Cranky, a friend, through Jace: "a 'capture sti
 And Talk in the aether as me (11/18/2026, Jace): the Page tab's "The aether", after the register: opens the page with its key in the fragment (#aether=<key>, no server sees it; the page takes it out of the address at once), so the aether lets its owner in under the page's name without pasting the key. On the press only; nothing sent by the plugin.
 
 Merged: runelite/plugin-hub#20922 merged 11/19/2026 02:51 UTC, at outside-plugin af8d683 (Jace had moved commit= one step past 11fea55, to take in the other session's "Effects at their own height, not raised twice"). The bot's compare link was its only comment; no review comments; labels plugin change and size-m (size-s until the second push).
+
+## Update 5: the plugin switched on again (11/19/2026)
+
+Update 4 merged 02:51 UTC and wouldn't start: RuneLite's event bus refuses a listener not named "on" and its event's name, and the goal's loot listeners were goalOnNpcLoot and goalOnLoot ("Subscribed method ... should be named onNpcLootReceived", PluginInstantiationException; found by starting the merged version in RuneLite under Xvfb). Now onNpcLootReceived (which hands the field reports theirs in the whole plugin) and onLootReceived; SubscribeTest checks every listener's name, and fails on update 4 as merged. The fixed Hub version started in RuneLite: running, both loot listeners registered.
