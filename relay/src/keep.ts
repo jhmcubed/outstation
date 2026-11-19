@@ -12,7 +12,9 @@
 //   - "goal" (11/17/2026, update 3; Goji Berries: "what if you could set a goal item from the plugin then it shows your kc
 //     and dryness on the top of ur profile"): the item they're after, {"id", "name", "model"?, "got"?: {"at": ms,
 //     "counts"?: the plugin's kill and clue counts then, {"kills": {name: n}, "clues": {tier: n}}}}; the page works out
-//     how dry they are from the wiki's drop rates
+//     how dry they are from the wiki's drop rates. Since 11/19/2026 (Cranky: "I'd like to have more than 1 goal item")
+//     the rest of their goals with it, "more": [{"id", "name", "got"?}, ...], GOALS_MORE at most, each item once; the
+//     one at the top is the one they chose to show turning, and the only one with a model
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
@@ -42,6 +44,8 @@ export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
 export const LIVE_MOST = 24, GEAR = /^[0-9a-f]{1,16}$/, ANIM = /^(idle|[0-9]{1,6})$/;
 export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
+// (11/19/2026: a goal's "more", the rest of a player's goals beside the one shown; the plugin keeps 10 in all)
+export const GOALS_MORE = 19;
 export const BANK_SLOTS = 1600, DEATHBANK_SLOTS = 200, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
 // (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the model viewer/capturer?"): a
 // still model's effects ("fx": FX_MOST models), a motion's ("frames.fx": FX_MODELS models by key, and each frame's
@@ -100,37 +104,30 @@ export function keepShape(what: string, d: unknown): unknown | string {
     return { name: d.name, model: m, ...(whole(d.kc) ? { kc: d.kc } : {}) };
   }
   if (what === "goal") {
-    if (!whole(d.id) || (d.id as number) < 1 || (d.id as number) > 200_000) return "id: the item's";
-    if (typeof d.name !== "string") return "name: the item's";
-    const name = d.name.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 60);
-    if (!name) return "name: the item's";
-    const out: Record<string, unknown> = { id: d.id, name };
+    const out = goalShape(d);
+    if (typeof out === "string") return out;
     if (d.model !== undefined) {
       if (!isObj(d.model)) return "model: the item's";
       const m = modelShape(d.model, true);
       if (typeof m === "string") return "model's " + m;
       out.model = m;
     }
-    if (d.got !== undefined) {
-      const g = d.got as Record<string, unknown>;
-      if (!isObj(g) || !whole(g.at, Number.MAX_SAFE_INTEGER) || (g.at as number) < 1_262_304_000_000) return "got: {\"at\": when, \"counts\"?}";
-      const got: Record<string, unknown> = { at: g.at };
-      if (g.counts !== undefined) {
-        if (!isObj(g.counts)) return "got's counts: {\"kills\", \"clues\"}";
-        const counts: Record<string, Record<string, number>> = {};
-        for (const k of ["kills", "clues"]) {
-          const src = (g.counts as Record<string, unknown>)[k];
-          if (src === undefined) continue;
-          if (!isObj(src)) return "got's counts' " + k + ": {name: count}";
-          const kept: Record<string, number> = {};
-          for (const [n, c] of Object.entries(src as Record<string, unknown>).slice(0, 400)) {
-            if (typeof n === "string" && n.length <= 60 && whole(c)) kept[n.replace(/[\x00-\x1f\x7f]/g, " ")] = c as number;
-          }
-          counts[k] = kept;
-        }
-        got.counts = counts;
+    // (11/19/2026, Cranky: "I'd like to have more than 1 goal item"; Jace: "choose ONE of the goal items to be displayed
+    // as a 3d model, while the rest of the goal items are listed under the first"): the rest of their goals, each as the
+    // one shown is but with no model, in the order the plugin keeps them; the one at the top is the one the page turns
+    if (d.more !== undefined) {
+      if (!Array.isArray(d.more) || d.more.length > GOALS_MORE) return "more: " + GOALS_MORE + " goals at most";
+      const more: Record<string, unknown>[] = [], ids = new Set([d.id]);
+      for (const g of d.more) {
+        if (!isObj(g)) return "more: each a goal";
+        if (g.model !== undefined) return "more: only the goal at the top has a model";
+        const one = goalShape(g);
+        if (typeof one === "string") return "more's " + one;
+        if (ids.has(one.id)) return "more: each item once";
+        ids.add(one.id);
+        more.push(one);
       }
-      out.got = got;
+      if (more.length) out.more = more;
     }
     return out;
   }
@@ -142,6 +139,37 @@ export function keepShape(what: string, d: unknown): unknown | string {
     return m;
   }
   return "kept: bank, deathbank or model";
+}
+
+/** A goal's item and when it was got, checked (its model apart: only the goal at the top carries one), or a reason. */
+function goalShape(d: Record<string, unknown>): Record<string, unknown> | string {
+  if (!whole(d.id) || (d.id as number) < 1 || (d.id as number) > 200_000) return "id: the item's";
+  if (typeof d.name !== "string") return "name: the item's";
+  const name = d.name.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 60);
+  if (!name) return "name: the item's";
+  const out: Record<string, unknown> = { id: d.id, name };
+  if (d.got !== undefined) {
+    const g = d.got as Record<string, unknown>;
+    if (!isObj(g) || !whole(g.at, Number.MAX_SAFE_INTEGER) || (g.at as number) < 1_262_304_000_000) return "got: {\"at\": when, \"counts\"?}";
+    const got: Record<string, unknown> = { at: g.at };
+    if (g.counts !== undefined) {
+      if (!isObj(g.counts)) return "got's counts: {\"kills\", \"clues\"}";
+      const counts: Record<string, Record<string, number>> = {};
+      for (const k of ["kills", "clues"]) {
+        const src = (g.counts as Record<string, unknown>)[k];
+        if (src === undefined) continue;
+        if (!isObj(src)) return "got's counts' " + k + ": {name: count}";
+        const kept: Record<string, number> = {};
+        for (const [n, c] of Object.entries(src as Record<string, unknown>).slice(0, 400)) {
+          if (typeof n === "string" && n.length <= 60 && whole(c)) kept[n.replace(/[\x00-\x1f\x7f]/g, " ")] = c as number;
+        }
+        counts[k] = kept;
+      }
+      got.counts = counts;
+    }
+    out.got = got;
+  }
+  return out;
 }
 
 /** A model's shape (keep.ts's header): the player's, which may carry its pet's ("pet": a model of its own, with no pet)
