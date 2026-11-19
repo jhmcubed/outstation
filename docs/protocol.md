@@ -863,12 +863,13 @@ and `Relay.aether_socket`. Outside shows it as a tab beside a transmission's cha
 
 **On joining** it hears `{"aether_so_far": [line, …]}`, the last 100 lines, oldest first, and then `{"aether_here": n}`.
 
-**It sends** text, `{"say": text}`. Anything else is thrown away, and anything over 8 KB isn't read.
+**It sends** text, `{"say": text}`. Anything else is thrown away, and anything over 15,808 characters (a full line
+with every character escaped) isn't read.
 - A line may be several rows (ASCII art). Control characters are taken out, all but `\n` (C1's too, and the direction
   and zero-width ones); each row is cut to 80 characters and its trailing spaces trimmed (its leading spaces stay, for
-  the art's shape); empty rows at the start and the end are dropped; and the first 12 rows are kept. So a line is at
-  most 960 characters, the newlines between its rows aside. Characters are code points. A row over 80 is cut, not
-  refused, and a 13th row and on are left out.
+  the art's shape); empty rows at the start and the end are dropped; and the first 32 rows are kept (12 until
+  11/19/2026). So a line is at most 2,560 characters, the newlines between its rows aside. Characters are code points.
+  A row over 80 is cut, not refused, and a 33rd row and on are left out.
 - A line that's empty after that is ignored, and isn't counted.
 - At most one line every 2 s and 15 a minute, counted for the socket and for whoever it is (a visitor's device, an
   outstation's channel), so opening another socket or reconnecting doesn't start the count again. Past either, the line

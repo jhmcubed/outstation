@@ -29,6 +29,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
+import { mendNotes } from "./mends";
 import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
@@ -388,6 +389,8 @@ export class Channel extends DurableObject<Env> {
       delete old.settle;
       this.chat = (got.get("chat") as [number, string][]) || [];
       this.notes = (got.get("notes") as [number, string, string][]) || [];
+      // (a note put right by the keeper, once: mends.ts)
+      if (mendNotes(this.name, this.notes)) this.ctx.storage.put("notes", this.notes);
       // (the chat kept 500 lines for the register's few hours: back to its own 50)
       if (this.chat.length > CHAT_KEPT) this.chat = this.chat.slice(-CHAT_KEPT);
       this.poll = (got.get("poll") as Poll) || null;
