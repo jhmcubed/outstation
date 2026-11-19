@@ -101,6 +101,9 @@ public class OutsidePanel extends PluginPanel
 
 		/** The ✕ beside a goal: taken off the page (update 4). */
 		void forgetGoal(int id);
+
+		/** "No 3D model": every goal listed on the page with its picture, none turning (11/19/2026). */
+		void noGoalModel();
 		// hub:end goal
 
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
@@ -275,7 +278,7 @@ public class OutsidePanel extends PluginPanel
 		pageTab.add(Box.createVerticalStrut(12));
 		pageTab.add(left(heading("Your goals")));
 		pageTab.add(left(small("<html><div style='width:155px'>Items you're after: your page shows your kill count where each"
-			+ " drops and how dry you are for it, and the one picked here as its 3D model.</div></html>")));
+			+ " drops and how dry you are for it, and the one picked here as its 3D model (or none).</div></html>")));
 		pageTab.add(Box.createVerticalStrut(6));
 		goalAdd.addActionListener(ev -> hooks.addGoal());
 		pageTab.add(wide(goalAdd));
@@ -809,13 +812,30 @@ public class OutsidePanel extends PluginPanel
 	}
 
 	/** The goals under their button, in the order they were added: each picked to be shown, or taken off with its ✕
-	 *  (none: the list hidden). Full, the button waits. */
-	public void goals(List<GoalRow> rows, int most)
+	 *  (none: the list hidden); over them, "No 3D model", picked when none's shown as one. Full, the button waits. */
+	public void goals(List<GoalRow> rows, int most, boolean model)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
 			goalList.removeAll();
 			ButtonGroup group = new ButtonGroup();
+			if (!rows.isEmpty())
+			{
+				// (11/19/2026, Jace: "add the option to NOT show a 3D model on your page for your goal/goals list")
+				JPanel r = new JPanel(new BorderLayout(4, 0));
+				r.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+				r.setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
+				JRadioButton none = new JRadioButton("No 3D model", !model);
+				none.setToolTipText("Your page lists every goal with its picture, none turning as a 3D model");
+				none.setOpaque(false);
+				none.setFont(FontManager.getRunescapeSmallFont());
+				group.add(none);
+				none.addActionListener(e -> hooks.noGoalModel());
+				r.add(none, BorderLayout.CENTER);
+				r.setMaximumSize(new Dimension(Integer.MAX_VALUE, r.getPreferredSize().height));
+				goalList.add(r);
+				goalList.add(Box.createVerticalStrut(2));
+			}
 			for (GoalRow g : rows)
 			{
 				goalList.add(goalRow(g, group, rows.size() > 1));

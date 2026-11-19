@@ -21,8 +21,12 @@ import java.util.List;
  * counts then (the page reads the kill count it took from those). The page works out how dry they are from the wiki's
  * drop rates.
  *
- * Kept for the RuneScape profile as one setting, LIST: {"shown": id, "list": [{"id", "got"?, "counts"?}, ...]}, in the
- * order they were added. The one goal kept before (ITEM, GOT, GOT_COUNTS) is read into it once, then let go.
+ * Or none shown as a model (11/19/2026, Jace: "add the option to NOT show a 3D model on your page for your goal/goals
+ * list"): every goal listed with its picture, in the order they were added, nothing turning.
+ *
+ * Kept for the RuneScape profile as one setting, LIST: {"shown": id, "model": false (none turning; left out: one is),
+ * "list": [{"id", "got"?, "counts"?}, ...]}, in the order they were added. The one goal kept before (ITEM, GOT,
+ * GOT_COUNTS) is read into it once, then let go.
  */
 final class Goal
 {
@@ -52,11 +56,12 @@ final class Goal
 		}
 	}
 
-	/** A player's goals: the list, and the one shown (0: none). */
+	/** A player's goals: the list, the one shown (0: none), and whether it's shown as its model (false: none turning). */
 	static final class Kept
 	{
 		final List<One> list = new ArrayList<>();
 		int shown;
+		boolean model = true;
 
 		One find(int id)
 		{
@@ -70,9 +75,13 @@ final class Goal
 			return null;
 		}
 
-		/** The one shown, then the rest in the order they were added. */
+		/** The one shown, then the rest in the order they were added (none shown as a model: all in that order). */
 		List<One> pageOrder()
 		{
+			if (!model)
+			{
+				return new ArrayList<>(list);
+			}
 			List<One> out = new ArrayList<>();
 			One top = find(shown);
 			if (top != null)
@@ -120,13 +129,26 @@ final class Goal
 			return true;
 		}
 
+		/** This one shown as its model (none was: one is again). */
 		boolean show(int id)
 		{
-			if (find(id) == null || shown == id)
+			if (find(id) == null || (shown == id && model))
 			{
 				return false;
 			}
 			shown = id;
+			model = true;
+			return true;
+		}
+
+		/** None turning as a model: every goal listed with its picture. */
+		boolean noModel()
+		{
+			if (!model)
+			{
+				return false;
+			}
+			model = false;
 			return true;
 		}
 
@@ -134,6 +156,10 @@ final class Goal
 		{
 			JsonObject o = new JsonObject();
 			o.addProperty("shown", shown);
+			if (!model)
+			{
+				o.addProperty("model", false);
+			}
 			JsonArray a = new JsonArray();
 			for (One g : list)
 			{
@@ -186,6 +212,7 @@ final class Goal
 				{
 					k.shown = shown;
 				}
+				k.model = o == null || !o.has("model") || o.get("model").getAsBoolean();
 			}
 			catch (RuntimeException ex)
 			{

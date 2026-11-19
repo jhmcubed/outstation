@@ -148,4 +148,25 @@ public class GoalTest
 		assertFalse(whole.getAsJsonArray("more").get(0).getAsJsonObject().has("model"));
 		assertTrue(whole.has("model"));
 	}
+
+	@Test
+	public void noneTurningListsThemAllInTheirOrderAndPickingOneTurnsItAgain()
+	{
+		Gson gson = new Gson();
+		Goal.Kept k = new Goal.Kept();
+		k.add(4151);
+		k.add(11286);
+		k.show(11286);
+		assertTrue(k.noModel());
+		assertFalse(k.noModel());
+		assertEquals(4151, k.pageOrder().get(0).id);
+		Goal.Kept back = Goal.Kept.from(k.json(gson), gson);
+		assertFalse(back.model);
+		assertEquals(11286, back.shown);
+		assertTrue(back.show(11286));
+		assertTrue(back.model);
+		assertEquals(11286, back.pageOrder().get(0).id);
+		// (kept before this, with no "model": one turns)
+		assertTrue(Goal.Kept.from("{\"shown\": 4151, \"list\": [{\"id\": 4151}]}", gson).model);
+	}
 }

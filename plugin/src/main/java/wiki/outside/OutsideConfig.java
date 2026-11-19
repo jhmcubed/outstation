@@ -514,7 +514,7 @@ public interface OutsideConfig extends Config
 		keyName = "goal",
 		name = "Goal items",
 		description = "On (to begin with): the items you're after (\"Add a goal item\" in the side tab, or ::outsidegoal) go"
-			+ " to your Outside page, one with its 3D model (the one you pick in the side tab) and the rest listed under it,"
+			+ " to your Outside page, one with its 3D model (the one you pick in the side tab, or none) and the rest listed under it,"
 			+ " each with your kill count and how dry you are for it. When the game's collection log or your loot says you"
 			+ " got one, the page says so. ::outsidegoal clear takes them all off",
 		warning = "On, the items you set as your goals (their names, and the 3D model of the one you show) and, when you get"
