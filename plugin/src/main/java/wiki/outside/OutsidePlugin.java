@@ -1118,7 +1118,6 @@ public class OutsidePlugin extends Plugin
 					}
 					else if (code == 200 && res.body() != null)
 					{
-						keepKey(a);
 						// (what the page's proof did with it, while it's still to be made: docs/protocol.md "Proving a name")
 						try
 						{
@@ -1132,6 +1131,12 @@ public class OutsidePlugin extends Plugin
 						{
 							// (an answer it can't read: the update itself was taken)
 						}
+					}
+					// (taken, 204 or 200 with the proof's news: the pasted key kept with the account too. 11/19/2026, Jace's test
+					// in the game: only 200 kept it at first, and a taken update is 204 unless the page is still to be proven)
+					if (code == 204 || code == 200)
+					{
+						keepKey(a);
 					}
 					if (done != null)
 					{
