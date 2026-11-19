@@ -194,3 +194,13 @@ Update 4's new code read for that kind of mistake afterwards: each game call it 
 canonical ids, the still's model) runs on the client thread (loot events, chat commands and the item search are
 posted there, the side tab's buttons hand theirs over with clientThread.invokeLater); the Page tab's Talk in the
 aether as me reads only the plugin's settings.
+
+## Update 6: the key kept and found (11/19/2026, built, waiting for Jace's test in the game)
+
+Jace's PC lost sburb's key on 11/19, the morning his MacBook first ran Outside (RuneLite's cloud sync between the two the likely cause; not the plugin, not the uninstall, not RuneLite's install defaults: each read in RuneLite 1.13.7's own code). His key, from his outstation, was only in Advanced, Station key: the one kept with the account is only made by Make my Outside page. And a player with only the Hub's plugin had no way to see their key at all, for another computer. So:
+
+- A pasted key the relay takes (an update answered 200) is kept with the account too (`keepKey`), a second copy that a settings Reset or an emptied setting doesn't lose.
+- **Copy my station key** in the Hub's version too, the Page tab's "Your page's key", for Outside on another computer.
+- The no-page box and the "proven or vouched for already" answer say where the key is: the Page tab on a computer that shows the page (and, in the whole plugin, the outstation's settings).
+
+Not in it, Jace's call: a proven page whose every key is lost can't be taken back (a proven name takes no challenge).

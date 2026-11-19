@@ -86,9 +86,8 @@ public class OutsidePanel extends PluginPanel
 		void openYear();
 		// hub:end year
 
-		// hub:cut live
+		/** "Copy my station key": the page's key, for the outstation or Outside on another computer. */
 		void copyKey();
-		// hub:end live
 
 		void update();
 
@@ -162,9 +161,8 @@ public class OutsidePanel extends PluginPanel
 	// hub:cut year
 	private final JLabel yearStatus = small(" ");
 	// hub:end year
-	// hub:cut live
+	// (in the Hub's version too since 11/19/2026: a player's key for their other computers)
 	private final JLabel keyStatus = small(" ");
-	// hub:end live
 	// (11/16/2026, the snapshot: "Update my page", when it was last updated from here, and what the last press did)
 	private final JLabel snapStatus = small(" ");
 	private long snapAt;
@@ -219,8 +217,11 @@ public class OutsidePanel extends PluginPanel
 		claimStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		start.add(left(claimStatus));
 		// hub:cut live
-		start.add(left(small("<html><div style='width:155px'>Have an outstation or a friend's invite? Paste its station key in the plugin's settings instead.</div></html>")));
+		start.add(left(small("<html><div style='width:155px'>Have a page already, on another computer, an outstation or a friend's"
+			+ " invite? Paste its station key in the plugin's settings (Advanced, Station key) instead.</div></html>")));
 		// hub:end live
+		// hub:only start.add(left(small("<html><div style='width:155px'>Have a page already, made on another computer? There,"
+		// hub:only 	+ " the Page tab's Copy my station key; then paste it here in the plugin's settings (Advanced, Station key).</div></html>")));
 		start.add(Box.createVerticalStrut(10));
 		start.setVisible(false);
 		col.add(start);
@@ -376,12 +377,18 @@ public class OutsidePanel extends PluginPanel
 		pageTab.add(left(small("<html><div style='width:155px'>The outstation program adds your game itself to your page: a few frames"
 			+ " a second, its sound if you want, a chat. It takes this page's key: copy it, and paste it into its first screen."
 			+ " Keep it to yourself: whoever has it can send to your page.</div></html>")));
+		// hub:end live
+		// (11/19/2026, Jace: a player with only the plugin needs their key too, for Outside on another computer: his Mac had
+		// none, and his PC's went missing; the Hub's version had no way to show it)
+		// hub:only pageTab.add(left(heading("Your page's key")));
+		// hub:only pageTab.add(left(small("<html><div style='width:155px'>For Outside on another computer: copy it here, then paste"
+		// hub:only 	+ " it there in the plugin's settings, Advanced, Station key. Keep it to yourself: whoever has it can change your"
+		// hub:only 	+ " page.</div></html>")));
 		pageTab.add(Box.createVerticalStrut(6));
 		pageTab.add(wide(button("Copy my station key", hooks::copyKey)));
 		keyStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		pageTab.add(left(keyStatus));
 		pageTab.add(Box.createVerticalStrut(12));
-		// hub:end live
 		pageTab.add(wide(button("Take my page down", () ->
 		{
 			int sure = javax.swing.JOptionPane.showConfirmDialog(this,
@@ -626,13 +633,11 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() -> tendStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
 
-	// hub:cut live
 	/** A line under "Copy my station key". */
 	public void keyStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> keyStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
 	}
-	// hub:end live
 
 	// hub:cut year
 	/** A line under "Open my year". */
