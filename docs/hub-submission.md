@@ -13,7 +13,13 @@ for RuneLite's event bus: "Update 5", below). So before any commit= goes on the 
 2. `python3 plugin/start_check.py <outside-plugin's checkout at the exact commit the Hub will get>`: RuneLite started
    with it, in a home of its own, until "Plugin OutsidePlugin is now running" with nothing of the plugin's failing
    after. It fails on update 4 as merged. GitHub runs it on every pull request here too (tests.yml, the plugin job).
-3. Only then the commit= on jhmcubed/plugin-hub's branch.
+3. Tested in the game (11/19/2026, rsbfox on update 5: "Please don't submit code to the Hub without testing it
+   in-game", with `-ea`, which turns on RuneLite's assertions, such as a game method called off the client thread:
+   off in release, so the same mistakes are errors for players). Jace runs the exact commit, `py run.py client` in a
+   checkout of jhmcubed/outside-plugin at it (run.py starts RuneLite with `-ea`), logs in, and tries each change from
+   a list Claude writes (what to press, what should happen, what the client log mustn't show); a cloud session can't
+   log in to the game, so this step is his.
+4. Only then the commit= on jhmcubed/plugin-hub's branch, once he says it works.
 
 Keep an update small: a fix alone goes on its own, and a new feature waits for the next update once one is in review
 (update 4 grew from size-s to size-m while it waited, and took 18 hours to merge).
@@ -179,3 +185,12 @@ Update 4 merged 02:51 UTC and wouldn't start: RuneLite's event bus refuses a lis
 The start check built after it (`plugin/start_check.py`, in tests.yml too): fails on update 4 as merged (the
 PluginInstantiationException), passes on the fix, both the cut and the whole plugin, and on outside-plugin d6937fe
 itself, the commit the fork's branch then named (restarted from the Hub's master, its update 4 branch merged).
+
+Merged: runelite/plugin-hub#20967 merged 11/19/2026 06:02 UTC, at outside-plugin d6937fe, five hours before the bot's
+"next review no sooner than 11:16:25Z" (a maintainer deleted that comment and merged it: the plugin was broken). rsbfox
+commented first: don't submit to the Hub without testing in the game; run the client with `-ea`, whose assertions catch
+mistakes like game methods called off the client thread, off in release. Step 3 of "Before every update" came from it.
+Update 4's new code read for that kind of mistake afterwards: each game call it makes (the goal's item names and
+canonical ids, the still's model) runs on the client thread (loot events, chat commands and the item search are
+posted there, the side tab's buttons hand theirs over with clientThread.invokeLater); the Page tab's Talk in the
+aether as me reads only the plugin's settings.
