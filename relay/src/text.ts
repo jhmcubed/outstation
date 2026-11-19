@@ -182,7 +182,9 @@ export function attachCode(relay: string, channel: string, key: string): string 
 // The aether (11/07/2026; aether.ts, docs/protocol.md "The aether"): one room for every outstation and visitor. A line
 // there may be several rows (ASCII art), so it isn't made one line; it's cleaned row by row instead. relay.py's
 // aether_text, aether_name, channel_form and aether_wait, the same.
-export const AETHER_ROWS = 12, AETHER_WIDTH = 80; // a line's rows at most, and each row's characters (so 960 in all)
+// (32 rows since 11/19/2026: 12 had cut the bottom five rows off a friend's 17-row drawing on a register. Jace: "my
+// friend posted his ascii and it got cut off, can you make it all fit?")
+export const AETHER_ROWS = 32, AETHER_WIDTH = 80; // a line's rows at most, and each row's characters (so 2,560 in all)
 export const AETHER_EVERY = 2000, AETHER_A_MINUTE = 15; // one line every 2 s at most, and 15 a minute
 // control characters but the newline (C1's too), and the direction and zero-width ones: taken out, not made spaces
 const AETHER_CONTROL = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;

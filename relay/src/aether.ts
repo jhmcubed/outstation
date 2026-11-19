@@ -21,11 +21,13 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { type Env, tooOld } from "./channel";
-import { aetherName, aetherRecent, aetherText, aetherWait, channelForm, pyjson, AETHER_A_MINUTE } from "./text";
+import { aetherName, aetherRecent, aetherText, aetherWait, channelForm, pyjson, AETHER_A_MINUTE, AETHER_ROWS, AETHER_WIDTH } from "./text";
 
 export const AETHER_KEPT = 100; // lines kept, and handed to whoever joins
 export const AETHER_READ = 30; // lines in the public read (GET /aether)
-const AETHER_MESSAGE = 8192; // anything longer from a socket is thrown away unread (a full line, escaped, fits)
+// anything longer from a socket is thrown away unread: a full line fits, every character escaped as \uXXXX (six each),
+// with its newlines and the message round it
+const AETHER_MESSAGE = AETHER_ROWS * (AETHER_WIDTH + 1) * 6 + 256;
 const AETHER_SAVE = 5000; // the lines into storage at most this often while they come
 const AETHER_HERE_EVERY = 2000; // who's here told to everyone at most this often
 const SAID_MOST = 1000; // senders' last lines' times kept in memory, past which the stale ones go
@@ -169,7 +171,18 @@ export class Aether extends DurableObject<Env> {
       try {
         const r = await this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"))
           .fetch("https://dir/taken?name=" + encodeURIComponent(channelForm(name)));
-        if (((await r.json()) as { taken: boolean }).taken) no = [4009, "that name belongs to an outstation"];
+        const t = (await r.json()) as { taken: boolean; channel?: string | null };
+        // (11/18/2026, a friend with an outstation, on the aether from its page: "i can't choose my username but that's
+        // how i'd like to go by in osrs related things". An outstation's name is its owner's: a visitor who brings that
+        // outstation's key, checked by its channel's object as the outstation's own socket's is (4001, 4003, 4029), is
+        // in under it, as the outstation: its lines from "outstation", its rate and its bans the channel's)
+        const key = q.get("key");
+        if (t.taken && t.channel && key) {
+          const k = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(t.channel)).fetch(new Request(
+            "https://channel/_key?key=" + encodeURIComponent(key), { headers: { "x-channel": t.channel, "cf-connecting-ip": ip } }));
+          no = ((await k.json()) as { no: [number, string] | null }).no;
+          if (!no) { from = "outstation"; who = "channel:" + t.channel; }
+        } else if (t.taken) no = [4009, "that name belongs to an outstation"];
       } catch {
         no = [1013, "the relay couldn't check the name: try again"];
       }

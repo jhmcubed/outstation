@@ -333,8 +333,10 @@ export class Directory extends DurableObject<Env> {
       // the aether's (11/07/2026, aether.ts): whether a visitor's name, in a channel's form (lower case, no spaces), is
       // a channel handed out's, whatever its case
       // (since 11/16/2026 a channel's form keeps the name's spaces as "_"; one made before, without them, counts too)
+      // (11/18/2026: and which channel it is, so the aether can check that channel's key for its owner)
       const form = url.searchParams.get("name") || "", flat = form.replace(/_/g, "");
-      return Response.json({ taken: [...(await this.givenNames()).keys()].some((n) => { const l = n.toLowerCase(); return l === form || (l.indexOf("_") < 0 && l === flat); }) });
+      const channel = [...(await this.givenNames()).keys()].find((n) => { const l = n.toLowerCase(); return l === form || (l.indexOf("_") < 0 && l === flat); });
+      return Response.json({ taken: channel !== undefined, channel: channel ?? null });
     }
     if (url.pathname === "/notice") {
       if (request.method === "PUT") {

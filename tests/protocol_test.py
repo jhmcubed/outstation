@@ -852,13 +852,13 @@ class Talk(Base):
         self.assertEqual(await next_of(b, "unnote"), got[8]["id"])
         st, notes = http("GET", "/proof/%s?key=%s&seen=%d" % (self.ch, urllib.parse.quote(self.key), got[5]["id"]))
         self.assertEqual(notes["notes"], {"n": 2, "last": got[7]["id"]})
-        # (a drawing signs it whole, as in the aether: its rows kept, each row's end trimmed, 12 rows of 80 at most;
+        # (a drawing signs it whole, as in the aether: its rows kept, each row's end trimmed, 32 rows of 80 at most;
         # 11/17/2026, Jace's ASCII dog had come out one row, cut off)
         d = await self.watch()                         # (a socket with notes to spare)
-        art = "\n".join(["\u2800\u28c0\u28e4  ", "\u28ff" * 90] + ["row %d" % i for i in range(14)])
+        art = "\n".join(["\u2800\u28c0\u28e4  ", "\u28ff" * 90] + ["row %d" % i for i in range(34)])
         await d.send(json.dumps({"note": art}))
         drawn = (await next_of(desk, "note"))["text"].split("\n")
-        self.assertEqual((len(drawn), drawn[0], len(drawn[1]), drawn[-1]), (12, "\u2800\u28c0\u28e4", 80, "row 9"))
+        self.assertEqual((len(drawn), drawn[0], len(drawn[1]), drawn[-1]), (32, "\u2800\u28c0\u28e4", 80, "row 29"))
 
     async def test_a_flood_is_cut_off_and_nothing_long_gets_through(self):
         tx, desk, a, b = await self.setup_room()
@@ -4624,14 +4624,19 @@ class Aether(Base):
         await self.say(b, text2)
         self.assertGreater((await next_of(a, "aether"))["id"], line["id"])
 
-    async def test_ascii_art_keeps_its_rows_twelve_of_eighty_at_most(self):
-        # (more rows are cut to 12, a longer row to 80: cut, not refused; empty rows at the ends and trailing spaces go)
-        a = await self.visitor()
+    async def test_ascii_art_keeps_its_rows_thirty_two_of_eighty_at_most(self):
+        # (more rows are cut to 32, a longer row to 80: cut, not refused; empty rows at the ends and trailing spaces go.
+        # 12 until 11/19/2026, when a friend's 17-row drawing lost its bottom five)
+        a, b = await self.visitor(), await self.visitor()
         tag = secrets.token_hex(4)
-        art = ["", "   ", "  /\\_/\\   ", " ( o.o ) " + tag, "x" * 81] + ["row %d" % i for i in range(3, 14)] + ["", "  "]
+        art = ["", "   ", "  /\\_/\\   ", " ( o.o ) " + tag, "x" * 81] + ["row %d" % i for i in range(3, 34)] + ["", "  "]
         await self.say(a, "\n".join(art))
-        want = ["  /\\_/\\", " ( o.o ) " + tag, "x" * 80] + ["row %d" % i for i in range(3, 12)]
+        want = ["  /\\_/\\", " ( o.o ) " + tag, "x" * 80] + ["row %d" % i for i in range(3, 32)]
         self.assertEqual((await next_of(a, "aether"))["text"].split("\n"), want)
+        # (and a drawing as big as a line can be, every character escaped on the way: whole, not thrown away unread)
+        full = "\n".join([tag] + ["\u28ff" * 80] * 31)
+        await self.say(b, full)
+        self.assertEqual([(await next_of(b, "aether"))["text"] for _ in range(2)], ["\n".join(want), full])
 
     async def test_control_characters_go_and_a_line_of_nothing_is_ignored(self):
         a, b = await self.visitor(), await self.visitor()

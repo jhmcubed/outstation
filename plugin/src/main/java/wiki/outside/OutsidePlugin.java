@@ -3280,8 +3280,8 @@ public class OutsidePlugin extends Plugin
 		return s;
 	}
 
-	/** One effect on them now: its key (id, vertices, faces), its vertices (raised by its height), and its model as
-	 *  JSON unless it's one already known. */
+	/** One effect on them now: its key (id, vertices, faces), its vertices (at its height, as RuneLite has them), and
+	 *  its model as JSON unless it's one already known. */
 	private static final class Fx
 	{
 		String key;
@@ -3314,10 +3314,10 @@ public class OutsidePlugin extends Plugin
 			f.x = java.util.Arrays.copyOf(m.getVerticesX(), f.n);
 			f.y = java.util.Arrays.copyOf(m.getVerticesY(), f.n);
 			f.z = java.util.Arrays.copyOf(m.getVerticesZ(), f.n);
-			for (int i = 0; i < f.n; i++)
-			{
-				f.y[i] -= sa.getHeight();
-			}
+			// (11/19/2026: taken as RuneLite hands it over, already at its height. Raised again by sa.getHeight(), every
+			// effect sat one height too high: a friend's arrow drawn from his bow came out 96 over it, at the top of his
+			// head (Jace: "my friends SalutCFlagg's arrow its flying above his bow, make it look right"), and Ja's
+			// casting at 308, over his head, not at his chest)
 			if (known == null || !known.contains(f.key))
 			{
 				f.json = Kept.model(f.x, f.y, f.z, f.n, m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceCount(),
