@@ -3,6 +3,21 @@
 What goes to runelite/plugin-hub for Outside's first version: the lean cut (`plugin/hub_cut.py`), merged into
 jhmcubed/outside-plugin's `main` as 0b90619 (jhmcubed/outside-plugin#1 and #2), checked to match the cut exactly.
 
+## Before every update (11/19/2026)
+
+Update 4 went out compiling and passing every test, and wouldn't switch on in anyone's RuneLite (a listener misnamed
+for RuneLite's event bus: "Update 5", below). So before any commit= goes on the fork for the Hub, in this order:
+
+1. `gradle test` and `hub_check.py`, for the whole plugin and for the cut (`hub_cut.py <folder>`): `SubscribeTest`
+   checks every listener's name as the event bus does.
+2. `python3 plugin/start_check.py <outside-plugin's checkout at the exact commit the Hub will get>`: RuneLite started
+   with it, in a home of its own, until "Plugin OutsidePlugin is now running" with nothing of the plugin's failing
+   after. It fails on update 4 as merged. GitHub runs it on every pull request here too (tests.yml, the plugin job).
+3. Only then the commit= on jhmcubed/plugin-hub's branch.
+
+Keep an update small: a fix alone goes on its own, and a new feature waits for the next update once one is in review
+(update 4 grew from size-s to size-m while it waited, and took 18 hours to merge).
+
 ## The file: `plugins/outside`
 
 ```
@@ -113,3 +128,54 @@ reviewer's terms ("an 'Update my page' action and an hourly sync"):
 - `README.hub.md` says what each sends and when; the settings' descriptions and warnings say "with your next update" in
   the Hub's version (`hub:only` lines).
 The manifest's warning stays as the reviewer wrote it; only `commit=` changes.
+
+## Update 3: the goal item (11/18/2026)
+
+Update 2 merged as runelite/plugin-hub#20872 (11/17/2026 23:24 UTC). Update 3 adds `goal` to `hub_cut.py`'s SUBMITTED
+(Goji Berries' idea; Jace: "Cut update 3 as it stands"): **Set my goal item** on the side tab's Page tab, or
+`::outsidegoal`, opens RuneLite's own item search in the chatbox (`ChatboxItemSearch`); the item picked goes to the
+page's keep with its model, as the game draws it, on that press. When the game's collection log line names it, its "got"
+(the time, the kill and clue counts then) is held in the Hub's version and sent after the next update's post, as the
+bank's is: the reviewer's terms, a press or the hourly sync. Its own switch, "Goal item", on to begin with, with its
+warning. And Outside.wiki with its capital O in what the player reads (no change to what's sent). The manifest's
+warning stays as the reviewer wrote it; only `commit=` changes.
+
+Cut into outside-plugin (jhmcubed/outside-plugin#18) at `63d66ae097dac04bc1a4daf4da4d851fa0f37f69`; `plugins/outside`'s
+`commit=` set to it on jhmcubed/plugin-hub's branch `claude/keen-hopper-89gwe5` (1f332d1, from runelite/plugin-hub's
+master), the pull request to runelite/plugin-hub opened from it by Jace. Once it's merged: ghillie's
+`public/outside-portal.js` `ON_THE_HUB.goal` on (the profile's "no goal set" line).
+
+## Update 4: the goal's model (11/18/2026)
+
+Update 3 merged as runelite/plugin-hub#20919 (11/18/2026 07:58 UTC). Jace's first goal (the Ascension crossbows) reached
+his page without its model: `sendGoal` copied the model's textures (`cloneTextures`) whether the item had any or not,
+and an item with none threw there, the whole model let go. Now each copy only as the item needs it (its recolours,
+its retextures), the model sent unlit if lighting it fails, and why it couldn't be read said in the chat. Only
+`commit=` changes.
+
+Then, before its review, three more in the same update (Jace, 11/18/2026, "do all three"): the goal got from the loot
+itself as well as the collection log's line (RuneLite's `NpcLootReceived`, and the Loot Tracker's `LootReceived` for a
+raid's chest or a casket when that plugin is on; the counts then still held for the next update, as the Hub's terms
+ask); the goal shown on the Outside side tab with a ✕ that clears it; and the note when a goal has no drop rate, which
+is the page's (outside.wiki's `listed`, from tools/drop_sources.py), not the plugin's: the plugin never knows the rates.
+
+And Jace's look at the side tab (11/18/2026): Set my goal item moved from the top buttons into the Page tab under "Your
+goal"; the More tab folded into the Page tab (his order: your goal, who sees it, Dink, the register, then Take my page
+down last), so two tabs, Page and Model; and the line under Capture my character keeps to the model's own messages
+(every line the plugin said had gone there, so "your goal is on your page" sat under the capture button).
+
+Jace updated the pull request's title ("Update Outside: goal fixes and the side tab's Page tab") and description to list all of it (11/18/2026, after the bot's cooldown, before any review).
+
+And Capture a still (11/18/2026, Cranky, a friend, through Jace: "a 'capture still' capturing the frame i click it like runeprofile does"): a button under Capture my character sends the model as it is the moment it's pressed (mid-emote too) as the page's still, on the player's press like ::outsidemodel, which now does the same. Until one is set, the still is the last capture's first moment, as before; once one is, captures leave it alone (an RS-profile flag, stillSet, cleared when the model's taken off or its switch turned off).
+
+And Talk in the aether as me (11/18/2026, Jace): the Page tab's "The aether", after the register: opens the page with its key in the fragment (#aether=<key>, no server sees it; the page takes it out of the address at once), so the aether lets its owner in under the page's name without pasting the key. On the press only; nothing sent by the plugin.
+
+Merged: runelite/plugin-hub#20922 merged 11/19/2026 02:51 UTC, at outside-plugin af8d683 (Jace had moved commit= one step past 11fea55, to take in the other session's "Effects at their own height, not raised twice"). The bot's compare link was its only comment; no review comments; labels plugin change and size-m (size-s until the second push).
+
+## Update 5: the plugin switched on again (11/19/2026)
+
+Update 4 merged 02:51 UTC and wouldn't start: RuneLite's event bus refuses a listener not named "on" and its event's name, and the goal's loot listeners were goalOnNpcLoot and goalOnLoot ("Subscribed method ... should be named onNpcLootReceived", PluginInstantiationException; found by starting the merged version in RuneLite under Xvfb). Now onNpcLootReceived (which hands the field reports theirs in the whole plugin) and onLootReceived; SubscribeTest checks every listener's name, and fails on update 4 as merged. The fixed Hub version started in RuneLite: running, both loot listeners registered.
+
+The start check built after it (`plugin/start_check.py`, in tests.yml too): fails on update 4 as merged (the
+PluginInstantiationException), passes on the fix, both the cut and the whole plugin, and on outside-plugin d6937fe
+itself, the commit the fork's branch then named (restarted from the Hub's master, its update 4 branch merged).

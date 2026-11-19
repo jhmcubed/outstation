@@ -66,7 +66,7 @@ This is everything the outstation sends. Before it's attached to a channel (a st
   - your polls and drop guesses
   - your broadcast's title and your cap on viewers
   - whether viewers may chat and ping
-- **Your field reports:** never from the outstation (since 11/17/2026). Dink sends them to your page itself, through the Outside plugin's "Copy my Dink address"; the outstation only hears Dink to know when to save a clip.
+- **Your field reports:** never from the outstation (since 11/17/2026). Dink sends them to your page itself, through the Outside plugin's "Copy my address for Dink"; the outstation only hears Dink to know when to save a clip.
 - **Messages to a friend's outstation** (friends ▸, right-click a name, "message"): your words, with your chat name and channel. They go to their outstation's window only, never on either stream.
 - **The monitor:** a socket to the relay with your channel and watch code, while you're attached, dark too, so the window can show what goes out.
 - **Who sees your page:** once a minute while you're attached, a request with your key for your page's watch code (the Outside plugin sets it: friends only, or anyone; 11/17/2026), so the monitor, the clips and the emotes can open a friends-only page. The outstation no longer sets it.

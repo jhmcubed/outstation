@@ -58,6 +58,9 @@ public class OutsidePanel extends PluginPanel
 	{
 		// hub:cut model
 		void capture(String name);
+
+		/** "Capture a still": the model as it is now, as the page's still (update 4). */
+		void captureStill();
 		// hub:end model
 
 		void refresh();
@@ -92,12 +95,18 @@ public class OutsidePanel extends PluginPanel
 		// hub:cut goal
 		/** "Set my goal item": the game's item search, the item picked goes to the page (update 3). */
 		void setGoal();
+
+		/** The ✕ beside the goal: taken off the page (update 4). */
+		void clearGoal();
 		// hub:end goal
 
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
 		void showSent();
 
-		/** "Copy my Dink address": the page's address for the Dink plugin's webhooks, to the clipboard. */
+		/** "Talk in the aether as me": the page opened with its key, for the aether under the page's own name. */
+		void aetherAsMe();
+
+		/** "Copy my address for Dink": the page's address for the Dink plugin's webhooks, to the clipboard. */
 		void copyDink();
 
 		void friendsOnly(boolean on);
@@ -239,11 +248,6 @@ public class OutsidePanel extends PluginPanel
 		page.add(wide(button("Open my page", hooks::openPage)));
 		page.add(Box.createVerticalStrut(4));
 		page.add(wide(button("Show what's sent", () -> hooks.showSent())));
-		// hub:cut goal
-		// (the goal item, 11/17/2026: here, by the page's own buttons, so it's found without looking for it)
-		page.add(Box.createVerticalStrut(4));
-		page.add(wide(button("Set my goal item", hooks::setGoal)));
-		// hub:end goal
 		snapClock.start();
 		page.add(Box.createVerticalStrut(10));
 
@@ -258,6 +262,33 @@ public class OutsidePanel extends PluginPanel
 		pageTab.add(left(small("<html><div style='width:155px'>Your page updates when you press Update my page, and by itself"
 			+ " every hour you're logged in; never from the Wilderness or a PvP world. What goes on it is in the plugin's"
 			+ " settings, each part its own switch.</div></html>")));
+		// hub:cut goal
+		// (the goal item, 11/17/2026; in the Page tab since 11/18/2026, update 4, Jace: set once and left, not one of
+		// the buttons pressed every session, which stay above)
+		pageTab.add(Box.createVerticalStrut(12));
+		pageTab.add(left(heading("Your goal")));
+		pageTab.add(left(small("<html><div style='width:155px'>An item you're after: your page shows its 3D model, your kill"
+			+ " count where it drops and how dry you are for it.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Set my goal item", hooks::setGoal)));
+		// (the goal set, with ✕ to take it off: 11/18/2026, update 4; ::outsidegoal clear was the only way)
+		JPanel goalRow = new JPanel(new BorderLayout(6, 0));
+		goalRow.setOpaque(false);
+		goalLine.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		goalRow.add(goalLine, BorderLayout.CENTER);
+		goalClear.setToolTipText("Take the goal off your page");
+		// (the game's own font has no ✕: a system font's, or × or x where that has none either)
+		goalClear.setFont(new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12));
+		goalClear.setText(goalClear.getFont().canDisplay('\u2715') ? "\u2715" : goalClear.getFont().canDisplay('\u00d7') ? "\u00d7" : "x");
+		goalClear.setMargin(new java.awt.Insets(0, 6, 0, 6));
+		goalClear.addActionListener(ev -> hooks.clearGoal());
+		goalRow.add(goalClear, BorderLayout.EAST);
+		goalRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
+		goalRow.setVisible(false);
+		goalBox = goalRow;
+		pageTab.add(Box.createVerticalStrut(4));
+		pageTab.add(goalRow);
+		// hub:end goal
 		// hub:cut year
 		// (11/15/2026: your year, kept by this plugin; docs/record.md)
 		pageTab.add(Box.createVerticalStrut(12));
@@ -269,6 +300,102 @@ public class OutsidePanel extends PluginPanel
 		yearStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		pageTab.add(left(yearStatus));
 		// hub:end year
+		pageTab.add(Box.createVerticalStrut(12));
+		// (the More tab's parts, folded into the Page tab 11/18/2026, update 4, Jace: all of them are about the page;
+		// in his order: who sees it, Dink, the register, then taking it down last, on its own)
+		pageTab.add(left(heading("Who sees it")));
+		pageTab.add(left(access));
+		pageTab.add(Box.createVerticalStrut(4));
+		accessButton.addActionListener(e -> hooks.friendsOnly(!friends));
+		pageTab.add(wide(accessButton));
+		friendsLink.setLayout(new BoxLayout(friendsLink, BoxLayout.Y_AXIS));
+		friendsLink.add(Box.createVerticalStrut(4));
+		friendsLink.add(wide(button("Copy the friends' link", hooks::copyFriendsLink)));
+		friendsLink.setVisible(false);
+		pageTab.add(friendsLink);
+		accessStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		pageTab.add(left(accessStatus));
+		pageTab.add(Box.createVerticalStrut(12));
+		pageTab.add(left(heading("Field reports with Dink")));
+		pageTab.add(left(small("<html><div style='width:155px'>Use the Dink plugin? Paste this on its own line in Dink's Primary"
+			+ " Webhook URLs: what you switch on in Dink then shows on your page and the globe as it happens. Nothing from the"
+			+ " Wilderness or PvP is ever shown. It holds your page's key: keep it to yourself.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Copy my address for Dink", () -> hooks.copyDink())));
+		dinkStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		pageTab.add(left(dinkStatus));
+		pageTab.add(Box.createVerticalStrut(12));
+		// (11/16/2026, Jace: "There is currently no way for someone who doesn't have the outstation to remove comments
+		// from people off of their profile": the page opens with a link only this browser has, good for 12 hours)
+		// (11/17/2026, Jace: the page's chat, while nothing transmits, is its register: visitors sign it, you read it later)
+		pageTab.add(left(heading("Your page's register")));
+		pageTab.add(left(small("<html><div style='width:155px'>Visitors sign your page's register. Read it, take back a note or"
+			+ " ban whoever wrote it, on your page itself: the link works for 12 hours, in the browser it opens in.</div></html>")));
+		notesLine.setForeground(LIME);
+		notesLine.setVisible(false);
+		pageTab.add(left(notesLine));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Read and tend my register", hooks::tendChat)));
+		tendStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		pageTab.add(left(tendStatus));
+		pageTab.add(Box.createVerticalStrut(12));
+		// (11/18/2026, Jace: "a button to the plugin that opens up their page and embeds the key into it so they dont have
+		// to manually paste it": the aether takes an outstation's own name with its key, asked for on the page otherwise)
+		pageTab.add(left(heading("The aether")));
+		pageTab.add(left(small("<html><div style='width:155px'>Outside.wiki's chat across every page. Your name is"
+			+ " yours there: this opens your page in your browser with your key, kept in that browser, so the aether"
+			+ " lets you in under your own name.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Talk in the aether as me", hooks::aetherAsMe)));
+		pageTab.add(Box.createVerticalStrut(12));
+		// hub:cut talk
+		// (11/16/2026: the page chat's emotes, from here as from the outstation's settings; Emotes)
+		pageTab.add(left(heading("Your emotes")));
+		pageTab.add(left(small("<html><div style='width:155px'>Pictures your page's chat shows for :name:. Copy a picture"
+			+ " (from a browser, a screenshot), name it, then paste it here: 256 KB at most, 30 in all. One of the same name is"
+			+ " replaced.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		JPanel en = new JPanel(new BorderLayout(6, 0));
+		en.add(small("Name"), BorderLayout.WEST);
+		emoteName.setToolTipText("2 to 24 letters, numbers or _");
+		en.add(emoteName, BorderLayout.CENTER);
+		en.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+		pageTab.add(en);
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Paste a picture as an emote", () -> hooks.addEmote(emoteName.getText().trim()))));
+		emoteStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		pageTab.add(left(emoteStatus));
+		emotes.setLayout(new GridLayout(0, 1, 0, 4));
+		pageTab.add(emotes);
+		pageTab.add(Box.createVerticalStrut(12));
+		// hub:end talk
+		// hub:cut live
+		// (11/15/2026, "Open your own" led by the plugin: an outstation transmits to the same page with the same key, and a
+		// key made here is kept with the account, not in the settings, so this is how it's handed over)
+		pageTab.add(left(heading("A transmission")));
+		pageTab.add(left(small("<html><div style='width:155px'>The outstation program adds your game itself to your page: a few frames"
+			+ " a second, its sound if you want, a chat. It takes this page's key: copy it, and paste it into its first screen."
+			+ " Keep it to yourself: whoever has it can send to your page.</div></html>")));
+		pageTab.add(Box.createVerticalStrut(6));
+		pageTab.add(wide(button("Copy my station key", hooks::copyKey)));
+		keyStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		pageTab.add(left(keyStatus));
+		pageTab.add(Box.createVerticalStrut(12));
+		// hub:end live
+		pageTab.add(wide(button("Take my page down", () ->
+		{
+			int sure = javax.swing.JOptionPane.showConfirmDialog(this,
+				"Take your Outside page down? Everything on it goes, and the name is free for anyone to claim."
+					// hub:cut year
+					+ " Your year's record on this PC stays."
+					// hub:end year
+					, "Take my page down", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+				javax.swing.JOptionPane.WARNING_MESSAGE);
+			if (sure == javax.swing.JOptionPane.OK_OPTION)
+			{
+				hooks.takeDown();
+			}
+		})));
 		MaterialTab first = new MaterialTab("Page", tabs, pageTab);
 		tabs.addTab(first);
 
@@ -276,7 +403,9 @@ public class OutsidePanel extends PluginPanel
 		// your character: the model on the page, its motions
 		JPanel charTab = tab();
 		charTab.add(left(small("<html><div style='width:155px'>Press capture, then do an emote within 8 seconds: it's recorded from its start to its end, your pet's"
-			+ " with it. Do nothing, and it records you and your pet standing. Your page shows it, and keeps it under its name.</div></html>")));
+			+ " with it. Do nothing, and it records you and your pet standing. Your page shows it, and keeps it under its name."
+			+ " Capture a still keeps you as you are the moment you press it, as your page's still; until you do, your still is"
+			+ " your last capture's first moment.</div></html>")));
 		charTab.add(Box.createVerticalStrut(6));
 		JPanel named = new JPanel(new BorderLayout(6, 0));
 		JLabel nl = small("Name");
@@ -288,6 +417,13 @@ public class OutsidePanel extends PluginPanel
 		charTab.add(Box.createVerticalStrut(6));
 		capture.addActionListener(e -> hooks.capture(name.getText().trim()));
 		charTab.add(wide(capture));
+		// (11/18/2026, update 4, Cranky: "a 'capture still' capturing the frame i click it like runeprofile does": the still
+		// was a capture's first moment, each capture's, so it followed whatever was recorded last)
+		charTab.add(Box.createVerticalStrut(4));
+		JButton stillButton = button("Capture a still", hooks::captureStill);
+		stillButton.setToolTipText("<html><div style='width:220px'>You, as you are the moment you press it (mid-emote too),"
+			+ " as your page's still. A capture doesn't change it after that.</div></html>");
+		charTab.add(wide(stillButton));
 		// (11/17/2026, Jace: the ground's switch here, by the capture it goes with, not in the plugin's settings)
 		ground.setSelected(hooks.ground());
 		ground.setToolTipText("<html><div style='width:220px'>When you capture your character, the ground round you then"
@@ -331,92 +467,6 @@ public class OutsidePanel extends PluginPanel
 		// hub:end model
 
 		// more: Dink, who sees it, the page's chat, and taking the page down (last, as it can't be undone)
-		JPanel moreTab = tab();
-		moreTab.add(left(heading("Field reports with Dink")));
-		moreTab.add(left(small("<html><div style='width:155px'>Use the Dink plugin? Paste this on its own line in Dink's Primary"
-			+ " Webhook URLs: what you switch on in Dink then shows on your page and the globe as it happens. Nothing from the"
-			+ " Wilderness or PvP is ever shown. It holds your page's key: keep it to yourself.</div></html>")));
-		moreTab.add(Box.createVerticalStrut(6));
-		moreTab.add(wide(button("Copy my Dink address", () -> hooks.copyDink())));
-		dinkStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		moreTab.add(left(dinkStatus));
-		moreTab.add(Box.createVerticalStrut(12));
-		moreTab.add(left(heading("Who sees it")));
-		moreTab.add(left(access));
-		moreTab.add(Box.createVerticalStrut(4));
-		accessButton.addActionListener(e -> hooks.friendsOnly(!friends));
-		moreTab.add(wide(accessButton));
-		friendsLink.setLayout(new BoxLayout(friendsLink, BoxLayout.Y_AXIS));
-		friendsLink.add(Box.createVerticalStrut(4));
-		friendsLink.add(wide(button("Copy the friends' link", hooks::copyFriendsLink)));
-		friendsLink.setVisible(false);
-		moreTab.add(friendsLink);
-		accessStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		moreTab.add(left(accessStatus));
-		moreTab.add(Box.createVerticalStrut(12));
-		// (11/16/2026, Jace: "There is currently no way for someone who doesn't have the outstation to remove comments
-		// from people off of their profile": the page opens with a link only this browser has, good for 12 hours)
-		// (11/17/2026, Jace: the page's chat, while nothing transmits, is its register: visitors sign it, you read it later)
-		moreTab.add(left(heading("Your page's register")));
-		moreTab.add(left(small("<html><div style='width:155px'>Visitors sign your page's register. Read it, take back a note or"
-			+ " ban whoever wrote it, on your page itself: the link works for 12 hours, in the browser it opens in.</div></html>")));
-		notesLine.setForeground(LIME);
-		notesLine.setVisible(false);
-		moreTab.add(left(notesLine));
-		moreTab.add(Box.createVerticalStrut(6));
-		moreTab.add(wide(button("Read and tend my register", hooks::tendChat)));
-		tendStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		moreTab.add(left(tendStatus));
-		moreTab.add(Box.createVerticalStrut(12));
-		// hub:cut talk
-		// (11/16/2026: the page chat's emotes, from here as from the outstation's settings; Emotes)
-		moreTab.add(left(heading("Your emotes")));
-		moreTab.add(left(small("<html><div style='width:155px'>Pictures your page's chat shows for :name:. Copy a picture"
-			+ " (from a browser, a screenshot), name it, then paste it here: 256 KB at most, 30 in all. One of the same name is"
-			+ " replaced.</div></html>")));
-		moreTab.add(Box.createVerticalStrut(6));
-		JPanel en = new JPanel(new BorderLayout(6, 0));
-		en.add(small("Name"), BorderLayout.WEST);
-		emoteName.setToolTipText("2 to 24 letters, numbers or _");
-		en.add(emoteName, BorderLayout.CENTER);
-		en.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
-		moreTab.add(en);
-		moreTab.add(Box.createVerticalStrut(6));
-		moreTab.add(wide(button("Paste a picture as an emote", () -> hooks.addEmote(emoteName.getText().trim()))));
-		emoteStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		moreTab.add(left(emoteStatus));
-		emotes.setLayout(new GridLayout(0, 1, 0, 4));
-		moreTab.add(emotes);
-		moreTab.add(Box.createVerticalStrut(12));
-		// hub:end talk
-		// hub:cut live
-		// (11/15/2026, "Open your own" led by the plugin: an outstation transmits to the same page with the same key, and a
-		// key made here is kept with the account, not in the settings, so this is how it's handed over)
-		moreTab.add(left(heading("A transmission")));
-		moreTab.add(left(small("<html><div style='width:155px'>The outstation program adds your game itself to your page: a few frames"
-			+ " a second, its sound if you want, a chat. It takes this page's key: copy it, and paste it into its first screen."
-			+ " Keep it to yourself: whoever has it can send to your page.</div></html>")));
-		moreTab.add(Box.createVerticalStrut(6));
-		moreTab.add(wide(button("Copy my station key", hooks::copyKey)));
-		keyStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		moreTab.add(left(keyStatus));
-		moreTab.add(Box.createVerticalStrut(12));
-		// hub:end live
-		moreTab.add(wide(button("Take my page down", () ->
-		{
-			int sure = javax.swing.JOptionPane.showConfirmDialog(this,
-				"Take your Outside page down? Everything on it goes, and the name is free for anyone to claim."
-					// hub:cut year
-					+ " Your year's record on this PC stays."
-					// hub:end year
-					, "Take my page down", javax.swing.JOptionPane.OK_CANCEL_OPTION,
-				javax.swing.JOptionPane.WARNING_MESSAGE);
-			if (sure == javax.swing.JOptionPane.OK_OPTION)
-			{
-				hooks.takeDown();
-			}
-		})));
-		tabs.addTab(new MaterialTab("More", tabs, moreTab));
 
 		tabs.select(first);
 		page.add(tabs);
@@ -647,7 +697,7 @@ public class OutsidePanel extends PluginPanel
 		});
 	}
 
-	/** A line under "Copy my Dink address". */
+	/** A line under "Copy my address for Dink". */
 	public void dinkStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> dinkStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));
@@ -737,6 +787,26 @@ public class OutsidePanel extends PluginPanel
 			claimStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>");
 		});
 	}
+
+	// hub:cut goal
+	private final JLabel goalLine = small(" ");
+	private final JButton goalClear = new JButton("x");
+	private JPanel goalBox;
+
+	/** The goal under its button: its name and how it stands (null: none set, the line hidden). */
+	public void goal(String words)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (goalBox == null)
+			{
+				return;
+			}
+			goalBox.setVisible(words != null);
+			goalLine.setText(words == null ? " " : "<html><div style='width:130px'>" + esc(words) + "</div></html>");
+		});
+	}
+	// hub:end goal
 
 	/** A line under the capture button. */
 	public void status(String words)

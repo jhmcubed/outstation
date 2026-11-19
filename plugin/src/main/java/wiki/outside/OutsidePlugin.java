@@ -198,7 +198,7 @@ public class OutsidePlugin extends Plugin
 	static final long UPDATE_EVERY_MS = 60_000L;
 	/** what a snapshot carries (the rest of read()'s fields are the socket's) */
 	static final String[] SNAP_FIELDS = {"name", "type", "worn", "inv", "bag", "pouch", "seeds", "barrel", "quiver",
-		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve", "clog", "counts"};   // (delve: update 2; clog: the collection log's counter; counts: kill and clue counts, 11/16/2026)
+		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve", "delve_lost", "clog", "counts"};   // (delve: update 2; clog: the collection log's counter; counts: kill and clue counts, 11/16/2026; delve_lost: the delve levels lost to deaths, 11/19/2026)
 
 	@Inject
 	private Client client;
@@ -348,6 +348,10 @@ public class OutsidePlugin extends Plugin
 	// hub:cut delve
 	/** (11/14/2026) the Doom of Mokhaiotl board's counts as last read (also kept on the profile), or null */
 	private JsonElement delveSeen;
+	/** (11/19/2026) the delve levels lost to deaths (Delves: this run's, and all lost, kept on the profile), and those
+	 *  lost as they stood when the board was last read (sent beside it), or null */
+	private final Delves delves = new Delves();
+	private JsonElement delveLostSeen;
 	// hub:end delve
 	// hub:cut bank
 	/** (11/14/2026) the bank changed on this tick (sent a few ticks after the last change), or -1 */
@@ -370,6 +374,8 @@ public class OutsidePlugin extends Plugin
 	/** the board beside the Doom of Mokhaiotl (the Delve Calculator plugin's: its scoreboard interface, each level's
 	 *  count in child 46 + 3 a level, 1 to 8, then the waves past 8) */
 	private static final int DELVE_BOARD = 920, DELVE_FIRST = 46, DELVE_STEP = 3;
+	/** the Doom's lair, its delves' regions (the Delve Calculator plugin's: its DELVE_REGION_IDS) */
+	private static final int[] DELVE_REGIONS = {5269, 13668, 14180};
 	// hub:end delve
 
 	@Inject
@@ -507,6 +513,7 @@ public class OutsidePlugin extends Plugin
 			}
 			else
 			{
+				configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET);
 				keep("model", null);
 			}
 		}
@@ -517,7 +524,7 @@ public class OutsidePlugin extends Plugin
 		{
 			if (config.goal())
 			{
-				clientThread.invokeLater(this::sendGoal);
+				clientThread.invokeLater(() -> sendGoal(false));
 			}
 			else
 			{
@@ -561,6 +568,9 @@ public class OutsidePlugin extends Plugin
 	{
 		if (e.getGameState() == GameState.LOGGED_IN)
 		{
+			// hub:cut goal
+			goalPanel();
+			// hub:end goal
 			readProof();   // (proven since the last logout? the side tab says so)
 			sceneDue = true;   // (a scene loaded: its area, as Discord reads it, on the next tick)
 		}
@@ -600,7 +610,9 @@ public class OutsidePlugin extends Plugin
 			seedsSeen = barrelSeen = null;
 			charges.clear();
 			// hub:cut delve
-			delveSeen = null;
+			delveSeen = delveLostSeen = null;
+			delves.left();
+			delves.load(null);
 			// hub:end delve
 			// hub:cut live
 			liveGear = gearSeen = null;
@@ -671,6 +683,13 @@ public class OutsidePlugin extends Plugin
 			characterChanged();
 		}
 		ticks++;
+		// hub:cut delve
+		// (a delve's run over once they're away from the boss: claimed and gone, or left in the chest, nothing lost)
+		if (delves.running() && !atDelve())
+		{
+			delves.left();
+		}
+		// hub:end delve
 		// hub:cut bank
 		// (the bank: sent three ticks after it last changed, so a whole deposit goes once)
 		if (bankChanged >= 0 && ticks - bankChanged >= 3)
@@ -1230,11 +1249,14 @@ public class OutsidePlugin extends Plugin
 		if (config.delve() && delveSeen != null)
 		{
 			m.put("delve", delveSeen);
+			// (the levels lost to deaths as they stood when the board was read: Delves; none sent till it's read again)
+			m.put("delve_lost", delveLostSeen == null ? JsonNull.INSTANCE : delveLostSeen);
 		}
 		else
 		{
 			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
 			m.put("delve", JsonNull.INSTANCE);
+			m.put("delve_lost", JsonNull.INSTANCE);
 		}
 		// hub:end delve
 		if (config.skills())
@@ -1595,6 +1617,13 @@ public class OutsidePlugin extends Plugin
 				configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "counts", gson.toJson(counts.json()));
 			}
 		}
+		// hub:cut delve
+		// (a delve level done, counted in its run: Delves)
+		if ((e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM) && config.delve())
+		{
+			delves.done(Text.removeTags(e.getMessage()));
+		}
+		// hub:end delve
 		// hub:cut deathbank
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
@@ -1700,6 +1729,13 @@ public class OutsidePlugin extends Plugin
 		if (any)
 		{
 			delveSeen = counts;
+			// (the levels lost to deaths, as they stand now: the board just read counts them too)
+			JsonArray lost = new JsonArray();
+			for (int n : delves.lost)
+			{
+				lost.add(n);
+			}
+			delveLostSeen = lost;
 			saveKept();
 		}
 	}
@@ -1756,11 +1792,11 @@ public class OutsidePlugin extends Plugin
 			String name = motionName(e.getArguments());
 			if (name == null || e.getArguments().length == 0)
 			{
-				say("which motion? ::outsideforget and its name");
+				sayModel("which motion? ::outsideforget and its name");
 				return;
 			}
 			keep("motion", name, null);
-			say("taking the motion \"" + name + "\" off your page");
+			sayModel("taking the motion \"" + name + "\" off your page");
 			return;
 		}
 		if ("outsidemotion".equalsIgnoreCase(e.getCommand()))
@@ -1770,14 +1806,14 @@ public class OutsidePlugin extends Plugin
 				String name = motionName(e.getArguments());
 				if (e.getArguments().length > 0 && name == null)
 				{
-					say("a motion's name: up to 24 letters, numbers, spaces, - or _");
+					sayModel("a motion's name: up to 24 letters, numbers, spaces, - or _");
 					return;
 				}
 				armMotion(name);
 			}
 			else
 			{
-				say("switch on \"Character model\" in the plugin's settings first");
+				sayModel("switch on \"Character model\" in the plugin's settings first");
 			}
 			return;
 		}
@@ -1785,11 +1821,11 @@ public class OutsidePlugin extends Plugin
 		{
 			if (config.model())
 			{
-				sendModel();
+				sendStill();
 			}
 			else
 			{
-				say("switch on \"Character model\" in the plugin's settings first");
+				sayModel("switch on \"Character model\" in the plugin's settings first");
 			}
 		}
 	}
@@ -2074,7 +2110,25 @@ public class OutsidePlugin extends Plugin
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
 		sendGoal();
+		goalPanel();
 		say("your goal is " + itemManager.getItemComposition(item).getName() + ": your Outside page shows it, your kill count and how dry you are");
+	}
+
+	/** The side tab's goal line, as this account's goal stands (on the client's thread). */
+	private void goalPanel()
+	{
+		if (panel == null)
+		{
+			return;
+		}
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (item == null || item <= 0)
+		{
+			panel.goal(null);
+			return;
+		}
+		boolean got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null;
+		panel.goal(itemManager.getItemComposition(item).getName() + (got ? " (got)" : ""));
 	}
 
 	private void goalClear()
@@ -2083,6 +2137,7 @@ public class OutsidePlugin extends Plugin
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
 		keep("goal", null);
+		goalPanel();
 		say("your goal's off your Outside page");
 	}
 
@@ -2090,39 +2145,92 @@ public class OutsidePlugin extends Plugin
 	 *  retextures), and when it was got with the counts then (on the client's thread). */
 	private void sendGoal()
 	{
+		sendGoal(false);
+	}
+
+	/** byItself: the game's collection log line sent it, not the player's press, so in the Hub's version it waits for the
+	 *  next update (Update my page, or the hourly one), as the bank does: the reviewer's terms, a press or the hourly sync. */
+	private void sendGoal(boolean byItself)
+	{
 		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
 		if (!config.goal() || item == null || item <= 0)
 		{
 			return;
 		}
 		net.runelite.api.ItemComposition c = itemManager.getItemComposition(item);
+		// (11/18/2026, the first goal on the Hub came without its model: its textures were copied whether it had any or
+		// not, and an item with none, most of them, threw there; now each step only as the item needs it, the model sent
+		// unlit if lighting it fails, and why it couldn't be read said in the chat)
 		JsonObject model = null;
+		String why = null;
+		net.runelite.api.ModelData md = null;
 		try
 		{
-			net.runelite.api.ModelData md = client.loadModelData(c.getInventoryModel());
-			if (md != null)
+			md = client.loadModelData(c.getInventoryModel());
+			if (md == null)
 			{
-				md = md.cloneColors().cloneTextures();
+				why = "the game gave no model for it";
+			}
+			else
+			{
 				short[] from = c.getColorToReplace(), to = c.getColorToReplaceWith();
-				for (int i = 0; from != null && to != null && i < Math.min(from.length, to.length); i++)
+				if (from != null && to != null && from.length > 0)
 				{
-					md.recolor(from[i], to[i]);
+					md = md.cloneColors();
+					for (int i = 0; i < Math.min(from.length, to.length); i++)
+					{
+						md.recolor(from[i], to[i]);
+					}
 				}
 				short[] tf = c.getTextureToReplace(), tt = c.getTextureToReplaceWith();
-				for (int i = 0; tf != null && tt != null && i < Math.min(tf.length, tt.length); i++)
+				if (tf != null && tt != null && tf.length > 0 && md.getFaceTextures() != null)
 				{
-					md.retexture(tf[i], tt[i]);
+					md = md.cloneTextures();
+					for (int i = 0; i < Math.min(tf.length, tt.length); i++)
+					{
+						md.retexture(tf[i], tt[i]);
+					}
 				}
+			}
+		}
+		catch (RuntimeException ex)
+		{
+			why = ex.getClass().getSimpleName() + (ex.getMessage() == null ? "" : ": " + ex.getMessage());
+			md = null;
+		}
+		if (md != null)
+		{
+			try
+			{
 				Model m = md.light();
 				if (m != null)
 				{
 					model = wholeModel(modelJson(m), null, null, null);
 				}
 			}
+			catch (RuntimeException ex)
+			{
+				why = ex.getClass().getSimpleName() + (ex.getMessage() == null ? "" : ": " + ex.getMessage());
+			}
+			if (model == null)
+			{
+				// (unlit, its own colours: the page lights it)
+				try
+				{
+					model = Kept.model(md.getVerticesX(), md.getVerticesY(), md.getVerticesZ(), md.getVerticesCount(),
+						md.getFaceIndices1(), md.getFaceIndices2(), md.getFaceIndices3(), md.getFaceCount(),
+						null, null, md.getFaceColors(), md.getFaceTransparencies(), md.getFaceTextures());
+				}
+				catch (RuntimeException ex)
+				{
+					why = ex.getClass().getSimpleName() + (ex.getMessage() == null ? "" : ": " + ex.getMessage());
+				}
+			}
 		}
-		catch (RuntimeException ex)
+		if (model == null)
 		{
-			log.debug("outside: the goal's model", ex);
+			log.debug("outside: the goal's model: {}", why);
+			say("your goal goes to your page as its picture: its 3D model couldn't be read (" + (why == null ? "no reason given" : why) + ")");
 		}
 		Long got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class);
 		String then = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
@@ -2135,29 +2243,79 @@ public class OutsidePlugin extends Plugin
 		{
 			countsThen = null;
 		}
-		keep("goal", Goal.body(item, c.getName(), model, got == null ? 0 : got, countsThen));
+		JsonObject body = Goal.body(item, c.getName(), model, got == null ? 0 : got, countsThen);
+		if (byItself && HOLD_KEEPS)
+		{
+			synchronized (keepHeld)
+			{
+				keepHeld.put("goal", body);
+			}
+			return;
+		}
+		keep("goal", body);
 	}
 
-	/** The game's collection log line: the goal's, it's got (once), the counts then kept with it. */
+	/** The game's collection log line: the goal's, it's got. */
 	private void goalLine(String added)
 	{
 		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
-		if (added == null || item == null || item <= 0)
+		if (added != null && item != null && item > 0 && Goal.isIt(added, itemManager.getItemComposition(item).getName()))
+		{
+			goalGot();
+		}
+	}
+
+	/** Loot as RuneLite reads it (a kill's, or the Loot Tracker's: a raid's chest, a casket, a minigame's reward): the
+	 *  goal among it, it's got (11/18/2026, update 4: the collection log's line shows only the first time, and only
+	 *  with its notification on in the game's settings). */
+	private void goalLoot(java.util.Collection<net.runelite.client.game.ItemStack> items)
+	{
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (items == null || item == null || item <= 0 || !config.goal())
 		{
 			return;
 		}
+		for (net.runelite.client.game.ItemStack it : items)
+		{
+			if (it != null && itemManager.canonicalize(it.getId()) == item)
+			{
+				goalGot();
+				return;
+			}
+		}
+	}
+
+	// (RuneLite's event bus takes a listener only when it's named "on" and its event's name: anything else and the plugin
+	// won't start. 11/19/2026: update 4 named these goalOnNpcLoot and goalOnLoot, to keep clear of the field reports'
+	// own listener, and the Hub's version wouldn't switch on. One listener now, which hands the reports theirs.)
+	@Subscribe
+	public void onNpcLootReceived(net.runelite.client.events.NpcLootReceived e)
+	{
+		goalLoot(e.getItems());
+		// hub:cut reports
+		reportLoot(e);
+		// hub:end reports
+	}
+
+	@Subscribe
+	public void onLootReceived(net.runelite.client.plugins.loottracker.LootReceived e)
+	{
+		goalLoot(e.getItems());
+	}
+
+	/** The goal's got (once): when, and the counts then, kept with it and sent (in the Hub's version, with the next
+	 *  update). */
+	private void goalGot()
+	{
 		if (configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null)
-		{
-			return;
-		}
-		if (!Goal.isIt(added, itemManager.getItemComposition(item).getName()))
 		{
 			return;
 		}
 		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, System.currentTimeMillis());
 		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS, gson.toJson(counts.json()));
-		sendGoal();
-		say("your goal's got: your Outside page says so");
+		sendGoal(true);
+		goalPanel();
+		say(HOLD_KEEPS ? "your goal's got: your Outside page says so with your next update" : "your goal's got: your Outside page says so");
 	}
 	// hub:end goal
 
@@ -2170,6 +2328,12 @@ public class OutsidePlugin extends Plugin
 			public void setGoal()
 			{
 				goalPick();
+			}
+
+			@Override
+			public void clearGoal()
+			{
+				clientThread.invokeLater(() -> goalClear());
 			}
 			// hub:end goal
 
@@ -2250,8 +2414,28 @@ public class OutsidePlugin extends Plugin
 
 			// hub:cut model
 			@Override
+			public void captureStill()
+			{
+				clientThread.invokeLater(() ->
+				{
+					if (!config.model())
+					{
+						sayModel("switch on \"Character model\" in the plugin's settings first");
+						return;
+					}
+					if (client.getLocalPlayer() == null)
+					{
+						panel.status("log in first");
+						return;
+					}
+					sendStill();
+				});
+			}
+
+			@Override
 			public void removeModel()
 			{
+				configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET);
 				keep("model", null);
 				panel.status("taking your model off your page");
 			}
@@ -2414,6 +2598,18 @@ public class OutsidePlugin extends Plugin
 				{
 					panel.dinkStatus("the clipboard's busy: try again");
 				}
+			}
+
+			@Override
+			public void aetherAsMe()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					say("log in on a character with a page first");
+					return;
+				}
+				net.runelite.client.util.LinkBrowser.browse(a.aetherPage(friendsOnly ? watchCode(false) : null));
 			}
 
 			@Override
@@ -2938,8 +3134,8 @@ public class OutsidePlugin extends Plugin
 						if (count > 0 && !notesSaid)
 						{
 							notesSaid = true;
-							say(count == 1 ? "1 new note in your Outside page's register (the side tab's More)"
-								: count + " new notes in your Outside page's register (the side tab's More)");
+							say(count == 1 ? "1 new note in your Outside page's register (the side tab's Page tab)"
+								: count + " new notes in your Outside page's register (the side tab's Page tab)");
 						}
 					}
 				}
@@ -3044,13 +3240,29 @@ public class OutsidePlugin extends Plugin
 		});
 	}
 
+	/** The account's own still, set (Capture a still, ::outsidemodel): a capture no longer replaces it. */
+	static final String STILL_SET = "stillSet";
+
+	/** Capture a still (11/18/2026, update 4, Cranky): the model as it is the moment it's pressed, mid-emote too, as the
+	 *  page's still, kept until another still or the model's taken off. */
+	private void sendStill()
+	{
+		if (client.getLocalPlayer() == null || client.getLocalPlayer().getModel() == null)
+		{
+			sayModel("your model isn't there to send yet: try Capture a still in a moment");
+			return;
+		}
+		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET, true);
+		sendModel();
+	}
+
 	private void sendModel()
 	{
 		Player me = client.getLocalPlayer();
 		Model m = me == null ? null : me.getModel();
 		if (m == null)
 		{
-			say("your model isn't there to send yet: try ::outsidemodel in a moment");
+			sayModel("your model isn't there to send yet: try Capture a still in a moment");
 			return;
 		}
 		// (each written out the moment it's read: the client hands out one shared model for anything animated, so reading
@@ -3458,7 +3670,7 @@ public class OutsidePlugin extends Plugin
 			panel.capturing(true);
 		}
 		motionStart = -1;
-		say("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
+		sayModel("recording the next thing you do (an emote, a special attack): do it now. Nothing in 8 seconds, and it records you standing.");
 	}
 
 	@Subscribe
@@ -3545,12 +3757,16 @@ public class OutsidePlugin extends Plugin
 		JsonObject frames = Kept.frames(motionFrames, 1000.0 / (MOTION_EVERY * 20));
 		motionFx.into(frames);
 		JsonObject petFrames = motionPet != null && !motionPetFrames.contains(null) ? Kept.frames(motionPetFrames, 1000.0 / (MOTION_EVERY * 20)) : null;
-		say("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
+		sayModel("recorded " + motionFrames.size() + " frames" + (motionIdle ? " of you standing" : "") + ": sending it to your page");
 		// (11/15/2026, Jace: "build the motion library": kept under its name beside the others)
 		String name = motionAs != null ? motionAs : motionIdle ? "idle" : "motion";
-		say("it goes on your page as \"" + name + "\"");
-		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment)
-		keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
+		sayModel("it goes on your page as \"" + name + "\"");
+		// (the side tab's one button, 11/15/2026: the still model goes too, from the motion's first moment; since
+		// 11/18/2026 only while they haven't set a still of their own with Capture a still)
+		if (configManager.getRSProfileConfiguration(OutsideConfig.GROUP, STILL_SET) == null)
+		{
+			keep("model", wholeModel(motionBase.deepCopy(), motionPet == null ? null : motionPet.deepCopy(), null, null));
+		}
 		keep("motion", name, wholeModel(motionBase, motionPet, frames, petFrames));
 		if (panel != null)
 		{
@@ -3621,13 +3837,51 @@ public class OutsidePlugin extends Plugin
 	}
 	// hub:end bank
 
-	// hub:cut deathbank
-	/** Their own death (11/16/2026): what they carried and wore as they fell, and where. */
+	/** Their own death: a delve's levels lost with it (11/19/2026), and what they carried and wore as they fell. */
 	@Subscribe
 	public void onActorDeath(ActorDeath e)
 	{
 		Player me = client.getLocalPlayer();
-		if (!config.deathbank() || me == null || e.getActor() != me)
+		if (me == null || e.getActor() != me)
+		{
+			return;
+		}
+		// hub:cut delve
+		if (config.delve() && atDelve() && delves.died())
+		{
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delveLost", delves.keep());
+		}
+		// hub:end delve
+		// hub:cut deathbank
+		deathbankDied();
+		// hub:end deathbank
+	}
+
+	// hub:cut delve
+	/** Whether they're in the Doom of Mokhaiotl's lair (DELVE_REGIONS, by the instance's own map). */
+	private boolean atDelve()
+	{
+		WorldPoint at = here();
+		if (at == null)
+		{
+			return false;
+		}
+		for (int r : DELVE_REGIONS)
+		{
+			if (at.getRegionID() == r)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	// hub:end delve
+
+	// hub:cut deathbank
+	/** Their own death (11/16/2026): what they carried and wore as they fell, and where. */
+	private void deathbankDied()
+	{
+		if (!config.deathbank())
 		{
 			return;
 		}
@@ -3764,7 +4018,7 @@ public class OutsidePlugin extends Plugin
 		}
 		if (first)
 		{
-			say("your " + what + " goes up with your next update (Update my page, or the hourly one)");
+			sayAbout(what, "your " + what + " goes up with your next update (Update my page, or the hourly one)");
 		}
 		return true;
 	}
@@ -3847,12 +4101,12 @@ public class OutsidePlugin extends Plugin
 				{
 					if (!"encounter".equals(what))
 					{
-						say("model".equals(what) ? "your model is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
+						sayAbout(what, "model".equals(what) ? "your still is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
 					}
 				}
 				else if (body != null && code != 200)
 				{
-					say("your " + what + " didn't go up (the relay said " + code + why + ")");
+					sayAbout(what, "your " + what + " didn't go up (the relay said " + code + why + ")");
 				}
 			}
 		});
@@ -3883,6 +4137,9 @@ public class OutsidePlugin extends Plugin
 			// hub:cut delve
 			String d = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delve");
 			delveSeen = d == null ? null : gson.fromJson(d, JsonArray.class);
+			delves.load(configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delveLost"));
+			String dl = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delveLostSeen");
+			delveLostSeen = dl == null ? null : gson.fromJson(dl, JsonArray.class);
 			// hub:end delve
 		}
 		catch (RuntimeException e)
@@ -3903,6 +4160,10 @@ public class OutsidePlugin extends Plugin
 		if (delveSeen != null)
 		{
 			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delve", gson.toJson(delveSeen));
+		}
+		if (delveLostSeen != null)
+		{
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delveLostSeen", gson.toJson(delveLostSeen));
 		}
 		// hub:end delve
 	}
@@ -3939,9 +4200,9 @@ public class OutsidePlugin extends Plugin
 	}
 
 	// hub:cut reports
-	/** A monster's loot (RuneLite's own reading of it, as Dink's): worth "Drops worth at least" or more, a report. */
-	@Subscribe
-	public void onNpcLootReceived(NpcLootReceived e)
+	/** A monster's loot (RuneLite's own reading of it, as Dink's): worth "Drops worth at least" or more, a report.
+	 *  (Handed it by the goal's onNpcLootReceived: the event bus takes one listener of that name.) */
+	private void reportLoot(NpcLootReceived e)
 	{
 		if (!config.reports() || e.getNpc() == null)
 		{
@@ -4801,11 +5062,31 @@ public class OutsidePlugin extends Plugin
 
 	private void say(String words)
 	{
+		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
+			.runeLiteFormattedMessage("Outside: " + words).build()));
+	}
+
+	/** A line about the character model or its motions: in the chat, and under Capture my character in the side tab's
+	 *  Model tab (11/18/2026: every line went there, so the goal's turned up under the capture button). */
+	private void sayModel(String words)
+	{
 		if (panel != null)
 		{
 			panel.status(words);
 		}
-		clientThread.invokeLater(() -> chat.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE)
-			.runeLiteFormattedMessage("Outside: " + words).build()));
+		say(words);
+	}
+
+	/** A keep's line: under Capture my character only when it's the model's or a motion's. */
+	private void sayAbout(String what, String words)
+	{
+		if ("model".equals(what) || "motion".equals(what))
+		{
+			sayModel(words);
+		}
+		else
+		{
+			say(words);
+		}
 	}
 }

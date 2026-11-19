@@ -29,7 +29,7 @@ Your gear, stats, quests, diaries and slayer task on your own page at Outside.wi
 ## Its side tab (11/15/2026)
 
 <!-- hub:cut model,talk -->
-The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**; **Capture my character**, which records the next emote you do within 8 seconds from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it (blank: "idle" or "motion"), with your model standing still; the motions on your page, the one picked showing first to everyone who opens it, ✕ taking one away; and **Take my model off my page**. The same as `::outsidemodel`, `::outsidemotion <a name>` and `::outsideforget <a name>`. It needs "Character model" switched on. Since 11/16/2026 also **Your emotes** (copy a picture, give it a name, **Paste a picture as an emote**: your page's chat shows it for `:name:`; ✕ takes one away; made a PNG in memory, never a file read) and **Copy my station key** (for the outstation program, which transmits to the same page with the same key).
+The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**; **Capture my character**, which records the next emote you do within 8 seconds from its start to its end (your pet's too), or you and your pet standing if you do nothing, and puts it on your page under the name you give it (blank: "idle" or "motion"), with your model standing still; **Capture a still** (11/18/2026), you as you are the moment you press it as your page's still, which captures then leave alone (`::outsidemodel` the same); the motions on your page, the one picked showing first to everyone who opens it, ✕ taking one away; and **Take my model off my page**. The same as `::outsidemodel`, `::outsidemotion <a name>` and `::outsideforget <a name>`. It needs "Character model" switched on. Since 11/16/2026 also **Your emotes** (copy a picture, give it a name, **Paste a picture as an emote**: your page's chat shows it for `:name:`; ✕ takes one away; made a PNG in memory, never a file read) and **Copy my station key** (for the outstation program, which transmits to the same page with the same key).
 <!-- hub:end model,talk -->
 <!-- hub:else model,talk
 The Outside tab in RuneLite's side bar (a lime ✼): whose page it is and **Open my page**, **Make my Outside page** and whether it's proven yours, **Update my page** (11/16/2026) and when it was last updated, and **Refresh**.
@@ -44,7 +44,7 @@ Under **Who sees it** (11/16/2026): whether the page is open to anyone (and on O
 
 **Update my page** counts down to when it can be pressed again, and the tab shows when it last went (11/16/2026).
 **Show what's sent** opens exactly what Update my page would send now, every field of it, in a window to read before
-sending. **Copy my Dink address** (11/16/2026): if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin,
+sending. **Copy my address for Dink** (11/16/2026): if you use the [Dink](https://github.com/pajlads/DinkPlugin) plugin,
 this copies your page's address for it, to paste on its own line in Dink's Primary Webhook URLs; what you switch on in
 Dink then shows on your page and Outside.wiki's globe as field reports as they happen. This plugin sends nothing for
 it (Dink does); nothing from the Wilderness or PvP is shown, nor anything that names another player, and Dink's world,
@@ -71,7 +71,7 @@ To Jace's relay on Cloudflare, only while you're logged in, and only when you pr
 <!-- hub:end live -->
 - **item charges** (one switch, on; 11/14/2026): each worn or carried item's charges, as the game tells you them in its chat when you check one or as it's used (only the number, by the item; kept on this RuneLite's profile so they're known after a restart)
 <!-- hub:cut delve -->
-- **Doom of Mokhaiotl delves** (one switch, on; 11/14/2026): when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level and the waves past 8, as the Delve Calculator plugin reads it ("Credits")
+- **Doom of Mokhaiotl delves** (one switch, on; 11/14/2026): when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level and the waves past 8, as the Delve Calculator plugin reads it ("Credits"); and (11/19/2026, `delve_lost`) the levels a death lost, as they stood when the board was read: Delves.java counts a run's levels from the chat ("Delve level: 3 duration: ..."), a death in the lair (its regions, the Delve Calculator's) adds them up, kept on the profile per account, since this version only
 <!-- hub:end delve -->
 <!-- hub:cut bank -->
 - **my bank on my page** (one switch, off to begin with, behind its own warning; 11/14/2026): your whole bank (each item, how many, a placeholder as none, and the tabs' counts), three ticks after you last used it, to your relay's keep for your page (docs/protocol.md, "Kept for the page"); switching it off takes it off your page
@@ -204,7 +204,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
 
 ## For the Hub's review
 
-Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update.
+Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update. And `py start_check.py --cut` (11/19/2026) starts the Hub's version inside RuneLite, in a home of its own, and says whether it switched on: update 4 passed every other check and didn't (docs/hub-submission.md, "Before every update").
 
 <!-- hub:cut live -->
 **Precedents** (11/09/2026): [`docs/hub-precedents.md`](https://github.com/jhmcubed/outstation/blob/2b2f2713fd66262593e17b4f6ad7e211fdce5686/docs/hub-precedents.md) (jhmcubed/outstation) goes through every piece of information this plugin reads or sends and names the Plugin Hub plugins (and RuneLite's own) that already read or send the same, with links to the exact lines, where this plugin is stricter, the Hub's written rules as they stand, and what the Hub requires of the licence and the repository (its own repository, with `runelite-plugin.properties` and a `LICENSE` at the root).

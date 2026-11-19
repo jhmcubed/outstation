@@ -189,7 +189,7 @@ public final class Attach
 		return base + "/keep/" + enc(channel) + "/" + enc(what) + "?key=" + enc(key);
 	}
 
-	/** The page's address for the Dink plugin's webhooks (11/16/2026, "Copy my Dink address"): http(s)://…/dink/<channel>?key=…,
+	/** The page's address for the Dink plugin's webhooks (11/16/2026, "Copy my address for Dink"): http(s)://…/dink/<channel>?key=…,
 	 *  on the relay every request goes to. Only copied for the player to paste into Dink; never fetched here. */
 	public String dinkAddress()
 	{
@@ -246,6 +246,13 @@ public final class Attach
 	public String gameReadUrl()
 	{
 		return keepUrl("x").replaceFirst("/keep/.*$", "/game/" + enc(channel));
+	}
+
+	/** The page with its key in the fragment, for the aether under the page's own name (11/18/2026): no server sees a
+	 *  fragment, and the page takes it out of the address at once. */
+	public String aetherPage(String code)
+	{
+		return page(code) + "#aether=" + enc(key);
 	}
 
 	/** The page with a watch code, for friends (11/16/2026). */

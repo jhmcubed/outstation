@@ -60,7 +60,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal"]
-SUBMITTED = ["delve", "model", "bank", "deathbank"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update)
+SUBMITTED = ["delve", "model", "bank", "deathbank", "goal"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update)
 
 # whole files that belong to a part (paths under this folder)
 J = "src/main/java/wiki/outside/"
@@ -73,6 +73,7 @@ PART_FILES = {
     "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
     "goal": [J + "Goal.java", T + "GoalTest.java"],
+    "delve": [J + "Delves.java", T + "DelvesTest.java"],
 }
 # never copied: what's built, and what only this repository needs
 SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__", "README.md"}
