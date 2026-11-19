@@ -35,11 +35,24 @@ test("nothing for another channel, another name, other words or a note that's go
   }
 });
 
+test("a dropped note goes, only with its name and exactly its words; the rest stay as they were", () => {
+  const drop: Mend = { channel: "someone", id: 2, name: "Ja", drop: true, text: "small\nboots" };
+  const notes: [number, string, string][] = [[1, note(1, "Ja", "big"), ""], [2, note(2, "Ja", "small\nboots"), ""], [3, note(3, "Ja", "x"), ""]];
+  strictEqual(mendNotes("someone", notes, [drop]), true);
+  deepStrictEqual(notes.map(([id]) => id), [1, 3]);
+  strictEqual(mendNotes("someone", notes, [drop]), false);
+  const other: [number, string, string][] = [[2, note(2, "Ja", "small\nboots!"), ""]];
+  strictEqual(mendNotes("someone", other, [drop]), false);
+  strictEqual(other.length, 1);
+});
+
 test("Ja's drawing: 17 rows of 34, kept whole, its first 12 as the register kept them", () => {
   const m = MENDS.find((x) => x.channel === "salutecflagg" && x.id === 1)!;
   const rows = m.text.split("\n");
   deepStrictEqual([rows.length, new Set(rows.map((r) => Array.from(r).length)).size, Array.from(rows[0]).length], [17, 1, 34]);
   strictEqual(aetherText(m.text), m.text);
+  const small = MENDS.find((x) => x.channel === "salutecflagg" && x.id === 2)!;
+  deepStrictEqual([small.drop, small.name, small.text.split("\n").length], [true, "Ja", 12]);
 });
 
 for (const [name, f] of tests) { f(); passed++; console.log("ok  " + name); }
