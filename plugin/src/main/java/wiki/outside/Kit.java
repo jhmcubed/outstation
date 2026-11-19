@@ -155,6 +155,7 @@ public class Kit
 		o.add("combat", JsonNull.INSTANCE);
 		o.add("slayer", JsonNull.INSTANCE);
 		o.add("delve", JsonNull.INSTANCE);
+		o.add("delve_lost", JsonNull.INSTANCE);
 		o.add("presence", JsonNull.INSTANCE);   // (what they're doing as Discord shows it, 11/16/2026)
 		return o;
 	}

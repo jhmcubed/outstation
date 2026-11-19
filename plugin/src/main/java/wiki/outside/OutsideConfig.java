@@ -410,7 +410,7 @@ public interface OutsideConfig extends Config
 		keyName = "delve",
 		name = "Doom of Mokhaiotl delves",
 		description = "When you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level"
-			+ " (as the Delve Calculator plugin reads it), for your Outside page",
+			+ " (as the Delve Calculator plugin reads it), and how many a death lost from then on, for your Outside page",
 		position = 5,
 		section = shownSection
 	)

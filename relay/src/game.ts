@@ -119,6 +119,11 @@ export function gameFields(g: unknown): Fields {
   // completed at each level, 1 to 8, then the waves past 8, as the Delve Calculator plugin reads it; null, not read yet
   if (g.delve === null) out.delve = null;
   else if (Array.isArray(g.delve) && g.delve.length === 9 && g.delve.every((x) => whole(x) !== undefined)) out.delve = g.delve as number[];
+  // (11/19/2026; SaluteCFlagg, through Jace: "count the levels each death throws away"): the levels a death in a delve
+  // lost (its run's drops gone with it), counted by the plugin's Delves.java and sent as they stood when the board was
+  // last read, the same nine; null, none counted yet
+  if (g.delve_lost === null) out.delve_lost = null;
+  else if (Array.isArray(g.delve_lost) && g.delve_lost.length === 9 && g.delve_lost.every((x) => whole(x) !== undefined)) out.delve_lost = g.delve_lost as number[];
   // (11/15/2026, Jace: "add quests, achievement diaries, combat achievements and slayer tasks to the plugin"; the
   // plugin's Progress.java): each whole or null (switched off: taken off the page)
   if (g.quests === null) out.quests = null;
