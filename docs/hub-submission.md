@@ -3,6 +3,21 @@
 What goes to runelite/plugin-hub for Outside's first version: the lean cut (`plugin/hub_cut.py`), merged into
 jhmcubed/outside-plugin's `main` as 0b90619 (jhmcubed/outside-plugin#1 and #2), checked to match the cut exactly.
 
+## Before every update (11/19/2026)
+
+Update 4 went out compiling and passing every test, and wouldn't switch on in anyone's RuneLite (a listener misnamed
+for RuneLite's event bus: "Update 5", below). So before any commit= goes on the fork for the Hub, in this order:
+
+1. `gradle test` and `hub_check.py`, for the whole plugin and for the cut (`hub_cut.py <folder>`): `SubscribeTest`
+   checks every listener's name as the event bus does.
+2. `python3 plugin/start_check.py <outside-plugin's checkout at the exact commit the Hub will get>`: RuneLite started
+   with it, in a home of its own, until "Plugin OutsidePlugin is now running" with nothing of the plugin's failing
+   after. It fails on update 4 as merged. GitHub runs it on every pull request here too (tests.yml, the plugin job).
+3. Only then the commit= on jhmcubed/plugin-hub's branch.
+
+Keep an update small: a fix alone goes on its own, and a new feature waits for the next update once one is in review
+(update 4 grew from size-s to size-m while it waited, and took 18 hours to merge).
+
 ## The file: `plugins/outside`
 
 ```
@@ -160,3 +175,7 @@ Merged: runelite/plugin-hub#20922 merged 11/19/2026 02:51 UTC, at outside-plugin
 ## Update 5: the plugin switched on again (11/19/2026)
 
 Update 4 merged 02:51 UTC and wouldn't start: RuneLite's event bus refuses a listener not named "on" and its event's name, and the goal's loot listeners were goalOnNpcLoot and goalOnLoot ("Subscribed method ... should be named onNpcLootReceived", PluginInstantiationException; found by starting the merged version in RuneLite under Xvfb). Now onNpcLootReceived (which hands the field reports theirs in the whole plugin) and onLootReceived; SubscribeTest checks every listener's name, and fails on update 4 as merged. The fixed Hub version started in RuneLite: running, both loot listeners registered.
+
+The start check built after it (`plugin/start_check.py`, in tests.yml too): fails on update 4 as merged (the
+PluginInstantiationException), passes on the fix, both the cut and the whole plugin, and on outside-plugin d6937fe
+itself, the commit the fork's branch then named (restarted from the Hub's master, its update 4 branch merged).

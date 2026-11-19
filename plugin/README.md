@@ -204,7 +204,7 @@ It compiles the plugin against your installed RuneLite and opens RuneLite in dev
 
 ## For the Hub's review
 
-Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update.
+Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plugin Hub Review" and "Rejected or Rolled Back Features", read 11/07/2026). `py hub_check.py` (from the plugin's folder) checks the source for every forbidden feature and API before each submission or update. And `py start_check.py --cut` (11/19/2026) starts the Hub's version inside RuneLite, in a home of its own, and says whether it switched on: update 4 passed every other check and didn't (docs/hub-submission.md, "Before every update").
 
 <!-- hub:cut live -->
 **Precedents** (11/09/2026): [`docs/hub-precedents.md`](https://github.com/jhmcubed/outstation/blob/2b2f2713fd66262593e17b4f6ad7e211fdce5686/docs/hub-precedents.md) (jhmcubed/outstation) goes through every piece of information this plugin reads or sends and names the Plugin Hub plugins (and RuneLite's own) that already read or send the same, with links to the exact lines, where this plugin is stricter, the Hub's written rules as they stand, and what the Hub requires of the licence and the repository (its own repository, with `runelite-plugin.properties` and a `LICENSE` at the root).

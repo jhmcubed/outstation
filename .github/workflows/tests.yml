@@ -64,6 +64,12 @@ jobs:
         run: gradle test --console=plain
       - name: the Hub's version against the Hub's rules
         run: python "$RUNNER_TEMP/outside-plugin/hub_check.py"
+      # (11/19/2026: update 4 compiled and passed every test and still wouldn't switch on in RuneLite: a listener
+      # misnamed for RuneLite's event bus. Only starting it inside RuneLite shows that)
+      - name: the Hub's version starts inside RuneLite
+        run: |
+          command -v xvfb-run || (sudo apt-get update -q && sudo apt-get install -y -q xvfb)
+          python plugin/start_check.py "$RUNNER_TEMP/outside-plugin"
 
   client:
     runs-on: windows-2025
