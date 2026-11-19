@@ -21,11 +21,13 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { type Env, tooOld } from "./channel";
-import { aetherName, aetherRecent, aetherText, aetherWait, channelForm, pyjson, AETHER_A_MINUTE } from "./text";
+import { aetherName, aetherRecent, aetherText, aetherWait, channelForm, pyjson, AETHER_A_MINUTE, AETHER_ROWS, AETHER_WIDTH } from "./text";
 
 export const AETHER_KEPT = 100; // lines kept, and handed to whoever joins
 export const AETHER_READ = 30; // lines in the public read (GET /aether)
-const AETHER_MESSAGE = 8192; // anything longer from a socket is thrown away unread (a full line, escaped, fits)
+// anything longer from a socket is thrown away unread: a full line fits, every character escaped as \uXXXX (six each),
+// with its newlines and the message round it
+const AETHER_MESSAGE = AETHER_ROWS * (AETHER_WIDTH + 1) * 6 + 256;
 const AETHER_SAVE = 5000; // the lines into storage at most this often while they come
 const AETHER_HERE_EVERY = 2000; // who's here told to everyone at most this often
 const SAID_MOST = 1000; // senders' last lines' times kept in memory, past which the stale ones go

@@ -135,7 +135,7 @@ pub fn url(relay: &str, channel: &str, key: &str) -> String {
     format!("{}/aether?channel={}&key={}&v={}", relay.trim_end_matches('/'), enc(channel), enc(key), enc(VERSION))
 }
 
-/// A line made ready to go: its rows' ends trimmed, empty rows at the start and end dropped, at most 12 rows of 80
+/// A line made ready to go: its rows' ends trimmed, empty rows at the start and end dropped, at most 32 rows of 80
 /// (as the relay keeps them; it cuts the same, this only spares a line it would refuse).
 pub fn tidy(text: &str) -> String {
     let rows: Vec<String> = text.replace("\r\n", "\n").split('\n')
@@ -143,7 +143,7 @@ pub fn tidy(text: &str) -> String {
     let first = rows.iter().position(|r| !r.trim().is_empty());
     let last = rows.iter().rposition(|r| !r.trim().is_empty());
     match (first, last) {
-        (Some(a), Some(b)) => rows[a..=b].iter().take(12).cloned().collect::<Vec<_>>().join("\n"),
+        (Some(a), Some(b)) => rows[a..=b].iter().take(32).cloned().collect::<Vec<_>>().join("\n"),
         _ => String::new(),
     }
 }
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(tidy("\n\n  /\\_/\\  \n ( o.o )\r\n  > ^ <\n\n"), "  /\\_/\\\n ( o.o )\n  > ^ <");
         assert_eq!(tidy("   \n \n"), "");
         assert_eq!(tidy(&"x".repeat(100)).len(), 80);
-        assert_eq!(tidy(&"row\n".repeat(20)).split('\n').count(), 12);
+        assert_eq!(tidy(&"row\n".repeat(40)).split('\n').count(), 32);
     }
 
     #[test]
