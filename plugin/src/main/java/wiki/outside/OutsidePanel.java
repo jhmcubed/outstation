@@ -5,21 +5,21 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
-// hub:cut model,talk
+// hub:cut model,talk,goal
 import java.util.List;
-// hub:end model,talk
+// hub:end model,talk,goal
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-// hub:cut model
+// hub:cut model,goal
 import javax.swing.ButtonGroup;
-// hub:end model
+// hub:end model,goal
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-// hub:cut model
+// hub:cut model,goal
 import javax.swing.JRadioButton;
-// hub:end model
+// hub:end model,goal
 // hub:cut model,talk
 import javax.swing.JTextField;
 // hub:end model,talk
@@ -92,11 +92,15 @@ public class OutsidePanel extends PluginPanel
 		void update();
 
 		// hub:cut goal
-		/** "Set my goal item": the game's item search, the item picked goes to the page (update 3). */
-		void setGoal();
+		/** "Add a goal item": the game's item search, the item picked added to the goals on the page (update 3; a list
+		 *  since 11/19/2026). */
+		void addGoal();
 
-		/** The ✕ beside the goal: taken off the page (update 4). */
-		void clearGoal();
+		/** The goal picked beside the others: the one shown as its 3D model on the page (11/19/2026). */
+		void showGoal(int id);
+
+		/** The ✕ beside a goal: taken off the page (update 4). */
+		void forgetGoal(int id);
 		// hub:end goal
 
 		/** "Show what's sent": what "Update my page" would send now, in a window. */
@@ -265,30 +269,21 @@ public class OutsidePanel extends PluginPanel
 			+ " settings, each part its own switch.</div></html>")));
 		// hub:cut goal
 		// (the goal item, 11/17/2026; in the Page tab since 11/18/2026, update 4, Jace: set once and left, not one of
-		// the buttons pressed every session, which stay above)
+		// the buttons pressed every session, which stay above. A list since 11/19/2026, Cranky: "maybe the button would
+		// be 'add a goal item' and it would just add to the list, and you'd just have to x any you don't want anymore";
+		// Jace: one of them shown as its 3D model, the rest listed under it)
 		pageTab.add(Box.createVerticalStrut(12));
-		pageTab.add(left(heading("Your goal")));
-		pageTab.add(left(small("<html><div style='width:155px'>An item you're after: your page shows its 3D model, your kill"
-			+ " count where it drops and how dry you are for it.</div></html>")));
+		pageTab.add(left(heading("Your goals")));
+		pageTab.add(left(small("<html><div style='width:155px'>Items you're after: your page shows your kill count where each"
+			+ " drops and how dry you are for it, and the one picked here as its 3D model.</div></html>")));
 		pageTab.add(Box.createVerticalStrut(6));
-		pageTab.add(wide(button("Set my goal item", hooks::setGoal)));
-		// (the goal set, with ✕ to take it off: 11/18/2026, update 4; ::outsidegoal clear was the only way)
-		JPanel goalRow = new JPanel(new BorderLayout(6, 0));
-		goalRow.setOpaque(false);
-		goalLine.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		goalRow.add(goalLine, BorderLayout.CENTER);
-		goalClear.setToolTipText("Take the goal off your page");
-		// (the game's own font has no ✕: a system font's, or × or x where that has none either)
-		goalClear.setFont(new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12));
-		goalClear.setText(goalClear.getFont().canDisplay('\u2715') ? "\u2715" : goalClear.getFont().canDisplay('\u00d7') ? "\u00d7" : "x");
-		goalClear.setMargin(new java.awt.Insets(0, 6, 0, 6));
-		goalClear.addActionListener(ev -> hooks.clearGoal());
-		goalRow.add(goalClear, BorderLayout.EAST);
-		goalRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
-		goalRow.setVisible(false);
-		goalBox = goalRow;
+		goalAdd.addActionListener(ev -> hooks.addGoal());
+		pageTab.add(wide(goalAdd));
+		goalList.setLayout(new BoxLayout(goalList, BoxLayout.Y_AXIS));
+		goalList.setOpaque(false);
+		goalList.setVisible(false);
 		pageTab.add(Box.createVerticalStrut(4));
-		pageTab.add(goalRow);
+		pageTab.add(goalList);
 		// hub:end goal
 		// hub:cut year
 		// (11/15/2026: your year, kept by this plugin; docs/record.md)
@@ -794,22 +789,70 @@ public class OutsidePanel extends PluginPanel
 	}
 
 	// hub:cut goal
-	private final JLabel goalLine = small(" ");
-	private final JButton goalClear = new JButton("x");
-	private JPanel goalBox;
+	private final JButton goalAdd = new JButton("Add a goal item");
+	private final JPanel goalList = new JPanel();
 
-	/** The goal under its button: its name and how it stands (null: none set, the line hidden). */
-	public void goal(String words)
+	/** A goal as the side tab lists it: the item, its name, whether it's got, and whether it's the one shown. */
+	public static final class GoalRow
+	{
+		final int id;
+		final String name;
+		final boolean got, shown;
+
+		public GoalRow(int id, String name, boolean got, boolean shown)
+		{
+			this.id = id;
+			this.name = name;
+			this.got = got;
+			this.shown = shown;
+		}
+	}
+
+	/** The goals under their button, in the order they were added: each picked to be shown, or taken off with its ✕
+	 *  (none: the list hidden). Full, the button waits. */
+	public void goals(List<GoalRow> rows, int most)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
-			if (goalBox == null)
+			goalList.removeAll();
+			ButtonGroup group = new ButtonGroup();
+			for (GoalRow g : rows)
 			{
-				return;
+				goalList.add(goalRow(g, group, rows.size() > 1));
+				goalList.add(Box.createVerticalStrut(2));
 			}
-			goalBox.setVisible(words != null);
-			goalLine.setText(words == null ? " " : "<html><div style='width:130px'>" + esc(words) + "</div></html>");
+			goalList.setVisible(!rows.isEmpty());
+			boolean full = rows.size() >= most;
+			goalAdd.setEnabled(!full);
+			goalAdd.setToolTipText(full ? most + " goals is the most: take one off first" : "The game's item search: the item you pick is added to your goals");
+			goalList.revalidate();
+			goalList.repaint();
 		});
+	}
+
+	private JPanel goalRow(GoalRow g, ButtonGroup group, boolean choice)
+	{
+		JPanel r = new JPanel(new BorderLayout(4, 0));
+		r.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		r.setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
+		JRadioButton pick = new JRadioButton("<html><div style='width:110px'>" + esc(g.name + (g.got ? " (got)" : "")) + "</div></html>", g.shown);
+		pick.setToolTipText(choice ? (g.shown ? "Shown as its 3D model on your page" : "Show this one as its 3D model on your page, the others listed under it")
+			: "Shown as its 3D model on your page");
+		pick.setOpaque(false);
+		pick.setFont(FontManager.getRunescapeSmallFont());
+		group.add(pick);
+		pick.addActionListener(e -> hooks.showGoal(g.id));
+		r.add(pick, BorderLayout.CENTER);
+		JButton x = new JButton();
+		// (the game's own font has no ✕: a system font's, or × or x where that has none either)
+		x.setFont(new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12));
+		x.setText(x.getFont().canDisplay('\u2715') ? "\u2715" : x.getFont().canDisplay('\u00d7') ? "\u00d7" : "x");
+		x.setMargin(new java.awt.Insets(0, 6, 0, 6));
+		x.setToolTipText("Take " + g.name + " off your goals");
+		x.addActionListener(ev -> hooks.forgetGoal(g.id));
+		r.add(x, BorderLayout.EAST);
+		r.setMaximumSize(new Dimension(Integer.MAX_VALUE, r.getPreferredSize().height));
+		return r;
 	}
 	// hub:end goal
 

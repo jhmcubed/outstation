@@ -1753,7 +1753,7 @@ public class OutsidePlugin extends Plugin
 	public void onCommandExecuted(CommandExecuted e)
 	{
 		// hub:cut goal
-		// (::outsidegoal opens the item search for the goal; ::outsidegoal clear takes it off)
+		// (::outsidegoal opens the item search to add a goal; ::outsidegoal clear takes them all off)
 		if ("outsidegoal".equalsIgnoreCase(e.getCommand()))
 		{
 			if (e.getArguments().length > 0 && "clear".equalsIgnoreCase(e.getArguments()[0]))
@@ -2085,70 +2085,184 @@ public class OutsidePlugin extends Plugin
 	}
 
 	// hub:cut goal
-	// ---- the goal item (Goal.java; 11/17/2026, update 3) ----
+	// ---- the goal items (Goal.java; 11/17/2026, update 3; a list since 11/19/2026) ----
 
-	/** The game's item search in the chatbox, for the goal: as you type, only the items that match, a click sets it. */
+	/** This account's goals, as kept (the one goal kept before 11/19/2026 read into the list once, then let go). */
+	private Goal.Kept goals()
+	{
+		String kept = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.LIST);
+		if (kept != null)
+		{
+			return Goal.Kept.from(kept, gson);
+		}
+		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
+		if (item == null || item <= 0)
+		{
+			return new Goal.Kept();
+		}
+		Goal.Kept k = Goal.Kept.fromOne(item, configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class),
+			configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS), gson);
+		goalsKeep(k);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
+		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
+		return k;
+	}
+
+	private void goalsKeep(Goal.Kept k)
+	{
+		if (k.list.isEmpty())
+		{
+			configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.LIST);
+		}
+		else
+		{
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.LIST, k.json(gson));
+		}
+	}
+
+	private String itemName(int id)
+	{
+		return itemManager.getItemComposition(id).getName();
+	}
+
+	/** The game's item search in the chatbox, for a goal: as you type, only the items that match, a click adds it. */
 	private void goalPick()
 	{
 		clientThread.invokeLater(() ->
 		{
 			if (!config.goal())
 			{
-				say("switch on \"Goal item\" in the plugin's settings first");
+				say("switch on \"Goal items\" in the plugin's settings first");
 				return;
 			}
 			if (client.getGameState() != net.runelite.api.GameState.LOGGED_IN)
 			{
-				say("log in first: the goal is your account's own");
+				say("log in first: your goals are your account's own");
 				return;
 			}
-			goalSearch.tooltipText("Set as my Outside goal")
+			if (goals().list.size() >= Goal.MOST)
+			{
+				say("you have " + Goal.MOST + " goals, the most there can be: take one off (its \u2715 in the side tab) first");
+				return;
+			}
+			goalSearch.tooltipText("Add to my Outside goals")
 				.onItemSelected(id -> clientThread.invokeLater(() -> goalChosen(id)))
 				.build();
 		});
 	}
 
-	/** An item chosen: kept for this account, sent with its model (on the client's thread). */
+	/** An item chosen: added to this account's goals, and the goals sent (on the client's thread). */
 	private void goalChosen(int id)
 	{
 		int item = itemManager.canonicalize(id);
-		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, item);
-		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
-		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
-		sendGoal();
-		goalPanel();
-		say("your goal is " + itemManager.getItemComposition(item).getName() + ": your Outside page shows it, your kill count and how dry you are");
+		Goal.Kept k = goals();
+		String name = itemName(item);
+		if (k.find(item) != null)
+		{
+			say(name + " is one of your goals already");
+			return;
+		}
+		if (!k.add(item))
+		{
+			say("you have " + Goal.MOST + " goals, the most there can be: take one off first");
+			return;
+		}
+		goalsKeep(k);
+		sendGoalSoon();
+		goalPanel(k);
+		say(k.list.size() == 1
+			? "your goal is " + name + ": your Outside page shows it, your kill count and how dry you are"
+			: name + " is added to your goals: your Outside page lists it under " + itemName(k.shown) + ", with your kill count and how dry you are");
 	}
 
-	/** The side tab's goal line, as this account's goal stands (on the client's thread). */
+	/** The one shown as its 3D model on the page (the side tab's choice; on the client's thread). */
+	private void goalShown(int id)
+	{
+		Goal.Kept k = goals();
+		if (!k.show(id))
+		{
+			return;
+		}
+		goalsKeep(k);
+		sendGoalSoon();
+		goalPanel(k);
+	}
+
+	/** One goal taken off (its \u2715; on the client's thread). */
+	private void goalForget(int id)
+	{
+		Goal.Kept k = goals();
+		if (!k.forget(id))
+		{
+			return;
+		}
+		goalsKeep(k);
+		goalPanel(k);
+		if (k.list.isEmpty())
+		{
+			goalSoon++;
+			keep("goal", null);
+			say("your goal's off your Outside page");
+		}
+		else
+		{
+			sendGoalSoon();
+			say(itemName(id) + " is off your goals");
+		}
+	}
+
+	/** The side tab's goals, as this account's stand (on the client's thread). */
 	private void goalPanel()
+	{
+		goalPanel(goals());
+	}
+
+	private void goalPanel(Goal.Kept k)
 	{
 		if (panel == null)
 		{
 			return;
 		}
-		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
-		if (item == null || item <= 0)
+		List<OutsidePanel.GoalRow> rows = new ArrayList<>();
+		for (Goal.One g : k.list)
 		{
-			panel.goal(null);
-			return;
+			rows.add(new OutsidePanel.GoalRow(g.id, itemName(g.id), g.got > 0, g.id == k.shown));
 		}
-		boolean got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null;
-		panel.goal(itemManager.getItemComposition(item).getName() + (got ? " (got)" : ""));
+		panel.goals(rows, Goal.MOST);
 	}
 
+	/** Every goal taken off (::outsidegoal clear). */
 	private void goalClear()
 	{
+		goalsKeep(new Goal.Kept());
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM);
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT);
 		configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
+		goalSoon++;
 		keep("goal", null);
 		goalPanel();
-		say("your goal's off your Outside page");
+		say("your goals are off your Outside page");
 	}
 
-	/** The goal set for this account to the keep: the item, its model as the game draws it (its own recolours and
-	 *  retextures), and when it was got with the counts then (on the client's thread). */
+	/** (the goals sent a moment after the last change, so a few presses in a row are one upload: the relay takes 24 an
+	 *  hour, every kind together) */
+	private int goalSoon;
+
+	private void sendGoalSoon()
+	{
+		int mine = ++goalSoon;
+		executor.schedule(() -> clientThread.invokeLater(() ->
+		{
+			if (mine == goalSoon)
+			{
+				sendGoal(false);
+			}
+		}), 2, TimeUnit.SECONDS);
+	}
+
+	/** The goals set for this account to the keep: the one shown with its model as the game draws it (its own recolours
+	 *  and retextures), the rest under it, and when each was got with the counts then (on the client's thread). */
 	private void sendGoal()
 	{
 		sendGoal(false);
@@ -2158,12 +2272,44 @@ public class OutsidePlugin extends Plugin
 	 *  next update (Update my page, or the hourly one), as the bank does: the reviewer's terms, a press or the hourly sync. */
 	private void sendGoal(boolean byItself)
 	{
-		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
-		if (!config.goal() || item == null || item <= 0)
+		Goal.Kept k = goals();
+		if (!config.goal() || k.list.isEmpty())
 		{
 			return;
 		}
-		net.runelite.api.ItemComposition c = itemManager.getItemComposition(item);
+		JsonObject shown = null;
+		List<JsonObject> more = new ArrayList<>();
+		for (Goal.One g : k.pageOrder())
+		{
+			net.runelite.api.ItemComposition c = itemManager.getItemComposition(g.id);
+			JsonObject model = shown == null ? goalModel(c) : null;
+			JsonObject one = Goal.body(g.id, c.getName(), model, g.got, g.counts);
+			if (shown == null)
+			{
+				shown = one;
+			}
+			else
+			{
+				more.add(one);
+			}
+		}
+		JsonObject body = Goal.body(shown, more);
+		if (byItself && HOLD_KEEPS)
+		{
+			synchronized (keepHeld)
+			{
+				keepHeld.put("goal", body);
+			}
+			return;
+		}
+		keep("goal", body);
+	}
+
+	private int goalModelSaid;
+
+	/** The item's model as the game draws it (null: it couldn't be read, said in the chat; its picture goes instead). */
+	private JsonObject goalModel(net.runelite.api.ItemComposition c)
+	{
 		// (11/18/2026, the first goal on the Hub came without its model: its textures were copied whether it had any or
 		// not, and an item with none, most of them, threw there; now each step only as the item needs it, the model sent
 		// unlit if lighting it fails, and why it couldn't be read said in the chat)
@@ -2233,60 +2379,52 @@ public class OutsidePlugin extends Plugin
 				}
 			}
 		}
-		if (model == null)
+		if (model == null && goalModelSaid != c.getId())
 		{
+			goalModelSaid = c.getId();   // (said once an item, not with every change to the list)
 			log.debug("outside: the goal's model: {}", why);
-			say("your goal goes to your page as its picture: its 3D model couldn't be read (" + (why == null ? "no reason given" : why) + ")");
+			say("your goal " + c.getName() + " goes to your page as its picture: its 3D model couldn't be read (" + (why == null ? "no reason given" : why) + ")");
 		}
-		Long got = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class);
-		String then = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS);
-		JsonObject countsThen = null;
-		try
-		{
-			countsThen = then == null ? null : gson.fromJson(then, JsonObject.class);
-		}
-		catch (RuntimeException ex)
-		{
-			countsThen = null;
-		}
-		JsonObject body = Goal.body(item, c.getName(), model, got == null ? 0 : got, countsThen);
-		if (byItself && HOLD_KEEPS)
-		{
-			synchronized (keepHeld)
-			{
-				keepHeld.put("goal", body);
-			}
-			return;
-		}
-		keep("goal", body);
+		return model;
 	}
 
-	/** The game's collection log line: the goal's, it's got. */
+	/** The game's collection log line: a goal's, it's got. */
 	private void goalLine(String added)
 	{
-		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
-		if (added != null && item != null && item > 0 && Goal.isIt(added, itemManager.getItemComposition(item).getName()))
+		if (added == null)
 		{
-			goalGot();
+			return;
+		}
+		for (Goal.One g : goals().list)
+		{
+			if (g.got <= 0 && Goal.isIt(added, itemName(g.id)))
+			{
+				goalGot(g.id);
+				return;
+			}
 		}
 	}
 
-	/** Loot as RuneLite reads it (a kill's, or the Loot Tracker's: a raid's chest, a casket, a minigame's reward): the
+	/** Loot as RuneLite reads it (a kill's, or the Loot Tracker's: a raid's chest, a casket, a minigame's reward): a
 	 *  goal among it, it's got (11/18/2026, update 4: the collection log's line shows only the first time, and only
 	 *  with its notification on in the game's settings). */
 	private void goalLoot(java.util.Collection<net.runelite.client.game.ItemStack> items)
 	{
-		Integer item = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.ITEM, Integer.class);
-		if (items == null || item == null || item <= 0 || !config.goal())
+		if (items == null || !config.goal())
+		{
+			return;
+		}
+		Goal.Kept k = goals();
+		if (k.list.isEmpty())
 		{
 			return;
 		}
 		for (net.runelite.client.game.ItemStack it : items)
 		{
-			if (it != null && itemManager.canonicalize(it.getId()) == item)
+			Goal.One g = it == null ? null : k.find(itemManager.canonicalize(it.getId()));
+			if (g != null && g.got <= 0)
 			{
-				goalGot();
-				return;
+				goalGot(g.id);
 			}
 		}
 	}
@@ -2309,19 +2447,22 @@ public class OutsidePlugin extends Plugin
 		goalLoot(e.getItems());
 	}
 
-	/** The goal's got (once): when, and the counts then, kept with it and sent (in the Hub's version, with the next
+	/** A goal's got (once): when, and the counts then, kept with it and sent (in the Hub's version, with the next
 	 *  update). */
-	private void goalGot()
+	private void goalGot(int id)
 	{
-		if (configManager.getRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, Long.class) != null)
+		Goal.Kept k = goals();
+		Goal.One g = k.find(id);
+		if (g == null || g.got > 0)
 		{
 			return;
 		}
-		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT, System.currentTimeMillis());
-		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, Goal.GOT_COUNTS, gson.toJson(counts.json()));
+		g.got = System.currentTimeMillis();
+		g.counts = counts.json();
+		goalsKeep(k);
 		sendGoal(true);
-		goalPanel();
-		say(HOLD_KEEPS ? "your goal's got: your Outside page says so with your next update" : "your goal's got: your Outside page says so");
+		goalPanel(k);
+		say(HOLD_KEEPS ? "your goal " + itemName(id) + "'s got: your Outside page says so with your next update" : "your goal " + itemName(id) + "'s got: your Outside page says so");
 	}
 	// hub:end goal
 
@@ -2331,15 +2472,21 @@ public class OutsidePlugin extends Plugin
 		{
 			// hub:cut goal
 			@Override
-			public void setGoal()
+			public void addGoal()
 			{
 				goalPick();
 			}
 
 			@Override
-			public void clearGoal()
+			public void showGoal(int id)
 			{
-				clientThread.invokeLater(() -> goalClear());
+				clientThread.invokeLater(() -> goalShown(id));
+			}
+
+			@Override
+			public void forgetGoal(int id)
+			{
+				clientThread.invokeLater(() -> goalForget(id));
 			}
 			// hub:end goal
 

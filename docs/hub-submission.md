@@ -204,3 +204,14 @@ Jace's PC lost sburb's key on 11/19, the morning his MacBook first ran Outside (
 - The no-page box and the "proven or vouched for already" answer say where the key is: the Page tab on a computer that shows the page (and, in the whole plugin, the outstation's settings).
 
 Not in it, Jace's call: a proven page whose every key is lost can't be taken back (a proven name takes no challenge).
+
+## Update 7: more than one goal (11/19/2026, built, waiting for update 6 to merge)
+
+Cranky, on Discord: "I'd like to have more than 1 goal item. maybe the button would be 'add a goal item' and it would just add to the list, and you'd just have to x any you don't want anymore". Jace: "we want to be able to choose ONE of the goal items to be displayed as a 3d model, while the rest of the goal items are listed under the first and each other with their dryness bars."
+
+- **Add a goal item** (was Set my goal item; `::outsidegoal` the same) adds the item picked to the account's goals, 10 at most (`Goal.MOST`; the button waits when full, its tip says why). Each goal is a row in the Page tab's **Your goals**: a choice of the one shown (its 3D model on the page; the first added is shown, and taking the shown one off shows the first left) and a ✕. `::outsidegoal clear` takes them all off.
+- Kept for the RuneScape profile as one setting, `goals` (`{"shown", "list": [{"id", "got"?, "counts"?}]}`, `Goal.Kept`); the one goal kept before (`goalItem`, `goalGot`, `goalGotCounts`) is read into it once and let go.
+- Sent as the keep's `goal`: the shown one as before (its model), the rest as `"more"` with no model (the relay's `keep.ts`, `GOALS_MORE`; docs/protocol.md). A change goes 2 seconds after the last press (`sendGoalSoon`), so a few ✕s in a row are one upload: the relay takes 24 an hour of every kind together. Each goal is got on its own (the collection log's line, or the loot), with the counts then.
+- An item whose model can't be read is said once, not with every change to the list.
+
+Order: the relay's half (outstation's `relay/`) goes live first (it refuses an unknown "more"? no: an older relay copies only the fields it knows, so "more" would be dropped, not refused; still, merge the relay before the Hub's update so the list reaches the page). Then ghillie's profile (the list under the goal) synced to outside.wiki. Then this update, once update 6 is merged. Before it goes to the fork: "Before every update", above (Jace's test in the game: add three goals, pick another to show, ✕ one, `::outsidegoal clear`, and an old single goal carried into the list).
