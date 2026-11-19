@@ -73,6 +73,7 @@ PART_FILES = {
     "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
     "goal": [J + "Goal.java", T + "GoalTest.java"],
+    "delve": [J + "Delves.java", T + "DelvesTest.java"],
 }
 # never copied: what's built, and what only this repository needs
 SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__", "README.md"}

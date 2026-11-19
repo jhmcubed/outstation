@@ -2220,6 +2220,21 @@ class Snapshot(Base):
         self.assertEqual(self.post({"game": {"name": "Somebody Else", "presence": self.WC}})[0], 204)
         self.assertIsNone((await self.row())["name"])
 
+    async def test_the_delve_levels_a_death_lost_are_kept_beside_the_board(self):
+        # (11/19/2026; SaluteCFlagg, through Jace: "count the levels each death throws away": delve_lost, nine whole
+        # numbers or null, as the board is; anything else left out)
+        board, lost = [773, 759, 739, 711, 658, 599, 470, 245, 381], [40, 38, 35, 30, 25, 20, 12, 6, 9]
+        self.assertEqual(self.post({"game": dict(self.STATE, delve=board, delve_lost=lost)})[0], 204)
+        kept = http("GET", "/game/%s?code=" % self.ch)[1]["game"]
+        self.assertEqual((kept["delve"], kept["delve_lost"]), (board, lost))
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.post({"game": dict(self.STATE, delve_lost=[1, 2, 3])})[0], 204)
+        self.assertEqual(http("GET", "/game/%s?code=" % self.ch)[1]["game"]["delve_lost"], lost)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.post({"game": dict(self.STATE, delve=None, delve_lost=None)})[0], 204)
+        kept = http("GET", "/game/%s?code=" % self.ch)[1]["game"]
+        self.assertEqual((kept["delve"], kept["delve_lost"]), (None, None))
+
     async def test_a_snapshot_clears_what_only_the_socket_sends_and_keeps_the_delve_board(self):
         # (11/16/2026, Jace: the outstation's orbs and world stayed on his page under the Hub's plugin; SNAP_CLEARS)
         socket = {"world": 369, "vitals": {"hp": [99, 99], "prayer": [99, 99], "run": 100, "spec": 100},

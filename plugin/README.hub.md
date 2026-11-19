@@ -55,7 +55,7 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 - **quests, diaries and combat achievements:** your quest points and which quests you've done or started, each Achievement Diary area's tiers and tasks done, and your combat achievement points and tasks done in each tier, and your collection log's count (slots filled and in all) with the names of the slots the game's chat said you added since the last update (the game's "Collection log - New addition notification" setting), and your kill counts and clue counts as the game's chat last said each one ("Your Vorkath kill count is: 418", "You have completed 152 hard Treasure Trails"; never a Wilderness boss's), kept on this RuneLite for the account
 - **my slayer task:** the monster, how many are left of how many, the area if your master named one, your slayer points and your task streak
 - **item charges:** each worn or carried item's charges, as the game tells you them in its chat when you check one or as it's used
-- **Doom of Mokhaiotl delves:** when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level (as the Delve Calculator plugin reads it)
+- **Doom of Mokhaiotl delves:** when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level (as the Delve Calculator plugin reads it), and how many of them a death lost, counted from the game's chat since you've had this version: a death in a delve loses every drop of its run, so your page leaves those levels out of your odds
 - that you've logged out
 
 **With the next update after you look** (only with its switch on):
