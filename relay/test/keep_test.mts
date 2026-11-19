@@ -3,7 +3,7 @@
 //
 //   node test/keep_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { keepShape, BANK_SLOTS, DEATHBANK_SLOTS, MOTION_NAME } from "../src/keep.ts";
+import { keepShape, BANK_SLOTS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME } from "../src/keep.ts";
 import { emoteKind, EMOTE_NAME } from "../src/emotes.ts";
 
 let passed = 0;
@@ -104,6 +104,25 @@ test("the goal: the item, its model, and when it was got with the counts then (1
   strictEqual(typeof keepShape("goal", { id: 4151, name: "  " }), "string");
   strictEqual(typeof keepShape("goal", { id: 4151, name: "x", got: { at: 5 } }), "string");
   strictEqual(typeof keepShape("goal", { id: 4151, name: "x", model: { v: "no" } }), "string");
+});
+
+test("the goal's list: the rest beside the one shown, each checked as it is, no model, each item once (11/19/2026)", () => {
+  const model = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100] };
+  const at = 1_794_944_909_617;
+  deepStrictEqual(keepShape("goal", { id: 4151, name: "Abyssal whip", model, more: [{ id: 11286, name: "Draconic visage\n", x: 1 },
+    { id: 13576, name: "Dragon warhammer", got: { at, counts: { kills: { "Lizardman shaman": 801, bad: -2 } } } }] }),
+    { id: 4151, name: "Abyssal whip", model, more: [{ id: 11286, name: "Draconic visage" },
+      { id: 13576, name: "Dragon warhammer", got: { at, counts: { kills: { "Lizardman shaman": 801 } } } }] });
+  // (an empty list says nothing; an old plugin's goal, with none, is as it was)
+  deepStrictEqual(keepShape("goal", { id: 4151, name: "Abyssal whip", more: [] }), { id: 4151, name: "Abyssal whip" });
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: [{ id: 11286, name: "y", model }] }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: [{ id: 4151, name: "x" }] }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: [{ id: 11286, name: "y" }, { id: 11286, name: "y" }] }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: [{ id: 0, name: "y" }] }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: [{ id: 11286, name: "y", got: { at: 5 } }] }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: { id: 11286 } }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: Array.from({ length: GOALS_MORE + 1 }, (_, i) => ({ id: 20000 + i, name: "z" })) }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: Array.from({ length: GOALS_MORE }, (_, i) => ({ id: 20000 + i, name: "z" })) }), "object");
 });
 
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {

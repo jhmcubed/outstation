@@ -512,13 +512,14 @@ public interface OutsideConfig extends Config
 	// hub:cut goal
 	@ConfigItem(
 		keyName = "goal",
-		name = "Goal item",
-		description = "On (to begin with): the item you're after (\"Set my goal item\" in the side tab, or ::outsidegoal) goes"
-			+ " to your Outside page with its 3D model, and the page shows your kill count and how dry you are for it."
-			+ " When the game's collection log says you got it, the page says so. ::outsidegoal clear takes it off",
-		warning = "On, the item you set as your goal (its name and its 3D model) and, when you get it, your kill and clue"
-			+ " counts then go to the Outside relay, a server not controlled or verified by the RuneLite developers, and"
-			+ " your Outside page shows them to anyone who opens it.",
+		name = "Goal items",
+		description = "On (to begin with): the items you're after (\"Add a goal item\" in the side tab, or ::outsidegoal) go"
+			+ " to your Outside page, one with its 3D model (the one you pick in the side tab, or none) and the rest listed under it,"
+			+ " each with your kill count and how dry you are for it. When the game's collection log or your loot says you"
+			+ " got one, the page says so. ::outsidegoal clear takes them all off",
+		warning = "On, the items you set as your goals (their names, and the 3D model of the one you show) and, when you get"
+			+ " one, your kill and clue counts then go to the Outside relay, a server not controlled or verified by the"
+			+ " RuneLite developers, and your Outside page shows them to anyone who opens it.",
 		position = 10,
 		section = shownSection
 	)

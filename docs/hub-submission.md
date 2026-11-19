@@ -13,7 +13,13 @@ for RuneLite's event bus: "Update 5", below). So before any commit= goes on the 
 2. `python3 plugin/start_check.py <outside-plugin's checkout at the exact commit the Hub will get>`: RuneLite started
    with it, in a home of its own, until "Plugin OutsidePlugin is now running" with nothing of the plugin's failing
    after. It fails on update 4 as merged. GitHub runs it on every pull request here too (tests.yml, the plugin job).
-3. Only then the commit= on jhmcubed/plugin-hub's branch.
+3. Tested in the game (11/19/2026, rsbfox on update 5: "Please don't submit code to the Hub without testing it
+   in-game", with `-ea`, which turns on RuneLite's assertions, such as a game method called off the client thread:
+   off in release, so the same mistakes are errors for players). Jace runs the exact commit, `py run.py client` in a
+   checkout of jhmcubed/outside-plugin at it (run.py starts RuneLite with `-ea`), logs in, and tries each change from
+   a list Claude writes (what to press, what should happen, what the client log mustn't show); a cloud session can't
+   log in to the game, so this step is his.
+4. Only then the commit= on jhmcubed/plugin-hub's branch, once he says it works.
 
 Keep an update small: a fix alone goes on its own, and a new feature waits for the next update once one is in review
 (update 4 grew from size-s to size-m while it waited, and took 18 hours to merge).
@@ -179,3 +185,53 @@ Update 4 merged 02:51 UTC and wouldn't start: RuneLite's event bus refuses a lis
 The start check built after it (`plugin/start_check.py`, in tests.yml too): fails on update 4 as merged (the
 PluginInstantiationException), passes on the fix, both the cut and the whole plugin, and on outside-plugin d6937fe
 itself, the commit the fork's branch then named (restarted from the Hub's master, its update 4 branch merged).
+
+Merged: runelite/plugin-hub#20967 merged 11/19/2026 06:02 UTC, at outside-plugin d6937fe, five hours before the bot's
+"next review no sooner than 11:16:25Z" (a maintainer deleted that comment and merged it: the plugin was broken). rsbfox
+commented first: don't submit to the Hub without testing in the game; run the client with `-ea`, whose assertions catch
+mistakes like game methods called off the client thread, off in release. Step 3 of "Before every update" came from it.
+Update 4's new code read for that kind of mistake afterwards: each game call it makes (the goal's item names and
+canonical ids, the still's model) runs on the client thread (loot events, chat commands and the item search are
+posted there, the side tab's buttons hand theirs over with clientThread.invokeLater); the Page tab's Talk in the
+aether as me reads only the plugin's settings.
+
+## Update 6: the key kept and found, the delve levels a death lost, more than one goal (11/19/2026, built, waiting for Jace's test in the game)
+
+Jace (11/19/2026): "Update 6 will include this and the other features we've added since update 5": the key (below),
+the delve levels a death lost (held till now as jhmcubed/outside-plugin#27, which this update carries, so that pull
+request isn't needed once it's in) and more than one goal. outside-plugin's claude/practical-rubin-pl0ob2 is the whole
+cut of this folder (`hub_cut.py --check` matches), with `gradle test`, `hub_check.py` and `start_check.py` passing on it.
+
+### The key kept and found
+
+Jace's PC lost sburb's key on 11/19, the morning his MacBook first ran Outside (RuneLite's cloud sync between the two the likely cause; not the plugin, not the uninstall, not RuneLite's install defaults: each read in RuneLite 1.13.7's own code). His key, from his outstation, was only in Advanced, Station key: the one kept with the account is only made by Make my Outside page. And a player with only the Hub's plugin had no way to see their key at all, for another computer. So:
+
+- A pasted key the relay takes (an update answered 200) is kept with the account too (`keepKey`), a second copy that a settings Reset or an emptied setting doesn't lose.
+- **Copy my station key** in the Hub's version too, the Page tab's "Your page's key", for Outside on another computer.
+- The no-page box and the "proven or vouched for already" answer say where the key is: the Page tab on a computer that shows the page (and, in the whole plugin, the outstation's settings).
+
+Not in it, Jace's call: a proven page whose every key is lost can't be taken back (a proven name takes no challenge).
+
+### The delve levels a death lost
+
+A death in a delve loses every drop of its run, but the board beside the Doom of Mokhaiotl counts the run's levels all the same, so a page's odds from the board ran high for someone who dies mid-run (SaluteCFlagg, through Jace). `Delves.java` counts each level done from the game's chat ("Delve level: 3 duration: …", as the Delve Calculator plugin does), a run over once they're away from the boss, and adds a run's levels to those lost when they die in it; kept on the profile (`delveLost`) and sent as `delve_lost` beside the board, as they stood when it was last read (outstation c6d822e; the relay's half and the page's are live since 11/19/2026, outstation#64 and outside-wiki#98).
+
+### More than one goal
+
+Cranky, on Discord: "I'd like to have more than 1 goal item. maybe the button would be 'add a goal item' and it would just add to the list, and you'd just have to x any you don't want anymore". Jace: "we want to be able to choose ONE of the goal items to be displayed as a 3d model, while the rest of the goal items are listed under the first and each other with their dryness bars."
+
+- **Add a goal item** (was Set my goal item; `::outsidegoal` the same) adds the item picked to the account's goals, 10 at most (`Goal.MOST`; the button waits when full, its tip says why). Each goal is a row in the Page tab's **Your goals**: a choice of the one shown (its 3D model on the page; the first added is shown, and taking the shown one off shows the first left) and a ✕. `::outsidegoal clear` takes them all off. Over the rows, **No 3D model** (Jace: "add the option to NOT show a 3D model on your page for your goal/goals list"): every goal listed on the page with its picture, none turning, none's model sent; a goal's dot turns that one again.
+- Kept for the RuneScape profile as one setting, `goals` (`{"shown", "model"?: false, "list": [{"id", "got"?, "counts"?}]}`, `Goal.Kept`); the one goal kept before (`goalItem`, `goalGot`, `goalGotCounts`) is read into it once and let go.
+- Sent as the keep's `goal`: the shown one as before (its model), the rest as `"more"` with no model (the relay's `keep.ts`, `GOALS_MORE`; docs/protocol.md). A change goes 2 seconds after the last press (`sendGoalSoon`), so a few ✕s in a row are one upload: the relay takes 24 an hour of every kind together. Each goal is got on its own (the collection log's line, or the loot), with the counts then.
+- An item whose model can't be read is said once, not with every change to the list.
+
+Order: the relay's half (outstation's `relay/`, e162bfc) goes live before this update: an older relay keeps only the fields it knows, so it would drop "more" (the goal at the top still shown), not refuse it. Then ghillie's profile (the list under the goal) synced to outside.wiki, and its `ON_THE_HUB.goals` on once the Hub has merged this.
+
+### Jace's test in the game, for the whole update
+
+`py run.py client` in a checkout of jhmcubed/outside-plugin at the exact commit the fork will name (run.py starts RuneLite with `-ea`), logged in. The client's log mustn't show anything from `wiki.outside` failing at any step.
+
+1. **The key:** paste your station key in the plugin's settings and press Update my page (it should update). Then in the Page tab, Copy my station key: the key on the clipboard is that one.
+2. **Goals, carried over:** with the goal you set before (one), open the Page tab: it's the one row under Your goals, its dot filled. Your page still shows it turning.
+3. **Goals, the list:** press Add a goal item and pick an item, twice more: three rows, the first still shown. Pick another row's dot: a couple of seconds later your page turns that one, the others under it with their kills and bars. ✕ the shown one: the first left is shown. Pick No 3D model: a couple of seconds later nothing turns on your page, every goal listed with its picture; pick a goal's dot and it turns again. `::outsidegoal clear`: every row gone, the page says no goals. Add ten: the button greys out, its tip says ten is the most.
+4. **The delves:** if you're doing the Doom of Mokhaiotl anyway, die in a delve after finishing a level or two, then read the board beside the boss and press Update my page: your page leaves those levels out of the goal's odds where they drop (Show what's sent shows `delve_lost`). Not needed if you're not there: its counting is tested (`DelvesTest`).
