@@ -10,6 +10,7 @@
 //   POST <relay>/game/<channel>?key=<key>                              the Hub's plugin: a snapshot, what they're doing (11/16/2026)
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
 //   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
+//   /fights/<channel>...                                                recorded fights on the player's page (fights.ts)
 //   /keep/<channel>/<bank|model>                                        their bank and their model, for the page (keep.ts)
 //   /emotes/<channel>...                                                the broadcaster's own emotes (emotes.ts)
 //
@@ -101,6 +102,7 @@ import { type ArrayEvent, ArrayFeed, type Lost, arrayAnswer, arrayBackfill, arra
 import { PRESENCE_FRESH_MS, type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
+import { fightsOn } from "./fights";
 import { emoteKey } from "./emotes";
 const CORS_KEEP = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
                     "access-control-allow-headers": "content-type", "access-control-max-age": "86400" };
@@ -854,6 +856,28 @@ export default {
         return new Response(null, { status: 404 });
       }
       if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_clips"));
+      return new Response(null, { status: 405 });
+    }
+
+    // recorded fights on a player's page (fights.ts, 11/20/2026): everything through the channel, which knows which are
+    // shown to anyone; off unless the FIGHTS switch is "on"
+    if (parts[0] === "fights" && (parts.length === 2 || parts.length === 3) && NAME.test(parts[1])) {
+      if (!fightsOn(env)) return Response.json({ error: "fights aren't on here" }, { status: 404, headers: { "access-control-allow-origin": "*" } });
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
+                                                             "access-control-allow-headers": "authorization, range, content-type", "access-control-max-age": "86400" } });
+      }
+      if (parts.length === 3) {
+        const m = /^([A-Za-z0-9_-]{22})(\.jsonl\.gz)?$/.exec(parts[2]);
+        if (!m) return new Response(null, { status: 404 });
+        url.searchParams.set("id", m[1]);
+        if (m[2]) {
+          if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405 });
+          url.searchParams.set("file", "1");
+        } else if (request.method !== "POST" && request.method !== "DELETE") return new Response(null, { status: 405 });
+        return channelStub(env, parts[1]).fetch(toChannel(new Request(url.toString(), request), parts[1], "/_fights"));
+      }
+      if (request.method === "GET" || request.method === "POST") return channelStub(env, parts[1]).fetch(toChannel(request, parts[1], "/_fights"));
       return new Response(null, { status: 405 });
     }
 

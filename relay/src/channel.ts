@@ -30,7 +30,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { mendNotes } from "./mends";
-import { type Clip, fileKey, json, newId, readUpload, trim, ID, KEPT_MOST } from "./clips";
+import { type Clip, fileKey, json, newId, readUpload, serveFile, trim, ID, KEPT_MOST } from "./clips";
+import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, fightKey, fightNumbers, newFightId, readFight, trimFights } from "./fights";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
@@ -65,6 +66,10 @@ export interface Env {
   CLIPS_MOST?: string; // a channel's clips at most (20)
   CLIPS_DAYS?: string; // and for how long (30 days)
   CLIPS_AN_HOUR?: string; // uploads a channel may make in an hour (30)
+  FIGHTS?: string; // recorded fights on players' pages (fights.ts): "on", or off (every /fights route 404s)
+  FIGHTS_PUBLIC?: string; // "1": a new fight is shown to anyone unless the player says otherwise; else kept to themselves
+  FIGHTS_MOST?: string; // a page's fights at most (20)
+  FIGHTS_DAYS?: string; // and for how long (30 days; 0: until taken down)
   PRESENCE_FRESH_SECONDS?: string; // (tests) how long the Hub's plugin counts as here after its last POST (game.ts's PRESENCE_FRESH_MS: 70 minutes)
   WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" or an "activity" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
   ALMANAC_UPSTREAM?: string; // (tests) the almanac's sources all fetched under this address instead of the real hosts (almanac.ts's urls)
@@ -773,6 +778,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "_gamepost") return this.postGame(request, q, ip);
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
+    if (role === "_fights") return this.fights(request, q, ip);
     if (role === "_keep") return this.kept(request, q, ip);
     if (role === "_emotes") return this.emotes(request, q, ip);
     if (role === "_takedown") return this.takedown(request, q, ip);
@@ -2301,6 +2307,92 @@ export class Channel extends DurableObject<Env> {
     return json({ id: clip.id }, 201);
   }
 
+  // Recorded fights on the player's page (fights.ts; 11/20/2026). The list in this object's storage ("fight:<id>"), the
+  // files in the CLIPS bucket (fights/<channel>/<id>.jsonl.gz), every file served through here so one kept to themselves
+  // stays theirs.
+
+  fightsUploads: number[] = []; // (in memory: a sleep forgets, which only loosens it)
+
+  async fightList(): Promise<Fight[]> {
+    const all = await this.ctx.storage.list<Fight>({ prefix: "fight:" });
+    const { most, days } = fightNumbers(this.env);
+    const { kept, gone } = trimFights([...all.values()], most, days);
+    if (gone.length) await this.dropFights(gone);
+    return kept;
+  }
+
+  async dropFights(gone: Fight[]) {
+    await this.ctx.storage.delete(gone.map((f) => "fight:" + f.id));
+    await this.env.CLIPS?.delete(gone.map((f) => fightKey(this.name, f.id)));
+  }
+
+  /** Whether a request is the page's owner: a tending token (Authorization: Bearer) that's good, or the key (?key=).
+   *  A key given and wrong is refused (checkKey counts it); none given is just not the owner. */
+  async fightOwner(request: Request, q: URLSearchParams, ip: string): Promise<boolean | [number, string]> {
+    const auth = request.headers.get("authorization") || "";
+    if (auth.startsWith("Bearer ")) {
+      if (await this.tendUntil(auth.slice(7).trim())) return true;
+      return [403, "this link to your page has run out: open it again from the plugin"];
+    }
+    if (!q.has("key")) return false;
+    const no = await this.checkKey(q.get("key") || "", ip);
+    return no ? [403, no[1]] : true;
+  }
+
+  /** /fights/<channel>[/<id>] (index.ts, which has checked the switch): the list, an upload, a file, shown or kept, taken
+   *  down. fights.ts has the routes. */
+  async fights(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    const owner = await this.fightOwner(request, q, ip);
+    if (Array.isArray(owner)) return json({ error: owner[1] }, owner[0]);
+    const id = q.get("id") || "";
+    if (request.method === "GET" || request.method === "HEAD") {
+      if (!owner && this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
+      const list = await this.fightList();
+      if (q.get("file") === "1") {
+        const f = FIGHT_ID.test(id) ? list.find((x) => x.id === id) : undefined;
+        if (!f || (!f.public && !owner)) return json({ error: "no such fight" }, 404);
+        const r = await serveFile(this.env.CLIPS, fightKey(this.name, f.id), request);
+        // (a fight kept to themselves, or on a friends-only page, never kept by a cache along the way; a shown one five
+        // minutes, so one hidden again or taken down stops being served soon after)
+        const h = new Headers(r.headers);
+        h.set("cache-control", !f.public || this.meta.code ? "private, no-store" : "public, max-age=300");
+        return new Response(r.body, { status: r.status, headers: h });
+      }
+      return json({ fights: owner ? list : list.filter((f) => f.public), owner, ...fightNumbers(this.env) });
+    }
+    if (!owner) return json({ error: "only the page's own" }, 403);
+    if (request.method === "DELETE") {
+      if (!FIGHT_ID.test(id)) return json({ error: "which fight?" }, 400);
+      const f = await this.ctx.storage.get<Fight>("fight:" + id);
+      if (!f) return json({ error: "no such fight" }, 404);
+      await this.dropFights([f]);
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    if (id) {
+      if (!FIGHT_ID.test(id)) return json({ error: "which fight?" }, 400);
+      const f = await this.ctx.storage.get<Fight>("fight:" + id);
+      if (!f) return json({ error: "no such fight" }, 404);
+      if (q.get("public") !== "1" && q.get("public") !== "0") return json({ error: "public=1 or public=0" }, 400);
+      f.public = q.get("public") === "1";
+      await this.ctx.storage.put("fight:" + id, f);
+      return json({ id, public: f.public });
+    }
+    if (!this.env.CLIPS) return json({ error: "this relay doesn't keep fights" }, 503);
+    const now = Date.now(), most = FIGHTS_AN_HOUR;
+    this.fightsUploads = this.fightsUploads.filter((t) => now - t < 3_600_000);
+    if (this.fightsUploads.length >= most) return json({ error: `${most} fights an hour at most: try again later` }, 429);
+    const got = await readFight(request);
+    if (Array.isArray(got)) return json({ error: got[1] }, got[0]);
+    this.fightsUploads.push(now);
+    const fight: Fight = { id: newFightId(), ...got.meta, public: got.public ?? fightNumbers(this.env).public_default, up: now };
+    await this.env.CLIPS.put(fightKey(this.name, fight.id), got.file, { httpMetadata: { contentType: "application/gzip" } });
+    await this.ctx.storage.put("fight:" + fight.id, fight);
+    await this.fightList(); // (the oldest past the most go)
+    return json({ fight }, 201);
+  }
+
   // Invites (11/07/2026; docs/protocol.md, "Invites"): this outstation hands out channels of its own, as the keeper does
   // (index.ts's mint, the same steps), INVITES_START to begin with and one more every INVITE_EVERY_S on air.
   //   GET  ?key=              {"left", "earned", "used", "hours", "next_in_s"}
@@ -2677,6 +2769,8 @@ export class Channel extends DurableObject<Env> {
     await this.revoke();
     const clips = await this.ctx.storage.list<Clip>({ prefix: "clip:" });
     if (clips.size) await this.dropClips([...clips.values()]);
+    const fights = await this.ctx.storage.list<Fight>({ prefix: "fight:" });
+    if (fights.size) await this.dropFights([...fights.values()]);
     await this.ctx.storage.deleteAll();
     this.meta = { keyHash: null, code: "", cap: 0, chatId: 0, pollId: 0, nextWho: 0, seq: 0,
                   hostNames: [], blocked: [], soundInfo: null, state: "open" };

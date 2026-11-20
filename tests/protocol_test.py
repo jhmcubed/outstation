@@ -9,6 +9,7 @@ only (wsmini.py, beside this, plays every client).
 """
 
 import asyncio
+import gzip
 import re
 import base64
 import hashlib
@@ -224,7 +225,7 @@ def setUpModule():
          "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S, "--var", "PRESENCE_FRESH_SECONDS:%g" % PRESENCE_FRESH_S,
          "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
          "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1", "--var", "NOTES_PAGE:4",
-         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
+         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "FIGHTS:on", "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
         cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
     up = wait_up(90)
@@ -1611,6 +1612,90 @@ def fetch(method, path, headers=None):
             return r.status, r.headers, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.headers, e.read()
+
+
+def fight_upload(meta, fight):
+    b = "fightboundary"
+    out = b""
+    for name, kind, data in (("meta", "application/json", json.dumps(meta).encode()), ("fight", "application/gzip", fight)):
+        fn = '' if name == "meta" else '; filename="fight.jsonl.gz"'
+        out += CRLF.join(["--" + b, 'Content-Disposition: form-data; name="%s"%s' % (name, fn), "Content-Type: " + kind, "", ""]).encode()
+        out += data + CRLF.encode()
+    return out + ("--%s--" % b + CRLF).encode(), "multipart/form-data; boundary=" + b
+
+
+FIGHT = gzip.compress(b'{"t":0,"c":1,"e":"header","format":6,"label":"Vardorvis","startedMs":1795180328946}\n{"t":1,"c":31,"e":"tick"}\n')
+
+
+class Fights(Base):
+    """Recorded fights on a player's page (docs/protocol.md, "Recorded fights"): put up by the page's own (its key, or a
+    tending token as Authorization), kept to themselves by default (the relay's FIGHTS_PUBLIC), shown or hidden, the
+    file served only to whoever may see it, taken down; anything that isn't an Encounter Recorder recording refused."""
+
+    def send(self, method, path, body=None, headers=None):
+        req = urllib.request.Request(http_url() + path, method=method, data=body, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    def up(self, meta=None, fight=FIGHT, key=None, token=None):
+        body, ct = fight_upload(meta if meta is not None else {"foe": "Vardorvis", "ticks": 210}, fight)
+        headers = {"Content-Type": ct}
+        path = "/fights/" + self.ch
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        else:
+            path += "?key=" + urllib.parse.quote(key or self.key)
+        st, _, out = self.send("POST", path, body, headers)
+        return st, (json.loads(out) if out else None)
+
+    def listed(self, token=None, key=None):
+        path = "/fights/" + self.ch + ("?key=" + urllib.parse.quote(key) if key else "")
+        st, _, out = self.send("GET", path, None, {"Authorization": "Bearer " + token} if token else {})
+        return st, json.loads(out)
+
+    async def test_kept_to_themselves_then_shown_then_taken_down(self):
+        st, got = self.up()
+        self.assertEqual(st, 201)
+        fid = got["fight"]["id"]
+        self.assertEqual((got["fight"]["foe"], got["fight"]["ticks"], got["fight"]["public"]), ("Vardorvis", 210, False))
+        self.assertEqual(self.listed()[1]["fights"], [])                                   # (anyone: not yet)
+        self.assertEqual([f["id"] for f in self.listed(key=self.key)[1]["fights"]], [fid])  # (its own: there)
+        st, h, _ = self.send("GET", "/fights/%s/%s.jsonl.gz" % (self.ch, fid))
+        self.assertEqual(st, 404)
+        st, h, body = self.send("GET", "/fights/%s/%s.jsonl.gz?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual((st, body, h.get("cache-control")), (200, FIGHT, "private, no-store"))
+        st, _, _ = self.send("POST", "/fights/%s/%s?key=%s&public=1" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual(st, 200)
+        self.assertEqual([f["id"] for f in self.listed()[1]["fights"]], [fid])
+        st, h, body = self.send("GET", "/fights/%s/%s.jsonl.gz" % (self.ch, fid))
+        self.assertEqual((st, body, h.get("cache-control"), h.get("access-control-allow-origin")), (200, FIGHT, "public, max-age=300", "*"))
+        st, _, _ = self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, fid, "wrong-key-123456"))
+        self.assertEqual(st, 403)
+        st, _, _ = self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual(st, 204)
+        self.assertEqual(self.send("GET", "/fights/%s/%s.jsonl.gz" % (self.ch, fid))[0], 404)
+        self.assertEqual(self.listed(key=self.key)[1]["fights"], [])
+
+    async def test_a_tending_token_is_the_owner_and_nothing_else_is(self):
+        token = secrets.token_urlsafe(32)
+        st, _, _ = self.send("POST", "/tend/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), json.dumps({"token": token}).encode(), {"Content-Type": "application/json"})
+        self.assertEqual(st, 200)
+        st, got = self.up(meta={"foe": "Duke Sucellus", "public": True}, token=token)
+        self.assertEqual((st, got["fight"]["public"]), (201, True))
+        self.assertEqual(self.listed(token=token)[1]["owner"], True)
+        self.assertEqual(self.listed()[1]["owner"], False)
+        self.assertEqual(self.up(token=secrets.token_urlsafe(32))[0], 403)
+        self.assertEqual(self.up(key="wrong-key-123456")[0], 403)
+        body, ct = fight_upload({}, FIGHT)
+        self.assertEqual(self.send("POST", "/fights/" + self.ch, body, {"Content-Type": ct})[0], 403)
+
+    async def test_what_isnt_a_recording_is_refused(self):
+        self.assertEqual(self.up(fight=b"not gzip at all")[0], 415)
+        self.assertEqual(self.up(fight=gzip.compress(b'{"t":0,"e":"tick"}\n'))[0], 415)
+        self.assertEqual(self.listed(key=self.key)[1]["fights"], [])
 
 
 class Clips(Base):

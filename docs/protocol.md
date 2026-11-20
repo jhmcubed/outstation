@@ -761,6 +761,35 @@ or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
 
+## Recorded fights (11/20/2026)
+
+Encounter Recorder files (the Plugin Hub's plugin, by Mr Gnome) on a player's page, played back at
+`outside.wiki/<name>/fight/<id>` (ghillie's claude/outstation.md, "Fight replays and trophies"). Only the Worker relay
+keeps them (relay/src/fights.ts), in the `CLIPS` bucket (`fights/<channel>/<id>.jsonl.gz`), the list in the channel's
+storage. Off unless the relay's `FIGHTS` var is "on" (every route below 404s `{"error": "fights aren't on here"}`).
+
+The owner is whoever holds the page's key (`?key=`) or a tending token handed in with it (`POST /tend/<channel>`, "Tending
+the page's chat from the page"), sent as `Authorization: Bearer <token>`: the link the plugin opens to the player's own
+page carries one, so a player with only the plugin can put fights up from their page.
+
+    GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "owner": bool, "public_default": bool,
+                                                "most": n, "days": n}: the ones shown to anyone; the owner's, all of them
+                                                (403 without a friends-only page's code, unless the owner)
+    POST   /fights/<channel>                    the owner's: multipart/form-data: meta (JSON), fight (the recording, gzipped)
+                                                201 {"fight": Fight}; 403 not the owner; 413 over 8 MB; 415 not gzip, or its
+                                                first line isn't Encounter Recorder's header; 429 over 20 an hour
+    GET    /fights/<channel>/<id>.jsonl.gz      the recording (404 for one kept to themselves, unless the owner); a shown
+                                                one cached 5 minutes, any other never
+    POST   /fights/<channel>/<id>?public=1|0    the owner's: shown to anyone, or kept to themselves (200 {"id", "public"})
+    DELETE /fights/<channel>/<id>               the owner's: taken down (204)
+
+meta: `{"foe", "label", "at": <the recording's startedMs>, "ticks", "died": bool, "taken", "dealt", "public"?: bool}`,
+each cleaned and bounded; without `public` a fight takes the relay's `FIGHTS_PUBLIC` ("0": kept to themselves). A Fight
+is the same with its `id`, `size`, `public` and `up` (when it was put up, ms). At most `FIGHTS_MOST` (20) a page, the
+oldest going first, each kept `FIGHTS_DAYS` (30; 0 for good). The relay checks only the file's first line: other
+players' names, other people's chat, exact XP and mouse presses are taken out by the page before it sends
+(ghillie's strip.js). They go with the page when it's taken down (`DELETE /channels/<channel>`).
+
 ## Your year (11/10/2026)
 
 A year of the player's own travels and activity, recorded by the Outside plugin (by the outstation's app till v0.2.0), kept on the relay **encrypted with a key only
