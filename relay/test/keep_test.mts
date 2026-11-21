@@ -181,7 +181,7 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
                     "https://soundcloud.com/someone", "https://open.spotify.com/artist/4uLU6hMCjMI75M1A2tKUQC", "ftp://youtu.be/dQw4w9WgXcQ", "x".repeat(500), 42]) {
     strictEqual(themeLink(no), null, String(no));
   }
-  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by and start only");
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by, start and tracks only");
   deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "x".repeat(99), start: 90 } }),
                   { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/a-song", link: "https://soundcloud.com/someone/a-song", title: "a song", by: "x".repeat(60), start: 90 } });
   strictEqual(typeof layoutShape({ theme: { link: "https://evil.example/x" } }), "string");
@@ -190,6 +190,13 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
   strictEqual(typeof layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ" } }), "string");
   strictEqual(typeof layoutShape({ theme: { link: "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC" } }), "string");
   for (const bad of [-1, 1.5, 86_400, "90"]) strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", start: bad } }), "string", String(bad));
+  // (a set's tracklist, round nine: titles, who made them and lengths, only for a set, 50 at most)
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "one\n", by: "them", dur: 1000 }, { title: "two" }] } }),
+                  { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/sets/a-set", link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "one", by: "them", dur: 1000 }, { title: "two" }] } });
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", tracks: [{ title: "x" }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: Array.from({ length: 51 }, () => ({ title: "x" })) } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "x", art: "y" }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "x", dur: -5 }] } }), "string");
 });
 
 test("a layout: only its three parts, any taken away with null", () => {

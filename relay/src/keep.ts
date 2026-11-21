@@ -285,7 +285,9 @@ export const ARRANGE_WIDE = ["sec-year", "sec-heat", "sec-case"];
 export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank", "reports", "talk"];
 // (the subject's box, the outstation and the encounters' stage stay where every file has them, always shown)
 export const HERO_FIXED = ["who", "screen", "stage"];
-export const HERO_COLS = 12, LAYOUT_MOST = 8 * 1024;
+export const HERO_COLS = 12, LAYOUT_MOST = 16 * 1024;
+// (a set's tracks kept with the theme, 50 at most: round nine; the layout's most raised from 8 KB for them)
+export const THEME_TRACKS = 50;
 // (written by the page as its owner arranges it, after "done" and as a song's set: its own count, apart from the plugin's
 // uploads, so arranging never uses up what "Update my page" needs)
 export const LAYOUT_AN_HOUR = 60;
@@ -392,14 +394,31 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
       // youtube songs can be found on there anyway", the page's own player driving SoundCloud's; and where it starts,
       // whole seconds, the page's "starts at")
       if (!isObj(t)) return "theme: {link, title?, by?, start?}";
-      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start") return "theme: link, title, by and start only";
+      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start" && k !== "tracks") return "theme: link, title, by, start and tracks only";
       const read = themeLink(t.link);
       if (!read || read.kind !== "soundcloud") return "theme's link: a song's or a set's own address on soundcloud";
       if (t.title !== undefined && typeof t.title !== "string") return "theme's title: words";
       if (t.by !== undefined && typeof t.by !== "string") return "theme's by: words";
       if (t.start !== undefined && !(Number.isInteger(t.start) && (t.start as number) >= 0 && (t.start as number) < 86_400)) return "theme's start: whole seconds into the song";
+      // (a set's tracklist, round nine, Jace: "If someone links a soundcloud playlist could we show a small tracklist?":
+      // as the owner's page read it from SoundCloud's player when the set was chosen, so a visitor's page shows it
+      // without asking SoundCloud anything; each track's title, who made it and its length, 50 at most)
+      let tracks: { title: string; by?: string; dur?: number }[] | null = null;
+      if (t.tracks !== undefined) {
+        if (!Array.isArray(t.tracks) || t.tracks.length > THEME_TRACKS) return `theme's tracks: a list, ${THEME_TRACKS} at most`;
+        if (t.tracks.length && !/\/sets\//.test(String(read.id))) return "theme's tracks: only for a set";
+        tracks = [];
+        for (const x of t.tracks) {
+          if (!isObj(x)) return "theme's tracks: {title, by?, dur?} each";
+          for (const k of Object.keys(x)) if (k !== "title" && k !== "by" && k !== "dur") return "theme's tracks: title, by and dur only";
+          if (typeof x.title !== "string" || (x.by !== undefined && typeof x.by !== "string")) return "theme's tracks: words";
+          if (x.dur !== undefined && !(Number.isInteger(x.dur) && (x.dur as number) >= 0 && (x.dur as number) < 86_400_000)) return "theme's tracks: a length in whole milliseconds";
+          const tt = plain(x.title, 120), tb = plain(x.by, 60);
+          tracks.push({ title: tt, ...(tb ? { by: tb } : {}), ...(x.dur ? { dur: x.dur as number } : {}) });
+        }
+      }
       const title = plain(t.title, 120), by = plain(t.by, 60), start = (t.start as number) || 0;
-      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}) };
+      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}), ...(tracks && tracks.length ? { tracks } : {}) };
     }
   }
   return out;
