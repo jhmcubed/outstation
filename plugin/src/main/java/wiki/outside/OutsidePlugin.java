@@ -5939,6 +5939,7 @@ public class OutsidePlugin extends Plugin
 			if (p.gz.length + (p.moment == null ? 0 : p.moment.length) > FIGHT_MOST)
 			{
 				p.moment = null;
+				p.momentWhy = "the recording and its moment together are past the page's 8 MB";
 			}
 			shelf.entryOf(due.file, e ->
 			{
@@ -5973,7 +5974,7 @@ public class OutsidePlugin extends Plugin
 			panel.encounterStatus("putting it on your page…");
 		}
 		okhttp3.MultipartBody.Builder mb = new okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
-			.addFormDataPart("meta", EncounterStrip.meta(p.summary, shown))
+			.addFormDataPart("meta", EncounterStrip.meta(p.summary, shown, p.moment == null ? p.momentWhy : null))
 			.addFormDataPart("fight", "fight.jsonl.gz", RequestBody.create(GZIP, p.gz));
 		if (p.moment != null)
 		{

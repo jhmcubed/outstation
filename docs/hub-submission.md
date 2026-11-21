@@ -467,6 +467,38 @@ plugin, not bosses, so nothing started them before. plugin/README.md, "Encounter
    and claim: the line keeps going until you leave the arena, then the row says **claimed**, its moment the chest's
    window as you saw it. (Die in a wave instead: **died**.)
 
+### Encounters, round eight: Jace's own raids (11/21/2026)
+
+Jace's first Fractured Archive raids as recorded by update 6's plugin (five on his page): three went up without a
+moment, the two that had one were "half of my poh and half of the moia arena after we died", a raid came up as two
+encounters, and "sometimes ... the plugin doesn't start automatically recording when I enter the fractured archive".
+Read from his own files (ghillie's claude/outstation.md, "Encounters, round eight", has each one tick by tick):
+
+- **The Archive's first room and its Nexus are the raid.** RuneLite's Discord plugin names the Fractured Archive by eight
+  regions (`DiscordGameEventType.RAIDS_THE_FRACTURED_ARCHIVE`, 1.13.7); the Archive Guardian's room and the Nexus
+  between the bosses are a ninth, 16471, as an instance's template. So no raid started recording until the second boss
+  (Ezekiel), and a wait at the Nexus past 50 ticks (the Quartermaster's shop) ended it as "left", the rest of the raid a
+  recording of its own (his E12y… and zlOv…, 40 s apart). `Encounters.RAID_ROOMS` counts 16471 as the raid, only in an
+  instance. A death never split one: a dead raider spectates in the room's instance until it ends, then goes on with
+  the party ("You will respawn when your party completes or fails the challenge").
+- **A raid's own state counts too**, wherever the game puts a dead raider: Chambers of Xeric's `RAIDS_CLIENT_INDUNGEON`
+  (the Raids plugin's IN_RAID) and Theatre of Blood's `TOB_CLIENT_PARTYSTATUS` 2 or 3 (inside, or dead and spectating).
+- **The raid over for the player** ("You failed to survive the Fractured Archive.", "You were unable to rejoin your
+  party."): the first ticks out of it are the end, "failed", not 50 ticks later in the lobby or the house.
+- **A moment never crosses a map load.** Each frame of the scene knows its map; the stretch is cut where it changed,
+  keeping its anchor's side; the still scene is the one taken on that map at the anchor's own event: a fall's at the
+  death, in the arena. It used to be read as the recording ended, by then in his house: two moments mixed the house's
+  ground with the arena's last seconds, and three failed outright (nothing of the house near where he fell).
+- **The buffer lets go**: shapes no kept frame has (every projectile and graphic, a player at each gear switch) went on
+  counting toward its 96 MB; in his 7,882-tick recording of three raids it filled, no frame was taken after, and the
+  chest's opening went without a moment. Let go each tick now.
+- **Every encounter goes up with a moment, or says why**: the upload's meta carries `moment_missing` (the relay keeps
+  only the fields it knows, so it's in the upload, the plugin's log and its index until the relay keeps it).
+
+Checks: gradle test (EncounterMapsTest: the cut, the still scene's map, his raid fall, a fall just before the map goes,
+three falls and a chest, a reason with none, the buffer, the Archive's rooms, the lines that end a raid), hub_check,
+start_check both ways, `hub_cut.py --check`.
+
 ### Edit my page: arranging the page and its theme song (11/21/2026)
 
 Jace (11/21/2026), of editing his own page and adding a song: "Build it, they should be a part of update 6". The part
@@ -494,3 +526,4 @@ arrange.js, hero.js and theme.js for the first time; then this update.
 7. **Putting one on your page:** only once Jace has switched the relay's fights on (`FIGHTS` "on"); until then the tab says "Outside.wiki isn't taking encounters on pages yet" and Put on my page is greyed out. Then: **Put on my page** on a row: a window says what's taken out (exact xp, and other players' names if any were near) and asks; OK: the row says "on your page" with **Open**, which opens outside.wiki/<you>/fight/<id> and plays it. Untick **shown to anyone** (or tick it): your page's own list follows. ✕ a row: it asks, then the file's gone from your computer (one on your page stays there).
 8. **The client closing mid-recording:** start one, close RuneLite's window: it closes as before (a second or so), and the next start lists that recording, ended "client closed".
 9. **Edit my page** (once the relay and outside.wiki have it): in the side tab, press **Edit my page** beside Open my page: the line under it says it's opened, and your browser opens your page with **arrange this file** under your name and a box for your theme song in the right margin (or the ✼ tab at the bottom right in a narrow window). Move a section (drag its bar, or its arrows), hide one with its eye, pull a panel at the top wider, press **done**: it says it's kept. Paste a YouTube, SoundCloud or Spotify link in the theme's box and press **set**. Then open your page in a private window (or another browser): it's arranged as you left it, the hidden section gone, your song in the margin to press, and no arrange button or link box. Press **as it was** in the first window: everything goes back for everyone. Two hours later the link stops working (the page says so); Edit my page again makes a new one.
+10. **A raid, whole** (round eight): enter the Fractured Archive: a recording starts in the Archive Guardian's room (the lime line, nothing pressed). Stay at the Nexus between bosses as long as you like (the shop): it goes on. If you die, it goes on through the spectating and the next rooms. It ends as you leave the chest room ("completed"), or a few seconds after the raid's failed ("failed"). On your page it's one encounter, its moment the chest's opening, else your last fall in the arena you fell in, with no other place in it.

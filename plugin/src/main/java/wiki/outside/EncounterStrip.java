@@ -600,6 +600,12 @@ final class EncounterStrip
 	 *  relay then shows or keeps as its public_default says). */
 	static String meta(Summary s, Boolean shown)
 	{
+		return meta(s, shown, null);
+	}
+
+	/** (round eight, 11/21/2026) with {@code noMoment}, why it goes up without a scene moment, as "moment_missing" */
+	static String meta(Summary s, Boolean shown, String noMoment)
+	{
 		Map<String, Object> o = new LinkedHashMap<>();
 		o.put("foe", s.foe);
 		o.put("label", Js.truthy(s.label) ? s.label : "");
@@ -611,6 +617,10 @@ final class EncounterStrip
 		if (shown != null)
 		{
 			o.put("public", shown);
+		}
+		if (noMoment != null)
+		{
+			o.put("moment_missing", noMoment);
 		}
 		return Js.stringify(o);
 	}

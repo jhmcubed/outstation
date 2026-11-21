@@ -459,6 +459,8 @@ final class Encounters
 	private int partBase;
 	/** the tick (the whole recording's) a raid's completion line came, or -1 */
 	private int raidDone = -1;
+	/** (round eight) the raid's over for the player (RAID_OVER_LINE): the first ticks out end it */
+	private boolean raidOver;
 	/** the loot written this recording, by source (one each: the window's opened again, an item taken, makes none) */
 	private final Set<String> looted = new HashSet<>();
 	/** a reward window open with its inventory still empty: written when the inventory fills, a few ticks at most */
@@ -633,6 +635,7 @@ final class Encounters
 		{
 			// (a new encounter: nothing of the last one's raid or loot)
 			raidDone = -1;
+			raidOver = false;
 			looted.clear();
 			corpseOf = null;
 			waitingFor = null;
@@ -849,11 +852,21 @@ final class Encounters
 			catch (RuntimeException e)
 			{
 				log.warn("outside: the encounter's scene couldn't be taken", e);
+				taken = EncounterScene.none("its scene couldn't be taken: " + e);
 			}
 		}
-		if (taken == null && !dropTick)
+		else if (!dropTick && !split)
 		{
-			log.info("outside: encounter {} has no scene moment (nothing of the scene was taken)", stopped.fileName());
+			taken = EncounterScene.none("no scene was taken");
+		}
+		if (taken != null && taken.none != null)
+		{
+			// (round eight: the upload says why, and the owner's page makes one from the recording when it can)
+			log.info("outside: encounter {} has no scene moment: {}", stopped.fileName(), taken.none);
+		}
+		else if (taken != null && taken.cutFrom >= 0)
+		{
+			log.info("outside: encounter {}'s moment cut at a map load to ticks {}-{}", stopped.fileName(), taken.cutFrom, taken.cutTo);
 		}
 		if (!split)
 		{
@@ -973,8 +986,64 @@ final class Encounters
 	{
 		Player me = client.getLocalPlayer();
 		WorldPoint at = OutsidePlugin.here(client, me);
-		return at == null ? null : Presence.area(at.getRegionID(), at.getPlane());
+		WorldView wv = client.getTopLevelWorldView();
+		return at == null ? null : areaAt(at.getRegionID(), at.getPlane(), wv != null && wv.isInstance());
 	}
+
+	/**
+	 * A raid's rooms Discord's list misses (11/21/2026, round eight; Jace: "Sometimes it also seems like the plugin doesn't
+	 * start automatically recording when I enter the fractured archive", and his raids came up in two halves): the
+	 * Fractured Archive's first room (the Archive Guardian's) and its Nexus between the bosses are one instanced region,
+	 * 16471 (WorldPoint.fromLocalInstance's template; his recordings' scene lines), which RuneLite's Discord plugin
+	 * (DiscordGameEventType.RAIDS_THE_FRACTURED_ARCHIVE, 1.13.7: 16214, 16726, 16215, 16727, 16216, 16728, 16472, 16474)
+	 * doesn't name. So entering the raid started nothing until the second boss's room, and a wait at the Nexus past
+	 * LEFT_RAID's 50 ticks (the Quartermaster's shop) ended it as "left", the rest a recording of its own. Counted only in
+	 * an instance (the region's own ground outside one is the raid's lobby's neighbour). Each maps to a region of the raid
+	 * Discord does name.
+	 */
+	static final Map<Integer, Integer> RAID_ROOMS = Collections.singletonMap(16471, 16214);
+
+	/** The area for a region (its template's in an instance), Discord's or a raid's room it misses (RAID_ROOMS). */
+	static Presence.Area areaAt(int region, int plane, boolean instance)
+	{
+		Presence.Area a = Presence.area(region, plane);
+		if (a == null && instance && RAID_ROOMS.containsKey(region))
+		{
+			a = Presence.area(RAID_ROOMS.get(region), plane);
+		}
+		return a;
+	}
+
+	/**
+	 * Whether the game itself says the player is still in a raid (11/21/2026, round eight), wherever it's put them: a
+	 * raid's own state, as RuneLite's plugins read it. Chambers of Xeric's RAIDS_CLIENT_INDUNGEON (the Raids plugin's
+	 * Varbits.IN_RAID) is 1 inside; Theatre of Blood's TOB_CLIENT_PARTYSTATUS (Varbits.THEATRE_OF_BLOOD) is 2 inside and
+	 * 3 dead and spectating. Tombs of Amascut and the Fractured Archive have no such state in RuneLite: a dead raider stays
+	 * in the room's instance, spectating, until the room ends, then goes on with the party (his files: "You will respawn
+	 * when your party completes or fails the challenge", the Nexus next), which the regions cover.
+	 */
+	private boolean raidSays(Presence.Area raid)
+	{
+		if (raid == null)
+		{
+			return false;
+		}
+		switch (raid.name)
+		{
+			case "Chambers of Xeric":
+				return client.getVarbitValue(VarbitID.RAIDS_CLIENT_INDUNGEON) == 1;
+			case "Theatre of Blood":
+				int st = client.getVarbitValue(VarbitID.TOB_CLIENT_PARTYSTATUS);
+				return st == 2 || st == 3;
+			default:
+				return false;
+		}
+	}
+
+	/** The game's lines that end a raid for the player while the party may go on without them (11/21/2026, round eight;
+	 *  his Fractured Archive files): every raider dead ("You failed to survive the Fractured Archive."), or one put out of
+	 *  it ("You were unable to rejoin your party."). The first ticks out of the raid after one is the end. */
+	static final Pattern RAID_OVER_LINE = Pattern.compile("^(?:You failed to survive the .+\\.|You were unable to rejoin your party\\.)$");
 
 	/**
 	 * A name for a recording: the area they're in, as Discord names it, or else the highest-level NPC around (usually the
@@ -1224,13 +1293,20 @@ final class Encounters
 		else if (automatic && area != null)
 		{
 			Presence.Area now = here();
-			boolean in = sameArea(now, area);
-			outside = in ? 0 : outside + 1;
 			boolean raid = Presence.RAID.equals(area.kind);
+			// (a raid's own state counts as in it, wherever a dead raider's been put; round eight)
+			boolean in = sameArea(now, area) || raid && !raidOver && raidSays(area);
+			outside = in ? 0 : outside + 1;
 			// (a raid is whole from entering to leaving its treasure room (Jace, 11/21/2026): its completion line, a
 			// room's "Challenge complete", a sub-boss's count, the loot and a death all go on; once it's completed or
 			// looted, the first ticks out of it are the end, the click on the exit and the map leaving the raid)
 			boolean done = raid && (raidDone >= 0 || !looted.isEmpty());
+			// (the raid over for them, failed or put out of it: the first ticks out are the end too; round eight)
+			if (!in && raid && raidOver && now == null && outside > LEFT_BOSS)
+			{
+				stopAuto("failed");
+				return;
+			}
 			// (in an area of another name: left at once; where no area's named, after a few ticks, a raid's longer
 			// before it's done: a room the list misses, a map loading)
 			if (!in && (now != null || outside > (raid && !done ? LEFT_RAID : LEFT_BOSS)))
@@ -1705,6 +1781,11 @@ final class Encounters
 			case LOADING:
 				sceneDirty = true;
 				animated.clear();
+				// (another map: a moment never crosses one; round eight)
+				if (scene != null)
+				{
+					scene.mapLoaded();
+				}
 				break;
 			case LOGGED_IN:
 				if (sceneDirty && recording != null)
@@ -2376,6 +2457,11 @@ final class Encounters
 		if (recording == null)
 		{
 			return;
+		}
+		// (a raid over for the player while the party may go on: round eight)
+		if (event.getType() == ChatMessageType.GAMEMESSAGE && RAID_OVER_LINE.matcher(text).matches() && raidArea() != null)
+		{
+			raidOver = true;
 		}
 		// (a pet: the game's own line, as Dink reads it; round four)
 		if (event.getType() == ChatMessageType.GAMEMESSAGE && PET_LINE.matcher(text).matches())

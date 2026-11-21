@@ -49,13 +49,19 @@ import net.runelite.api.gameval.VarClientID;
  * projectile's, graphic's, ground item's and animated object's model as the client poses it for drawing that cycle
  * (Actor.getModel and the rest: what the game draws, rotated and placed as Model's own drawing does it), its corners
  * copied as whole units in the moment's axes (6 bytes a corner) and its faces' see-through-ness when it has any; its
- * faces, colours and textures copied once while it stays the same model. At the kill (else as the recording ends) the
- * still scene is taken once: the tile paints and tile models within {@link EncounterMoment#REACH} tiles of the player on
+ * faces, colours and textures copied once while it stays the same model. At the kill, the loot, each death of the
+ * player and a pet (else as the recording ends, if it's still the same map) the still scene is taken: the tile paints and tile models within {@link EncounterMoment#REACH} tiles of the player on
  * their plane and below (no roofs, as most play), and every still object there (walls, wall decorations, floor
  * decorations, game objects) by its own model, as Scene's drawing places each; their arrays are the scene's own (they
  * don't change), read off the client's thread. Everything heavy (sampling the dots, the tracks, the file) runs on the
  * encounters' moment thread after the recording ends. Measured in the local world (claude/outstation.md): the client
  * thread's share per frame and at the still scene, and the buffer's size, are logged with each moment.
+ *
+ * <p>Round eight (11/21/2026, Jace's raids): a moment never crosses a map load. Each frame knows its map (one more at
+ * each load); the stretch is cut where the map changed, keeping the side its anchor is on, and its still scene is the
+ * one taken on that map, at its anchor's event (a fall's at the death, in the arena, not after the respawn). Shapes no
+ * kept frame has are let go each tick, so a long raid's buffer never fills. When no moment can be made the Taken says
+ * why ({@code none}), and the upload carries it.
  *
  * <p>The ground items' names and prices are RuneLite's Ground Items plugin's (its defaults, as moment.js's itemText):
  * the item's name (a noted one's, the item it notes), "(qty)" past 1, "(GE: … gp)" from RuneLite's own prices
@@ -97,6 +103,8 @@ final class EncounterScene
 		final EncounterMoment.Mesh mesh;
 		byte[] texFaces;
 		int[] tp, tm, tn;
+		/** what it counts toward the buffer's size (let go with it once no frame kept has it: 11/21/2026) */
+		long bytes;
 
 		Shape(String key, int kind, EncounterMoment.Mesh mesh)
 		{
@@ -135,6 +143,8 @@ final class EncounterScene
 	static final class Frame
 	{
 		int cycle, tick;
+		/** the map it was taken on: one more at each map load (11/21/2026: a moment never crosses one) */
+		int epoch;
 		float fx, fy;
 		int yaw, pitch, zoom, h, ground;
 		final List<Sample> samples = new ArrayList<>();
@@ -184,9 +194,36 @@ final class EncounterScene
 		}
 	}
 
+	/**
+	 * A still scene as it was taken (11/21/2026): its meshes, the map it was taken on, the tick and the plane, and how
+	 * long the client's thread spent on it. Each anchor keeps its own (the kill's, the loot's, the last fall's, the
+	 * pet's), each read on the map it happened on, so a moment's still scene is always the map its frames are from (Jace,
+	 * 11/21/2026: "half of my poh and half of the moia arena": the fall's still scene used to be read as the recording
+	 * ended, after he'd left the raid for his house).
+	 */
+	static final class Still
+	{
+		final List<EncounterMoment.Mesh> meshes;
+		final int epoch, tick, plane;
+		final long nanos;
+
+		Still(List<EncounterMoment.Mesh> meshes, int epoch, int tick, int plane, long nanos)
+		{
+			this.meshes = meshes;
+			this.epoch = epoch;
+			this.tick = tick;
+			this.plane = plane;
+			this.nanos = nanos;
+		}
+	}
+
 	/** Everything a moment is built from, handed to the moment thread. */
 	static final class Taken
 	{
+		/** (11/21/2026) why there's no moment, when there can't be one: everything else is then unset */
+		String none;
+		/** (11/21/2026) the tick the stretch was cut at by a map load (-1: not cut), for the log */
+		int cutFrom = -1, cutTo = -1;
 		List<Frame> frames;
 		List<EncounterMoment.Mesh> still;
 		Map<Integer, int[]> textures;
@@ -213,9 +250,14 @@ final class EncounterScene
 	private final Map<TileItem, Item> itemSeen = new IdentityHashMap<>();
 	private final Map<Integer, int[]> textures = new HashMap<>();
 	private final List<int[]> clock = new ArrayList<>();
-	private List<EncounterMoment.Mesh> still;
-	private int stillPlane;
-	private long bytes, clientNanos, stillNanos;
+	/** the still scenes taken at each anchor (11/21/2026), each on its own map */
+	private Still stillKill, stillLoot, stillFall, stillPet;
+	/** the map: one more at each load (Encounters says so as the client loads one; a frame whose scene base moved counts
+	 *  too), and the base the last frame was taken on */
+	private int epoch;
+	private int baseX = Integer.MIN_VALUE, baseY = Integer.MIN_VALUE;
+	private boolean baseInstance;
+	private long bytes, clientNanos;
 	private int framesTaken;
 	private boolean anyFrame;
 	private int lastCycle;
@@ -230,6 +272,10 @@ final class EncounterScene
 	private String petKind, petName;
 	private Window petWindow;
 	private final Map<String, Integer> dealt = new HashMap<>();
+	/** (round eight) what was dealt on each map, for the fall's name: the boss of the room they fell in, not the raid's */
+	private final Map<Integer, Map<String, Integer>> dealtOn = new HashMap<>();
+	/** the map of the last death */
+	private int deathEpoch = -1;
 	private boolean full, warned;
 
 	EncounterScene(Client client, Items items, boolean others)
@@ -247,6 +293,14 @@ final class EncounterScene
 		tick = t;
 		clock.add(new int[]{t, client.getGameCycle()});
 		trim();
+		sweep();
+	}
+
+	/** A map's loading (11/21/2026; Encounters, as the client says LOADING): what's drawn after it is another map, which
+	 *  a moment never mixes with this one. */
+	void mapLoaded()
+	{
+		epoch++;
 	}
 
 	/** The kill (its count line, on the recording's tick {@code t}): the still scene is taken now. */
@@ -256,7 +310,7 @@ final class EncounterScene
 		{
 			killTick = t;
 			killNpc = npc;
-			takeStill();
+			stillKill = takeStill();
 		}
 	}
 
@@ -291,8 +345,7 @@ final class EncounterScene
 		}
 		lootTick = t;
 		window = w;
-		still = null;
-		takeStill();
+		stillLoot = takeStill();
 	}
 
 	int killTick()
@@ -312,10 +365,7 @@ final class EncounterScene
 		petTick = t;
 		petKind = kind;
 		petWindow = w;
-		if (still == null)
-		{
-			takeStill();
-		}
+		stillPet = takeStill();
 	}
 
 	/** The pet seen: beside the player as a follower ({@code npc} its id) or come into the backpack ({@code item}). */
@@ -382,10 +432,17 @@ final class EncounterScene
 		return true;
 	}
 
-	/** The subject died (the last death counts: 11/21/2026, the fall). */
+	/** The subject died (the last death counts: 11/21/2026, the fall): the still scene taken now, in the place they fell
+	 *  (a raid goes on after a death and a fall's moment is read later, after the respawn: 11/21/2026, round eight). */
 	void died(int t)
 	{
 		deathTick = t;
+		Still s = takeStill();
+		deathEpoch = epoch;
+		if (s != null)
+		{
+			stillFall = s;
+		}
 	}
 
 	/** A hit in the fight; one of theirs on an NPC counts toward which is the boss (the most dealt), for the fall's name. */
@@ -395,6 +452,7 @@ final class EncounterScene
 		if (npc != null && amount > 0)
 		{
 			dealt.merge(npc, amount, Integer::sum);
+			dealtOn.computeIfAbsent(epoch, k -> new HashMap<>()).merge(npc, amount, Integer::sum);
 		}
 	}
 
@@ -406,6 +464,11 @@ final class EncounterScene
 
 	private String boss()
 	{
+		return most(dealt);
+	}
+
+	private static String most(Map<String, Integer> dealt)
+	{
 		String best = null;
 		for (Map.Entry<String, Integer> e : dealt.entrySet())
 		{
@@ -415,6 +478,14 @@ final class EncounterScene
 			}
 		}
 		return best;
+	}
+
+	/** The boss of the room they fell in (round eight: Moia, not the raid's Ezekiel), else the whole recording's. */
+	private String fallBoss()
+	{
+		Map<String, Integer> d = dealtOn.get(deathEpoch);
+		String b = d == null ? null : most(d);
+		return b != null ? b : boss();
 	}
 
 	/** Each client cycle: a frame every CYCLES. */
@@ -495,10 +566,50 @@ final class EncounterScene
 				full = true;
 			}
 		}
+		else
+		{
+			full = false;
+		}
 		// (the clock keeps what the frames reach, and a little)
 		while (clock.size() > 2 && !frames.isEmpty() && clock.get(1)[0] < frames.peekFirst().tick - 1)
 		{
 			clock.remove(0);
+		}
+	}
+
+	/**
+	 * The shapes no frame kept has any more, let go (11/21/2026, round eight). Every projectile and graphic is a shape of
+	 * its own, and so is a player each time their gear or a graphic on them changes the model: kept for the whole
+	 * recording they reached the buffer's size in a long raid (his 7,882-tick recording of three raids), after which no
+	 * frame was taken at all and the chest's opening went up without a moment. Once a tick.
+	 */
+	private void sweep()
+	{
+		if (shapes.size() < 64)
+		{
+			return;
+		}
+		java.util.Set<Shape> used = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Frame f : frames)
+		{
+			for (Sample x : f.samples)
+			{
+				used.add(x.shape);
+			}
+		}
+		java.util.Iterator<Shape> it = shapes.values().iterator();
+		while (it.hasNext())
+		{
+			Shape sh = it.next();
+			if (!used.contains(sh))
+			{
+				bytes -= sh.bytes;
+				it.remove();
+			}
+		}
+		if (bytes <= BUFFER_MOST)
+		{
+			full = false;
 		}
 	}
 
@@ -529,9 +640,11 @@ final class EncounterScene
 		{
 			return null;
 		}
+		noteBase(wv);
 		Frame f = new Frame();
 		f.cycle = cycle;
 		f.tick = tick;
+		f.epoch = epoch;
 		f.fx = client.getCameraFocalPointX();
 		f.fy = client.getCameraFocalPointZ();
 		f.yaw = client.getCameraYaw();
@@ -650,6 +763,23 @@ final class EncounterScene
 		return f;
 	}
 
+	/** A map load the recorder didn't see, as the scene's base moving (another instance, another place): another map all
+	 *  the same (11/21/2026). */
+	private void noteBase(WorldView wv)
+	{
+		boolean inst = wv.isInstance();
+		if (wv.getBaseX() != baseX || wv.getBaseY() != baseY || inst != baseInstance)
+		{
+			if (baseX != Integer.MIN_VALUE)
+			{
+				epoch++;
+			}
+			baseX = wv.getBaseX();
+			baseY = wv.getBaseY();
+			baseInstance = inst;
+		}
+	}
+
 	private static boolean close(LocalPoint a, LocalPoint b, int near)
 	{
 		return Math.abs(a.getX() - b.getX()) <= near && Math.abs(a.getY() - b.getY()) <= near;
@@ -742,7 +872,8 @@ final class EncounterScene
 				texture(id);
 			}
 		}
-		bytes += fc * 26L;
+		s.bytes = fc * 26L;
+		bytes += s.bytes;
 		return s;
 	}
 
@@ -772,25 +903,22 @@ final class EncounterScene
 
 	// ---- the still scene (the client's thread, once)
 
-	/** The ground and the still objects within reach of the player, on their plane and those under it. */
-	void takeStill()
+	/** The ground and the still objects within reach of the player, on their plane and those under it, on the map they're
+	 *  on now; null when there's no scene to read. */
+	Still takeStill()
 	{
-		if (still != null)
-		{
-			return;
-		}
 		long t0 = System.nanoTime();
 		WorldView wv = client.getTopLevelWorldView();
 		Player me = client.getLocalPlayer();
 		if (wv == null || me == null || me.getLocalLocation() == null)
 		{
-			return;
+			return null;
 		}
+		noteBase(wv);
 		Scene scene = wv.getScene();
 		Tile[][][] tiles = scene.getTiles();
 		int[][][] heights = scene.getTileHeights();
 		int plane = wv.getPlane();
-		stillPlane = plane;
 		LocalPoint mine = me.getLocalLocation();
 		int cx = mine.getSceneX(), cy = mine.getSceneY(), r = EncounterMoment.REACH + 2;
 		List<EncounterMoment.Mesh> out = new ArrayList<>();
@@ -850,8 +978,7 @@ final class EncounterScene
 				}
 			}
 		}
-		still = out;
-		stillNanos = System.nanoTime() - t0;
+		return out.isEmpty() ? null : new Still(out, epoch, tick, plane, System.nanoTime() - t0);
 	}
 
 	/** A still object's model (an animated one is a frame's, not the still scene's), placed as the scene draws it. */
@@ -1035,18 +1162,22 @@ final class EncounterScene
 
 	// ---- the end: what's been taken, chosen for the stretch (the client's thread), then built (the moment thread)
 
-	/** The recording's ended at tick {@code last}: the stretch chosen, the still scene taken if it wasn't, everything
-	 *  handed over. Null when there's nothing to make a moment of. */
+	/** A Taken that says why there's no moment (11/21/2026: the upload says so, and the page makes one when it can). */
+	static Taken none(String why)
+	{
+		Taken t = new Taken();
+		t.none = why;
+		return t;
+	}
+
+	/** The recording's ended at tick {@code last}: the stretch chosen, cut to the map its anchor's on, its still scene
+	 *  the one taken on that map, everything handed over. When there's nothing to make a moment of, a Taken with only
+	 *  {@code none}, why. */
 	Taken finish(int last)
 	{
 		if (frames.isEmpty())
 		{
-			return null;
-		}
-		takeStill();
-		if (still == null || still.isEmpty())
-		{
-			return null;
+			return none(full ? "the scene's buffer was full" : "no frame of the scene was kept");
 		}
 		Taken t = new Taken();
 		if (lootTick >= 0 && "destroyed".equals(window.kind))
@@ -1087,7 +1218,7 @@ final class EncounterScene
 			t.anchor = deathTick + 1;
 			t.why = "the fall";
 			t.fallTick = deathTick;
-			t.npc = killNpc != null ? killNpc : boss();
+			t.npc = fallBoss();
 		}
 		else if (killTick >= 0)
 		{
@@ -1121,31 +1252,126 @@ final class EncounterScene
 		t.anchor = Math.max(t.from, Math.min(t.to, t.anchor));
 		if (t.to < t.from)
 		{
-			return null;
+			return none("the stretch's frames weren't kept");
 		}
+		// (11/21/2026, round eight: never across a map load. The stretch is cut where the map changed, the side with the
+		// anchor kept; Jace's raid falls had the arena's last seconds and his house's ground in one moment)
+		int[] ticks = new int[frames.size()], epochs = new int[frames.size()];
+		int i = 0;
+		for (Frame f : frames)
+		{
+			ticks[i] = f.tick;
+			epochs[i++] = f.epoch;
+		}
+		int[] cut = cutToMap(ticks, epochs, t.from, t.to, t.anchor);
+		if (cut == null)
+		{
+			return none("the stretch's frames weren't kept");
+		}
+		if (cut[0] != t.from || cut[1] != t.to)
+		{
+			t.cutFrom = cut[0];
+			t.cutTo = cut[1];
+		}
+		t.from = cut[0];
+		t.to = cut[1];
+		t.anchor = cut[2];
+		int map = cut[3];
 		List<Frame> kept = new ArrayList<>();
 		for (Frame f : frames)
 		{
-			if (f.tick >= t.from && f.tick <= t.to)
+			if (f.tick >= t.from && f.tick <= t.to && f.epoch == map)
 			{
 				kept.add(f);
 			}
 		}
-		if (kept.isEmpty())
+		// (the still scene: the anchor's own, else any taken on the same map, else the map now if it's still that one)
+		Still own = t.lootTick >= 0 ? stillLoot : t.fallTick >= 0 && "the fall".equals(t.why) ? stillFall
+			: t.killTick >= 0 ? stillKill : "the pet".equals(t.why) ? stillPet : null;
+		Still st = pickStill(map, own, stillLoot, stillFall, stillKill, stillPet);
+		if (st == null && map == epoch)
 		{
-			return null;
+			st = takeStill();
+		}
+		if (st == null || st.epoch != map)
+		{
+			return none("the map it happened on was gone before its still scene was read");
 		}
 		t.frames = kept;
-		t.still = still;
+		t.still = st.meshes;
 		t.textures = new HashMap<>(textures);
 		t.clock = new ArrayList<>(clock);
-		t.plane = stillPlane;
+		t.plane = st.plane;
 		t.clientNanos = clientNanos;
-		t.stillNanos = stillNanos;
+		t.stillNanos = st.nanos;
 		t.bufferBytes = bytes;
 		t.framesTaken = framesTaken;
 		frames.clear();
 		return t;
+	}
+
+	/** The still scene for map {@code map}: {@code own} (the anchor's) when it's on that map, else the first of the others
+	 *  that is, else null. */
+	static Still pickStill(int map, Still own, Still... others)
+	{
+		if (own != null && own.epoch == map)
+		{
+			return own;
+		}
+		for (Still s : others)
+		{
+			if (s != null && s.epoch == map)
+			{
+				return s;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * A stretch cut to one map (11/21/2026, round eight; moment.js's cutToMap the same): the frames' ticks and maps in the
+	 * order taken, the stretch {@code from}..{@code to} and its {@code anchor}. The anchor's map is the map of the last
+	 * frame at or before it (the first frame's when none is); the stretch keeps the ticks that map's frames span within
+	 * it, the anchor held inside. Returns {from, to, anchor, map}, or null when no frame of it is in the stretch.
+	 */
+	static int[] cutToMap(int[] ticks, int[] maps, int from, int to, int anchor)
+	{
+		if (ticks.length == 0)
+		{
+			return null;
+		}
+		int a = -1;
+		for (int i = 0; i < ticks.length; i++)
+		{
+			if (ticks[i] <= anchor && ticks[i] >= from)
+			{
+				a = i;
+			}
+		}
+		if (a < 0)
+		{
+			for (int i = 0; i < ticks.length && a < 0; i++)
+			{
+				if (ticks[i] >= from && ticks[i] <= to)
+				{
+					a = i;
+				}
+			}
+		}
+		if (a < 0)
+		{
+			return null;
+		}
+		int map = maps[a], lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
+		for (int i = 0; i < ticks.length; i++)
+		{
+			if (maps[i] == map && ticks[i] >= from && ticks[i] <= to)
+			{
+				lo = Math.min(lo, ticks[i]);
+				hi = Math.max(hi, ticks[i]);
+			}
+		}
+		return new int[]{lo, hi, Math.max(lo, Math.min(hi, anchor)), map};
 	}
 
 	/**
