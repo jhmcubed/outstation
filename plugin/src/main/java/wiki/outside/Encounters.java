@@ -355,8 +355,6 @@ final class Encounters
 	static final int RUN_LEFT = 5;
 	/** the Hunllef killed: the most it waits for the chest (5 minutes) */
 	static final int RUN_CHEST_WAIT = 500;
-	/** the Colosseum's reward window opened: the most it waits for it to close (the claim made) */
-	static final int CLAIM_MOST = 100;
 
 	/** the game's kill and completion count lines ("Your Vorkath kill count is: 418.", "Your completed Chambers of Xeric
 	 *  count is: 12."), as Counts reads them; the count may open with one of the game's colour macros, "@mes_hl_red@",
@@ -3174,10 +3172,8 @@ final class Encounters
 		}
 		if (automatic && run == COLOSSEUM && COLOSSEUM.name.equals(source))
 		{
-			// (the Colosseum's claim: ends a few ticks after its window shuts (onWidgetClosed), CLAIM_MOST at most, or
-			// once out of the arena; round six)
-			endAt = endAt >= 0 ? endAt : whole() + CLAIM_MOST;
-			endWhy = endWhy != null ? endWhy : "claimed";
+			// (the Colosseum's claim: noted, nothing ended; the run ends when the player leaves the arena, "claimed"
+			// (runEnding). 11/21/2026, Jace: "it should end when you leave the arena")
 		}
 		else if (automatic && !raid && !delve)
 		{
@@ -3865,12 +3861,6 @@ final class Encounters
 		{
 			emit("widget_close").addProperty("group", event.getGroupId());
 			shotsClosed(event.getGroupId());
-			// (the Colosseum's claim window shut, its loot written: the run ends a few ticks on; round six)
-			if (automatic && run == COLOSSEUM && event.getGroupId() == InterfaceID.COLOSSEUM_REWARD_CHEST_2
-				&& looted.contains(COLOSSEUM.name) && endAt >= 0)
-			{
-				endAt = Math.min(endAt, whole() + LOOT_AFTER);
-			}
 		}
 	}
 }

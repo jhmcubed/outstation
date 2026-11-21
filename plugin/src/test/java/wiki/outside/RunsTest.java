@@ -87,15 +87,15 @@ public class RunsTest
 	}
 
 	@Test
-	public void aColosseumEndsAtTheClaimOrLeaving()
+	public void aColosseumEndsOnLeavingTheArena()
 	{
 		Encounters.Run c = Encounters.COLOSSEUM;
 		// (every wave, and Sol Heredit's count: nothing ends it)
 		assertNull(ends(c, true, false, 0, 3000, 3005, false, -1, null));
-		// (the claim's window open: its ending is due, held till the window shuts)
-		assertNull(ends(c, true, false, 0, 3000, 3100, true, 3150, "claimed"));
-		// (claimed and out of the arena: ended now)
-		assertEquals("claimed", ends(c, false, false, Encounters.RUN_LEFT + 1, 3000, 3120, true, 3150, "claimed"));
+		// (claimed, still in the arena: it goes on, however long; Jace, 11/21/2026: "it should end when you leave the arena")
+		assertNull(ends(c, true, false, 0, 3000, 3400, true, -1, null));
+		// (claimed and out of the arena: ended, "claimed")
+		assertEquals("claimed", ends(c, false, false, Encounters.RUN_LEFT + 1, 3000, 3420, true, -1, null));
 		// (out of the arena with nothing claimed: left; a death's ending isn't cut short)
 		assertEquals("left", ends(c, false, false, Encounters.RUN_LEFT + 1, -1, 500, false, -1, null));
 		assertNull(ends(c, false, false, Encounters.RUN_LEFT + 1, -1, 500, false, 506, "died"));

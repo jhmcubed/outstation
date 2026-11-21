@@ -464,7 +464,7 @@ plugin, not bosses, so nothing started them before. plugin/README.md, "Encounter
    (or **died**) a few seconds later, and nothing starts again till you're out of the Gauntlet.
 4. **The Fortis Colosseum:** click the **Entrance** in the Colosseum's lobby: the line starts as the arena loads,
    named **Fortis Colosseum**. Clear a wave or more (each "Wave completed" line goes by), then search the rewards chest
-   and claim: the line stops a few seconds after the window shuts, the row says **claimed**, its moment the chest's
+   and claim: the line keeps going until you leave the arena, then the row says **claimed**, its moment the chest's
    window as you saw it. (Die in a wave instead: **died**.)
 
 ### Jace's test in the game, for the whole update
