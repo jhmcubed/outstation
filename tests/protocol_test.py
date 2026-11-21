@@ -3785,7 +3785,8 @@ class EditingThePage(OwnPage):
         self.assertEqual(raw("PUT", "/edit/" + name)[0], 405)
         self.assertEqual(self.edit("o" + secrets.token_hex(5), key, {"token": token})[0], 404)
         # (a token nobody handed in: can't write, and the page is told it's run out)
-        theme = {"theme": {"link": "https://youtu.be/dQw4w9WgXcQ?t=5", "title": "a song", "by": "them"}}
+        # (SoundCloud only since round nine, 11/21/2026, with its start beside the link)
+        theme = {"theme": {"link": "https://soundcloud.com/someone/a-song", "title": "a song", "by": "them", "start": 5}}
         self.assertEqual(self.write(name, theme, token=token)[0], 403)
         self.assertEqual(raw("GET", "/edit/" + name, None, {"Authorization": "Bearer " + token})[0], 403)
         self.assertEqual(raw("GET", "/keep/%s/layout" % name)[0], 404)
@@ -3798,7 +3799,7 @@ class EditingThePage(OwnPage):
         # (written: the theme read as the page reads it, kept in its plain form; then the arrangement beside it)
         st, got = self.write(name, theme, token=token)
         self.assertEqual(st, 200, got)
-        self.assertEqual(got["layout"]["theme"], {"kind": "youtube", "id": "dQw4w9WgXcQ", "start": 5, "link": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5", "title": "a song", "by": "them"})
+        self.assertEqual(got["layout"]["theme"], {"kind": "soundcloud", "id": "https://soundcloud.com/someone/a-song", "link": "https://soundcloud.com/someone/a-song", "title": "a song", "by": "them", "start": 5})
         arrange = {"arrange": {"boxes": {"reading.0": ["sec-kills", "sec-skills"]}, "off": ["sec-pets"]},
                    "hero": {"p": {"kit": {"x": 8, "w": 4}}, "o": ["who", "stage", "screen", "kit"], "off": ["clips"]}}
         self.assertEqual(self.write(name, arrange, token=token)[0], 200)
@@ -3811,7 +3812,7 @@ class EditingThePage(OwnPage):
         # (refused: what isn't one of the page's own, or isn't a song on the three; nothing kept changes)
         for bad in ({"theme": {"link": "https://evil.example/song"}}, {"theme": {"link": "javascript:alert(1)"}},
                     {"arrange": {"boxes": {"reading.0": ["sec-nope"]}, "off": []}}, {"hero": {"p": {}, "o": [], "off": ["screen"]}},
-                    {"goal": {"id": 1}}, {"theme": {"link": "https://youtu.be/dQw4w9WgXcQ", "html": "<b>"}}):
+                    {"goal": {"id": 1}}, {"theme": {"link": "https://soundcloud.com/someone/a-song", "html": "<b>"}}):
             self.assertEqual(self.write(name, bad, token=token)[0], 400, bad)
         self.assertEqual(raw("POST", "/keep/%s/layout" % name, b"x" * 9000, {"Authorization": "Bearer " + token})[0], 413)
         self.assertEqual(json.loads(raw("GET", "/keep/%s/layout" % name)[2])["layout"], kept["layout"])
