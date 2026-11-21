@@ -847,7 +847,7 @@ export default {
     if (parts[0] === "clips" && (parts.length === 2 || parts.length === 3) && NAME.test(parts[1])) {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
-                                                             "access-control-allow-headers": "range, content-type", "access-control-max-age": "86400" } });
+                                                             "access-control-allow-headers": "range, content-type, authorization", "access-control-max-age": "86400" } });
       }
       if (parts.length === 3) {
         const m = /^([A-Za-z0-9_-]{16,32})\.(mp4|jpg)$/.exec(parts[2]);

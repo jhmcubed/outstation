@@ -2275,8 +2275,17 @@ export class Channel extends DurableObject<Env> {
       return json({ clips: await this.clipList() });
     }
     if (!admin) {
-      const no = await this.checkKey(q.get("key") || "", ip);
-      if (no) return json({ error: no[1] }, 403);
+      // (the page's owner, its key or, for taking one down or keeping it, the plugin's Edit my page link (a tending
+      // token, as the fights take it; 11/21/2026, round nine, Jace: "if someone has clips on their profile, could just
+      // right click them and delete them"); an upload still needs the key)
+      const bearer = (request.headers.get("authorization") || "").startsWith("Bearer ");
+      if (bearer && (request.method === "DELETE" || id)) {
+        const own = await this.fightOwner(request, q, ip);
+        if (own !== true) return json({ error: own ? own[1] : "the page's owner only" }, own ? own[0] : 403);
+      } else {
+        const no = await this.checkKey(q.get("key") || "", ip);
+        if (no) return json({ error: no[1] }, 403);
+      }
     }
     if (request.method === "DELETE") {
       if (!ID.test(id)) return json({ error: "which clip?" }, 400);
