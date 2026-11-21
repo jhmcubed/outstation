@@ -82,6 +82,8 @@ final class EncounterShelf
 		final Map<String, Integer> removed;
 		byte[] moment;
 		int momentTick = -1;
+		/** (round eight) why it has no moment, for the upload's meta; null with one */
+		String momentWhy;
 
 		Prepared(String file, byte[] gz, EncounterStrip.Summary summary, Map<String, Integer> removed)
 		{
@@ -510,6 +512,13 @@ final class EncounterShelf
 					log.warn("outside: the moment beside {} couldn't be read; it goes without", file, e);
 				}
 			}
+			if (p.moment == null)
+			{
+				// (round eight: why it goes without, said in the upload's meta)
+				JsonObject e = entry(file);
+				p.momentWhy = e != null && e.has("momentWhy") ? e.get("momentWhy").getAsString()
+					: mf.isFile() ? "its moment was too big or couldn't be read" : "no moment was made";
+			}
 			ready.accept(p);
 		}, problem);
 	}
@@ -816,10 +825,22 @@ final class EncounterShelf
 	 */
 	void moment(String file, EncounterScene.Taken taken, Runnable then)
 	{
-		if (taken == null)
+		if (taken == null || taken.none != null)
 		{
-			building.remove(file);
-			then.run();
+			// (round eight, 11/21/2026: why there's none, kept with it for the upload's meta)
+			String why = taken == null ? null : taken.none;
+			run("noting why " + file + " has no moment", () ->
+			{
+				try
+				{
+					noteNoMoment(file, why);
+				}
+				finally
+				{
+					building.remove(file);
+					then.run();
+				}
+			}, null);
 			return;
 		}
 		building.add(file);
@@ -862,8 +883,19 @@ final class EncounterShelf
 					catch (IOException | RuntimeException | OutOfMemoryError ex)
 					{
 						log.warn("outside: {}'s moment couldn't be made; it goes without", file, ex);
-						building.remove(file);
-						then.run();
+						String why = "it couldn't be made: " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
+						run("noting why " + file + " has no moment", () ->
+						{
+							try
+							{
+								noteNoMoment(file, why);
+							}
+							finally
+							{
+								building.remove(file);
+								then.run();
+							}
+						}, null);
 					}
 				});
 			}
@@ -872,6 +904,24 @@ final class EncounterShelf
 				building.remove(file);
 			}
 		}, null);
+	}
+
+	/** Why a recording has no moment (round eight), in its index entry ("momentWhy"), on the files thread; null: none
+	 *  known, nothing written. */
+	private void noteNoMoment(String file, String why) throws IOException
+	{
+		if (why == null)
+		{
+			return;
+		}
+		JsonObject e = entry(file);
+		if (e == null)
+		{
+			e = new JsonObject();
+			index().add(file, e);
+		}
+		e.addProperty("momentWhy", why);
+		saveIndex();
 	}
 
 	/** What the index says of one recording (null: nothing), on the files thread. */
