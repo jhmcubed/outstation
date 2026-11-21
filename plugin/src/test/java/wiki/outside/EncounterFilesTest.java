@@ -158,4 +158,50 @@ public class EncounterFilesTest
 		text.setLength(text.length() - 1);
 		assertEquals(LINES + "{\"t\":2,\"e\":\"end\",\"reason\":\"not stopped: the client closed or crashed\",\"ticks\":2}\n", text.toString());
 	}
+
+	private static void gz(Path file, String text) throws IOException
+	{
+		try (java.util.zip.GZIPOutputStream z = new java.util.zip.GZIPOutputStream(Files.newOutputStream(file)))
+		{
+			z.write(text.getBytes(StandardCharsets.UTF_8));
+		}
+	}
+
+	/** (11/21/2026, round three) a recording past the length limit goes up as one: its parts walked back by each header's
+	 *  "follows", the later headers and the earlier end lines left out, the ticks running on, the last end's "ticks" too */
+	@Test
+	public void partsJoinAsOneWithTheTicksRunningOn() throws IOException
+	{
+		Filepath dir = folder();
+		Path d = Filepath.Unchecked.getPath(dir);
+		String one = "20261121-090000-Chambers_of_Xeric.jsonl.gz", two = "20261121-095000-Chambers_of_Xeric.jsonl.gz",
+			three = "20261121-104000-Chambers_of_Xeric.jsonl.gz";
+		gz(d.resolve(one), "{\"t\":0,\"c\":1,\"e\":\"header\",\"label\":\"Chambers of Xeric\"}\n{\"t\":0,\"c\":2,\"e\":\"tick\"}\n"
+			+ "{\"t\":1,\"c\":32,\"e\":\"tick\"}\n{\"t\":2,\"c\":62,\"e\":\"end\",\"reason\":\"split: the length limit\",\"ticks\":2}\n");
+		gz(d.resolve(two), "{\"t\":0,\"c\":62,\"e\":\"header\",\"part\":2,\"follows\":\"" + one + "\"}\n{\"t\":0,\"c\":62,\"e\":\"scene\"}\n"
+			+ "{\"t\":0,\"c\":63,\"e\":\"tick\"}\n{\"t\":1,\"c\":92,\"e\":\"end\",\"reason\":\"split: the length limit\",\"ticks\":1}\n");
+		gz(d.resolve(three), "{\"t\":0,\"c\":92,\"e\":\"header\",\"part\":3,\"follows\":\"" + two + "\"}\n{\"t\":0,\"c\":93,\"e\":\"tick\"}\n"
+			+ "{\"t\":1,\"c\":122,\"e\":\"loot\",\"source\":\"Chambers of Xeric\",\"items\":[{\"id\":21034,\"qty\":1,\"ge\":0,\"ha\":0}]}\n"
+			+ "{\"t\":3,\"c\":182,\"e\":\"end\",\"reason\":\"completed\",\"ticks\":3}\n");
+		assertEquals(one, EncounterFiles.follows("{\"t\":0,\"c\":62,\"e\":\"header\",\"part\":2,\"follows\":\"" + one + "\"}"));
+		List<Filepath> parts = EncounterFiles.chain(dir, three);
+		assertEquals(3, parts.size());
+		assertEquals(one, parts.get(0).getFileName());
+		List<String> lines = new ArrayList<>();
+		EncounterFiles.eachJoined(parts, lines::add);
+		assertEquals(Arrays.asList(
+			"{\"t\":0,\"c\":1,\"e\":\"header\",\"label\":\"Chambers of Xeric\"}",
+			"{\"t\":0,\"c\":2,\"e\":\"tick\"}",
+			"{\"t\":1,\"c\":32,\"e\":\"tick\"}",
+			"{\"t\":2,\"c\":62,\"e\":\"scene\"}",
+			"{\"t\":2,\"c\":63,\"e\":\"tick\"}",
+			"{\"t\":3,\"c\":93,\"e\":\"tick\"}",
+			"{\"t\":4,\"c\":122,\"e\":\"loot\",\"source\":\"Chambers of Xeric\",\"items\":[{\"id\":21034,\"qty\":1,\"ge\":0,\"ha\":0}]}",
+			"{\"t\":6,\"c\":182,\"e\":\"end\",\"reason\":\"completed\",\"ticks\":6}"), lines);
+		// (a part gone (the size cap took it): what's left goes, from there)
+		Files.delete(d.resolve(one));
+		assertEquals(2, EncounterFiles.chain(dir, three).size());
+		// (a recording of one part is itself)
+		assertEquals(1, EncounterFiles.chain(dir, two).size());
+	}
 }

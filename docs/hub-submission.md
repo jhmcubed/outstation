@@ -195,7 +195,7 @@ canonical ids, the still's model) runs on the client thread (loot events, chat c
 posted there, the side tab's buttons hand theirs over with clientThread.invokeLater); the Page tab's Talk in the
 aether as me reads only the plugin's settings.
 
-## Update 6: the key kept and found, the delve levels a death lost, more than one goal, encounters (11/19/2026, encounters 11/21/2026, round two the same day; built, waiting for Jace's test in the game)
+## Update 6: the key kept and found, the delve levels a death lost, more than one goal, encounters (11/19/2026, encounters 11/21/2026, rounds two and three the same day; built, waiting for Jace's test in the game)
 
 Jace (11/19/2026): "Update 6 will include this and the other features we've added since update 5": the key (below),
 the delve levels a death lost (held till now as jhmcubed/outside-plugin#27, which this update carries, so that pull
@@ -296,6 +296,59 @@ updated to match. That call is Jace's before it's sent: on by default (his ask) 
 6. Close RuneLite right after a kill (before its row says on your page): next start, it goes up by itself within a
    minute or so, once only (your page lists it once). Not tried in the local world: if it doesn't, Put on my page
    puts it up, and say so.
+
+### Encounters, round three: a raid whole, its chest as the moment, crash leftovers and Record now sent (11/21/2026)
+
+Jace (11/21/2026): "Put each encounter on my page" stays on by default; recordings a crash left are sent by themselves at
+the next start; "Record now" recordings go up by themselves too ("in case someone wants to record something that isn't
+a fight, like them and their friends emoting together"); "it should be the whole raid when it's a raid and if it's just
+an individual boss outside of a raid it will be a recording of the fight with that individual boss"; "A raid should
+record from entering through clicking the door to leave the treasure/chest room at the end of every raid"; "no reward
+chests in this game put your loot on the ground unless your inventory is full"; and bosses whose corpse you loot
+(Araxxor's, the Maggot King's). ghillie's claude/outstation.md, "Encounters, round three", has the design; plugin/
+README.md, "Encounters", all of it.
+
+- **A raid is one recording, from entering to leaving its treasure room.** The raid's completion line, each room's
+  "Challenge complete", a boss's count line inside it, a death and the loot all go on; it ends the first ticks the player
+  is out of the raid after it's completed or looted (the exit's click and the map leaving: Tombs of Amascut's treasure
+  room, Osmumten's Burial Chamber, counts as the raid; its lobby, Jaltevas Pyramid, doesn't, and starts nothing), or 30
+  minutes after the completion line, or at 3 hours in all; a client closed, a log out or a hop end it as before.
+- **Its parts go up as one.** Past 5,000 ticks a recording is still split into parts on the computer (as Encounter
+  Recorder's files are); the parts aren't sent one by one: the last part's row stands for all of them, and what goes up
+  is the parts joined, the ticks running on (`EncounterFiles.eachJoined`).
+- **The loot, read from the game itself** (not the Loot Tracker plugin): a `loot` line in the recording when a reward
+  window opens with its reward inventory (the windows RuneLite's Loot Tracker reads: Chambers of Xeric, Theatre of Blood,
+  Tombs of Amascut, the Fractured Archive, Barrows, the Lunar Chest, the Fortis Colosseum), Doom of Mokhaiotl's pile
+  claimed, or a corpse looted (an NPC's Loot or Harvest after a kill: what the inventory gained). Its moment is the
+  chest's opening, with the window as the player saw it laid over (a picture of that window, cropped from the frame the
+  client drew, carried in the moment file beside the recording; it leaves only with the encounter). A boss outside a
+  raid with a corpse waits for it to be looted or to go (5 minutes at most).
+- **Crash leftovers and Record now:** a recording the client closed or crashed in the middle of is packed at the next
+  start and goes up by itself (with the switch on, only on the character it was recorded on, never twice). Record now's
+  go up by themselves too.
+- **The Hub risk, the same as round two's, a little wider:** a Record now recording isn't a fight; it goes with no press,
+  as every other. The words of the setting and the update's description say "each recording".
+
+**Jace's in-game steps for round three:**
+
+1. **A raid, whole:** with Record my encounters and Put each on my page ticked, do a raid you do (any: Chambers of
+   Xeric, Theatre of Blood, Tombs of Amascut, the Fractured Archive). The lime line starts as you enter and keeps going
+   through every room, the completion line and the chest. Open the chest and take the loot; the line keeps going. Click
+   the exit (the door, the stairs, the portal) and leave: the line stops within a couple of seconds and the row says
+   **completed**, its length the whole raid. A few seconds later it's **on your page ✓**: its page plays the whole raid
+   from the entrance to the treasure room's exit, and its moment (on your page's stage or its tile) is the chest
+   opening: you at the chest, its animation, then the reward window as you saw it, its title and items.
+2. **A raid past 50 minutes** (if you do one that long): the folder holds two or more parts; the tab lists one row; the
+   page plays it whole, no jump at the 50-minute mark.
+3. **A boss with a chest:** the Moons of Peril (Record now there, or list their ids in the settings), Barrows (Record
+   now), or the Colosseum: open the Lunar Chest, the Barrows chest or the Colosseum's: the moment is the chest opening
+   with its window. A boss with a corpse to loot: kill Araxxor (or the Maggot King) and loot the corpse: the recording
+   ends a few seconds after the loot, and the moment shows the items coming into your inventory.
+4. **A boss outside a raid** (Vorkath, Zulrah…): one recording a kill, as before.
+5. **Record now:** press it, emote with a friend for half a minute, press Stop: it goes up by itself.
+6. **A crash:** start Record now, then end RuneLite's process (Task Manager, End task) mid-recording. Start RuneLite
+   again and log in on the same character: within a minute or two the row is **on your page ✓**, once (your page lists
+   it once). Log in on another character first: it waits for the right one.
 
 ### Jace's test in the game, for the whole update
 

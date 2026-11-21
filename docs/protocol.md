@@ -872,6 +872,24 @@ on my page still offers it). One taken down, or on the page already, is never qu
 The relay needs nothing new for it: these are the routes above, the key as the owner; one upload carries the fight and its
 moment, so nothing is half up. The plugin strips exactly as the page does, so a file put up either way is the same.
 
+**Round three (11/21/2026): the same routes, three things more in what goes.** (ghillie's claude/outstation.md,
+"Encounters, round three".)
+- **A raid's parts as one upload.** A recording past 5,000 ticks is kept on the computer in parts (each part's header
+  `"part": n, "follows": "<the part before's file>"`); only the last part is queued, and what goes is the parts joined
+  (EncounterFiles.eachJoined): the first part's header only, each earlier part's end line left out, every later part's
+  `t` counted on from the parts before (and its end line's `ticks`). A later part's starting state stays (it reads as a
+  map loading). `at` and `ticks` in the meta, and the "never twice" check, are the joined recording's. A raid runs up to
+  about 2 h 25 min before its joined file passes 8 MB gzipped (the Fractured Archive's 19-minute run, five players,
+  1.06 MB stripped); past that it's refused by the plugin itself, as before (below: the call).
+- **A `loot` line** in the recording (Outside's own kind; strip.js and EncounterStrip keep it as they keep any line):
+  `{"t", "c", "e": "loot", "source", x, y, p, pl, sx, sy, lx, ly (where it came from: the chest or corpse the player last
+  chose to open or loot, else the nearest thing named a chest, else the player), "at": "chest" | "corpse" | "player",
+  "from": {"kind": "obj" | "npc", "id", "name"} (when known), "window": <interface> and "title" (a reward window's),
+  "items": [{"id", "qty", "ge", "ha"}]}` (GE price and high alchemy value each, as RuneLite reads them).
+- **The moment's picture block** (MOMENT-FORMAT.md, flag bit 1): the loot's window as the player's client drew it, a
+  PNG, after the motion block; the relay takes it as part of the moment (it checks only the magic and the version) and
+  the 3 MB cap holds. Crash leftovers and Record now recordings go through the same queue.
+
 **The scene moment** (11/21/2026; ghillie's claude/outstation.md, "Encounters on Outside: the night's design"): a moment
 of a fight its owner kept, as coloured dots sampled from the replay's 3D scene at a tick, so the profile can show it
 turning with no game files (ghillie's replay/3d/moment.js, which writes and reads it; since round two, version 2 loops

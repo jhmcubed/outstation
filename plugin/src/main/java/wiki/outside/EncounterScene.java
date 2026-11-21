@@ -68,6 +68,10 @@ final class EncounterScene
 	static final int KEEP_TICKS = 9;
 	/** ticks before the kill and after the kill or the drop (moment.js's SET.before, SET.after); a stretch at most */
 	static final int BEFORE = 6, AFTER = 5, STRETCH_MOST = 34, DROP_WAIT = 20;
+	/** ticks kept after the loot came (round three: the window read) */
+	static final int CHEST_AFTER = 8;
+	/** the loot window's picture, at most (a reward window is about 500 by 330 pixels: 100-200 KB as a PNG) */
+	static final int PICTURE_MOST = 600 * 1024;
 	/** client cycles between frames (2: 25 a second) */
 	static final int CYCLES = 2;
 	/** the buffer's size at most: past it the oldest frames go, or after the kill, no more are kept */
@@ -135,6 +139,48 @@ final class EncounterScene
 		long bytes;
 	}
 
+	/** An item of loot (round three): its id, quantity, GE price and high alchemy value each, its name. */
+	static final class Loot
+	{
+		final int id, qty;
+		final long ge, ha;
+		final String name;
+
+		Loot(int id, int qty, long ge, long ha, String name)
+		{
+			this.id = id;
+			this.qty = qty;
+			this.ge = ge;
+			this.ha = ha;
+			this.name = name;
+		}
+	}
+
+	/**
+	 * The loot as the game showed it (11/21/2026, round three; Jace: no reward chest puts its loot on the ground, so the
+	 * moment shows the window, not names over the chest): "reward" (a chest's or a boss's reward window, its interface
+	 * and title) or "inventory" (a corpse looted: what came into the inventory); the items; and the window as the
+	 * player's client drew it (a PNG of its box on the canvas, taken a few cycles after it opened), when it could be.
+	 */
+	static final class Window
+	{
+		final String kind, source;
+		final int group;
+		volatile String title;
+		final List<Loot> items;
+		volatile byte[] picture;
+		volatile int pw, ph;
+
+		Window(String kind, String source, int group, String title, List<Loot> items)
+		{
+			this.kind = kind;
+			this.source = source;
+			this.group = group;
+			this.title = title;
+			this.items = items;
+		}
+	}
+
 	/** Everything a moment is built from, handed to the moment thread. */
 	static final class Taken
 	{
@@ -143,7 +189,8 @@ final class EncounterScene
 		Map<Integer, int[]> textures;
 		/** (tick, cycle) of each tick of the recording seen */
 		List<int[]> clock;
-		int from, to, anchor, killTick = -1, dropTick = -1, fallTick = -1;
+		int from, to, anchor, killTick = -1, dropTick = -1, fallTick = -1, lootTick = -1;
+		Window window;
 		String why, npc;
 		int plane;
 		long clientNanos, stillNanos, bufferBytes;
@@ -167,6 +214,9 @@ final class EncounterScene
 	private int tick;
 	private int killTick = -1, dropTick = -1, deathTick = -1, hitTick = -1;
 	private String killNpc;
+	/** the loot (round three): its tick (the whole recording's), the window, where it came from */
+	private int lootTick = -1;
+	private Window window;
 	private final Map<String, Integer> dealt = new HashMap<>();
 	private boolean full, warned;
 
@@ -206,6 +256,31 @@ final class EncounterScene
 	boolean dropped()
 	{
 		return dropTick >= 0;
+	}
+
+	boolean looted()
+	{
+		return lootTick >= 0;
+	}
+
+	String killNpc()
+	{
+		return killNpc;
+	}
+
+	/** The loot (a chest's window, a corpse's): the moment is its opening; the still scene taken again here (a raid's
+	 *  treasure room is another map from its last boss's). The first loot counts. ({@code at} and {@code plane}: where
+	 *  it came from, kept by the loot line; the moment is centred as always on the camera's followed point.) */
+	void loot(int t, Window w, LocalPoint at, int plane)
+	{
+		if (lootTick >= 0)
+		{
+			return;
+		}
+		lootTick = t;
+		window = w;
+		still = null;
+		takeStill();
 	}
 
 	int killTick()
@@ -270,8 +345,9 @@ final class EncounterScene
 			return;
 		}
 		anyFrame = true;
-		// (after the kill, frames only as far as the longest stretch reaches)
-		if (killTick >= 0 && tick > killTick + STRETCH_MOST && deathTick < killTick)
+		// (after the loot, frames only as far as its stretch reaches: nothing after it is the moment; round three. After
+		// a kill they go on, the last few ticks rolling, since a chest or a corpse looted later is the moment then)
+		if (lootTick >= 0 && tick > lootTick + STRETCH_MOST)
 		{
 			return;
 		}
@@ -300,28 +376,42 @@ final class EncounterScene
 		framesTaken++;
 	}
 
-	/** The oldest frames past what's needed go: before a kill, all but the last KEEP_TICKS ticks; and past the size. */
+	/**
+	 * The frames past what's needed go (round three: a kill, a death and the loot each keep their own stretch, from
+	 * BEFORE ticks before to STRETCH_MOST after, and the last KEEP_TICKS ticks roll on, for a loot or a death still to
+	 * come); past the size, the oldest unanchored first, then the newest stop coming.
+	 */
 	private void trim()
 	{
-		int keepFrom = killTick >= 0 && deathTick >= 0 ? Math.min(killTick, deathTick) - BEFORE : killTick >= 0 ? killTick - BEFORE
-			: deathTick >= 0 ? deathTick - BEFORE : tick - KEEP_TICKS;
-		while (!frames.isEmpty() && frames.peekFirst().tick < keepFrom)
+		if (!frames.isEmpty())
 		{
-			bytes -= frames.removeFirst().bytes;
+			java.util.Iterator<Frame> it = frames.iterator();
+			while (it.hasNext())
+			{
+				Frame f = it.next();
+				if (!kept(f.tick))
+				{
+					bytes -= f.bytes;
+					it.remove();
+				}
+			}
 		}
 		if (bytes > BUFFER_MOST)
 		{
-			if (killTick >= 0 || deathTick >= 0)
+			java.util.Iterator<Frame> it = frames.iterator();
+			while (it.hasNext() && bytes > BUFFER_MOST && frames.size() > 1)
 			{
-				// (after the kill the start is wanted: the newest stop coming instead)
-				full = true;
-			}
-			else
-			{
-				while (frames.size() > 1 && bytes > BUFFER_MOST)
+				Frame f = it.next();
+				if (!anchored(f.tick))
 				{
-					bytes -= frames.removeFirst().bytes;
+					bytes -= f.bytes;
+					it.remove();
 				}
+			}
+			if (bytes > BUFFER_MOST)
+			{
+				// (the anchors' own stretches fill it: the newest stop coming instead)
+				full = true;
 			}
 		}
 		// (the clock keeps what the frames reach, and a little)
@@ -329,6 +419,23 @@ final class EncounterScene
 		{
 			clock.remove(0);
 		}
+	}
+
+	/** Whether a frame of tick {@code t} is within a kill's, a death's or the loot's stretch. */
+	private boolean anchored(int t)
+	{
+		return near(t, killTick) || near(t, deathTick) || near(t, lootTick);
+	}
+
+	private static boolean near(int t, int anchor)
+	{
+		return anchor >= 0 && t >= anchor - BEFORE && t <= anchor + STRETCH_MOST;
+	}
+
+	/** Whether a frame of tick {@code t} is kept: anchored, or among the last KEEP_TICKS ticks (until the loot's come). */
+	private boolean kept(int t)
+	{
+		return anchored(t) || lootTick < 0 && t >= tick - KEEP_TICKS;
 	}
 
 	// ---- a frame (the client's thread)
@@ -861,7 +968,20 @@ final class EncounterScene
 			return null;
 		}
 		Taken t = new Taken();
-		if (deathTick >= 0 && (killTick < 0 || killTick < deathTick))
+		if (lootTick >= 0)
+		{
+			// the chest's opening (round three): the player at the chest, its animation and the loot's window, 6 ticks
+			// before the loot came to 8 after, held a tick in, the window laid over from its frame
+			t.from = lootTick - BEFORE;
+			t.to = lootTick + CHEST_AFTER;
+			t.anchor = lootTick + 1;
+			t.why = "inventory".equals(window.kind) ? "the loot" : "the chest";
+			t.lootTick = lootTick;
+			t.window = window;
+			t.killTick = killTick >= 0 && killTick >= t.from ? killTick : -1;
+			t.npc = killNpc != null ? killNpc : boss();
+		}
+		else if (deathTick >= 0 && (killTick < 0 || killTick < deathTick))
 		{
 			// the subject's fall (11/21/2026, Jace: "What is the moment on an encounter when the subject dies rather than
 			// boss?"; moment.js's stretchFor): their last death, unless the boss died after it (a raid's team finishing it):
@@ -1139,6 +1259,53 @@ final class EncounterScene
 		{
 			meta.put("drop", null);
 		}
+		// (round three: the chest's opening, and its window as the game showed it, laid over from the loot's frame)
+		Window w = t.window;
+		byte[] picture = null;
+		if (t.lootTick >= 0 && w != null)
+		{
+			int lf = frameOf(cycleAt(t.clock, t.lootTick, fr), c0, count);
+			Map<String, Object> chest = new LinkedHashMap<>();
+			chest.put("tick", (double) t.lootTick);
+			chest.put("frame", (double) lf);
+			chest.put("source", w.source);
+			chest.put("kind", w.kind);
+			meta.put("chest", chest);
+			Map<String, Object> win = new LinkedHashMap<>();
+			win.put("kind", w.kind);
+			win.put("source", w.source);
+			win.put("group", w.group >= 0 ? (Object) (double) w.group : null);
+			win.put("title", w.title);
+			win.put("from", (double) lf);
+			List<Object> its = new ArrayList<>();
+			for (Loot l : w.items)
+			{
+				Map<String, Object> o = new LinkedHashMap<>();
+				o.put("id", (double) l.id);
+				o.put("qty", (double) l.qty);
+				o.put("ge", (double) l.ge);
+				o.put("ha", (double) l.ha);
+				o.put("name", l.name);
+				its.add(o);
+			}
+			win.put("items", its);
+			byte[] png = w.picture;
+			if (png != null && png.length > 0 && png.length <= PICTURE_MOST)
+			{
+				Map<String, Object> pic = new LinkedHashMap<>();
+				pic.put("w", (double) w.pw);
+				pic.put("h", (double) w.ph);
+				pic.put("type", "image/png");
+				win.put("picture", pic);
+				picture = png;
+			}
+			meta.put("window", win);
+		}
+		else
+		{
+			meta.put("chest", null);
+			meta.put("window", null);
+		}
 		meta.put("labels", labels);
 		meta.put("beams", beams);
 		// (what it cost, for whoever reads the file: the client thread's share, the buffer)
@@ -1151,6 +1318,7 @@ final class EncounterScene
 		cost.put("frameMs", t.framesTaken == 0 ? 0.0 : Math.round(t.clientNanos / 1e4 / t.framesTaken) / 100.0);
 		meta.put("taken", cost);
 		EncounterMoment.Moment m = b.moment(meta, count);
+		m.picture = picture;
 		return EncounterMoment.fit(m, EncounterMoment.MOST, null);
 	}
 

@@ -71,6 +71,8 @@ final class EncounterStrip
 		boolean killed;
 		/** (not strip.js's) the header's player, where this plugin wrote one */
 		String player;
+		/** (not strip.js's) the part before, for a part past the length limit (round three) */
+		String follows;
 
 		boolean diedIn()
 		{
@@ -496,6 +498,9 @@ final class EncounterStrip
 				s.started = Js.get(o, "startedMs");
 				Object p = Js.get(o, "player");
 				s.player = p instanceof String ? (String) p : null;
+				// (round three: a part after the length limit names the part before; the parts go up joined)
+				Object fw = Js.get(o, "follows");
+				s.follows = fw instanceof String ? (String) fw : null;
 			}
 			else if ("npcdef".equals(e) && Js.truthy(Js.get(o, "def")))
 			{

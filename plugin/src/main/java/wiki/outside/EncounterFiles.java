@@ -730,6 +730,115 @@ final class EncounterFiles
 		return compress(dir, name, ticks, end);
 	}
 
+	// ---- the parts of one recording joined (11/21/2026, round three; ghillie's claude/outstation.md, "Encounters,
+	// round three"): a recording past the length limit is kept in parts (each its own file, as his replay reads them), and
+	// goes on the page as one, its ticks running on
+
+	private static final Pattern FOLLOWS = Pattern.compile("\"follows\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+	private static final Pattern END = Pattern.compile("\"e\"\\s*:\\s*\"end\"");
+	private static final Pattern END_TICKS_FIELD = Pattern.compile("(\"ticks\"\\s*:\\s*)(\\d+)");
+	/** parts a chain holds at most (5,000 ticks each: past any raid) */
+	static final int CHAIN_MOST = 64;
+
+	/** The part a recording's header says it follows (its file's name), or null. */
+	static String follows(String headerLine)
+	{
+		if (headerLine == null || !isHeader(headerLine))
+		{
+			return null;
+		}
+		Matcher m = FOLLOWS.matcher(headerLine);
+		return m.find() ? m.group(1).replace("\\\"", "\"").replace("\\\\", "\\") : null;
+	}
+
+	/** A recording's parts, the first first, ending with {@code file}: each part's header names the one before (a part
+	 *  missing, deleted by the size cap, ends the walk there: what's left goes). */
+	static List<Filepath> chain(Filepath dir, String file) throws IOException
+	{
+		List<Filepath> parts = new ArrayList<>();
+		Set<String> seen = new java.util.HashSet<>();
+		String name = file;
+		while (name != null && parts.size() < CHAIN_MOST && seen.add(name))
+		{
+			Filepath f = dir.joinSegment(name);
+			if (!f.isFile())
+			{
+				// (the part before as it'll be once packed: a leftover still plain, or one being packed)
+				Filepath plain = name.endsWith(EXT) ? dir.joinSegment(name.substring(0, name.length() - EXT.length())) : null;
+				if (plain == null || !plain.isFile() || parts.isEmpty())
+				{
+					break;
+				}
+				f = plain;
+			}
+			parts.add(0, f);
+			try
+			{
+				name = follows(firstLine(f));
+			}
+			catch (IOException | RuntimeException e)
+			{
+				// (its first line unreadable: the walk ends at it)
+				name = null;
+			}
+		}
+		return parts;
+	}
+
+	/**
+	 * The lines of a recording's parts as one: the first part's header only, each part's end line but the last's left out,
+	 * and every later part's ticks counted on from the parts before (each part's ticks: the most "t" it holds, its end
+	 * line's), its end line's "ticks" too. A later part's starting state stays: it reads as a map loading, as the replay
+	 * already takes one (its scene line clears the items and objects, its own lines set them again).
+	 */
+	static void eachJoined(List<Filepath> parts, java.util.function.Consumer<String> line) throws IOException
+	{
+		long[] offset = {0};
+		for (int k = 0; k < parts.size(); k++)
+		{
+			boolean first = k == 0, last = k == parts.size() - 1;
+			long[] most = {0};
+			long base = offset[0];
+			eachLine(parts.get(k), l ->
+			{
+				if (l.isEmpty())
+				{
+					return;
+				}
+				Matcher t = TICK.matcher(l);
+				long tick = t.find() ? Long.parseLong(t.group(1)) : -1;
+				most[0] = Math.max(most[0], tick);
+				if (!first && HEADER.matcher(l).find() && l.indexOf("\"header\"") < 40)
+				{
+					return;
+				}
+				boolean end = END.matcher(l).find() && l.indexOf("\"end\"") < 40;
+				if (!last && end)
+				{
+					return;
+				}
+				String out = l;
+				if (base > 0 && tick >= 0)
+				{
+					out = "{\"t\":" + (tick + base) + "," + l.substring(t.end());
+					if (end)
+					{
+						Matcher et = END_TICKS_FIELD.matcher(out);
+						StringBuffer sb = new StringBuffer();
+						while (et.find())
+						{
+							et.appendReplacement(sb, Matcher.quoteReplacement(et.group(1) + (Long.parseLong(et.group(2)) + base)));
+						}
+						et.appendTail(sb);
+						out = sb.toString();
+					}
+				}
+				line.accept(out);
+			});
+			offset[0] = base + most[0];
+		}
+	}
+
 	/** A gzip's unpacked size, from its last four bytes (modulo 4 GB, more than any recording) */
 	private static long unpackedSize(Filepath f) throws IOException
 	{

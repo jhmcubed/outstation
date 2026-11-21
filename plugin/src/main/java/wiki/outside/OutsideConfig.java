@@ -541,8 +541,9 @@ public interface OutsideConfig extends Config
 		keyName = "encounters",
 		name = "Record my encounters",
 		description = "On (to begin with): your fights at bosses and raids are recorded to this computer, tick by tick, by"
-			+ " themselves (RuneLite's folder, plugin-data/outside/encounters), and end with the kill, your death or your"
-			+ " leaving. The side tab's Encounters tab lists them, records one by hand, and puts one on your Outside page"
+			+ " themselves (RuneLite's folder, plugin-data/outside/encounters), and end with the kill (or the loot from a chest"
+			+ " or a corpse), your death or your leaving; a raid whole, from entering to leaving its treasure room. The side"
+			+ " tab's Encounters tab lists them, records one by hand, and puts one on your Outside page"
 			+ " (by itself with \"Put each encounter on my page\" on, else when you press Put on my page). Never in the"
 			+ " Wilderness, a PvP area or on a PvP world. Needs an Outside page",
 		position = 0,
@@ -557,8 +558,10 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "encounterSend",
 		name = "Put each encounter on my page",
-		description = "On (to begin with): each encounter goes to your Outside page by itself as it ends, with its scene"
-			+ " moment (the scene your game drew round the kill, as coloured dots): stripped first as Put on my page strips"
+		description = "On (to begin with): each recording (one you started with Record now too, and one cut off by the client"
+			+ " closing, at the next start) goes to your Outside page by itself as it ends, with its scene moment (the scene"
+			+ " your game drew round the kill, as coloured dots; for a chest's loot, its reward window as you saw it): stripped"
+			+ " first as Put on my page strips"
 			+ " one (other players' names, their chat, your exact experience), then sent to the Outside relay, a server not"
 			+ " controlled or verified by the RuneLite developers. Shown to anyone or kept to yourself as your page starts"
 			+ " new ones, unless you tick otherwise in the Encounters tab. Off, nothing goes till you press Put on my page."

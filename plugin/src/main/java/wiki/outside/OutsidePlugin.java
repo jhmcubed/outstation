@@ -383,6 +383,9 @@ public class OutsidePlugin extends Plugin
 	/** the encounters (11/21/2026): the recorder, on RuneLite's event bus while the plugin's on, and its files */
 	@Inject
 	private net.runelite.client.eventbus.EventBus eventBus;
+	/** the frame as drawn, for the loot window's picture (round three) */
+	@Inject
+	private net.runelite.client.ui.DrawManager drawManager;
 	private Encounters encounters;
 	private EncounterShelf shelf;
 	/** an encounter's file going up gzipped: 8 MB at most (the relay's MAX_FIGHT) */
@@ -390,9 +393,8 @@ public class OutsidePlugin extends Plugin
 	private static final MediaType GZIP = MediaType.parse("application/gzip");
 	private static final MediaType OCTETS = MediaType.parse("application/octet-stream");
 	/** (11/21/2026, round two) each recording's scene moment makings, by its packed file, till it's packed and built; the
-	 *  recordings to queue once packed; the sender's timer and whether a send is under way */
+	 *  sender's timer and whether a send is under way */
 	private final Map<String, EncounterScene.Taken> takenFor = new java.util.concurrent.ConcurrentHashMap<>();
-	private final java.util.Set<String> queueWhenPacked = java.util.concurrent.ConcurrentHashMap.newKeySet();
 	private ScheduledFuture<?> sendTimer;
 	private final java.util.concurrent.atomic.AtomicBoolean sending = new java.util.concurrent.atomic.AtomicBoolean();
 	// hub:end encounters
@@ -430,7 +432,8 @@ public class OutsidePlugin extends Plugin
 		shelf = new EncounterShelf(gson, this::getPluginDirectory);
 		encounters = new Encounters(client, clientThread, gson, encounterHost());
 		eventBus.register(encounters);
-		shelf.tidy(encounterMost(), encounters.busy(), this::listEncounters);
+		// (round three: what a crash left behind goes up by itself too, once packed, with the switch on; Jace, 11/21/2026)
+		shelf.tidy(encounterMost(), encounters.busy(), config.encounterSend(), this::listEncounters);
 		// (each encounter up by itself: what's due tried every 30 s, and as each is ready; 11/21/2026)
 		sendTimer = executor.scheduleWithFixedDelay(this::pumpSends, 20, 30, TimeUnit.SECONDS);
 		// hub:end encounters
@@ -5514,11 +5517,7 @@ public class OutsidePlugin extends Plugin
 					sh.packed(packed, encounterMost(), e == null ? java.util.Collections.emptySet() : e.busy(), () ->
 					{
 						listEncounters();
-						// (11/21/2026, round two: queued to go up by itself, then its moment built; the sender waits for it)
-						if (queueWhenPacked.remove(packed))
-						{
-							sh.queue(packed, OutsidePlugin.this::listEncounters);
-						}
+						// (11/21/2026, round two: its moment built; the sender waits for it)
 						sh.moment(packed, takenFor.remove(packed), () ->
 						{
 							listEncounters();
@@ -5535,19 +5534,97 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
+			public long[] prices(int id)
+			{
+				return itemPrices(id);
+			}
+
+			@Override
+			public void picture(java.awt.Rectangle bounds, java.util.function.Consumer<byte[]> done)
+			{
+				framePicture(bounds, done);
+			}
+
+			@Override
 			public void ended(String packed, EncounterScene.Taken taken, String reason)
 			{
 				if (taken != null)
 				{
 					takenFor.put(packed, taken);
 				}
-				// (never from anywhere dangerous; with the switch on, every other end goes up by itself)
-				if (config.encounterSend() && !"the Wilderness or PvP".equals(reason))
+				// (never from anywhere dangerous; with the switch on, every other end goes up by itself, "Record now"'s
+				// too (Jace, 11/21/2026: "in case someone wants to record something that isn't a fight"). Queued now,
+				// in the index before it's even packed, so a client closed meanwhile still sends it next time; the sender
+				// waits for its file and its moment. A part split at the length limit isn't sent: the last part sends
+				// them all, joined; round three)
+				if (Encounters.SPLIT.equals(reason))
 				{
-					queueWhenPacked.add(packed);
+					return;
+				}
+				if (shelf != null && taken != null)
+				{
+					shelf.expect(packed);
+				}
+				if (shelf != null && config.encounterSend() && !"the Wilderness or PvP".equals(reason))
+				{
+					shelf.queue(packed, OutsidePlugin.this::listEncounters);
 				}
 			}
 		};
+	}
+
+	/** An item's GE price (RuneLite's own) and high alchemy value, each, a noted one's the item it notes (as the Ground
+	 *  Items plugin reads them; coins 1 and 1): {ge, ha}, or null. The client's thread. (11/21/2026, round three) */
+	private long[] itemPrices(int id)
+	{
+		net.runelite.api.ItemComposition def = itemManager.getItemComposition(id);
+		if (def == null)
+		{
+			return null;
+		}
+		int real = def.getNote() != -1 ? def.getLinkedNoteId() : id;
+		net.runelite.api.ItemComposition base = real != id ? itemManager.getItemComposition(real) : def;
+		if (base == null)
+		{
+			return null;
+		}
+		boolean coins = real == net.runelite.api.gameval.ItemID.COINS;
+		return new long[]{coins ? 1 : itemManager.getItemPrice(real), coins ? 1 : base.getHaPrice()};
+	}
+
+	/**
+	 * The next frame the client draws (RuneLite's DrawManager, the frame as the player sees it), cropped to a box on the
+	 * canvas and written as a PNG off the client's thread: the loot's window as it was drawn (11/21/2026, round three).
+	 * Nothing leaves this computer from here: it goes into the encounter's moment beside its file.
+	 */
+	private void framePicture(java.awt.Rectangle bounds, java.util.function.Consumer<byte[]> done)
+	{
+		drawManager.requestNextFrameListener(image ->
+		{
+			int w = image.getWidth(null), h = image.getHeight(null);
+			java.awt.Rectangle b = bounds.intersection(new java.awt.Rectangle(0, 0, w, h));
+			if (b.isEmpty())
+			{
+				return;
+			}
+			java.awt.image.BufferedImage crop = new java.awt.image.BufferedImage(b.width, b.height, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			java.awt.Graphics2D g = crop.createGraphics();
+			g.drawImage(image, 0, 0, b.width, b.height, b.x, b.y, b.x + b.width, b.y + b.height, null);
+			g.dispose();
+			executor.execute(() ->
+			{
+				try
+				{
+					java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+					javax.imageio.ImageIO.write(crop, "png", out);
+					done.accept(out.toByteArray());
+				}
+				catch (IOException | RuntimeException e)
+				{
+					log.debug("outside: the loot window's picture couldn't be written", e);
+				}
+			});
+		});
 	}
 
 	/**

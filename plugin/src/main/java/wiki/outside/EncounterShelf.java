@@ -244,6 +244,10 @@ final class EncounterShelf
 		{
 			n.addProperty("player", s.player);
 		}
+		if (s.follows != null)
+		{
+			n.addProperty("follows", s.follows);
+		}
 		index().add(f.getFileName(), n);
 		dirty = true;
 		return n;
@@ -251,13 +255,20 @@ final class EncounterShelf
 
 	// ---- jobs
 
-	/** At the start: what a crash left behind packed, the size cap kept, the index's entries for files gone dropped. */
-	void tidy(long most, Collection<String> busy, Runnable then)
+	/** At the start: what a crash left behind packed (and, {@code send}, queued to go up by itself: Jace, 11/21/2026,
+	 *  round three), the size cap kept, the index's entries for files gone dropped. */
+	void tidy(long most, Collection<String> busy, boolean send, Runnable then)
 	{
 		run("tidying the encounters' folder", () ->
 		{
 			Filepath d = dir();
-			EncounterFiles.finishLeftovers(d, System.currentTimeMillis());
+			for (String left : EncounterFiles.finishLeftovers(d, System.currentTimeMillis()))
+			{
+				if (send)
+				{
+					queueNow(left);
+				}
+			}
 			EncounterFiles.cap(d, most, busy);
 			Set<String> there = new HashSet<>(EncounterFiles.names(d));
 			boolean changed = index().entrySet().removeIf(en -> !there.contains(en.getKey()));
@@ -308,13 +319,22 @@ final class EncounterShelf
 		{
 			List<Filepath> all = EncounterFiles.list(dir());
 			List<Row> out = new ArrayList<>();
+			// (round three: a recording's earlier parts aren't rows of their own; the last part's row is all of it)
+			Set<String> followed = new HashSet<>();
+			for (Map.Entry<String, JsonElement> en : index().entrySet())
+			{
+				if (en.getValue().isJsonObject() && str(en.getValue().getAsJsonObject(), "follows") != null)
+				{
+					followed.add(str(en.getValue().getAsJsonObject(), "follows"));
+				}
+			}
 			for (Filepath f : all)
 			{
 				if (out.size() >= LISTED)
 				{
 					break;
 				}
-				if (busy.contains(f.getFileName()) || !EncounterFiles.isPacked(f.getFileName()))
+				if (busy.contains(f.getFileName()) || !EncounterFiles.isPacked(f.getFileName()) || followed.contains(f.getFileName()))
 				{
 					continue;
 				}
@@ -328,7 +348,18 @@ final class EncounterShelf
 					log.debug("outside: couldn't read encounter {}", f.getFileName(), ex);
 					continue;
 				}
-				out.add(row(f, e));
+				if (str(e, "follows") != null)
+				{
+					// (a part read for the first time just now names the one before: that one's row goes)
+					followed.add(str(e, "follows"));
+					out.removeIf(r -> followed.contains(r.file));
+				}
+				Row r = row(f, e);
+				if (str(e, "follows") != null)
+				{
+					r = withTicks(r, (int) chainSummary(dir(), f.getFileName())[1]);
+				}
+				out.add(r);
 			}
 			if (dirty)
 			{
@@ -354,6 +385,47 @@ final class EncounterShelf
 		r.why = str(e, "why");
 		r.moment = f.getParent().joinSegment(momentName(f.getFileName())).isFile();
 		return r;
+	}
+
+	/** A row with the whole recording's length (its parts'). */
+	private static Row withTicks(Row r, int ticks)
+	{
+		Row n = new Row(r.file, r.who, r.when, ticks, r.died, r.killed, r.player, r.fight, r.channel, r.shown);
+		n.kept = r.kept;
+		n.featured = r.featured;
+		n.send = r.send;
+		n.why = r.why;
+		n.moment = r.moment;
+		return n;
+	}
+
+	/** A recording's start and length as the page has them, its parts joined: {the first part's start (ms), every part's
+	 *  ticks added up} (EncounterFiles.eachJoined counts them so). The files thread. */
+	private double[] chainSummary(Filepath d, String file) throws IOException
+	{
+		double at = 0, ticks = 0;
+		List<Filepath> parts = EncounterFiles.chain(d, file);
+		for (int i = 0; i < parts.size(); i++)
+		{
+			Filepath p = parts.get(i);
+			JsonObject e = EncounterFiles.isPacked(p.getFileName()) ? summarized(p) : null;
+			if (e == null)
+			{
+				continue;
+			}
+			if (i == 0)
+			{
+				at = e.has("at") ? e.get("at").getAsDouble() : 0;
+			}
+			ticks += e.has("ticks") ? e.get("ticks").getAsDouble() : 0;
+		}
+		if (parts.isEmpty())
+		{
+			JsonObject e = entry(file);
+			at = e != null && e.has("at") ? e.get("at").getAsDouble() : 0;
+			ticks = e != null && e.has("ticks") ? e.get("ticks").getAsDouble() : 0;
+		}
+		return new double[]{at, ticks};
 	}
 
 	private static String str(JsonObject e, String k)
@@ -384,13 +456,19 @@ final class EncounterShelf
 			{
 				throw new IOException("it isn't an encounter recording");
 			}
+			// (a recording past the length limit: its parts joined, the ticks running on; round three)
+			List<Filepath> parts = EncounterFiles.chain(dir(), file);
+			if (parts.isEmpty())
+			{
+				parts = java.util.Collections.singletonList(f);
+			}
 			EncounterStrip.Names names = new EncounterStrip.Names();
-			EncounterFiles.eachLine(f, names::line);
+			EncounterFiles.eachJoined(parts, names::line);
 			EncounterStrip.Stripper st = new EncounterStrip.Stripper(names.pattern());
 			EncounterStrip.Summarizer z = new EncounterStrip.Summarizer();
 			EncounterFiles.Packer packer = new EncounterFiles.Packer();
 			IOException[] failed = new IOException[1];
-			EncounterFiles.eachLine(f, line ->
+			EncounterFiles.eachJoined(parts, line ->
 			{
 				String kept = st.line(line);
 				if (kept != null && failed[0] == null)
@@ -567,24 +645,36 @@ final class EncounterShelf
 	{
 		run("queueing " + file, () ->
 		{
-			JsonObject e = entry(file);
-			if (e == null)
-			{
-				e = new JsonObject();
-				index().add(file, e);
-			}
-			// (one on the page already, or queued once before: never twice)
-			if (e.has("fight") || e.has("send"))
-			{
-				then.run();
-				return;
-			}
-			e.addProperty("send", EncounterQueue.DUE);
-			e.addProperty("next", 0L);
-			e.addProperty("tries", 0);
-			saveIndex();
+			queueNow(file);
 			then.run();
 		}, null);
+	}
+
+	/** Queued on the files thread (one on the page already, or queued once before: never twice). The file may not be
+	 *  packed yet (round three: queued as the recording ends, so a client closed while it packs still sends it). */
+	private void queueNow(String file) throws IOException
+	{
+		JsonObject e = entry(file);
+		if (e == null)
+		{
+			e = new JsonObject();
+			index().add(file, e);
+		}
+		if (e.has("fight") || e.has("send"))
+		{
+			return;
+		}
+		e.addProperty("send", EncounterQueue.DUE);
+		e.addProperty("next", 0L);
+		e.addProperty("tries", 0);
+		saveIndex();
+	}
+
+	/** A recording whose moment is still to be made (its scene was taken as it ended): the sender waits for it. Called
+	 *  on the client's thread as it ends, before it's packed. */
+	void expect(String file)
+	{
+		building.add(file);
 	}
 
 	/** A send to make now: its file, its index entry as it was, and whether its last send went unanswered. */
@@ -631,12 +721,25 @@ final class EncounterShelf
 				{
 					continue;
 				}
-				String player = str(e, "player");
-				if (player != null && (me == null || !OutsidePanel.sameName(player, me)))
+				if (!d.joinSegment(en.getKey()).isFile())
 				{
 					continue;
 				}
-				if (!d.joinSegment(en.getKey()).isFile())
+				// (only on the character it was recorded on: its player read from its header first, if it hasn't been;
+				// one that names no player (not this recorder's) never goes by itself; round three)
+				if (!e.has("who"))
+				{
+					try
+					{
+						e = summarized(d.joinSegment(en.getKey()));
+					}
+					catch (IOException | RuntimeException ex)
+					{
+						continue;
+					}
+				}
+				String player = str(e, "player");
+				if (player == null || me == null || !OutsidePanel.sameName(player, me))
 				{
 					continue;
 				}
@@ -657,7 +760,9 @@ final class EncounterShelf
 			e.addProperty("send", EncounterQueue.SENDING);
 			e.addProperty("tries", (e.has("tries") ? e.get("tries").getAsInt() : 0) + 1);
 			saveIndex();
-			found.accept(new Due(best, unsure, e.has("at") ? e.get("at").getAsDouble() : 0, e.has("ticks") ? e.get("ticks").getAsDouble() : 0));
+			// (the page's list has the parts joined: the first part's start, every part's ticks; round three)
+			double[] whole = chainSummary(d, best);
+			found.accept(new Due(best, unsure, whole[0], whole[1]));
 		}, null);
 	}
 
@@ -713,6 +818,7 @@ final class EncounterShelf
 	{
 		if (taken == null)
 		{
+			building.remove(file);
 			then.run();
 			return;
 		}
@@ -782,6 +888,18 @@ final class EncounterShelf
 			if (busy.contains(file) || !EncounterFiles.isRecordingName(file))
 			{
 				return;
+			}
+			// (its earlier parts with it: they're one recording; round three)
+			for (Filepath p : EncounterFiles.chain(dir(), file))
+			{
+				String n = p.getFileName();
+				if (busy.contains(n) || !EncounterFiles.isRecordingName(n))
+				{
+					continue;
+				}
+				p.deleteIfExists();
+				dir().joinSegment(momentName(n)).deleteIfExists();
+				index().remove(n);
 			}
 			dir().joinSegment(file).deleteIfExists();
 			dir().joinSegment(momentName(file)).deleteIfExists();

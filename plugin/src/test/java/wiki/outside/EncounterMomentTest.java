@@ -363,4 +363,34 @@ public class EncounterMomentTest
 		m.c3 = new int[]{-1, -1};
 		return m;
 	}
+
+	/** (11/21/2026, round three) the loot's window as drawn rides after the motion block (flag bit 1), kept through thin
+	 *  and sparse, with the chest's and the window's frames halved as the drop's */
+	@Test
+	public void thePictureBlock() throws Exception
+	{
+		EncounterMoment.Moment m = two();
+		Map<String, Object> chest = new LinkedHashMap<>();
+		chest.put("tick", d(12));
+		chest.put("frame", d(1));
+		chest.put("source", "Lunar Chest");
+		chest.put("kind", "reward");
+		m.meta.put("chest", chest);
+		Map<String, Object> win = new LinkedHashMap<>();
+		win.put("kind", "reward");
+		win.put("from", d(1));
+		m.meta.put("window", win);
+		m.picture = new byte[]{(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
+		byte[] raw = EncounterMoment.raw(m);
+		assertEquals(EncounterMoment.FLAG_MOTION | EncounterMoment.FLAG_PICTURE, raw[5]);
+		EncounterMoment.Moment back = EncounterMoment.decode(EncounterMoment.encode(m));
+		assertArrayEquals(m.picture, back.picture);
+		assertEquals(3, back.frames);
+		EncounterMoment.Moment t = EncounterMoment.thin(back);
+		assertArrayEquals(m.picture, t.picture);
+		assertEquals(1.0, EncounterMoment.num(((Map<?, ?>) t.meta.get("chest")).get("frame")), 0);
+		assertArrayEquals(m.picture, EncounterMoment.sparse(back).picture);
+		// (without one: the flag off, the bytes as before)
+		assertArrayEquals(hex(GOLDEN_2), EncounterMoment.raw(two()));
+	}
 }

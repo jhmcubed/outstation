@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import net.runelite.api.ChatMessageType;
 import org.junit.Test;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -56,5 +57,42 @@ public class EncountersTest
 	{
 		assertEquals(new HashSet<>(Arrays.asList(3106, 12077)), Encounters.parseIds("3106, 12077, nope"));
 		assertTrue(Encounters.parseIds("").isEmpty());
+	}
+
+	/** (11/21/2026, round three) a raid whole: its own completion line told from a boss's inside it, Tombs of Amascut's
+	 *  treasure room part of it, its lobby not; a corpse's loot is what the inventory gained */
+	@Test
+	public void aRaidIsWholeAndItsCompletionIsItsOwn()
+	{
+		assertTrue(Encounters.raidCompletion("Your completed Chambers of Xeric count is: 12.", "Chambers of Xeric", "Chambers of Xeric"));
+		assertTrue(Encounters.raidCompletion("Your completed Fractured Archive count is: 58.", "Fractured Archive", "The Fractured Archive"));
+		assertTrue(Encounters.raidCompletion("Your Theatre of Blood count is: 3.", "Theatre of Blood", "Theatre of Blood"));
+		assertFalse(Encounters.raidCompletion("Your Ocellus kill count is: 3.", "Ocellus", "The Fractured Archive"));
+		Presence.Area toa = Presence.area(14674, 0), room = Presence.area(14672, 0), lobby = Presence.area(13454, 0);
+		assertEquals("Tombs of Amascut", toa.name);
+		assertTrue(Encounters.sameArea(room, toa));
+		assertFalse(Encounters.sameArea(lobby, toa));
+		assertFalse(Encounters.sameArea(null, toa));
+		assertTrue(Encounters.LOBBIES.contains(lobby.name));
+		java.util.Map<Integer, Long> before = new java.util.HashMap<>();
+		before.put(995, 100L);
+		before.put(385, 3L);
+		java.util.List<int[]> got = Encounters.gained(before, Arrays.asList(new int[]{995, 1100}, new int[]{385, 2}, new int[]{29790, 1}, new int[]{385, 1}));
+		assertEquals(2, got.size());
+		assertArrayEquals(new int[]{995, 1000}, got.get(0));
+		assertArrayEquals(new int[]{29790, 1}, got.get(1));
+	}
+
+	/** every reward window RuneLite's Loot Tracker reads (1.13.7) is one this recorder reads */
+	@Test
+	public void theRewardWindowsAreTheLootTrackers()
+	{
+		java.util.Set<String> sources = new java.util.HashSet<>();
+		for (Encounters.Chest c : Encounters.CHESTS)
+		{
+			sources.add(c.source);
+		}
+		assertEquals(new HashSet<>(Arrays.asList("Chambers of Xeric", "Theatre of Blood", "Tombs of Amascut", "The Fractured Archive",
+			"Barrows", "Lunar Chest", "Fortis Colosseum", "Doom of Mokhaiotl")), sources);
 	}
 }

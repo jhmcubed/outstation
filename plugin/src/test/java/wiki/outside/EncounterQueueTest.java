@@ -163,4 +163,31 @@ public class EncounterQueueTest
 		assertEquals(2, onPage);
 		shelf.shutDown();
 	}
+
+	/** (11/21/2026, round three) a crash's leftover packed at the next start goes up by itself (only with the switch on, and
+	 *  only for the character it was recorded on); one that names no player never goes by itself */
+	@Test
+	public void aCrashsLeftoverIsQueuedAtTheStart() throws Exception
+	{
+		Path root = Files.createTempDirectory("outside");
+		Path enc = Files.createDirectories(root.resolve("encounters"));
+		Path plain = enc.resolve("20261121-110000-Vorkath.jsonl");
+		Files.write(plain, ("{\"t\":0,\"c\":1,\"e\":\"header\",\"label\":\"Vorkath\",\"startedMs\":1763722800000,\"player\":\"camo field\"}\n"
+			+ "{\"t\":0,\"c\":2,\"e\":\"tick\"}\n{\"t\":1,\"c\":32,\"e\":\"tick\"}\n").getBytes(StandardCharsets.UTF_8));
+		Files.setLastModifiedTime(plain, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - EncounterFiles.IDLE_MS - 1000));
+		recording(enc, "20261121-100000-Giant_Mole.jsonl.gz", null, 1763719200000L);
+		EncounterShelf shelf = new EncounterShelf(new Gson(), () -> Filepath.Unchecked.getRooted(root));
+		await(shelf, done -> shelf.tidy(200L << 20, Collections.emptySet(), true, done));
+		await(shelf, done -> shelf.queue("20261121-100000-Giant_Mole.jsonl.gz", done));
+		long now = System.currentTimeMillis();
+		assertNull(EncounterQueueTest.<EncounterShelf.Due>await(c -> shelf.nextDue(now, "Someone Else", Collections.emptySet(), c)));
+		EncounterShelf.Due d = await(c -> shelf.nextDue(now, "camo field", Collections.emptySet(), c));
+		assertEquals("20261121-110000-Vorkath.jsonl.gz", d.file);
+		assertEquals(1763722800000.0, d.at, 0);
+		assertEquals(2.0, d.ticks, 0);
+		await(shelf, done -> shelf.sent(d.file, EncounterQueue.answered(201, null, null, now, 1), "abc", "camo_field", true, done));
+		// (the one naming no player: never by itself)
+		assertNull(EncounterQueueTest.<EncounterShelf.Due>await(c -> shelf.nextDue(now, "camo field", Collections.emptySet(), c)));
+		shelf.shutDown();
+	}
 }

@@ -178,6 +178,9 @@ final class Encounters
 {
 	private static final Logger log = LoggerFactory.getLogger(Encounters.class);
 
+	/** the end line's reason for a part split at the length limit (the plugin sends only the last part, the parts joined) */
+	static final String SPLIT = "split: the length limit";
+
 	/** Encounter Recorder's format these files keep to */
 	static final int FORMAT_VERSION = 6;
 	/** ticks a part runs before the next is split off (his length limit's default: 50 minutes) */
@@ -196,6 +199,68 @@ final class Encounters
 	static final Set<String> SKILLING = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList("Wintertodt", "Tempoross")));
 	/** how far round the player objects' animations are watched, in tiles */
 	static final int OBJ_RADIUS = 32;
+
+	// ---- raids whole, and loot from a chest, a reward window or a corpse (11/21/2026, round three; ghillie's
+	// claude/outstation.md, "Encounters, round three"). Jace: "it should be the whole raid when it's a raid", and "A raid
+	// should record from entering through clicking the door to leave the treasure/chest room at the end of every raid".
+
+	/** after the loot of a boss outside a raid (a chest, a reward window, a corpse looted), ticks more kept */
+	static final int LOOT_AFTER = 6;
+	/** a raid completed: the most it waits for the player to leave the treasure room, in ticks (30 minutes) */
+	static final int RAID_AFTER = 3000;
+	/** a raid's whole recording, every part, at most (three hours): a safety end */
+	static final int RAID_MOST = 18000;
+	/** a kill with no drop on the ground and a corpse to loot: the most it waits for the corpse to be looted or go */
+	static final int CORPSE_WAIT = 300;
+	/** after the click on a corpse, the ticks within which the inventory's gain is its loot */
+	static final int CORPSE_TAKE = 6;
+	/** Discord's raid areas that are a part of another raid (the area that started it counts them as in it): Tombs of
+	 *  Amascut's treasure room, Osmumten's Burial Chamber (region 14672, beside the raid's own 14674 and 14676) */
+	static final Map<String, String> RAID_PARTS = Collections.singletonMap("Osmumten's Burial Chamber", "Tombs of Amascut");
+	/** Discord's raid areas that are a lobby, not a raid: no recording starts by itself there (Tombs of Amascut's, in the
+	 *  Jaltevas pyramid), and walking out to one is leaving */
+	static final Set<String> LOBBIES = Collections.singleton("Jaltevas Pyramid");
+
+	/**
+	 * The rewards that come in a window, as RuneLite's Loot Tracker reads them (LootTrackerPlugin.onWidgetLoaded, 1.13.7):
+	 * the window's interface, the inventory the game fills with the reward, and whether it's a raid's. Read straight
+	 * from the game here (WidgetLoaded and ItemContainerChanged), so the Loot Tracker needn't be on. Doom of Mokhaiotl's
+	 * pile is claimed by a script, not a window (the Loot Tracker's onScriptPreFired, DOM_LOOT_CLAIM); its window is the
+	 * level's end (DOM_END_LEVEL_UI), whose title names the level.
+	 */
+	static final class Chest
+	{
+		final String source;
+		final int window, inv;
+		final boolean raid;
+
+		Chest(String source, int window, int inv, boolean raid)
+		{
+			this.source = source;
+			this.window = window;
+			this.inv = inv;
+			this.raid = raid;
+		}
+	}
+
+	static final Chest[] CHESTS = {
+		new Chest("Chambers of Xeric", InterfaceID.RAIDS_REWARDS, InventoryID.RAIDS_REWARDS, true),
+		new Chest("Theatre of Blood", InterfaceID.TOB_CHESTS, InventoryID.TOB_CHESTS, true),
+		new Chest("Tombs of Amascut", InterfaceID.TOA_CHESTS, InventoryID.TOA_CHESTS, true),
+		new Chest("The Fractured Archive", InterfaceID.TFA_CHESTS, InventoryID.TFA_CHESTS, true),
+		new Chest("Barrows", InterfaceID.BARROWS_REWARD, InventoryID.TRAIL_REWARDINV, false),
+		new Chest("Lunar Chest", InterfaceID.PMOON_REWARD, InventoryID.PMOON_REWARDINV, false),
+		new Chest("Fortis Colosseum", InterfaceID.COLOSSEUM_REWARD_CHEST_2, InventoryID.COLOSSEUM_REWARDS, false),
+		new Chest("Doom of Mokhaiotl", InterfaceID.DOM_END_LEVEL_UI, InventoryID.DOM_LOOTPILE, false),
+	};
+	/** the client script the game runs as Doom of Mokhaiotl's pile is claimed (RuneLite's ScriptID.DOM_LOOT_CLAIM) */
+	static final int DOM_LOOT_CLAIM = 7928;
+	/** Theatre of Blood's treasure room and lobby (the Loot Tracker's THEATRE_OF_BLOOD_REGION and _LOBBY: its chests'
+	 *  window is taken only there) */
+	static final int TOB_CHEST_REGION = 12867, TOB_LOBBY = 14642;
+	/** a menu option that opens or loots something (a chest, a corpse): where the loot came from is what was clicked */
+	static final Set<String> LOOT_OPTIONS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
+		"Open", "Search", "Loot", "Harvest", "Claim", "Take", "Take-loot", "Collect", "Grab", "Plunder")));
 
 	/** the game's kill and completion count lines ("Your Vorkath kill count is: 418.", "Your completed Chambers of Xeric
 	 *  count is: 12."), as Counts reads them */
@@ -240,6 +305,15 @@ final class Encounters
 		/** a recording's ended: its file once packed ({@code packed}), why, and what its scene moment is made from (null:
 		 *  none, as for one stopped in the Wilderness); on the client's thread (11/21/2026, "Encounters, round two") */
 		void ended(String packed, EncounterScene.Taken taken, String reason);
+
+		/** an item's GE price (RuneLite's own) and high alchemy value, each, as the Ground Items plugin reads them (a
+		 *  noted item's, the item it notes): {ge, ha}; on the client's thread (11/21/2026, round three) */
+		long[] prices(int id);
+
+		/** the next frame the client draws, cropped to {@code bounds} on the canvas, as PNG bytes to {@code done} (null:
+		 *  none); asked on the client's thread, answered on whichever (11/21/2026, round three: the reward window as the
+		 *  player saw it) */
+		void picture(java.awt.Rectangle bounds, java.util.function.Consumer<byte[]> done);
 	}
 
 	private final Client client;
@@ -284,6 +358,29 @@ final class Encounters
 	private Presence.Area handStopped;
 	private Presence.Area afterKill;
 	private int tickNow;
+	// (round three, 11/21/2026: a raid whole and its loot)
+	/** the ticks of the parts before this one (the scene counts the whole recording's ticks) */
+	private int partBase;
+	/** the tick (the whole recording's) a raid's completion line came, or -1 */
+	private int raidDone = -1;
+	/** the loot written this recording, by source (one each: the window's opened again, an item taken, makes none) */
+	private final Set<String> looted = new HashSet<>();
+	/** a reward window open with its inventory still empty: written when the inventory fills, a few ticks at most */
+	private Chest waitingFor;
+	private int waitingUntil;
+	/** what the player last chose to open or loot (a menu option on an object or an NPC: never written, only its place
+	 *  kept for the loot line): its tile, floor, id, kind ("obj" or "npc"), name, NPC index, and the tick */
+	private LocalPoint clickedAt;
+	private int clickedPlane, clickedId, clickedIndex = -1, clickedTick = -1000;
+	private String clickedKind, clickedName;
+	/** the inventory as it was, item by item (id to count), for a corpse's loot (what it gained after the click) */
+	private Map<Integer, Long> invBefore = new HashMap<>();
+	/** the loot's window whose picture is to be taken, its interface (-1: the inventory), client cycles to go */
+	private EncounterScene.Window pictureOf;
+	private int pictureGroup, pictureIn;
+	/** a boss's corpse waiting to be looted (its name; the kill's tick), or null */
+	private String corpseOf;
+	private int corpseSince;
 
 	Encounters(Client client, net.runelite.client.callback.ClientThread clientThread, Gson gson, Host host)
 	{
@@ -354,7 +451,7 @@ final class Encounters
 			return "never in the Wilderness, a PvP area or on a PvP world";
 		}
 		handStopped = null;
-		start(unnamedLabel(), false, null, Collections.emptySet(), 1, null);
+		start(unnamedLabel(), false, null, Collections.emptySet(), 1, null, null, 0);
 		return null;
 	}
 
@@ -381,7 +478,10 @@ final class Encounters
 		}
 	}
 
-	private void start(String name, boolean auto, Presence.Area at, Set<Integer> watched, int partNo, String follows)
+	/** A new recording; for the next part of one split at the length limit, {@code keep} is its scene (its frames and
+	 *  anchors go on: the moment is the whole recording's) and {@code base} the ticks of the parts before. */
+	private void start(String name, boolean auto, Presence.Area at, Set<Integer> watched, int partNo, String follows,
+		EncounterScene keep, int base)
 	{
 		if (name == null || name.trim().isEmpty())
 		{
@@ -397,8 +497,17 @@ final class Encounters
 		endAt = -1;
 		endWhy = null;
 		part = partNo;
+		partBase = base;
+		if (keep == null)
+		{
+			// (a new encounter: nothing of the last one's raid or loot)
+			raidDone = -1;
+			looted.clear();
+			corpseOf = null;
+			waitingFor = null;
+		}
 		recording = new EncounterFiles.Writer(gson, () -> host.folder().joinSegment("encounters"), name, LocalDateTime.now());
-		scene = new EncounterScene(client, host::itemLabel, host.otherPlayers());
+		scene = keep != null ? keep : new EncounterScene(client, host::itemLabel, host.otherPlayers());
 		definedNpcs.clear();
 		definedObjects.clear();
 		definedItems.clear();
@@ -483,6 +592,7 @@ final class Encounters
 		emit("ui_tab").addProperty("tab", client.getVarcIntValue(VarClientID.TOPLEVEL_PANEL));
 		containers(client.getItemContainer(InventoryID.INV), "inv");
 		containers(client.getItemContainer(InventoryID.WORN), "worn");
+		invBefore = counts(client.getItemContainer(InventoryID.INV));
 		for (Skill skill : Skill.values())
 		{
 			JsonObject s = emit("stat");
@@ -561,6 +671,13 @@ final class Encounters
 	 */
 	private void stop(String reason, boolean dropTick)
 	{
+		stop(reason, dropTick, false);
+	}
+
+	/** {@code split}: the part ends at the length limit and the next goes on (its scene kept, no moment yet, and nothing
+	 *  sent: the parts go up joined, as one, once the last has ended; EncounterShelf.prepare). */
+	private void stop(String reason, boolean dropTick, boolean split)
+	{
 		EncounterFiles.Writer stopped = recording;
 		if (dropTick)
 		{
@@ -572,11 +689,11 @@ final class Encounters
 		end.addProperty("endedMs", System.currentTimeMillis());
 		// (its scene moment's makings: nothing from anywhere dangerous; the rest built on the plugin's moment thread)
 		EncounterScene.Taken taken = null;
-		if (scene != null && !dropTick)
+		if (scene != null && !dropTick && !split)
 		{
 			try
 			{
-				taken = scene.finish(stopped.ticks() - 1);
+				taken = scene.finish(partBase + stopped.ticks() - 1);
 			}
 			catch (RuntimeException e)
 			{
@@ -587,7 +704,10 @@ final class Encounters
 		{
 			log.info("outside: encounter {} has no scene moment (nothing of the scene was taken)", stopped.fileName());
 		}
-		scene = null;
+		if (!split)
+		{
+			scene = null;
+		}
 		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason);
 		finishing.add(stopped);
 		recording = null;
@@ -611,8 +731,10 @@ final class Encounters
 		Set<Integer> indices = new HashSet<>(watchedIndices);
 		String name = label;
 		int next = part + 1;
-		stop("split: the length limit", false);
-		start(name, auto, at, watched, next, follows);
+		int base = partBase + recording.ticks();
+		EncounterScene kept = scene;
+		stop(SPLIT, false, true);
+		start(name, auto, at, watched, next, follows, kept, base);
 		watchedIndices.addAll(indices);
 	}
 
@@ -648,7 +770,40 @@ final class Encounters
 	private Presence.Area bossArea()
 	{
 		Presence.Area a = here();
-		return a != null && (Presence.BOSS.equals(a.kind) || Presence.RAID.equals(a.kind)) && !SKILLING.contains(a.name) ? a : null;
+		return a != null && (Presence.BOSS.equals(a.kind) || Presence.RAID.equals(a.kind)) && !SKILLING.contains(a.name)
+			&& !LOBBIES.contains(a.name) && !RAID_PARTS.containsKey(a.name) ? a : null;
+	}
+
+	/** Whether where they are ({@code now}) is the area a recording started at: the same, one of the same name, or a part
+	 *  of it (Tombs of Amascut's treasure room). */
+	static boolean sameArea(Presence.Area now, Presence.Area area)
+	{
+		return now != null && area != null && (now == area || now.name.equals(area.name) || area.name.equals(RAID_PARTS.get(now.name)));
+	}
+
+	/** The raid they're in, for the recording's endings: the one that started it, else the raid they stand in (a part of
+	 *  one as the raid itself; a lobby isn't one), or null. */
+	private Presence.Area raidArea()
+	{
+		if (area != null)
+		{
+			return Presence.RAID.equals(area.kind) ? area : null;
+		}
+		Presence.Area h = here();
+		return h != null && Presence.RAID.equals(h.kind) && !LOBBIES.contains(h.name) ? h : null;
+	}
+
+	/** Whether a count line in a raid is the raid's own completion ("Your completed Chambers of Xeric count is: 12."),
+	 *  not a boss's inside it. */
+	static boolean raidCompletion(String text, String counted, String raid)
+	{
+		if (text != null && text.startsWith("Your completed "))
+		{
+			return true;
+		}
+		String c = counted == null ? "" : counted.toLowerCase().replaceFirst("^the ", "");
+		String r = raid == null ? "" : raid.toLowerCase().replaceFirst("^the ", "");
+		return !c.isEmpty() && !r.isEmpty() && (c.contains(r) || r.contains(c));
 	}
 
 	private Presence.Area here()
@@ -724,6 +879,12 @@ final class Encounters
 		return recording == null && host.autoOn() && host.hasPage() && client.getGameState() == GameState.LOGGED_IN && !danger();
 	}
 
+	/** the whole recording's tick (every part's): the scene's and the endings' clock */
+	private int whole()
+	{
+		return partBase + (recording == null ? 0 : recording.ticks());
+	}
+
 	private JsonObject emit(String event)
 	{
 		JsonObject line = EncounterSnap.line(event, recording.ticks(), client.getGameCycle());
@@ -776,7 +937,7 @@ final class Encounters
 		WorldView wv = client.getTopLevelWorldView();
 		if (scene != null)
 		{
-			scene.tick(recording.ticks());
+			scene.tick(whole());
 		}
 		JsonObject tick = emit("tick");
 		tick.addProperty("abs", client.getTickCount());
@@ -821,12 +982,28 @@ final class Encounters
 		spawnedThisTick.clear();
 		recording.endTick();
 
-		// (how it ends: the kill or a death a few ticks on, leaving, the listed NPCs gone)
-		if (endAt >= 0 && recording.ticks() >= endAt)
+		// (a reward window open whose inventory hadn't filled yet: read again, then let go; round three)
+		if (waitingFor != null)
 		{
-			// (a kill with no drop yet: held a little for it, the moment's anchor; 11/21/2026)
-			boolean waiting = "killed".equals(endWhy) && scene != null && scene.killed() && !scene.dropped()
-				&& recording.ticks() < scene.killTick() + DROP_WAIT;
+			Chest w = waitingFor;
+			List<int[]> got = itemsOf(client.getItemContainer(w.inv));
+			if (!got.isEmpty())
+			{
+				loot(w.source, got, w.window, false);
+			}
+			else if (whole() > waitingUntil)
+			{
+				waitingFor = null;
+			}
+		}
+
+		// (how it ends: the kill or a death a few ticks on, leaving, the listed NPCs gone)
+		if (endAt >= 0 && whole() >= endAt)
+		{
+			// (a kill with no drop yet: held a little for it, the moment's anchor (11/21/2026); and a corpse to loot, till
+			// it's looted or goes (round three: Araxxor's, as the game's own loot needs a click on what's left))
+			boolean unlooted = "killed".equals(endWhy) && scene != null && scene.killed() && !scene.dropped() && !scene.looted();
+			boolean waiting = unlooted && (whole() < scene.killTick() + DROP_WAIT || corpseWaiting());
 			if (!waiting)
 			{
 				stopAuto(endWhy);
@@ -836,12 +1013,28 @@ final class Encounters
 		if (automatic && area != null)
 		{
 			Presence.Area now = here();
-			boolean in = now == area || now != null && now.name.equals(area.name);
+			boolean in = sameArea(now, area);
 			outside = in ? 0 : outside + 1;
-			// (in an area of another name: left at once; where no area's named, after a few ticks, a raid's longer)
-			if (!in && (now != null || outside > (Presence.RAID.equals(area.kind) ? LEFT_RAID : LEFT_BOSS)))
+			boolean raid = Presence.RAID.equals(area.kind);
+			// (a raid is whole from entering to leaving its treasure room (Jace, 11/21/2026): its completion line, a
+			// room's "Challenge complete", a sub-boss's count, the loot and a death all go on; once it's completed or
+			// looted, the first ticks out of it are the end, the click on the exit and the map leaving the raid)
+			boolean done = raid && (raidDone >= 0 || !looted.isEmpty());
+			// (in an area of another name: left at once; where no area's named, after a few ticks, a raid's longer
+			// before it's done: a room the list misses, a map loading)
+			if (!in && (now != null || outside > (raid && !done ? LEFT_RAID : LEFT_BOSS)))
 			{
-				stopAuto("left");
+				stopAuto(done ? "completed" : "left");
+				return;
+			}
+			if (raid && raidDone >= 0 && whole() >= raidDone + RAID_AFTER)
+			{
+				stopAuto("completed");
+				return;
+			}
+			if (raid && whole() >= RAID_MOST)
+			{
+				stopAuto("the time limit");
 				return;
 			}
 		}
@@ -870,7 +1063,7 @@ final class Encounters
 	{
 		Presence.Area a = area;
 		stop(why, false);
-		if (a != null && ("killed".equals(why) || "died".equals(why) || "completed".equals(why)))
+		if (a != null && ("killed".equals(why) || "died".equals(why) || "completed".equals(why) || "looted".equals(why)))
 		{
 			afterKill = a;
 		}
@@ -892,7 +1085,7 @@ final class Encounters
 		{
 			return;
 		}
-		start(a.name, true, a, Collections.emptySet(), 1, null);
+		start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
 	}
 
 	/** After a kill in the area: the next fight (a hitsplat on them, or on an NPC from them) starts the next one. */
@@ -902,7 +1095,7 @@ final class Encounters
 		{
 			Presence.Area a = afterKill;
 			afterKill = null;
-			start(a.name, true, a, Collections.emptySet(), 1, null);
+			start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
 		}
 	}
 
@@ -917,6 +1110,27 @@ final class Encounters
 		if (scene != null)
 		{
 			scene.cycle();
+		}
+		// (the loot's window as the player sees it: its title read again now its scripts have run, its box, the next
+		// frame cropped to it; round three)
+		if (pictureOf != null && --pictureIn <= 0)
+		{
+			EncounterScene.Window w = pictureOf;
+			pictureOf = null;
+			if (w.title == null && pictureGroup >= 0)
+			{
+				w.title = windowTitle(pictureGroup);
+			}
+			java.awt.Rectangle bounds = pictureGroup >= 0 ? windowBounds(pictureGroup) : inventoryBounds();
+			if (bounds != null && bounds.width > 0 && bounds.height > 0)
+			{
+				host.picture(bounds, png ->
+				{
+					w.pw = bounds.width;
+					w.ph = bounds.height;
+					w.picture = png;
+				});
+			}
 		}
 		// Where the client is walking you, each time it changes: the tile it puts the red flag on (his dest line,
 		// without the click it came from: clicks aren't recorded here)
@@ -1413,7 +1627,7 @@ final class Encounters
 		if (ids.contains(npc.getId()) && mayStart())
 		{
 			// The start snapshot includes this NPC, so it isn't written twice
-			start(Text.removeTags(npc.getName()), true, null, ids, 1, null);
+			start(Text.removeTags(npc.getName()), true, null, ids, 1, null, null, 0);
 			watchedIndices.add(npc.getIndex());
 		}
 	}
@@ -1627,7 +1841,7 @@ final class Encounters
 		}
 		if (scene != null && (actor == client.getLocalPlayer() || actor instanceof NPC && event.getHitsplat().isMine()))
 		{
-			scene.hit(recording.ticks(), actor instanceof NPC && event.getHitsplat().isMine() ? Text.removeTags(((NPC) actor).getName()) : null,
+			scene.hit(whole(), actor instanceof NPC && event.getHitsplat().isMine() ? Text.removeTags(((NPC) actor).getName()) : null,
 				event.getHitsplat().getAmount());
 		}
 		JsonObject line = emit("hit");
@@ -1753,15 +1967,28 @@ final class Encounters
 		Matcher kill = recording != null && event.getType() == ChatMessageType.GAMEMESSAGE ? KILL_LINE.matcher(text) : null;
 		if (kill != null && kill.matches())
 		{
-			if (automatic && endAt < 0)
+			Presence.Area raid = raidArea();
+			if (raid != null)
 			{
-				endAt = recording.ticks() + AFTER_KILL;
-				endWhy = area != null && Presence.RAID.equals(area.kind) ? "completed" : "killed";
+				// (in a raid, nothing ends it here and nothing's its moment: the raid's own line is noted, a boss's inside
+				// it passed by; the treasure room's leaving ends it, the chest is its moment; round three)
+				if (raidCompletion(text, kill.group(1), raid.name) && raidDone < 0)
+				{
+					raidDone = whole();
+				}
 			}
-			// (the scene moment's kill, by hand or not: its still scene taken now)
-			if (scene != null)
+			else
 			{
-				scene.kill(recording.ticks(), kill.group(1));
+				if (automatic && endAt < 0)
+				{
+					endAt = whole() + AFTER_KILL;
+					endWhy = "killed";
+				}
+				// (the scene moment's kill, by hand or not: its still scene taken now)
+				if (scene != null)
+				{
+					scene.kill(whole(), kill.group(1));
+				}
 			}
 		}
 		if (recording == null)
@@ -1895,10 +2122,10 @@ final class Encounters
 			// (the drop, for the scene moment: the recording holds on till it's landed and a few ticks more; not what a
 			// map's load brings)
 			if (scene != null && client.getGameState() == GameState.LOGGED_IN
-				&& scene.itemLanded(recording.ticks(), event.getTile().getLocalLocation(), event.getTile().getPlane())
+				&& scene.itemLanded(whole(), event.getTile().getLocalLocation(), event.getTile().getPlane())
 				&& "killed".equals(endWhy) && endAt >= 0)
 			{
-				endAt = Math.max(endAt, recording.ticks() + AFTER_KILL + 1);
+				endAt = Math.max(endAt, whole() + AFTER_KILL + 1);
 			}
 		}
 	}
@@ -1924,11 +2151,473 @@ final class Encounters
 		if (event.getContainerId() == InventoryID.INV)
 		{
 			containers(event.getItemContainer(), "inv");
+			corpseLoot(event.getItemContainer());
 		}
 		else if (event.getContainerId() == InventoryID.WORN)
 		{
 			containers(event.getItemContainer(), "worn");
 		}
+		// (a reward window's inventory filled after its window opened)
+		Chest w = waitingFor;
+		if (w != null && event.getContainerId() == w.inv)
+		{
+			List<int[]> got = itemsOf(event.getItemContainer());
+			if (!got.isEmpty())
+			{
+				loot(w.source, got, w.window, false);
+			}
+		}
+	}
+
+	// ---- the loot (11/21/2026, round three; ghillie's claude/outstation.md, "Encounters, round three"): from a reward
+	// window (a raid's chest, Barrows', the Lunar Chest, the Colosseum's), Doom of Mokhaiotl's pile, or a corpse looted;
+	// one loot line each, and the scene moment's anchor. Items that land on the ground are the item lines, as before.
+
+	/** A reward window loaded: its reward read now, or once its inventory fills (a few ticks at most). */
+	private void rewardWindow(int group)
+	{
+		for (Chest c : CHESTS)
+		{
+			if (c.window != group || c.inv == InventoryID.DOM_LOOTPILE)
+			{
+				// (Doom's level-end window shows the pile before it's claimed: the claim is its loot, below)
+				continue;
+			}
+			if (c.inv == InventoryID.TOB_CHESTS && !inTobChestRegion())
+			{
+				continue;
+			}
+			List<int[]> got = itemsOf(client.getItemContainer(c.inv));
+			if (!got.isEmpty())
+			{
+				loot(c.source, got, c.window, false);
+			}
+			else if (!looted.contains(c.source))
+			{
+				waitingFor = c;
+				waitingUntil = whole() + 5;
+			}
+		}
+	}
+
+	/** Doom of Mokhaiotl's pile claimed (the game's script as it's taken, as the Loot Tracker reads it). */
+	@Subscribe
+	public void onScriptPreFired(net.runelite.api.events.ScriptPreFired event)
+	{
+		if (recording != null && event.getScriptId() == DOM_LOOT_CLAIM)
+		{
+			List<int[]> got = itemsOf(client.getItemContainer(InventoryID.DOM_LOOTPILE));
+			if (!got.isEmpty())
+			{
+				loot("Doom of Mokhaiotl", got, InterfaceID.DOM_END_LEVEL_UI, false);
+			}
+		}
+	}
+
+	/** Theatre of Blood's chests' window counts only in its treasure room or lobby (the Loot Tracker's own check). */
+	private boolean inTobChestRegion()
+	{
+		Player me = client.getLocalPlayer();
+		WorldPoint at = OutsidePlugin.here(client, me);
+		int r = at == null ? -1 : at.getRegionID();
+		return r == TOB_CHEST_REGION || r == TOB_LOBBY;
+	}
+
+	/** What the player chose to open or loot (an object's or an NPC's menu option): kept, never written, so the loot line
+	 *  can say where its loot came from; and the inventory as it was, for a corpse's loot. */
+	@Subscribe
+	public void onMenuOptionClicked(net.runelite.api.events.MenuOptionClicked event)
+	{
+		if (recording == null || !LOOT_OPTIONS.contains(Text.removeTags(event.getMenuOption())))
+		{
+			return;
+		}
+		WorldView wv = client.getTopLevelWorldView();
+		net.runelite.api.MenuAction a = event.getMenuAction();
+		NPC npc = event.getMenuEntry() == null ? null : event.getMenuEntry().getNpc();
+		if (npc != null)
+		{
+			clickedAt = npc.getLocalLocation();
+			clickedPlane = wv.getPlane();
+			clickedId = npc.getId();
+			clickedIndex = npc.getIndex();
+			clickedKind = "npc";
+			clickedName = npc.getName() == null ? null : Text.removeTags(npc.getName());
+		}
+		else if (a != null && a.name().startsWith("GAME_OBJECT_"))
+		{
+			clickedAt = LocalPoint.fromScene(event.getParam0(), event.getParam1(), wv);
+			clickedPlane = wv.getPlane();
+			clickedId = event.getId();
+			clickedIndex = -1;
+			clickedKind = "obj";
+			net.runelite.api.ObjectComposition def = client.getObjectDefinition(event.getId());
+			if (def != null && def.getImpostorIds() != null)
+			{
+				net.runelite.api.ObjectComposition imp = def.getImpostor();
+				def = imp != null ? imp : def;
+			}
+			clickedName = def == null ? null : Text.removeTags(def.getName());
+		}
+		else
+		{
+			return;
+		}
+		clickedTick = whole();
+		invBefore = counts(client.getItemContainer(InventoryID.INV));
+	}
+
+	/** A container's items, [id, quantity] each, the empty slots left out. */
+	static List<int[]> itemsOf(ItemContainer c)
+	{
+		List<int[]> out = new ArrayList<>();
+		if (c == null)
+		{
+			return out;
+		}
+		for (Item item : c.getItems())
+		{
+			if (item != null && item.getId() >= 0 && item.getQuantity() > 0)
+			{
+				out.add(new int[]{item.getId(), item.getQuantity()});
+			}
+		}
+		return out;
+	}
+
+	/** A container's count of each item (stacks and slots added up). */
+	static Map<Integer, Long> counts(ItemContainer c)
+	{
+		Map<Integer, Long> m = new HashMap<>();
+		for (int[] it : itemsOf(c))
+		{
+			m.merge(it[0], (long) it[1], Long::sum);
+		}
+		return m;
+	}
+
+	/** What an inventory gained over what it had (each item's count up), in the order of {@code now}'s slots. */
+	static List<int[]> gained(Map<Integer, Long> before, List<int[]> now)
+	{
+		Map<Integer, Long> after = new java.util.LinkedHashMap<>();
+		for (int[] it : now)
+		{
+			after.merge(it[0], (long) it[1], Long::sum);
+		}
+		List<int[]> out = new ArrayList<>();
+		for (Map.Entry<Integer, Long> e : after.entrySet())
+		{
+			long up = e.getValue() - before.getOrDefault(e.getKey(), 0L);
+			if (up > 0)
+			{
+				out.add(new int[]{e.getKey(), (int) Math.min(Integer.MAX_VALUE, up)});
+			}
+		}
+		return out;
+	}
+
+	/** The inventory changed: after a click on a corpse (an NPC's loot option, a kill this recording, outside a raid),
+	 *  what it gained is the corpse's loot (Jace, 11/21/2026: Araxxor's, the Maggot King's: "the loot goes into the
+	 *  inventory"; the ground only when it's full, and that's the item lines). */
+	private void corpseLoot(ItemContainer inv)
+	{
+		if (!"npc".equals(clickedKind) || whole() - clickedTick > CORPSE_TAKE || looted.contains("corpse") || scene == null
+			|| !scene.killed() || raidArea() != null)
+		{
+			return;
+		}
+		List<int[]> got = gained(invBefore, itemsOf(inv));
+		if (!got.isEmpty())
+		{
+			loot("corpse", got, -1, true);
+		}
+	}
+
+	/** Whether a kill's corpse is still there to loot (an NPC of the killed one's name near them, with a loot option and
+	 *  no Attack), so the recording waits for it, CORPSE_WAIT ticks at most. */
+	private boolean corpseWaiting()
+	{
+		if (scene == null || !scene.killed() || whole() >= scene.killTick() + CORPSE_WAIT)
+		{
+			return false;
+		}
+		Player me = client.getLocalPlayer();
+		String killed = scene.killNpc();
+		if (me == null || killed == null)
+		{
+			return false;
+		}
+		for (NPC npc : client.getTopLevelWorldView().npcs())
+		{
+			net.runelite.api.NPCComposition def = npc.getTransformedComposition();
+			String name = npc.getName() == null ? "" : Text.removeTags(npc.getName());
+			if (def == null || !name.equalsIgnoreCase(killed) || npc.getWorldLocation().distanceTo(me.getWorldLocation()) > 15)
+			{
+				continue;
+			}
+			boolean loot = false, attack = false;
+			for (String act : def.getActions())
+			{
+				if (act != null)
+				{
+					loot |= LOOT_OPTIONS.contains(Text.removeTags(act));
+					attack |= "Attack".equals(Text.removeTags(act));
+				}
+			}
+			if (loot && !attack)
+			{
+				corpseOf = name;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * A loot line (Outside's own kind, round three): where it came from (the chest or corpse the player last chose to
+	 * open or loot, within 30 ticks; else the nearest thing named a chest within 10 tiles; else the player), the source
+	 * ("Chambers of Xeric", "Lunar Chest", "corpse"), the window it came in, and each item with its GE price and high
+	 * alchemy value, each. Once a source a recording; the scene moment's anchor; a boss outside a raid ends a few ticks
+	 * on.
+	 */
+	private void loot(String source, List<int[]> items, int window, boolean corpse)
+	{
+		if (!looted.add(source))
+		{
+			return;
+		}
+		if (waitingFor != null && source.equals(waitingFor.source))
+		{
+			waitingFor = null;
+		}
+		WorldView wv = client.getTopLevelWorldView();
+		Player me = client.getLocalPlayer();
+		for (int[] it : items)
+		{
+			defineItem(it[0]);
+		}
+		JsonObject line = emit("loot");
+		line.addProperty("source", source);
+		LocalPoint at = null;
+		int plane = wv.getPlane();
+		JsonObject from = null;
+		if (clickedAt != null && whole() - clickedTick <= 30)
+		{
+			at = clickedAt;
+			plane = clickedPlane;
+			from = new JsonObject();
+			from.addProperty("kind", clickedKind);
+			from.addProperty("id", clickedId);
+			if (clickedName != null)
+			{
+				from.addProperty("name", clickedName);
+			}
+		}
+		else
+		{
+			Object[] near = nearestChest(wv, me);
+			if (near != null)
+			{
+				at = (LocalPoint) near[0];
+				from = (JsonObject) near[1];
+			}
+		}
+		if (at == null && me != null)
+		{
+			at = me.getLocalLocation();
+		}
+		EncounterSnap.tile(line, wv, at, plane);
+		line.addProperty("at", from != null ? (corpse ? "corpse" : "chest") : "player");
+		if (from != null)
+		{
+			line.add("from", from);
+		}
+		if (window >= 0)
+		{
+			line.addProperty("window", window);
+			String title = windowTitle(window);
+			if (title != null)
+			{
+				line.addProperty("title", title);
+			}
+		}
+		JsonArray list = new JsonArray();
+		List<EncounterScene.Loot> scened = new ArrayList<>();
+		for (int[] it : items)
+		{
+			long[] p = host.prices(it[0]);
+			JsonObject o = new JsonObject();
+			o.addProperty("id", it[0]);
+			o.addProperty("qty", it[1]);
+			o.addProperty("ge", p == null ? 0 : p[0]);
+			o.addProperty("ha", p == null ? 0 : p[1]);
+			list.add(o);
+			ItemComposition def = client.getItemDefinition(it[0]);
+			scened.add(new EncounterScene.Loot(it[0], it[1], p == null ? 0 : p[0], p == null ? 0 : p[1],
+				def == null ? null : Text.removeTags(def.getName())));
+		}
+		line.add("items", list);
+		// (the scene moment: the chest's opening, the window as the player saw it laid over)
+		if (scene != null)
+		{
+			EncounterScene.Window w = new EncounterScene.Window(corpse ? "inventory" : "reward", source, window,
+				window >= 0 ? windowTitle(window) : null, scened);
+			scene.loot(whole(), w, at, plane);
+			// (its picture a few client cycles on, once the window's laid out and drawn with its items)
+			pictureOf = w;
+			pictureGroup = corpse ? -1 : window;
+			pictureIn = 3;
+		}
+		// (a boss outside a raid: ends a few ticks after its loot; a raid goes on to its treasure room's door)
+		boolean raid = raidArea() != null;
+		for (Chest c : CHESTS)
+		{
+			raid |= c.raid && c.source.equals(source);
+		}
+		if (automatic && !raid)
+		{
+			endAt = Math.max(endAt, whole() + LOOT_AFTER);
+			if (endWhy == null)
+			{
+				endWhy = "looted";
+			}
+		}
+	}
+
+	/** The nearest object or NPC named a chest (or its corpse) within 10 tiles: {its tile, {kind, id, name}}, or null. */
+	private Object[] nearestChest(WorldView wv, Player me)
+	{
+		if (me == null || me.getLocalLocation() == null)
+		{
+			return null;
+		}
+		LocalPoint mine = me.getLocalLocation();
+		Object[] best = null;
+		int bestD = 10 * 128 + 1;
+		for (NPC npc : wv.npcs())
+		{
+			String name = npc.getName() == null ? "" : Text.removeTags(npc.getName());
+			LocalPoint lp = npc.getLocalLocation();
+			int d = lp == null ? Integer.MAX_VALUE : Math.max(Math.abs(lp.getX() - mine.getX()), Math.abs(lp.getY() - mine.getY()));
+			if (name.toLowerCase().contains("chest") && d < bestD)
+			{
+				JsonObject f = new JsonObject();
+				f.addProperty("kind", "npc");
+				f.addProperty("id", npc.getId());
+				f.addProperty("name", name);
+				best = new Object[]{lp, f};
+				bestD = d;
+			}
+		}
+		Tile[][][] tiles = wv.getScene().getTiles();
+		int plane = wv.getPlane(), cx = mine.getSceneX(), cy = mine.getSceneY();
+		for (int x = Math.max(0, cx - 10); x <= Math.min(tiles[plane].length - 1, cx + 10); x++)
+		{
+			for (int y = Math.max(0, cy - 10); y <= Math.min(tiles[plane][x].length - 1, cy + 10); y++)
+			{
+				Tile tile = tiles[plane][x][y];
+				if (tile == null)
+				{
+					continue;
+				}
+				for (GameObject o : tile.getGameObjects())
+				{
+					if (o == null || !tile.getSceneLocation().equals(o.getSceneMinLocation()))
+					{
+						continue;
+					}
+					net.runelite.api.ObjectComposition def = client.getObjectDefinition(o.getId());
+					if (def != null && def.getImpostorIds() != null && def.getImpostor() != null)
+					{
+						def = def.getImpostor();
+					}
+					String name = def == null || def.getName() == null ? "" : Text.removeTags(def.getName());
+					LocalPoint lp = o.getLocalLocation();
+					int d = Math.max(Math.abs(lp.getX() - mine.getX()), Math.abs(lp.getY() - mine.getY()));
+					if ((name.toLowerCase().contains("chest") || name.toLowerCase().contains("coffer")) && d < bestD)
+					{
+						JsonObject f = new JsonObject();
+						f.addProperty("kind", "obj");
+						f.addProperty("id", o.getId());
+						f.addProperty("name", name);
+						best = new Object[]{lp, f};
+						bestD = d;
+					}
+				}
+			}
+		}
+		return best;
+	}
+
+	/** A window's title as the game draws it: the first text in it that has a letter (its static parts in order, then
+	 *  their children), or null. */
+	private String windowTitle(int group)
+	{
+		for (int i = 0; i < 128; i++)
+		{
+			Widget w = client.getWidget(group, i);
+			if (w == null)
+			{
+				continue;
+			}
+			String t = w.getText() == null ? "" : Text.removeTags(w.getText()).trim();
+			if (!t.isEmpty() && t.matches("(?s).*[A-Za-z].*"))
+			{
+				return t;
+			}
+			Widget[] kids = w.getDynamicChildren();
+			for (int k = 0; kids != null && k < kids.length; k++)
+			{
+				String kt = kids[k] == null || kids[k].getText() == null ? "" : Text.removeTags(kids[k].getText()).trim();
+				if (!kt.isEmpty() && kt.matches("(?s).*[A-Za-z].*"))
+				{
+					return kt;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** Where a window is drawn on the canvas: its first part's box (the window's frame), else all its shown parts'. */
+	private java.awt.Rectangle windowBounds(int group)
+	{
+		if (group < 0)
+		{
+			return null;
+		}
+		java.awt.Rectangle all = null;
+		int cw = client.getCanvasWidth(), ch = client.getCanvasHeight();
+		for (int i = 0; i < 128; i++)
+		{
+			Widget w = client.getWidget(group, i);
+			if (w == null || w.isHidden())
+			{
+				continue;
+			}
+			java.awt.Rectangle b = w.getBounds();
+			if (b == null || b.width <= 0 || b.height <= 0)
+			{
+				continue;
+			}
+			if (i == 0 && b.width >= 120 && b.height >= 80 && b.width < cw && b.height < ch)
+			{
+				return b.intersection(new java.awt.Rectangle(0, 0, cw, ch));
+			}
+			all = all == null ? new java.awt.Rectangle(b) : all.union(b);
+		}
+		return all == null ? null : all.intersection(new java.awt.Rectangle(0, 0, cw, ch));
+	}
+
+	/** The inventory's box on the canvas, when it's showing (a corpse's loot arriving there). */
+	private java.awt.Rectangle inventoryBounds()
+	{
+		Widget w = client.getWidget(InterfaceID.Inventory.ITEMS);
+		if (w == null || w.isHidden())
+		{
+			return null;
+		}
+		java.awt.Rectangle b = w.getBounds();
+		return b == null || b.width <= 0 ? null : b;
 	}
 
 	private void containers(ItemContainer container, String which)
@@ -1988,12 +2677,12 @@ final class Encounters
 		emit("death").add("who", EncounterSnap.ref(client, actor));
 		if (scene != null && actor == client.getLocalPlayer())
 		{
-			scene.died(recording.ticks());
+			scene.died(whole());
 		}
 		// (a death ends an automatic recording a few ticks on: not in a raid, which goes on)
 		if (actor == client.getLocalPlayer() && automatic && endAt < 0 && (area == null || !Presence.RAID.equals(area.kind)))
 		{
-			endAt = recording.ticks() + AFTER_DEATH;
+			endAt = whole() + AFTER_DEATH;
 			endWhy = "died";
 		}
 	}
@@ -2008,6 +2697,7 @@ final class Encounters
 		if (recording != null)
 		{
 			emit("widget_open").addProperty("group", event.getGroupId());
+			rewardWindow(event.getGroupId());
 		}
 	}
 
