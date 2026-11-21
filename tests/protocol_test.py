@@ -3814,7 +3814,7 @@ class EditingThePage(OwnPage):
                     {"arrange": {"boxes": {"reading.0": ["sec-nope"]}, "off": []}}, {"hero": {"p": {}, "o": [], "off": ["screen"]}},
                     {"goal": {"id": 1}}, {"theme": {"link": "https://soundcloud.com/someone/a-song", "html": "<b>"}}):
             self.assertEqual(self.write(name, bad, token=token)[0], 400, bad)
-        self.assertEqual(raw("POST", "/keep/%s/layout" % name, b"x" * 9000, {"Authorization": "Bearer " + token})[0], 413)
+        self.assertEqual(raw("POST", "/keep/%s/layout" % name, b"x" * 17000, {"Authorization": "Bearer " + token})[0], 413)   # (16 KB at most since round nine: a set's tracklist)
         self.assertEqual(json.loads(raw("GET", "/keep/%s/layout" % name)[2])["layout"], kept["layout"])
         # (without the token or the key: refused; a wrong token, refused)
         self.assertEqual(self.write(name, {"theme": None})[0], 403)
