@@ -125,6 +125,19 @@ test("the goal's list: the rest beside the one shown, each checked as it is, no 
   strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: Array.from({ length: GOALS_MORE }, (_, i) => ({ id: 20000 + i, name: "z" })) }), "object");
 });
 
+test("the goal with none turning: \"nomodel\" kept at the top only, never beside a model (11/21/2026, round nine)", () => {
+  const model = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100] };
+  deepStrictEqual(keepShape("goal", { id: 4151, name: "Abyssal whip", nomodel: true, more: [{ id: 11286, name: "Draconic visage", nomodel: true }] }),
+    { id: 4151, name: "Abyssal whip", nomodel: true, more: [{ id: 11286, name: "Draconic visage" }] });
+  // (left out, or a goal sent by an older plugin: as it was)
+  deepStrictEqual(keepShape("goal", { id: 4151, name: "Abyssal whip" }), { id: 4151, name: "Abyssal whip" });
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: false }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: 1 }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: true, model }), "string");
+  // ("model": false, the other way it could have been said, is refused as before: the plugin never sends it)
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", model: false }), "string");
+});
+
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {
   strictEqual(emoteKind(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "png");
   strictEqual(emoteKind(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), "jpg");

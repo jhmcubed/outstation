@@ -1,2 +1,4 @@
 build/
 .gradle/
+# (a JVM crash report, written beside wherever Java ran; never kept)
+hs_err_pid*.log

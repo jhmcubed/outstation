@@ -22,7 +22,10 @@ import java.util.List;
  * drop rates.
  *
  * Or none shown as a model (11/19/2026, Jace: "add the option to NOT show a 3D model on your page for your goal/goals
- * list"): every goal listed with its picture, in the order they were added, nothing turning.
+ * list"): every goal listed with its picture, in the order they were added, nothing turning. Since 11/21/2026 (round
+ * nine) the first then carries {"nomodel": true}: the page builds a goal's model from the game's own files when one
+ * comes without it (an older plugin's goals mostly did), and this tells it they chose none. (A new key rather than
+ * "model": false, which the relay before then refused, goal and all; it drops a key it doesn't know.)
  *
  * Kept for the RuneScape profile as one setting, LIST: {"shown": id, "model": false (none turning; left out: one is),
  * "list": [{"id", "got"?, "counts"?}, ...]}, in the order they were added. The one goal kept before (ITEM, GOT,
@@ -276,6 +279,17 @@ final class Goal
 	/** The whole goal for the keep: the one shown (with its model) and the rest under it as "more" (none: no "more"). */
 	static JsonObject body(JsonObject shown, List<JsonObject> more)
 	{
+		return body(shown, more, true);
+	}
+
+	/** As above; model false (the side tab's No 3D model): the first marked "nomodel", so the page builds it none. */
+	static JsonObject body(JsonObject shown, List<JsonObject> more, boolean model)
+	{
+		if (!model)
+		{
+			shown.remove("model");
+			shown.addProperty("nomodel", true);
+		}
 		if (more != null && !more.isEmpty())
 		{
 			JsonArray a = new JsonArray();

@@ -2374,7 +2374,8 @@ public class OutsidePlugin extends Plugin
 				more.add(one);
 			}
 		}
-		JsonObject body = Goal.body(shown, more);
+		// (No 3D model: said, so the page doesn't build it one from the game's files; 11/21/2026, round nine)
+		JsonObject body = Goal.body(shown, more, k.model);
 		if (byItself && HOLD_KEEPS)
 		{
 			synchronized (keepHeld)

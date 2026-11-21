@@ -149,6 +149,24 @@ public class GoalTest
 		assertTrue(whole.has("model"));
 	}
 
+	// (11/21/2026, round nine: the page builds a goal's model from the game's files when it comes without one, so No 3D
+	// model is said, not left out)
+	@Test
+	public void noModelChosenTheFirstSaysSoAndOnlyIt()
+	{
+		List<JsonObject> more = new ArrayList<>();
+		more.add(Goal.body(11286, "Draconic visage", null, 0, null));
+		JsonObject none = Goal.body(Goal.body(4151, "Abyssal whip", null, 0, null), more, false);
+		assertTrue(none.get("nomodel").getAsBoolean());
+		assertFalse(none.has("model"));
+		assertFalse(none.getAsJsonArray("more").get(0).getAsJsonObject().has("nomodel"));
+		// (one shown as its model: no mark, as before)
+		JsonObject shown = Goal.body(Goal.body(4151, "Abyssal whip", new JsonObject(), 0, null), new ArrayList<>(), true);
+		assertFalse(shown.has("nomodel"));
+		assertTrue(shown.has("model"));
+		assertFalse(Goal.body(Goal.body(4151, "Abyssal whip", null, 0, null), null).has("nomodel"));
+	}
+
 	@Test
 	public void noneTurningListsThemAllInTheirOrderAndPickingOneTurnsItAgain()
 	{

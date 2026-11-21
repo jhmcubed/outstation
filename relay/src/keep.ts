@@ -14,7 +14,9 @@
 //     "counts"?: the plugin's kill and clue counts then, {"kills": {name: n}, "clues": {tier: n}}}}; the page works out
 //     how dry they are from the wiki's drop rates. Since 11/19/2026 (Cranky: "I'd like to have more than 1 goal item")
 //     the rest of their goals with it, "more": [{"id", "name", "got"?}, ...], GOALS_MORE at most, each item once; the
-//     one at the top is the one they chose to show turning, and the only one with a model
+//     one at the top is the one they chose to show turning, and the only one with a model. And since 11/21/2026 (round
+//     nine) "nomodel": true on the one at the top when they chose none turning (the plugin's No 3D model): the page
+//     builds a goal's model from the game's own files when it comes without one, and this tells it not to
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
@@ -112,6 +114,13 @@ export function keepShape(what: string, d: unknown): unknown | string {
       const m = modelShape(d.model, true);
       if (typeof m === "string") return "model's " + m;
       out.model = m;
+    }
+    // (11/21/2026, round nine: none turning, said; the page then builds none from the game's files. Only at the top, and
+    // never beside a model)
+    if (d.nomodel !== undefined) {
+      if (d.nomodel !== true) return "nomodel: true or none";
+      if (out.model) return "nomodel: a goal with a model has one";
+      out.nomodel = true;
     }
     // (11/19/2026, Cranky: "I'd like to have more than 1 goal item"; Jace: "choose ONE of the goal items to be displayed
     // as a 3d model, while the rest of the goal items are listed under the first"): the rest of their goals, each as the
