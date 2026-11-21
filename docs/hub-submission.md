@@ -234,7 +234,7 @@ Jace (11/21/2026): "include it in update 6 along with our other changes". Encoun
 - **Recorded to the player's computer**, in `.runelite/plugin-data/outside/encounters` (`getPluginDirectory()`, which needs the descriptor's `internalName = "outside"`, the Hub's own name: the Hub's rules let a plugin's files go only through `Filepath`), in his file format (his docs/FORMAT.md, format 6) with Outside's additions in new fields and the new line kind `obj_anim`, so his replay and outside.wiki read both plugins' files. On a thread of its own, crash-safe as his; the newest kept within "Keep up to (MB)" (200).
 - **By itself at bosses and raids** (RuneLite's Discord plugin's boss and raid areas, `Presence`; not Wintertodt or Tempoross) and for listed NPC ids (his list, and now a form change too), with "Record my encounters" on (on to begin with) and a page for the character; **by hand** from the side tab. **Ends** on the kill (the game's count line), the player's death (not in a raid) or leaving; splits at 5,000 ticks where his stopped. **Never** in the Wilderness, a PvP area or on a PvP or Deadman world (`OutsidePlugin.held`).
 - **His gaps closed**, each checked in the local world's test fight (`fightcheck.py`: 55 of 56 on time, the sound untested for want of an audio device): the starting state (varps, ground items, graphics, projectiles in flight), a restarted animation, the raids' friends-chat completion lines (names taken out), objects' animation changes, projectiles over in a cycle.
-- **Left out entirely**: mouse presses, clicks, their screen places, the interface layout, markers, hotkeys and his overlay.
+- **Left out entirely**: mouse presses, clicks as his recorder writes them (the option, the target's name, the cursor), their screen places, the interface layout, markers, hotkeys and his overlay. (Round five, 11/21/2026, adds only which kind of click the game answered with its cross, "walk" or "act", and where in the scene: never the cursor.)
 - **The side tab's third tab, Encounters**: Record my encounters, Record now / Stop, the recent ones (who, when, how long, killed or died), each with Put on my page (a window first, saying what was taken out and what goes), shown to anyone, Open, and ✕.
 - **Sent only on the player's press** (round one; since round two, below, each goes up by itself unless the player switches that off): the recording stripped exactly as the page's strip.js strips one (other players' names, other people's chat, exact XP; checked byte for byte against strip.js), to the relay's existing `POST /fights/<channel>?key=`. Opening the tab reads `GET /fights/<channel>?key=` (what's on the page, whether a new one starts shown, and whether the relay takes encounters at all: its fights are off until Jace switches them on, and the tab says so plainly).
 
@@ -392,6 +392,43 @@ round four", has the design; plugin/README.md, "Encounters", all of it.
    into your inventory. (**Sacrifice** next time: as Araxxor's Destroy.)
 4. **A pet** (whenever one comes): its moment holds the pet's line as your chatbox showed it, low on the left, and the
    pet beside you (or the backpack line). Nothing to do but hope.
+
+### Encounters, round five: each reward window as you saw it, the click crosses (11/21/2026)
+
+Jace (11/21/2026): "I'd like if the replay showed loot too for each level, just as the replay shows the loot for the
+chest at the end of the raid"; then "I just want to make sure the loot and inventory windows look clean and true to the
+game in the replay viewers, and to the moments as well"; and click markers, "pink or lime, just as we use for our left
+click animations on the website". plugin/README.md, "Encounters", has it all.
+
+- **Each reward window, as your client drew it, goes in the recording** (a `window` line, and `window_close` when it
+  goes): a raid's or a boss's reward chest every time it opens, Doom's burrow at every level (before you descend or
+  claim) and the claim, and the pet's chat line. The picture is the window's box only, cut from the frame RuneLite
+  already hands plugins (the same way round three's moment picture was taken; the burrow's window, which lies over the
+  whole game view, cut to what it draws), written as a PNG as small as it goes without changing a pixel: 7 to 20 KB a
+  window in the local world. The replay lays it over its view at that tick, pixel for pixel, where the game had it.
+- **No picture of the inventory:** a corpse's loot comes into the replay's own inventory panel (the recording's
+  inventory lines, as before), and the moment shows the items gained as a plain panel in the game's colours.
+- **The click crosses:** a `mark` line for each click the game answers with its cross: "walk" (the yellow cross) with
+  the tile walked to, or "act" (the red cross: an NPC, a player, an object or an item on the ground) with whom (by its
+  index in the scene, never a name) or the object's tile. Never where the cursor was, never the option's words.
+- **Nothing new is sent or asked:** these are part of the recording, stripped as before (a window's title is searched
+  for other players' names; its picture is the player's own window).
+
+**Jace's in-game steps for round five:**
+
+1. **A delve, level by level:** with Record my encounters ticked, finish a level and open the burrow; **Descend**;
+   again; then **Claim and Leave** and **Leave**. On your page (or the file opened in the replay), play it: at each
+   level the burrow's window appears over the view at the tick it opened, exactly as you saw it (same size against the
+   scene, sharp), and goes when you closed it; the claim's too. The timeline has a small lime chest where each opened;
+   hovering it says the window's title.
+2. **A raid's chest** (or Barrows, the Lunar Chest, the Colosseum): open it, close it, open it again: the replay shows
+   the window each time it was open, centred, as the game shows it.
+3. **Clicks:** in the replay, a lime cross where you walked and a pink one on what you attacked or clicked, at the
+   moment you clicked (the drawing panel's **click crosses**, or x, turns them off).
+4. **The panels:** the readout's **worn and carried** shows your inventory, worn equipment and prayers at every tick,
+   with the game's tab stones to switch between them: eat, sip, switch gear and pray in the fight and watch each change
+   at its tick. (i puts all three over the view as well.)
+5. **A pet** (whenever one comes): its chat line appears flush in the replay's bottom-left corner at the tick it came.
 
 ### Jace's test in the game, for the whole update
 

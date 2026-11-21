@@ -176,8 +176,14 @@ import org.slf4j.LoggerFactory;
  * the burrow's Leave (or the claim and out of the delve's instance); a corpse's forfeit (Araxxor's Destroy, the Royal
  * Titans' Sacrifice) as a loot line with nothing, "choice" saying which; and a pet: the game's line (a `pet` line), the
  * pet seen beside them or in the backpack (`pet_seen`), its chat line's picture, and the moment with it in.</li>
- * <li>Not his: mouse presses, clicks, their screen positions, the interface layout and markers are never recorded (a
- * replay doesn't need them and the page's strip would take them out anyway), and there's no overlay or hotkey.</li>
+ * <li>Not his: mouse presses, clicks as he writes them (the option, the target's name, the cursor), their screen positions,
+ * the interface layout and markers are never recorded (a replay doesn't need them and the page's strip would take them
+ * out anyway), and there's no overlay or hotkey. Round five (11/21/2026) adds only which kind of click the game answered
+ * with its cross ("walk" or "act") and where in the scene (the tile, or who by index), as a `mark` line: never the
+ * cursor.</li>
+ * <li>Round five (11/21/2026): each reward window as the player's client drew it (`window` and `window_close` lines: a
+ * reward chest each time it opens, Doom's burrow at every level and its claim, the pet's chat line), for the replay to
+ * lay over its view at that tick; a corpse's loot is the inventory's own lines, no picture.</li>
  * </ul>
  */
 final class Encounters
@@ -2571,8 +2577,10 @@ final class Encounters
 			return;
 		}
 		String option = Text.removeTags(event.getMenuOption() == null ? "" : event.getMenuOption());
-		// (the player's next action lets a chat line's or the inventory's picture go; round five)
+		// (the player's next action lets a chat line's picture go; round five)
 		shotsActed();
+		// (which kind of click and where in the scene, for the replay's click crosses; round five)
+		mark(event);
 		// (a delve: the burrow's Leave, after the claim, ends it a few ticks on (Jace, 11/21/2026: "it should only end when
 		// the player dies or after they claim their loot and press the leave button on the burrow"); the Mokha Loot
 		// Tracker reads the same option; round four)
@@ -3228,6 +3236,71 @@ final class Encounters
 		}
 	}
 
+	// ---- the click crosses (11/21/2026, round five; Jace: click markers in the replay, "pink or lime, just as we use for
+	// our left click animations on the website"). A `mark` line for each click the game answers with its cross: "walk"
+	// (the game's yellow cross) with the scene tile walked to, or "act" (its red cross: an NPC, a player, an object or an
+	// item on the ground, attacked, talked to, taken, used on) with who (by index, never a name) or the object's tile.
+	// Never where the cursor was on the screen, never the option's text: only the kind of click and its place in the
+	// scene. Not in the Wilderness or on PvP worlds, as nothing is.
+
+	/** The menu actions that answer with the red cross: an option on an NPC, a player, an object or a ground item, or
+	 *  something used or cast on one (RuneLite's MenuAction names). */
+	static String markKind(String action)
+	{
+		if (action == null)
+		{
+			return null;
+		}
+		if ("WALK".equals(action))
+		{
+			return "walk";
+		}
+		if (action.startsWith("NPC_") && action.contains("_OPTION") || action.startsWith("PLAYER_") && action.contains("_OPTION")
+			|| action.startsWith("GAME_OBJECT_") && action.contains("_OPTION") || action.startsWith("GROUND_ITEM_") && action.contains("_OPTION")
+			|| action.startsWith("WIDGET_TARGET_ON_") && !"WIDGET_TARGET_ON_WIDGET".equals(action))
+		{
+			return "act";
+		}
+		return null;
+	}
+
+	private void mark(net.runelite.api.events.MenuOptionClicked event)
+	{
+		net.runelite.api.MenuAction a = event.getMenuAction();
+		String kind = markKind(a == null ? null : a.name());
+		if (kind == null || bankPinShowing())
+		{
+			return;
+		}
+		WorldView wv = client.getTopLevelWorldView();
+		net.runelite.api.MenuEntry entry = event.getMenuEntry();
+		NPC npc = entry == null ? null : entry.getNpc();
+		Player player = entry == null ? null : entry.getPlayer();
+		JsonObject line;
+		if ("walk".equals(kind))
+		{
+			Tile t = wv.getSelectedSceneTile();
+			if (t == null)
+			{
+				return;
+			}
+			line = emit("mark");
+			line.addProperty("kind", kind);
+			EncounterSnap.tile(line, wv, t.getLocalLocation(), wv.getPlane());
+			return;
+		}
+		line = emit("mark");
+		line.addProperty("kind", kind);
+		if (npc != null || player != null)
+		{
+			line.add("target", EncounterSnap.ref(client, npc != null ? npc : player));
+		}
+		else
+		{
+			EncounterSnap.tile(line, wv, LocalPoint.fromScene(event.getParam0(), event.getParam1(), wv), wv.getPlane());
+		}
+	}
+
 	/** The nearest object or NPC named a chest (or its corpse, or Doom's burrow) within 10 tiles: {its tile, {kind, id, name}}, or null. */
 	private Object[] nearestChest(WorldView wv, Player me)
 	{
@@ -3324,7 +3397,11 @@ final class Encounters
 		return null;
 	}
 
-	/** Where a window is drawn on the canvas: its first part's box (the window's frame), else all its shown parts'. */
+	/** Where a window is drawn on the canvas: its first part's box (the window's frame), else all its shown parts'.
+	 *  (Round five, 11/21/2026: a window whose first part is a layer over the whole game view, as Doom's burrow (919) is,
+	 *  its frame 512 by 334 with the scene showing through, is the union of what it draws instead: its texts, sprites,
+	 *  items and filled boxes, each part and its children, leaving out layers and anything near the layer's own size, so
+	 *  the picture is the window and not the scene behind it.) */
 	private java.awt.Rectangle windowBounds(int group)
 	{
 		if (group < 0)
@@ -3333,6 +3410,15 @@ final class Encounters
 		}
 		java.awt.Rectangle all = null;
 		int cw = client.getCanvasWidth(), ch = client.getCanvasHeight();
+		java.awt.Rectangle canvas = new java.awt.Rectangle(0, 0, cw, ch);
+		Widget root = client.getWidget(group, 0);
+		java.awt.Rectangle rb = root == null || root.isHidden() ? null : root.getBounds();
+		boolean overView = rb != null && root.getType() == net.runelite.api.widgets.WidgetType.LAYER
+			&& rb.width * rb.height >= cw * ch / 3;
+		if (rb != null && !overView && rb.width >= 120 && rb.height >= 80 && rb.width < cw && rb.height < ch)
+		{
+			return rb.intersection(canvas);
+		}
 		for (int i = 0; i < 128; i++)
 		{
 			Widget w = client.getWidget(group, i);
@@ -3340,18 +3426,47 @@ final class Encounters
 			{
 				continue;
 			}
-			java.awt.Rectangle b = w.getBounds();
-			if (b == null || b.width <= 0 || b.height <= 0)
+			if (!overView)
 			{
+				java.awt.Rectangle b = w.getBounds();
+				if (b != null && b.width > 0 && b.height > 0)
+				{
+					all = all == null ? new java.awt.Rectangle(b) : all.union(b);
+				}
 				continue;
 			}
-			if (i == 0 && b.width >= 120 && b.height >= 80 && b.width < cw && b.height < ch)
-			{
-				return b.intersection(new java.awt.Rectangle(0, 0, cw, ch));
-			}
+			all = drawnIn(w, rb, all, 0);
+		}
+		return all == null ? null : all.intersection(canvas);
+	}
+
+	/** The union of what a part and its children draw (texts, sprites, items, models, filled boxes), leaving out layers
+	 *  and anything near {@code over}'s size (a layer over the whole view, round five). */
+	private static java.awt.Rectangle drawnIn(Widget w, java.awt.Rectangle over, java.awt.Rectangle all, int depth)
+	{
+		if (w == null || w.isHidden() || depth > 6)
+		{
+			return all;
+		}
+		java.awt.Rectangle b = w.getBounds();
+		int type = w.getType();
+		boolean big = b != null && b.width * b.height >= over.width * over.height * 0.8;
+		boolean draws = type == net.runelite.api.widgets.WidgetType.TEXT && w.getText() != null && !Text.removeTags(w.getText()).trim().isEmpty()
+			|| type == net.runelite.api.widgets.WidgetType.GRAPHIC && (w.getSpriteId() >= 0 || w.getItemId() >= 0)
+			|| type == net.runelite.api.widgets.WidgetType.MODEL
+			|| type == net.runelite.api.widgets.WidgetType.RECTANGLE && w.isFilled() && w.getOpacity() < 255;
+		if (draws && !big && b != null && b.width > 0 && b.height > 0)
+		{
 			all = all == null ? new java.awt.Rectangle(b) : all.union(b);
 		}
-		return all == null ? null : all.intersection(new java.awt.Rectangle(0, 0, cw, ch));
+		for (Widget[] kids : new Widget[][]{w.getDynamicChildren(), w.getStaticChildren(), w.getNestedChildren()})
+		{
+			for (int k = 0; kids != null && k < kids.length; k++)
+			{
+				all = drawnIn(kids[k], over, all, depth + 1);
+			}
+		}
+		return all;
 	}
 
 	/** The inventory's box on the canvas, when it's showing (a corpse's loot arriving there). */

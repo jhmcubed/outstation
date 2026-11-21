@@ -166,4 +166,22 @@ public class EncountersTest
 			assertTrue("colours " + colours + ": " + png.length + " against " + plain.size(), png.length <= plain.size());
 		}
 	}
+
+	/** Round five (11/21/2026): which clicks are a cross, and which kind: the game's yellow for a walk, its red for an
+	 *  option on something in the scene or a spell or item used on one; nothing for the interface's own. */
+	@Test
+	public void theClickCrossesKinds()
+	{
+		assertEquals("walk", Encounters.markKind("WALK"));
+		assertEquals("act", Encounters.markKind("NPC_SECOND_OPTION"));
+		assertEquals("act", Encounters.markKind("PLAYER_FIRST_OPTION"));
+		assertEquals("act", Encounters.markKind("GAME_OBJECT_FIRST_OPTION"));
+		assertEquals("act", Encounters.markKind("GROUND_ITEM_THIRD_OPTION"));
+		assertEquals("act", Encounters.markKind("WIDGET_TARGET_ON_NPC"));
+		assertEquals(null, Encounters.markKind("WIDGET_TARGET_ON_WIDGET"));
+		assertEquals(null, Encounters.markKind("CC_OP"));
+		assertEquals(null, Encounters.markKind("EXAMINE_NPC"));
+		assertEquals(null, Encounters.markKind("CANCEL"));
+		assertEquals(null, Encounters.markKind(null));
+	}
 }

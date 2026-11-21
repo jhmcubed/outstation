@@ -886,6 +886,18 @@ moment, so nothing is half up. The plugin strips exactly as the page does, so a 
   chose to open or loot, else the nearest thing named a chest, else the player), "at": "chest" | "corpse" | "player",
   "from": {"kind": "obj" | "npc", "id", "name"} (when known), "window": <interface> and "title" (a reward window's),
   "items": [{"id", "qty", "ge", "ha"}]}` (GE price and high alchemy value each, as RuneLite reads them).
+- **`window` and `window_close` lines** (round five, 11/21/2026; Outside's own kinds, kept by strip.js and EncounterStrip,
+  byte for byte: a window's `picture` is never searched for names, its `title` is): `{"t", "c", "e": "window", "n" (its
+  number in the recording), "kind": "chest" | "burrow" | "chat", "group": <interface> (not for a chat line), "title",
+  "items": [{"id", "qty", "ge", "ha"}], "claim": true (Doom's claim), "box": [x, y, w, h] and "canvas": [w, h] (where it
+  was on the game's canvas), "picture": <base64 PNG of exactly that box as the client drew it>}`, and `{"t", "c", "e":
+  "window_close", "n"}` when it went (its interface closed, a newer picture of the same window, or a chat line's next
+  action, 2 to 10 ticks on). A reward chest each time it opens, Doom's burrow at every level and its claim, the pet's
+  chat line; no picture of the inventory. 7 to 20 KB a picture.
+- **`mark` lines** (round five): `{"t", "c", "e": "mark", "kind": "walk" | "act"}` with the tile walked to (x, y, p, pl,
+  sx, sy, lx, ly), or for "act" `"target": {"k": "npc" | "player" | "me", "i"}` (whom, by index: never a name) or the
+  object's or ground item's tile. Only which kind of click the game answered with its cross and where in the scene:
+  never the cursor, never the option's words.
 - **The moment's picture block** (MOMENT-FORMAT.md, flag bit 1): the loot's window as the player's client drew it, a
   PNG, after the motion block; the relay takes it as part of the moment (it checks only the magic and the version) and
   the 3 MB cap holds. Crash leftovers and Record now recordings go through the same queue.

@@ -3,7 +3,7 @@
 Your gear, stats, quests, diaries and slayer task on a page of your own at **Outside.wiki/<your name>**: your equipment, inventory, looting bag, seed box, chugging barrel, rune pouch and Dizana's quiver, each skill's level and experience, your quests, Achievement Diaries, combat achievements and slayer task. Your page updates when you press **Update my page**, and by itself once an hour while you're logged in. It can also show what you're doing, the way RuneLite's own Discord plugin shows it in your Discord status (the skill you're training, the area you're in by name).
 <!-- hub:cut encounters -->
 
-It also records your fights at bosses and raids to your computer, tick by tick (a raid whole, from entering to leaving its treasure room), and puts each on your page as it ends (or only when you choose), so anyone can watch it back there, in 2D or 3D, scrubbing to any moment; its moment on your page is the kill and its drop, or the chest you opened with its reward window as you saw it.
+It also records your fights at bosses and raids to your computer, tick by tick (a raid whole, from entering to leaving its treasure room), and puts each on your page as it ends (or only when you choose), so anyone can watch it back there, in 2D or 3D, scrubbing to any moment; its moment on your page is the kill and its drop, or the chest you opened with its reward window as you saw it. Played back, each reward window you opened (a raid's chest, each level of a delve) appears as you saw it, and where you clicked shows as the game's own crosses; what's recorded of a click is only whether you walked or clicked something, and where in the game world, never your mouse.
 <!-- hub:end encounters -->
 
 ## Getting started
