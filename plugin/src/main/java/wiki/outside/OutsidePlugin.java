@@ -5646,7 +5646,17 @@ public class OutsidePlugin extends Plugin
 		drawManager.requestNextFrameListener(image ->
 		{
 			int w = image.getWidth(null), h = image.getHeight(null);
-			java.awt.Rectangle b = bounds.intersection(new java.awt.Rectangle(0, 0, w, h));
+			// (the frame at another size than the canvas the box was measured on, stretched mode's: the box scaled to it;
+			// 11/21/2026, round nine)
+			int cw = client.getCanvasWidth(), ch = client.getCanvasHeight();
+			java.awt.Rectangle at = bounds;
+			if (cw > 0 && ch > 0 && (w != cw || h != ch))
+			{
+				double sx = (double) w / cw, sy = (double) h / ch;
+				at = new java.awt.Rectangle((int) Math.round(bounds.x * sx), (int) Math.round(bounds.y * sy),
+					(int) Math.round(bounds.width * sx), (int) Math.round(bounds.height * sy));
+			}
+			java.awt.Rectangle b = at.intersection(new java.awt.Rectangle(0, 0, w, h));
 			if (b.isEmpty())
 			{
 				return;
