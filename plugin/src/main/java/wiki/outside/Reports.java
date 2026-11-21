@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 final class Reports
 {
 	// (Dink's own patterns, simplified: KillCountNotifier, CollectionNotifier, PetNotifier, ClueNotifier)
-	private static final Pattern KILL = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?([\\d,]+)\\b.*$");
+	private static final Pattern KILL = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?(?:@[A-Za-z0-9_]+@)?([\\d,]+)\\b.*$");
 	private static final Pattern CLOG = Pattern.compile("^New item added to your collection log: (.+?)\\s*$");
 	private static final Pattern CLUE = Pattern.compile("^You have completed ([\\d,]+) (beginner|easy|medium|hard|elite|master) Treasure Trails?\\.?\\s*$",
 		Pattern.CASE_INSENSITIVE);

@@ -36,6 +36,11 @@ public interface OutsideConfig extends Config
 	String chatSection = "chat";
 	// hub:end talk
 
+	// hub:cut encounters
+	@ConfigSection(name = "Encounters", description = "Your boss fights and raids, recorded to this computer", position = 6)
+	String encountersSection = "encounters";
+	// hub:end encounters
+
 	@ConfigSection(name = "Advanced", description = "Your page's key, if you were given one", position = 9, closedByDefault = true)
 	String advancedSection = "advanced";
 
@@ -528,4 +533,86 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 	// hub:end goal
+
+	// hub:cut encounters
+	// (11/21/2026, ghillie's claude/outstation.md, "Encounters on Outside: the night's design": Encounter Recorder's
+	// recorder folded in, its files on this computer; round two, each one up by itself unless that's switched off)
+	@ConfigItem(
+		keyName = "encounters",
+		name = "Record my encounters",
+		description = "On (to begin with): your fights at bosses and raids are recorded to this computer, tick by tick, by"
+			+ " themselves (RuneLite's folder, plugin-data/outside/encounters), and end with the kill (or the loot from a chest"
+			+ " or a corpse), your death or your leaving; a raid whole, from entering to leaving its treasure room. The side"
+			+ " tab's Encounters tab lists them, records one by hand, and puts one on your Outside page"
+			+ " (by itself with \"Put each encounter on my page\" on, else when you press Put on my page). Never in the"
+			+ " Wilderness, a PvP area or on a PvP world. Needs an Outside page",
+		position = 0,
+		section = encountersSection
+	)
+	default boolean encounters()
+	{
+		return true;
+	}
+
+	// (11/21/2026, ghillie's claude/outstation.md, "Encounters, round two": every encounter up by itself, Jace's ask)
+	@ConfigItem(
+		keyName = "encounterSend",
+		name = "Put each encounter on my page",
+		description = "On (to begin with): each recording (one you started with Record now too, and one cut off by the client"
+			+ " closing, at the next start) goes to your Outside page by itself as it ends, with its scene moment (the scene"
+			+ " your game drew round the kill, as coloured dots; for a chest's loot, its reward window as you saw it): stripped"
+			+ " first as Put on my page strips"
+			+ " one (other players' names, their chat, your exact experience), then sent to the Outside relay, a server not"
+			+ " controlled or verified by the RuneLite developers. Shown to anyone or kept to yourself as your page starts"
+			+ " new ones, unless you tick otherwise in the Encounters tab. Off, nothing goes till you press Put on my page."
+			+ " Never from the Wilderness, a PvP area or a PvP world",
+		position = 1,
+		section = encountersSection
+	)
+	default boolean encounterSend()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "encounterPlayers",
+		name = "Players around you",
+		description = "Record what other players near you do too (where they stand, their gear, animations and hitsplats):"
+			+ " a raid's team. On this computer only; putting an encounter on your page takes every other player's name out"
+			+ " first. From the next recording",
+		position = 2,
+		section = encountersSection
+	)
+	default boolean encounterPlayers()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "encounterNpcs",
+		name = "Also for these NPCs",
+		description = "NPC ids, separated by commas: a recording starts when one appears (or another NPC turns into one) and"
+			+ " stops once none has been seen for 50 ticks, or with the kill. For a fight Outside doesn't know as a boss",
+		position = 3,
+		section = encountersSection
+	)
+	default String encounterNpcs()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "encounterKeepMb",
+		name = "Keep up to (MB)",
+		description = "The newest encounters are kept on this computer within this many megabytes; past it, the oldest go"
+			+ " (one on your page stays there)",
+		position = 4,
+		section = encountersSection
+	)
+	@net.runelite.client.config.Range(min = 20, max = 10000)
+	default int encounterKeepMb()
+	{
+		return 200;
+	}
+	// hub:end encounters
 }

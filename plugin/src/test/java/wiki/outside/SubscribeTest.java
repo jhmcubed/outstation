@@ -30,4 +30,26 @@ public class SubscribeTest
 		}
 		assertTrue("the plugin listens to something", n > 0);
 	}
+	// hub:cut encounters
+
+	/** The encounters' recorder is on the event bus too (11/21/2026): the same rule for its listeners. */
+	@Test
+	public void theRecordersListenersToo()
+	{
+		Set<String> seen = new HashSet<>();
+		int n = 0;
+		for (Method m : Encounters.class.getDeclaredMethods())
+		{
+			if (m.getAnnotation(Subscribe.class) == null)
+			{
+				continue;
+			}
+			n++;
+			assertEquals(m + ": one parameter, the event", 1, m.getParameterCount());
+			assertEquals(m + ": named for its event", "on" + m.getParameterTypes()[0].getSimpleName(), m.getName());
+			assertTrue(m + ": one listener an event", seen.add(m.getName()));
+		}
+		assertTrue("the recorder listens to something", n > 0);
+	}
+	// hub:end encounters
 }

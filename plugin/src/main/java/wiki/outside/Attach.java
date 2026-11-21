@@ -261,6 +261,36 @@ public final class Attach
 		return code == null || code.isEmpty() ? page() : page() + "?code=" + enc(code);
 	}
 
+	// hub:cut encounters
+	/** The page's recorded encounters (11/21/2026; docs/protocol.md, "Recorded fights"): http(s)://…/fights/<channel>?key=…,
+	 *  the list as its owner reads it (GET) and one put up (POST, multipart). */
+	public String fightsUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/fights/" + enc(channel) + "?");
+	}
+
+	/** One of them shown to anyone or kept to themselves (POST): http(s)://…/fights/<channel>/<id>?key=…&public=1|0. */
+	public String fightUrl(String id, boolean shown)
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/fights/" + enc(channel) + "/" + enc(id) + "?") + "&public=" + (shown ? "1" : "0");
+	}
+
+	/** One of them changed (POST, 11/21/2026): http(s)://…/fights/<channel>/<id>?key=…&<what> (kept=1|0, featured=1|0);
+	 *  with no what, the fight itself (DELETE: taken down). */
+	public String fightUrl(String id, String what)
+	{
+		String u = keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/fights/" + enc(channel) + "/" + enc(id) + "?");
+		return what == null || what.isEmpty() ? u : u + "&" + what;
+	}
+
+	/** Its page on Outside: outside.wiki/<name>/fight/<id>, with a friends-only page's watch code. */
+	public String fightPage(String id, String code)
+	{
+		String p = page() + "/fight/" + enc(id);
+		return code == null || code.isEmpty() ? p : p + "?code=" + enc(code);
+	}
+	// hub:end encounters
+
 	/** The outstation's page on Outside. */
 	public String page()
 	{

@@ -761,6 +761,159 @@ or let go. The page's copy (client/src/clip.rs,
 page_copy): 12 s before the moment to 5 s after, at most 768 px wide, 1.5 Mbit/s; the still is the moment, 160 px wide;
 the flipbook, the moment's 1.5 s before to 1 s after, at most 20 frames the still's size, one under another.
 
+## Recorded fights (11/20/2026)
+
+Encounter Recorder files (the Plugin Hub's plugin, by Mr Gnome) on a player's page, played back at
+`outside.wiki/<name>/fight/<id>` (ghillie's claude/outstation.md, "Fight replays and trophies"). Only the Worker relay
+keeps them (relay/src/fights.ts), in the `CLIPS` bucket (`fights/<channel>/<id>.jsonl.gz`), the list in the channel's
+storage. Off unless the relay's `FIGHTS` var is "on" (every route below 404s `{"error": "fights aren't on here"}`).
+
+The owner is whoever holds the page's key (`?key=`) or a tending token handed in with it (`POST /tend/<channel>`, "Tending
+the page's chat from the page"), sent as `Authorization: Bearer <token>`: the link the plugin opens to the player's own
+page carries one, so a player with only the plugin can put fights up from their page.
+
+    GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "owner": bool, "public_default": bool,
+                                                "most": n, "days": n}: the ones shown to anyone; the owner's, all of them
+                                                (403 without a friends-only page's code, unless the owner)
+    POST   /fights/<channel>                    the owner's: multipart/form-data: meta (JSON), fight (the recording, gzipped),
+                                                and optionally moment (its scene moment) and moment_tick (below)
+                                                201 {"fight": Fight}; 400 a moment with no tick to be found, or one past the
+                                                fight's ticks; 403 not the owner; 413 over 8 MB (a moment over 3 MB); 415 not
+                                                gzip, or its first line isn't Encounter Recorder's header, or the moment
+                                                isn't one; 429 over 60 an hour (with Retry-After: the seconds until one of
+                                                the hour's leaves it, also as "retry_after")
+    GET    /fights/<channel>/<id>.jsonl.gz      the recording (404 for one kept to themselves, unless the owner); a shown
+                                                one cached 5 minutes, any other never
+    POST   /fights/<channel>/<id>?public=1|0&featured=1|0&kept=1|0
+                                                the owner's, any of the three: shown to anyone or kept to themselves; the
+                                                page's featured fight or not (one at a time: a new one takes the old one's
+                                                place); kept for good or not (below). 200 {"id", "public", "featured":
+                                                bool, "kept": bool}; 400 none asked, or kept=0 with featured=1; 409 keeping
+                                                one past FIGHTS_KEPT ({"error", "kept", "most"}: let one go first)
+    DELETE /fights/<channel>/<id>               the owner's: taken down (204), its moment with it
+    POST   /fights/<channel>/<id>/moment?tick=<t>
+                                                the owner's: the fight's scene moment, the body the file
+                                                (application/octet-stream; the tick also as `X-Moment-Tick`); one a fight, a
+                                                new one in the old one's place. 201 {"id", "moment": {"tick", "size", "at"}};
+                                                400 no tick or one past the fight's `ticks`; 403 not the owner; 404 no such
+                                                fight; 413 over 3 MB; 415 not a moment; 429 over 60 an hour
+    GET    /fights/<channel>/<id>/moment.bin    the moment, to whoever may see the fight (as its recording: 404 for one
+                                                kept to themselves unless the owner; cached alike)
+    DELETE /fights/<channel>/<id>/moment        the owner's: the moment taken away (204)
+
+meta: `{"foe", "label", "at": <the recording's startedMs>, "ticks", "died": bool, "taken", "dealt", "public"?: bool}`,
+each cleaned and bounded; without `public` a fight takes the relay's `FIGHTS_PUBLIC` ("0": kept to themselves). A Fight
+is the same with its `id`, `size`, `public` and `up` (when it was put up, ms), and `moment: {"tick", "size", "at"}` once its
+owner has kept one, and `"kept": true` once it's kept for good. The list also says which fight the page features: `"featured": <id>` (null when there's none, or it's
+kept to themselves and the viewer isn't the owner), that entry marked `"featured": true`. At most `FIGHTS_MOST` (20) a page, the
+oldest going first, each kept `FIGHTS_DAYS` (30; 0 for good).
+
+**Kept for good (11/21/2026).** Once every encounter goes up by itself, the player keeps the few they want: a fight
+with `kept` is never trimmed by `FIGHTS_DAYS` and isn't counted against `FIGHTS_MOST`, at most `FIGHTS_KEPT` (12) a
+page; keeping one more answers 409 with its reason (a lowered `FIGHTS_KEPT` lets go of none already kept, it only
+refuses more). Featuring a fight keeps it (past the cap, featuring one not yet kept is refused alike); `kept=0` on the
+featured fight unfeatures it too (the answer says `"featured": false`), rather than being refused. A featured fight from
+before `kept` existed is spared by the trim all the same. Taking a kept fight down (`DELETE`) takes it down.
+
+**One upload with its moment (11/21/2026), for the plugin's automatic sends.** The upload may carry a `moment` part (a
+file part: the same file as the moment route's, any version 1 to 9: the looping moments are version 2) and its tick as a
+`moment_tick` part (or `moment_tick` in meta; without either, the `tick` in the moment's own meta, read from the file's
+header). The moment is checked as the moment route checks it, and a bad one refuses the whole upload, so nothing is
+half up; it isn't counted against the moments' hourly limit (it came with its fight). The separate moment route stays as
+it is (the page's own capture, for fights from Encounter Recorder's files). The hourly limits are 60 fights and 60
+moments a page (raised from 20 and 30 for the automatic sends: a raid splits into parts every 5,000 ticks, two or three
+an hour, but a busy hour of short bosses can pass 40; one a minute still caps a key run away), each kept in the
+channel's memory (a sleep forgets it, which only loosens it).
+
+The relay checks only the file's first line: other
+players' names, other people's chat, exact XP and mouse presses are taken out by the page before it sends
+(ghillie's strip.js). They go with the page when it's taken down (`DELETE /channels/<channel>`).
+
+**The Outside plugin as a sender (11/21/2026, update 6; rewritten the same day for round two).** The plugin records
+encounters itself (Encounter Recorder's recorder folded in: plugin/README.md, "Encounters"; its files in
+`.runelite/plugin-data/outside/encounters`, format 6 with `"recorder": "outside"` in the header) and, with "Put each
+encounter on my page" on (to begin with), sends each one as it ends, with the scene moment its own game drew round the
+kill (ghillie's claude/outstation.md, "Encounters, round two"). All with the page's key, as the page does with a tending
+token:
+
+    GET    /fights/<channel>?key=<key>          when the Encounters tab's opened (or its Refresh): what's on the page (each
+                                                id, public, kept, which is featured), public_default, kept (the most that
+                                                may be kept: "N of 12 kept for good"), and a 404 whose error says "fights
+                                                aren't on here" said as plainly as that. Also before a send whose last try
+                                                went unanswered (below)
+    POST   /fights/<channel>?key=<key>          each recording as it ends (by itself), or "Put on my page" (after a window
+                                                saying what was taken out): multipart, meta (fights.js's put(): foe, label,
+                                                at, ticks, died, taken, dealt, and public only where the player chose in
+                                                the row before it went: without it the relay's public_default), fight
+                                                ("fight.jsonl.gz", application/gzip: the recording stripped by EncounterStrip,
+                                                strip.js's strip() in Java, byte for byte the same, gzipped with the length
+                                                in the header's comment as packed files are), and, when it has one, moment
+                                                ("moment.bin", application/octet-stream: the scene moment, version 2, at most
+                                                2.9 MB) with moment_tick (its anchor's tick, as its own meta has it). The
+                                                plugin refuses itself over 8 MB (the moment left off first). 201's fight.id
+                                                is kept beside the file
+    POST   /fights/<channel>/<id>?key=…&public=1|0      "shown to anyone" ticked or not, once it's up
+    POST   /fights/<channel>/<id>?key=…&kept=1|0        "keep for good" ticked or not (409's error said in the tab)
+    POST   /fights/<channel>/<id>?key=…&featured=1      "✼ feature it" (which keeps it)
+    DELETE /fights/<channel>/<id>?key=…                 "take down" (after asking): off the page, its moment with it;
+                                                the file stays, and the sender never puts it up again by itself
+    POST   /tend/<channel>?key=<key>            "Open" on one kept to themselves: a tending token, the fight's page opened
+                                                as outside.wiki/<channel>/fight/<id>#tend=<token>
+
+**The sender** (EncounterQueue, its state in the folder's index.json beside each file, so it outlives the client): a
+recording that ends while the switch is on is queued once it's packed (not one stopped for the Wilderness or PvP), its
+moment built first on a thread of its own; then the oldest due goes, one at a time, only while the character it was
+recorded on is logged in with a page. **429**: sent again exactly when its Retry-After says. **No answer** (out of reach,
+the connection lost, the client closed mid-send): marked unsure, and before it's sent again the page's list is read and a
+fight with the same `at` and `ticks` taken as it: **never twice**. Out of reach or a 5xx: 1, 2, 5, 10, 30 minutes, then
+hourly. 404 "fights aren't on here": six hours. 403: held till the key's sorted. 400, 413, 415: not by itself again (Put
+on my page still offers it). One taken down, or on the page already, is never queued again.
+
+The relay needs nothing new for it: these are the routes above, the key as the owner; one upload carries the fight and its
+moment, so nothing is half up. The plugin strips exactly as the page does, so a file put up either way is the same.
+
+**Round three (11/21/2026): the same routes, three things more in what goes.** (ghillie's claude/outstation.md,
+"Encounters, round three".)
+- **A raid's parts as one upload.** A recording past 5,000 ticks is kept on the computer in parts (each part's header
+  `"part": n, "follows": "<the part before's file>"`); only the last part is queued, and what goes is the parts joined
+  (EncounterFiles.eachJoined): the first part's header only, each earlier part's end line left out, every later part's
+  `t` counted on from the parts before (and its end line's `ticks`). A later part's starting state stays (it reads as a
+  map loading). `at` and `ticks` in the meta, and the "never twice" check, are the joined recording's. A raid runs up to
+  about 2 h 25 min before its joined file passes 8 MB gzipped (the Fractured Archive's 19-minute run, five players,
+  1.06 MB stripped); past that it's refused by the plugin itself, as before (below: the call).
+- **A `loot` line** in the recording (Outside's own kind; strip.js and EncounterStrip keep it as they keep any line):
+  `{"t", "c", "e": "loot", "source", x, y, p, pl, sx, sy, lx, ly (where it came from: the chest or corpse the player last
+  chose to open or loot, else the nearest thing named a chest, else the player), "at": "chest" | "corpse" | "player",
+  "from": {"kind": "obj" | "npc", "id", "name"} (when known), "window": <interface> and "title" (a reward window's),
+  "items": [{"id", "qty", "ge", "ha"}]}` (GE price and high alchemy value each, as RuneLite reads them).
+- **`window` and `window_close` lines** (round five, 11/21/2026; Outside's own kinds, kept by strip.js and EncounterStrip,
+  byte for byte: a window's `picture` is never searched for names, its `title` is): `{"t", "c", "e": "window", "n" (its
+  number in the recording), "kind": "chest" | "burrow" | "chat", "group": <interface> (not for a chat line), "title",
+  "items": [{"id", "qty", "ge", "ha"}], "claim": true (Doom's claim), "box": [x, y, w, h] and "canvas": [w, h] (where it
+  was on the game's canvas), "picture": <base64 PNG of exactly that box as the client drew it>}`, and `{"t", "c", "e":
+  "window_close", "n"}` when it went (its interface closed, a newer picture of the same window, or a chat line's next
+  action, 2 to 10 ticks on). A reward chest each time it opens, Doom's burrow at every level and its claim, the pet's
+  chat line; no picture of the inventory. 7 to 20 KB a picture.
+- **`mark` lines** (round five): `{"t", "c", "e": "mark", "kind": "walk" | "act"}` with the tile walked to (x, y, p, pl,
+  sx, sy, lx, ly), or for "act" `"target": {"k": "npc" | "player" | "me", "i"}` (whom, by index: never a name) or the
+  object's or ground item's tile. Only which kind of click the game answered with its cross and where in the scene:
+  never the cursor, never the option's words.
+- **The moment's picture block** (MOMENT-FORMAT.md, flag bit 1): the loot's window as the player's client drew it, a
+  PNG, after the motion block; the relay takes it as part of the moment (it checks only the magic and the version) and
+  the 3 MB cap holds. Crash leftovers and Record now recordings go through the same queue.
+
+**The scene moment** (11/21/2026; ghillie's claude/outstation.md, "Encounters on Outside: the night's design"): a moment
+of a fight its owner kept, as coloured dots sampled from the replay's 3D scene at a tick, so the profile can show it
+turning with no game files (ghillie's replay/3d/moment.js, which writes and reads it; since round two, version 2 loops
+over a stretch of frames, and the Outside plugin writes it from the game's own scene: EncounterMoment and EncounterScene,
+to ghillie's replay/3d/MOMENT-FORMAT.md, the whole format). Version 1's file is gzip of: `OMNT`, a
+version byte (1), a flags byte, the meta's length (u16, little-endian), the dots' count (u32), the meta (JSON: `kind`
+"outside-moment", `fight`, `tick`, `cycle`, `foes`, `label`, `at`, `made`, `plane`, `tile`, `camera` {yaw, pitch, zoom,
+H}, `grid`, `spacing`, `core`, `reach`, `count`), then ten planes of a byte a dot in Morton order (x, y and z as
+zigzagged steps from the dot before, low bytes then high; r, g and b as steps mod 256; the class: ground, scenery, a
+player or NPC, an effect or item). About 200,000 dots, 0.6 MB. The relay checks only that it's gzip, starts `OMNT` and
+has a version from 1 to 9; never a player's name in it (its foes are NPCs, named as the recording's are).
+
 ## Your year (11/10/2026)
 
 A year of the player's own travels and activity, recorded by the Outside plugin (by the outstation's app till v0.2.0), kept on the relay **encrypted with a key only

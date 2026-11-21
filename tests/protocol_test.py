@@ -9,6 +9,7 @@ only (wsmini.py, beside this, plays every client).
 """
 
 import asyncio
+import gzip
 import re
 import base64
 import hashlib
@@ -207,6 +208,11 @@ class UpstreamHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+# (kept for good, 11/21/2026: a page's fights at most and its kept ones at most, small so a test reaches both)
+FIGHTS_MOST = 4
+FIGHTS_KEPT = 3
+
+
 def setUpModule():
     global RELAY, PROC, STATE, UPSTREAM
     if MODE.startswith("ws"):
@@ -224,7 +230,9 @@ def setUpModule():
          "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S, "--var", "PRESENCE_FRESH_SECONDS:%g" % PRESENCE_FRESH_S,
          "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
          "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1", "--var", "NOTES_PAGE:4",
-         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
+         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "FIGHTS:on", "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS,
+         "--var", "FIGHTS_MOST:%d" % FIGHTS_MOST, "--var", "FIGHTS_KEPT:%d" % FIGHTS_KEPT,
+         "--var", "FIGHTS_PUBLIC:0"],   # (wrangler.jsonc has "1" since 11/21/2026; these tests start from kept to themselves)
         cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
     up = wait_up(90)
@@ -1611,6 +1619,263 @@ def fetch(method, path, headers=None):
             return r.status, r.headers, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.headers, e.read()
+
+
+def fight_upload(meta, fight, moment=None, moment_tick=None):
+    b = "fightboundary"
+    out = b""
+    parts = [("meta", "application/json", json.dumps(meta).encode()), ("fight", "application/gzip", fight)]
+    if moment is not None:   # (the fight and its moment in one upload, 11/21/2026)
+        parts.append(("moment", "application/octet-stream", moment))
+    if moment_tick is not None:
+        parts.append(("moment_tick", "text/plain", str(moment_tick).encode()))
+    for name, kind, data in parts:
+        fn = {"fight": '; filename="fight.jsonl.gz"', "moment": '; filename="moment.bin"'}.get(name, '')
+        out += CRLF.join(["--" + b, 'Content-Disposition: form-data; name="%s"%s' % (name, fn), "Content-Type: " + kind, "", ""]).encode()
+        out += data + CRLF.encode()
+    return out + ("--%s--" % b + CRLF).encode(), "multipart/form-data; boundary=" + b
+
+
+FIGHT = gzip.compress(b'{"t":0,"c":1,"e":"header","format":6,"label":"Vardorvis","startedMs":1795180328946}\n{"t":1,"c":31,"e":"tick"}\n')
+
+
+class Fights(Base):
+    """Recorded fights on a player's page (docs/protocol.md, "Recorded fights"): put up by the page's own (its key, or a
+    tending token as Authorization), kept to themselves by default (the relay's FIGHTS_PUBLIC), shown or hidden, the
+    file served only to whoever may see it, taken down; anything that isn't an Encounter Recorder recording refused."""
+
+    def send(self, method, path, body=None, headers=None):
+        req = urllib.request.Request(http_url() + path, method=method, data=body, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    def up(self, meta=None, fight=FIGHT, key=None, token=None):
+        body, ct = fight_upload(meta if meta is not None else {"foe": "Vardorvis", "ticks": 210}, fight)
+        headers = {"Content-Type": ct}
+        path = "/fights/" + self.ch
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        else:
+            path += "?key=" + urllib.parse.quote(key or self.key)
+        st, _, out = self.send("POST", path, body, headers)
+        return st, (json.loads(out) if out else None)
+
+    def listed(self, token=None, key=None):
+        path = "/fights/" + self.ch + ("?key=" + urllib.parse.quote(key) if key else "")
+        st, _, out = self.send("GET", path, None, {"Authorization": "Bearer " + token} if token else {})
+        return st, json.loads(out)
+
+    async def test_kept_to_themselves_then_shown_then_taken_down(self):
+        st, got = self.up()
+        self.assertEqual(st, 201)
+        fid = got["fight"]["id"]
+        self.assertEqual((got["fight"]["foe"], got["fight"]["ticks"], got["fight"]["public"]), ("Vardorvis", 210, False))
+        self.assertEqual(self.listed()[1]["fights"], [])                                   # (anyone: not yet)
+        self.assertEqual([f["id"] for f in self.listed(key=self.key)[1]["fights"]], [fid])  # (its own: there)
+        st, h, _ = self.send("GET", "/fights/%s/%s.jsonl.gz" % (self.ch, fid))
+        self.assertEqual(st, 404)
+        st, h, body = self.send("GET", "/fights/%s/%s.jsonl.gz?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual((st, body, h.get("cache-control")), (200, FIGHT, "private, no-store"))
+        st, _, _ = self.send("POST", "/fights/%s/%s?key=%s&public=1" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual(st, 200)
+        self.assertEqual([f["id"] for f in self.listed()[1]["fights"]], [fid])
+        st, h, body = self.send("GET", "/fights/%s/%s.jsonl.gz" % (self.ch, fid))
+        self.assertEqual((st, body, h.get("cache-control"), h.get("access-control-allow-origin")), (200, FIGHT, "public, max-age=300", "*"))
+        st, _, _ = self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, fid, "wrong-key-123456"))
+        self.assertEqual(st, 403)
+        st, _, _ = self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual(st, 204)
+        self.assertEqual(self.send("GET", "/fights/%s/%s.jsonl.gz" % (self.ch, fid))[0], 404)
+        self.assertEqual(self.listed(key=self.key)[1]["fights"], [])
+
+    async def test_a_tending_token_is_the_owner_and_nothing_else_is(self):
+        token = secrets.token_urlsafe(32)
+        st, _, _ = self.send("POST", "/tend/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), json.dumps({"token": token}).encode(), {"Content-Type": "application/json"})
+        self.assertEqual(st, 200)
+        st, got = self.up(meta={"foe": "Duke Sucellus", "public": True}, token=token)
+        self.assertEqual((st, got["fight"]["public"]), (201, True))
+        self.assertEqual(self.listed(token=token)[1]["owner"], True)
+        self.assertEqual(self.listed()[1]["owner"], False)
+        self.assertEqual(self.up(token=secrets.token_urlsafe(32))[0], 403)
+        self.assertEqual(self.up(key="wrong-key-123456")[0], 403)
+        body, ct = fight_upload({}, FIGHT)
+        self.assertEqual(self.send("POST", "/fights/" + self.ch, body, {"Content-Type": ct})[0], 403)
+
+    async def test_what_isnt_a_recording_is_refused(self):
+        self.assertEqual(self.up(fight=b"not gzip at all")[0], 415)
+        self.assertEqual(self.up(fight=gzip.compress(b'{"t":0,"e":"tick"}\n'))[0], 415)
+        self.assertEqual(self.listed(key=self.key)[1]["fights"], [])
+
+
+# a scene moment (ghillie's replay/3d/moment.js, 11/21/2026): "OMNT", a version, the rest, gzipped
+MOMENT = gzip.compress(b"OMNT\x01\x00\x02\x00\x01\x00\x00\x00{}" + bytes(10))
+
+
+class Moments(Base):
+    """A fight's scene moment and the page's featured fight (docs/protocol.md, "Recorded fights"): one moment a fight,
+    kept by the page's own with its tick, listed on the fight, served to whoever may see the fight, replaced, taken away,
+    and gone with the fight; one fight featured at a time, named only to whoever can see it."""
+
+    send, up, listed = Fights.send, Fights.up, Fights.listed
+
+    def keep(self, fid, body=MOMENT, tick="60", key=None, token=None):
+        headers = {"Content-Type": "application/octet-stream"}
+        path = "/fights/%s/%s/moment?tick=%s" % (self.ch, fid, tick)
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        else:
+            path += "&key=" + urllib.parse.quote(key or self.key)
+        st, _, out = self.send("POST", path, body, headers)
+        return st, (json.loads(out) if out else None)
+
+    def entry(self, fid, key=None):
+        return next(f for f in self.listed(key=key)[1]["fights"] if f["id"] == fid)
+
+    async def test_a_moment_kept_listed_served_replaced_and_gone_with_the_fight(self):
+        st, got = self.up(meta={"foe": "Vardorvis", "ticks": 210})
+        fid = got["fight"]["id"]
+        self.assertEqual(self.keep(fid, key="wrong-key-123456")[0], 403)
+        self.assertEqual(self.send("POST", "/fights/%s/%s/moment?tick=60" % (self.ch, fid), MOMENT, {})[0], 403)   # (anyone)
+        st, got = self.keep(fid)
+        self.assertEqual((st, got["moment"]["tick"], got["moment"]["size"]), (201, 60, len(MOMENT)))
+        self.assertEqual((self.entry(fid, key=self.key)["moment"]["tick"], self.entry(fid, key=self.key)["moment"]["size"]), (60, len(MOMENT)))
+        # (kept to themselves: the moment too)
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))[0], 404)
+        st, h, out = self.send("GET", "/fights/%s/%s/moment.bin?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual((st, out, h.get("cache-control"), h.get("content-type")), (200, MOMENT, "private, no-store", "application/octet-stream"))
+        self.send("POST", "/fights/%s/%s?key=%s&public=1" % (self.ch, fid, urllib.parse.quote(self.key)))
+        st, h, out = self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))
+        self.assertEqual((st, out, h.get("cache-control"), h.get("access-control-allow-origin")), (200, MOMENT, "public, max-age=300", "*"))
+        self.assertEqual(self.entry(fid)["moment"]["tick"], 60)
+        # (a new one in its place)
+        other = gzip.compress(b"OMNT\x01\x00\x02\x00\x02\x00\x00\x00{}" + bytes(20))
+        self.assertEqual(self.keep(fid, body=other, tick="200")[0], 201)
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))[2], other)
+        self.assertEqual(self.entry(fid)["moment"]["tick"], 200)
+        # (refused: no tick, past the end, not a moment, the fight not there)
+        self.assertEqual(self.keep(fid, tick="")[0], 400)
+        self.assertEqual(self.keep(fid, tick="999")[0], 400)
+        self.assertEqual(self.keep(fid, body=FIGHT)[0], 415)
+        self.assertEqual(self.keep("a" * 22)[0], 404)
+        # (taken away, then kept again, then gone with the fight)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s/moment?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))[0], 204)
+        self.assertNotIn("moment", self.entry(fid))
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))[0], 404)
+        self.assertEqual(self.keep(fid)[0], 201)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))[0], 204)
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))[0], 404)
+
+    async def test_a_tending_token_keeps_one_too(self):
+        token = secrets.token_urlsafe(32)
+        self.send("POST", "/tend/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), json.dumps({"token": token}).encode(), {"Content-Type": "application/json"})
+        fid = self.up(meta={"foe": "Duke Sucellus", "ticks": 100, "public": True}, token=token)[1]["fight"]["id"]
+        st, got = self.keep(fid, tick="5", token=token)
+        self.assertEqual((st, got["moment"]["tick"]), (201, 5))
+        self.assertEqual(self.keep(fid, token=secrets.token_urlsafe(32))[0], 403)
+
+    async def test_one_fight_featured_at_a_time(self):
+        a = self.up(meta={"foe": "Vardorvis", "public": True})[1]["fight"]["id"]
+        b = self.up(meta={"foe": "Duke Sucellus"})[1]["fight"]["id"]   # (kept to themselves)
+        q = "?key=" + urllib.parse.quote(self.key)
+        self.assertEqual(self.listed()[1]["featured"], None)
+        self.assertEqual(self.send("POST", "/fights/%s/%s?featured=1" % (self.ch, a))[0], 403)    # (anyone)
+        st, _, out = self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, a, q))
+        self.assertEqual((st, json.loads(out)["featured"]), (200, True))
+        self.assertEqual(self.listed()[1]["featured"], a)
+        self.assertEqual([f["id"] for f in self.listed()[1]["fights"] if f.get("featured")], [a])
+        # (another featured in its place; one kept to themselves named only to the owner)
+        self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, b, q))
+        self.assertEqual((self.listed(key=self.key)[1]["featured"], self.listed()[1]["featured"]), (b, None))
+        self.assertFalse(any(f.get("featured") for f in self.listed()[1]["fights"]))
+        # (shown and featured in one; then not featured; and the switch asked for)
+        st, _, out = self.send("POST", "/fights/%s/%s%s&public=1&featured=1" % (self.ch, b, q))
+        self.assertEqual((st, json.loads(out)["public"], self.listed()[1]["featured"]), (200, True, b))
+        self.send("POST", "/fights/%s/%s%s&featured=0" % (self.ch, b, q))
+        self.assertEqual(self.listed()[1]["featured"], None)
+        self.assertEqual(self.send("POST", "/fights/%s/%s%s" % (self.ch, b, q))[0], 400)
+        self.assertEqual(self.send("POST", "/fights/%s/%s%s&featured=2" % (self.ch, b, q))[0], 400)
+        # (a featured fight taken down is featured no more)
+        self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, a, q))
+        self.send("DELETE", "/fights/%s/%s%s" % (self.ch, a, q))
+        self.assertEqual(self.listed(key=self.key)[1]["featured"], None)
+
+
+def moment_with_tick(tick, version=1):
+    """A scene moment whose own meta says its tick, as moment.js writes it (version 2: a looping one)."""
+    meta = json.dumps({"kind": "outside-moment", "v": version, "tick": tick}).encode()
+    return gzip.compress(b"OMNT" + bytes([version, 0]) + len(meta).to_bytes(2, "little") + bytes(4) + meta + bytes(30))
+
+
+class KeptFights(Base):
+    """Kept for good and one upload with its moment (docs/protocol.md, "Recorded fights", 11/21/2026): a kept fight never
+    trimmed by FIGHTS_MOST nor counted against it, at most FIGHTS_KEPT a page (409 past it), featuring keeps it, letting the
+    featured one go unfeatures it; the plugin's automatic send carrying the fight's moment, refused whole if it's bad."""
+
+    send, up, listed = Fights.send, Fights.up, Fights.listed
+
+    def mark(self, fid, query):
+        st, _, out = self.send("POST", "/fights/%s/%s?key=%s&%s" % (self.ch, fid, urllib.parse.quote(self.key), query))
+        return st, (json.loads(out) if out else None)
+
+    def ids(self):
+        return [f["id"] for f in self.listed(key=self.key)[1]["fights"]]
+
+    async def test_kept_ones_stay_past_the_most_and_are_capped(self):
+        first = [self.up(meta={"foe": "Vardorvis %d" % i})[1]["fight"]["id"] for i in range(3)]
+        st, got = self.mark(first[0], "kept=1")
+        self.assertEqual((st, got["kept"], got["featured"]), (200, True, False))
+        self.assertTrue(next(f for f in self.listed(key=self.key)[1]["fights"] if f["id"] == first[0])["kept"])
+        self.assertNotIn("kept", next(f for f in self.listed(key=self.key)[1]["fights"] if f["id"] == first[1]))
+        # (FIGHTS_MOST more put up: the oldest unkept go, the kept one stays and isn't counted)
+        later = [self.up(meta={"foe": "Duke %d" % i})[1]["fight"]["id"] for i in range(FIGHTS_MOST)]
+        ids = self.ids()
+        self.assertIn(first[0], ids)
+        self.assertNotIn(first[1], ids)
+        self.assertEqual(len(ids), FIGHTS_MOST + 1)
+        # (featuring keeps it; then the cap: FIGHTS_KEPT kept, one more refused with its reason)
+        st, got = self.mark(later[0], "featured=1")
+        self.assertEqual((st, got["kept"], got["featured"]), (200, True, True))
+        self.assertEqual(self.mark(later[1], "kept=1&public=0")[1]["public"], False)
+        st, got = self.mark(later[2], "kept=1")
+        self.assertEqual((st, got["most"]), (409, FIGHTS_KEPT))
+        self.assertIn("at most", got["error"])
+        st, got = self.mark(later[2], "featured=1")   # (featuring one past the cap: refused alike, the old one still featured)
+        self.assertEqual(st, 409)
+        self.assertEqual(self.listed(key=self.key)[1]["featured"], later[0])
+        self.assertEqual(self.mark(first[0], "kept=1")[0], 200)   # (already kept: fine)
+        # (kept=0 with featured=1 can't be; letting the featured one go unfeatures it)
+        self.assertEqual(self.mark(later[0], "kept=0&featured=1")[0], 400)
+        self.assertEqual(self.mark(later[0], "kept=2")[0], 400)
+        st, got = self.mark(later[0], "kept=0")
+        self.assertEqual((st, got["kept"], got["featured"]), (200, False, False))
+        self.assertEqual(self.listed(key=self.key)[1]["featured"], None)
+        self.assertEqual(self.mark(later[2], "kept=1")[0], 200)   # (room again)
+        # (a kept one taken down goes all the same)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, first[0], urllib.parse.quote(self.key)))[0], 204)
+        self.assertNotIn(first[0], self.ids())
+
+    async def test_one_upload_carries_the_fight_and_its_moment(self):
+        looping = moment_with_tick(380, version=2)
+        body, ct = fight_upload({"foe": "Vardorvis", "ticks": 400, "public": True}, FIGHT, moment=looping)
+        st, _, out = self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})
+        got = json.loads(out)
+        self.assertEqual((st, got["fight"]["moment"]["tick"], got["fight"]["moment"]["size"]), (201, 380, len(looping)))
+        fid = got["fight"]["id"]
+        st, _, out = self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))
+        self.assertEqual((st, out), (200, looping))
+        # (the tick as its own part)
+        body, ct = fight_upload({"foe": "Duke", "ticks": 400}, FIGHT, moment=MOMENT, moment_tick=12)
+        st, _, out = self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})
+        self.assertEqual((st, json.loads(out)["fight"]["moment"]["tick"]), (201, 12))
+        # (refused whole: not a moment, no tick to be found, past the end; nothing more put up)
+        before = len(self.ids())
+        for moment, tick, want in ((FIGHT, 5, 415), (MOMENT, None, 400), (moment_with_tick(999), None, 400)):
+            body, ct = fight_upload({"foe": "Duke", "ticks": 400}, FIGHT, moment=moment, moment_tick=tick)
+            self.assertEqual(self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})[0], want)
+        self.assertEqual(len(self.ids()), before)
 
 
 class Clips(Base):
