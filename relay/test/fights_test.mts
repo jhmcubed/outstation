@@ -4,7 +4,7 @@
 //   node test/fights_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { gzipSync } from "node:zlib";
-import { firstLine, fightNumbers, fightsOn, isHeader, newFightId, readFight, trimFights, FIGHT_ID, type Fight } from "../src/fights.ts";
+import { firstLine, fightNumbers, fightsOn, isHeader, isMoment, listed, momentKey, newFightId, readFight, readMoment, trimFights, FIGHT_ID, MAX_MOMENT, type Fight } from "../src/fights.ts";
 
 let passed = 0;
 const tests: [string, () => Promise<void> | void][] = [];
@@ -77,6 +77,49 @@ test("an upload that isn't a recording is refused", async () => {
   const bad = new FormData();
   bad.set("meta", "{}");
   deepStrictEqual(await readFight(new Request("https://relay/fights/x", { method: "POST", body: bad })), [400, "an upload is multipart: meta and fight"]);
+});
+
+// The scene moment (11/21/2026): ghillie's replay/3d/moment.js's file, "OMNT" and a version byte, gzipped
+const MOMENT = new Uint8Array(gzipSync(Buffer.concat([Buffer.from("OMNT"), Buffer.from([1, 0, 2, 0, 1, 0, 0, 0]), Buffer.from("{}"), Buffer.alloc(10)])));
+const momentPost = (body: Uint8Array, q = "tick=60", headers: Record<string, string> = {}) =>
+  [new Request("https://relay/fights/x/" + "a".repeat(22) + "/moment?" + q, { method: "POST", body, headers }), new URLSearchParams(q)] as const;
+
+test("a scene moment: gzip of OMNT and a version; nothing else", async () => {
+  strictEqual(await isMoment(MOMENT), true);
+  strictEqual(await isMoment(new Uint8Array(Buffer.concat([Buffer.from("OMNT"), Buffer.alloc(20)]))), false); // (not gzipped)
+  strictEqual(await isMoment(new Uint8Array(gzipSync(Buffer.from("OMNT\u0000" + "x".repeat(20))))), false); // (version 0)
+  strictEqual(await isMoment(rec([HEADER])), false);
+  strictEqual(await isMoment(new Uint8Array(gzipSync(Buffer.from("OMN")))), false);
+  strictEqual(momentKey("sburb", "a".repeat(22)), "fights/sburb/" + "a".repeat(22) + ".moment.bin");
+});
+
+test("a moment's upload: its tick from the query or the header; too big, no tick, past the end or not a moment refused", async () => {
+  const ok = await readMoment(...momentPost(MOMENT), 688);
+  if (Array.isArray(ok)) throw new Error(ok[1]);
+  deepStrictEqual([ok.tick, ok.file.length], [60, MOMENT.length]);
+  const [r, q] = momentPost(MOMENT, "", { "x-moment-tick": "380" });
+  const byHeader = await readMoment(r, q, 688);
+  if (Array.isArray(byHeader)) throw new Error(byHeader[1]);
+  strictEqual(byHeader.tick, 380);
+  deepStrictEqual(await readMoment(...momentPost(MOMENT, "tick=-1"), 688), [400, "which tick? (?tick=)"]);
+  deepStrictEqual(await readMoment(...momentPost(MOMENT, ""), 688), [400, "which tick? (?tick=)"]);
+  deepStrictEqual(await readMoment(...momentPost(MOMENT, "tick=900"), 688), [400, "that tick is past the fight's end"]);
+  strictEqual(Array.isArray(await readMoment(...momentPost(MOMENT, "tick=900"), 0)), false); // (a fight of unknown length)
+  deepStrictEqual(await readMoment(...momentPost(rec([HEADER])), 688), [415, "that isn't a scene moment (gzipped)"]);
+  const big = new Uint8Array(MAX_MOMENT + 1);
+  big.set(MOMENT);
+  deepStrictEqual(await readMoment(...momentPost(big), 688), [413, "a moment is 2 MB at most"]);
+});
+
+test("the list: the featured fight marked, and named only to whoever can see it", () => {
+  const a = { ...fight("a", 3), public: true }, b = { ...fight("b", 2), public: false }, c = { ...fight("c", 1), public: true };
+  const mine = listed([a, b, c], true, "b");
+  deepStrictEqual([mine.featured, mine.fights.map((f) => f.id), mine.fights.map((f) => !!f.featured)], ["b", ["a", "b", "c"], [false, true, false]]);
+  const theirs = listed([a, b, c], false, "b");
+  deepStrictEqual([theirs.featured, theirs.fights.map((f) => f.id)], [null, ["a", "c"]]); // (kept to themselves: not named)
+  deepStrictEqual(listed([a, b, c], false, "c").featured, "c");
+  deepStrictEqual(listed([a, c], false, "gone").featured, null); // (taken down since)
+  deepStrictEqual(listed([a, c], false, null).fights.some((f) => f.featured), false);
 });
 
 for (const [name, f] of tests) {

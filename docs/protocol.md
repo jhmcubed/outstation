@@ -780,15 +780,61 @@ page carries one, so a player with only the plugin can put fights up from their 
                                                 first line isn't Encounter Recorder's header; 429 over 20 an hour
     GET    /fights/<channel>/<id>.jsonl.gz      the recording (404 for one kept to themselves, unless the owner); a shown
                                                 one cached 5 minutes, any other never
-    POST   /fights/<channel>/<id>?public=1|0    the owner's: shown to anyone, or kept to themselves (200 {"id", "public"})
-    DELETE /fights/<channel>/<id>               the owner's: taken down (204)
+    POST   /fights/<channel>/<id>?public=1|0&featured=1|0
+                                                the owner's: shown to anyone or kept to themselves, and/or the page's
+                                                featured fight or not (one at a time: a new one takes the old one's place)
+                                                (200 {"id", "public", "featured": bool}; 400 neither asked)
+    DELETE /fights/<channel>/<id>               the owner's: taken down (204), its moment with it
+    POST   /fights/<channel>/<id>/moment?tick=<t>
+                                                the owner's: the fight's scene moment, the body the file
+                                                (application/octet-stream; the tick also as `X-Moment-Tick`); one a fight, a
+                                                new one in the old one's place. 201 {"id", "moment": {"tick", "size", "at"}};
+                                                400 no tick or one past the fight's `ticks`; 403 not the owner; 404 no such
+                                                fight; 413 over 2 MB; 415 not a moment; 429 over 30 an hour
+    GET    /fights/<channel>/<id>/moment.bin    the moment, to whoever may see the fight (as its recording: 404 for one
+                                                kept to themselves unless the owner; cached alike)
+    DELETE /fights/<channel>/<id>/moment        the owner's: the moment taken away (204)
 
 meta: `{"foe", "label", "at": <the recording's startedMs>, "ticks", "died": bool, "taken", "dealt", "public"?: bool}`,
 each cleaned and bounded; without `public` a fight takes the relay's `FIGHTS_PUBLIC` ("0": kept to themselves). A Fight
-is the same with its `id`, `size`, `public` and `up` (when it was put up, ms). At most `FIGHTS_MOST` (20) a page, the
+is the same with its `id`, `size`, `public` and `up` (when it was put up, ms), and `moment: {"tick", "size", "at"}` once its
+owner has kept one. The list also says which fight the page features: `"featured": <id>` (null when there's none, or it's
+kept to themselves and the viewer isn't the owner), that entry marked `"featured": true`. At most `FIGHTS_MOST` (20) a page, the
 oldest going first, each kept `FIGHTS_DAYS` (30; 0 for good). The relay checks only the file's first line: other
 players' names, other people's chat, exact XP and mouse presses are taken out by the page before it sends
 (ghillie's strip.js). They go with the page when it's taken down (`DELETE /channels/<channel>`).
+
+**The Outside plugin as a sender (11/21/2026, update 6).** The plugin records encounters itself (Encounter Recorder's
+recorder folded in: plugin/README.md, "Encounters"; its files in `.runelite/plugin-data/outside/encounters`, format 6
+with `"recorder": "outside"` in the header) and puts one up from its side tab's Encounters tab, on the player's press
+only, with the page's key, as the page does with a tending token:
+
+    GET    /fights/<channel>?key=<key>          when the tab's opened (or its Refresh): what's on the page (each id and
+                                                public, matched against the ids the plugin keeps beside its files),
+                                                public_default (the "shown to anyone" box's start), and a 404 whose error
+                                                says "fights aren't on here" shown as plainly as that
+    POST   /fights/<channel>?key=<key>          "Put on my page", after a window saying what was taken out: multipart,
+                                                meta (exactly fights.js's put(): foe, label, at, ticks, died, taken, dealt,
+                                                public) and fight ("fight.jsonl.gz", application/gzip: the recording
+                                                stripped by EncounterStrip, strip.js's strip() in Java, byte for byte the
+                                                same, gzipped with the length in the header's comment as packed files
+                                                are); refused by the plugin itself over 8 MB. 201's fight.id is kept
+    POST   /fights/<channel>/<id>?key=…&public=1|0   "shown to anyone" ticked or not, once it's up
+    POST   /tend/<channel>?key=<key>            "Open" on one kept to themselves: a tending token, the fight's page opened
+                                                as outside.wiki/<channel>/fight/<id>#tend=<token>
+
+The relay needs nothing new for it: these are the routes above, the key as the owner. The plugin strips exactly as the
+page does, so a file put up either way is the same.
+
+**The scene moment** (11/21/2026; ghillie's claude/outstation.md, "Encounters on Outside: the night's design"): a moment
+of a fight its owner kept, as coloured dots sampled from the replay's 3D scene at a tick, so the profile can show it
+turning with no game files (ghillie's replay/3d/moment.js, which writes and reads it). The file is gzip of: `OMNT`, a
+version byte (1), a flags byte, the meta's length (u16, little-endian), the dots' count (u32), the meta (JSON: `kind`
+"outside-moment", `fight`, `tick`, `cycle`, `foes`, `label`, `at`, `made`, `plane`, `tile`, `camera` {yaw, pitch, zoom,
+H}, `grid`, `spacing`, `core`, `reach`, `count`), then ten planes of a byte a dot in Morton order (x, y and z as
+zigzagged steps from the dot before, low bytes then high; r, g and b as steps mod 256; the class: ground, scenery, a
+player or NPC, an effect or item). About 200,000 dots, 0.6 MB. The relay checks only that it's gzip, starts `OMNT` and
+has a version from 1 to 9; never a player's name in it (its foes are NPCs, named as the recording's are).
 
 ## Your year (11/10/2026)
 

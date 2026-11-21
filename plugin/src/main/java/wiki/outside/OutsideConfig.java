@@ -36,6 +36,11 @@ public interface OutsideConfig extends Config
 	String chatSection = "chat";
 	// hub:end talk
 
+	// hub:cut encounters
+	@ConfigSection(name = "Encounters", description = "Your boss fights and raids, recorded to this computer", position = 6)
+	String encountersSection = "encounters";
+	// hub:end encounters
+
 	@ConfigSection(name = "Advanced", description = "Your page's key, if you were given one", position = 9, closedByDefault = true)
 	String advancedSection = "advanced";
 
@@ -528,4 +533,65 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 	// hub:end goal
+
+	// hub:cut encounters
+	// (11/21/2026, ghillie's claude/outstation.md, "Encounters on Outside: the night's design": Encounter Recorder's
+	// recorder folded in, its files on this computer; nothing leaves it till "Put on my page" in the Encounters tab)
+	@ConfigItem(
+		keyName = "encounters",
+		name = "Record my encounters",
+		description = "On (to begin with): your fights at bosses and raids are recorded to this computer, tick by tick, by"
+			+ " themselves (RuneLite's folder, plugin-data/outside/encounters), and end with the kill, your death or your"
+			+ " leaving. The side tab's Encounters tab lists them, records one by hand, and puts one on your Outside page when"
+			+ " you press Put on my page; nothing leaves this computer before that. Never in the Wilderness, a PvP area or"
+			+ " on a PvP world. Needs an Outside page",
+		position = 0,
+		section = encountersSection
+	)
+	default boolean encounters()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "encounterPlayers",
+		name = "Players around you",
+		description = "Record what other players near you do too (where they stand, their gear, animations and hitsplats):"
+			+ " a raid's team. On this computer only; putting an encounter on your page takes every other player's name out"
+			+ " first. From the next recording",
+		position = 1,
+		section = encountersSection
+	)
+	default boolean encounterPlayers()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "encounterNpcs",
+		name = "Also for these NPCs",
+		description = "NPC ids, separated by commas: a recording starts when one appears (or another NPC turns into one) and"
+			+ " stops once none has been seen for 50 ticks, or with the kill. For a fight Outside doesn't know as a boss",
+		position = 2,
+		section = encountersSection
+	)
+	default String encounterNpcs()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "encounterKeepMb",
+		name = "Keep up to (MB)",
+		description = "The newest encounters are kept on this computer within this many megabytes; past it, the oldest go"
+			+ " (one on your page stays there)",
+		position = 3,
+		section = encountersSection
+	)
+	@net.runelite.client.config.Range(min = 20, max = 10000)
+	default int encounterKeepMb()
+	{
+		return 200;
+	}
+	// hub:end encounters
 }

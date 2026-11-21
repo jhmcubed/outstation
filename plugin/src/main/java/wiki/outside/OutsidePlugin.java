@@ -169,9 +169,18 @@ import org.slf4j.LoggerFactory;
 // hub:cut talk
  * Their page's chat in the game's chat box, off to begin with, answered with ::o or /o; their emotes (Talk, Emotes).
 // hub:end talk
+// hub:cut encounters
+ * Their fights at bosses and raids, recorded to this computer (Encounters, Encounter Recorder's recorder folded in), and
+ * one put on their page when they press Put on my page, stripped first (EncounterStrip, EncounterShelf; 11/21/2026).
+// hub:end encounters
  */
 @PluginDescriptor(
 	name = "Outside",
+	// hub:cut encounters
+	// (11/21/2026: the Plugin Hub's name, which RuneLite's getPluginDirectory needs for this plugin's own folder of files,
+	// plugin-data/outside: the encounters are kept there)
+	internalName = "outside",
+	// hub:end encounters
 	description = "Your gear, stats, quests, diaries and slayer task on your own page at Outside.wiki",
 	tags = {"outside", "loadout", "inventory", "profile", "quests", "diaries", "slayer", "discord"}
 )
@@ -370,6 +379,16 @@ public class OutsidePlugin extends Plugin
 	private String deathLine;
 	// hub:end deathbank
 	private static final MediaType JSON = MediaType.parse("application/json");
+	// hub:cut encounters
+	/** the encounters (11/21/2026): the recorder, on RuneLite's event bus while the plugin's on, and its files */
+	@Inject
+	private net.runelite.client.eventbus.EventBus eventBus;
+	private Encounters encounters;
+	private EncounterShelf shelf;
+	/** an encounter's file going up gzipped: 8 MB at most (the relay's MAX_FIGHT) */
+	static final int FIGHT_MOST = 8 * 1024 * 1024;
+	private static final MediaType GZIP = MediaType.parse("application/gzip");
+	// hub:end encounters
 	// hub:cut delve
 	/** the board beside the Doom of Mokhaiotl (the Delve Calculator plugin's: its scoreboard interface, each level's
 	 *  count in child 46 + 3 a level, 1 to 8, then the waves past 8) */
@@ -400,6 +419,12 @@ public class OutsidePlugin extends Plugin
 		panel = new OutsidePanel(panelHooks());
 		navButton = net.runelite.client.ui.NavigationButton.builder().tooltip("Outside").icon(tabIcon()).priority(8).panel(panel).build();
 		clientToolbar.addNavigation(navButton);
+		// hub:cut encounters
+		shelf = new EncounterShelf(gson, this::getPluginDirectory);
+		encounters = new Encounters(client, clientThread, gson, encounterHost());
+		eventBus.register(encounters);
+		shelf.tidy(encounterMost(), encounters.busy(), this::listEncounters);
+		// hub:end encounters
 		Attach a = key();
 		panel.who(a == null ? null : a.getChannel());
 		if (a != null)
@@ -429,6 +454,20 @@ public class OutsidePlugin extends Plugin
 		{
 			panel.stop();
 		}
+		// hub:cut encounters
+		if (encounters != null)
+		{
+			// (stopped on the client's thread, as every game call here; packed on its own thread after)
+			Encounters e = encounters;
+			clientThread.invoke(() -> e.shutDown("plugin turned off"));
+			eventBus.unregister(e);
+			encounters = null;
+		}
+		if (shelf != null)
+		{
+			shelf.shutDown();
+		}
+		// hub:end encounters
 		// (RuneLite closing, or the plugin switched off, while they're logged in: as a logout)
 		if (posted && client.getGameState() == GameState.LOGGED_IN)
 		{
@@ -532,6 +571,12 @@ public class OutsidePlugin extends Plugin
 			}
 		}
 		// hub:end goal
+		// hub:cut encounters
+		if (e.getKey().equals("encounters") && panel != null)
+		{
+			panel.recordingOn(config.encounters());
+		}
+		// hub:end encounters
 		// hub:cut talk
 		if (e.getKey().equals("chat"))
 		{
@@ -2947,6 +2992,94 @@ public class OutsidePlugin extends Plugin
 					}
 				});
 			}
+			// hub:cut encounters
+			@Override
+			public boolean recordingOn()
+			{
+				return config.encounters();
+			}
+
+			@Override
+			public void setRecordingOn(boolean on)
+			{
+				configManager.setConfiguration(OutsideConfig.GROUP, "encounters", on);
+			}
+
+			@Override
+			public void recordToggle()
+			{
+				clientThread.invoke(() ->
+				{
+					if (encounters == null)
+					{
+						return;
+					}
+					if (encounters.running())
+					{
+						encounters.stopByHand();
+						panel.encounterStatus(null);
+						return;
+					}
+					String no = encounters.startByHand();
+					panel.encounterStatus(no);
+				});
+			}
+
+			@Override
+			public void encountersShown()
+			{
+				listEncounters();
+				readFights();
+			}
+
+			@Override
+			public void putFight(String file, boolean shown)
+			{
+				putEncounter(file, shown);
+			}
+
+			@Override
+			public void fightShown(String file, boolean shown)
+			{
+				showEncounter(file, shown);
+			}
+
+			@Override
+			public void openFight(String file)
+			{
+				openEncounter(file);
+			}
+
+			@Override
+			public void deleteEncounter(String file)
+			{
+				if (shelf != null && encounters != null)
+				{
+					shelf.delete(file, encounters.busy(), OutsidePlugin.this::listEncounters, panel::encounterStatus);
+				}
+			}
+
+			@Override
+			public void copyEncountersFolder()
+			{
+				if (shelf == null)
+				{
+					return;
+				}
+				shelf.where(path ->
+				{
+					try
+					{
+						java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(path), null);
+						panel.encounterStatus("copied: " + path);
+					}
+					catch (IllegalStateException | java.awt.HeadlessException ex)
+					{
+						panel.encounterStatus("the clipboard's busy: it's " + path);
+					}
+				}, panel::encounterStatus);
+			}
+			// hub:end encounters
 		};
 	}
 
@@ -5259,6 +5392,371 @@ public class OutsidePlugin extends Plugin
 	}
 	// hub:end talk
 	// hub:end live
+
+	// hub:cut encounters
+	// ---- the encounters (11/21/2026; ghillie's claude/outstation.md, "Encounters on Outside: the night's design";
+	// docs/protocol.md, "Recorded fights"): the recorder's needs, the side tab's list, and putting one on the page
+
+	/** What the recorder (Encounters) needs from the plugin. */
+	private Encounters.Host encounterHost()
+	{
+		return new Encounters.Host()
+		{
+			@Override
+			public net.runelite.client.util.Filepath folder() throws IOException
+			{
+				return getPluginDirectory();
+			}
+
+			@Override
+			public boolean hasPage()
+			{
+				return key() != null;
+			}
+
+			@Override
+			public boolean autoOn()
+			{
+				return config.encounters();
+			}
+
+			@Override
+			public boolean otherPlayers()
+			{
+				return config.encounterPlayers();
+			}
+
+			@Override
+			public String npcIds()
+			{
+				return config.encounterNpcs();
+			}
+
+			@Override
+			public long most()
+			{
+				return encounterMost();
+			}
+
+			@Override
+			public String version()
+			{
+				return VERSION;
+			}
+
+			@Override
+			public void recording(String words, boolean running)
+			{
+				if (panel != null)
+				{
+					panel.encounterRecording(words, running);
+				}
+			}
+
+			@Override
+			public void filesChanged(String packed)
+			{
+				Encounters e = encounters;
+				if (shelf != null && packed != null)
+				{
+					shelf.packed(packed, encounterMost(), e == null ? java.util.Collections.emptySet() : e.busy(), OutsidePlugin.this::listEncounters);
+				}
+			}
+		};
+	}
+
+	/** "Keep up to (MB)", in bytes. */
+	private long encounterMost()
+	{
+		return Math.max(20, config.encounterKeepMb()) * 1024L * 1024L;
+	}
+
+	/** The side tab's list read again (the files thread), for the character logged in. */
+	private void listEncounters()
+	{
+		Encounters e = encounters;
+		if (shelf == null || panel == null || e == null)
+		{
+			return;
+		}
+		shelf.list(e.busy(), (rows, more) -> panel.encounters(rows, more, shownName), panel::encounterStatus);
+	}
+
+	/** The page's own list of its encounters (GET /fights/<channel>?key=, on the press that opens the tab): whether the
+	 *  page takes them at all (404: the relay's fights are off), whether a new one starts shown, and what's still on it. */
+	private void readFights()
+	{
+		Attach a = key();
+		if (a == null || panel == null)
+		{
+			return;
+		}
+		http.newCall(new Request.Builder().url(a.fightsUrl()).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				panel.encounterStatus("the relay's out of reach: what's on your page isn't known just now");
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					String body = res.body() == null ? "" : res.body().string();
+					JsonObject o = null;
+					try
+					{
+						o = gson.fromJson(body, JsonObject.class);
+					}
+					catch (RuntimeException ignored)
+					{
+						// (an answer that isn't JSON: said by its code below)
+					}
+					if (res.code() == 404 && o != null && o.has("error") && o.get("error").getAsString().contains("fights aren't on"))
+					{
+						panel.fightsState(false, false);
+						return;
+					}
+					if (res.code() != 200 || o == null || !o.has("fights") || !o.get("fights").isJsonArray())
+					{
+						panel.encounterStatus("the relay said " + res.code() + (o != null && o.has("error") ? ": " + o.get("error").getAsString() : ""));
+						return;
+					}
+					boolean first = o.has("public_default") && o.get("public_default").getAsBoolean();
+					Map<String, Boolean> fights = new HashMap<>();
+					for (JsonElement f : o.getAsJsonArray("fights"))
+					{
+						if (f.isJsonObject() && f.getAsJsonObject().has("id"))
+						{
+							JsonObject fo = f.getAsJsonObject();
+							fights.put(fo.get("id").getAsString(), fo.has("public") && fo.get("public").getAsBoolean());
+						}
+					}
+					panel.fightsState(true, first);
+					shelf.reconcile(a.getChannel(), fights, OutsidePlugin.this::listEncounters);
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					panel.encounterStatus("the relay's answer couldn't be read");
+				}
+			}
+		});
+	}
+
+	/** "Put on my page" (the side tab): the recording stripped as the page strips one (EncounterStrip), what was taken out
+	 *  said, and only once that's agreed to, sent: POST /fights/<channel>?key=, multipart, meta and the gzipped fight. */
+	private void putEncounter(String file, boolean shown)
+	{
+		Attach a = key();
+		if (a == null || shelf == null)
+		{
+			panel.encounterStatus("log in on a character with a page first");
+			return;
+		}
+		String me = shownName;
+		panel.putting(file, true);
+		panel.encounterStatus("reading it…");
+		shelf.prepare(file, p ->
+		{
+			if (p.summary.player != null && me != null && !OutsidePanel.sameName(p.summary.player, me))
+			{
+				panel.putting(file, false);
+				panel.encounterStatus("that was recorded on " + p.summary.player + ": log in on that character to put it on its page");
+				return;
+			}
+			byte[] gz;
+			try
+			{
+				gz = EncounterFiles.gzipText(p.stripped.text, (int) p.summary.ticks);
+			}
+			catch (IOException ex)
+			{
+				panel.putting(file, false);
+				panel.encounterStatus("it couldn't be packed: " + ex.getMessage());
+				return;
+			}
+			if (gz.length > FIGHT_MOST)
+			{
+				panel.putting(file, false);
+				panel.encounterStatus(String.format("it's %.1f MB packed: a page takes 8 MB at most", gz.length / 1048576.0));
+				return;
+			}
+			panel.encounterStatus(null);
+			panel.confirmPut(file, p.summary.who(), (int) p.summary.ticks, p.stripped.removed, shown, gz.length,
+				() -> sendEncounter(a, file, p, gz, shown));
+		}, problem ->
+		{
+			panel.putting(file, false);
+			panel.encounterStatus(problem);
+		});
+	}
+
+	private void sendEncounter(Attach a, String file, EncounterShelf.Prepared p, byte[] gz, boolean shown)
+	{
+		panel.encounterStatus("putting it on your page…");
+		RequestBody body = new okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
+			.addFormDataPart("meta", EncounterStrip.meta(p.summary, shown))
+			.addFormDataPart("fight", "fight.jsonl.gz", RequestBody.create(GZIP, gz))
+			.build();
+		http.newCall(new Request.Builder().url(a.fightsUrl()).header("User-Agent", "outside-plugin/" + VERSION).post(body).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				panel.putting(file, false);
+				panel.encounterStatus("the relay's out of reach: nothing went; try again in a bit");
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					String text = res.body() == null ? "" : res.body().string();
+					JsonObject o = null;
+					try
+					{
+						o = gson.fromJson(text, JsonObject.class);
+					}
+					catch (RuntimeException ignored)
+					{
+						// (said by its code below)
+					}
+					if (res.code() == 201 && o != null && o.has("fight") && o.get("fight").isJsonObject())
+					{
+						JsonObject f = o.getAsJsonObject("fight");
+						String id = f.get("id").getAsString();
+						boolean pub = f.has("public") && f.get("public").getAsBoolean();
+						shelf.onPage(file, a.getChannel(), id, pub, OutsidePlugin.this::listEncounters);
+						panel.putting(file, false);
+						panel.encounterStatus(p.summary.who() + " is on your page" + (pub ? "" : ", kept to yourself"));
+						return;
+					}
+					panel.putting(file, false);
+					if (res.code() == 404 && o != null && o.has("error") && o.get("error").getAsString().contains("fights aren't on"))
+					{
+						panel.fightsState(false, false);
+						panel.encounterStatus(null);
+						return;
+					}
+					panel.encounterStatus(res.code() == 403 ? "the relay didn't take your page's key: nothing went"
+						: "nothing went: " + (o != null && o.has("error") ? o.get("error").getAsString() : "the relay said " + res.code()));
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					panel.putting(file, false);
+					panel.encounterStatus("the relay's answer couldn't be read");
+				}
+			}
+		});
+	}
+
+	/** "Shown to anyone" ticked or not: on the page at once (POST /fights/<channel>/<id>?public=), or kept as the choice
+	 *  for when it goes. */
+	private void showEncounter(String file, boolean shown)
+	{
+		Attach a = key();
+		if (shelf == null)
+		{
+			return;
+		}
+		shelf.entryOf(file, e ->
+		{
+			String id = e != null && e.has("fight") ? e.get("fight").getAsString() : null;
+			String channel = e != null && e.has("channel") ? e.get("channel").getAsString() : null;
+			if (id == null || a == null || !a.getChannel().equals(channel))
+			{
+				shelf.onPage(file, null, null, shown, OutsidePlugin.this::listEncounters);
+				return;
+			}
+			http.newCall(new Request.Builder().url(a.fightUrl(id, shown)).header("User-Agent", "outside-plugin/" + VERSION)
+				.post(RequestBody.create(JSON, "{}")).build()).enqueue(new Callback()
+			{
+				@Override
+				public void onFailure(Call call, IOException ex)
+				{
+					panel.encounterStatus("the relay's out of reach: try again in a bit");
+					listEncounters();
+				}
+
+				@Override
+				public void onResponse(Call call, Response r)
+				{
+					try (Response res = r)
+					{
+						if (res.code() == 404)
+						{
+							// (taken down on the page, or gone with its days: no longer on it)
+							shelf.onPage(file, null, null, shown, OutsidePlugin.this::listEncounters);
+							panel.encounterStatus("that one isn't on your page any more");
+							return;
+						}
+						if (res.code() != 200)
+						{
+							panel.encounterStatus("the relay said " + res.code());
+							listEncounters();
+							return;
+						}
+						shelf.onPage(file, channel, id, shown, OutsidePlugin.this::listEncounters);
+						panel.encounterStatus(shown ? "shown to anyone now" : "kept to yourself now");
+					}
+				}
+			});
+		});
+	}
+
+	/** "Open": its page on Outside.wiki; one kept to themselves opens with a tending token in the fragment (as Read and
+	 *  tend my register's), which only the page's own browser then holds. */
+	private void openEncounter(String file)
+	{
+		Attach a = key();
+		if (a == null || shelf == null)
+		{
+			return;
+		}
+		shelf.entryOf(file, e ->
+		{
+			String id = e != null && e.has("fight") ? e.get("fight").getAsString() : null;
+			boolean shown = e != null && e.has("shown") && e.get("shown").getAsBoolean();
+			if (id == null)
+			{
+				return;
+			}
+			String page = a.fightPage(id, friendsOnly ? watchCode(false) : null);
+			if (shown)
+			{
+				net.runelite.client.util.LinkBrowser.browse(page);
+				return;
+			}
+			String token = Tend.token(new java.security.SecureRandom());
+			http.newCall(new Request.Builder().url(a.tendUrl()).header("User-Agent", "outside-plugin/" + VERSION)
+				.post(RequestBody.create(JSON, Tend.body(token, gson))).build()).enqueue(new Callback()
+			{
+				@Override
+				public void onFailure(Call call, IOException ex)
+				{
+					panel.encounterStatus("the relay's out of reach: try again in a moment");
+				}
+
+				@Override
+				public void onResponse(Call call, Response r)
+				{
+					try (Response res = r)
+					{
+						if (res.code() != 200)
+						{
+							panel.encounterStatus("the relay said no (" + res.code() + ")");
+							return;
+						}
+					}
+					net.runelite.client.util.LinkBrowser.browse(page + "#tend=" + token);
+				}
+			});
+		});
+	}
+	// hub:end encounters
 
 	private void say(String words)
 	{

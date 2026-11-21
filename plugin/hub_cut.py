@@ -45,6 +45,8 @@ The parts left out (SUBMITTED: those in the Hub's version now; add a part's name
   deathbank the deathbank (the Item Retrieval Service's) on the page, as they last looked in it
   talk    the page's chat in the game (::o, /o) and emotes
   goal    the goal item (update 3): the item search, its model, got by the collection log's line
+  encounters  (update 6, 11/21/2026) fights at bosses and raids recorded to the player's computer (Encounter Recorder's
+          recorder folded in, BSD 2-Clause, NOTICE), and one put on their page on their press, stripped first
 
     python3 plugin/hub_cut.py ../outside-plugin           write the cut there (its .git and build left alone)
     python3 plugin/hub_cut.py --check ../outside-plugin   say whether it matches; write nothing
@@ -59,8 +61,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal"]
-SUBMITTED = ["delve", "model", "bank", "deathbank", "goal"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update)
+PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal", "encounters"]
+SUBMITTED = ["delve", "model", "bank", "deathbank", "goal", "encounters"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update; 11/21/2026, update 6: the encounters, Jace: "include it in update 6 along with our other changes")
 
 # whole files that belong to a part (paths under this folder)
 J = "src/main/java/wiki/outside/"
@@ -74,6 +76,9 @@ PART_FILES = {
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
     "goal": [J + "Goal.java", T + "GoalTest.java"],
     "delve": [J + "Delves.java", T + "DelvesTest.java"],
+    "encounters": [J + "Encounters.java", J + "EncounterSnap.java", J + "EncounterFiles.java", J + "EncounterStrip.java",
+                   J + "EncounterShelf.java", T + "EncounterStripTest.java", T + "EncounterFilesTest.java",
+                   T + "EncountersTest.java", "NOTICE"],
 }
 # never copied: what's built, and what only this repository needs
 SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__", "README.md"}

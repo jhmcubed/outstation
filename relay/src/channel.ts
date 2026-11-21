@@ -31,7 +31,7 @@ import { DurableObject } from "cloudflare:workers";
 import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { mendNotes } from "./mends";
 import { type Clip, fileKey, json, newId, readUpload, serveFile, trim, ID, KEPT_MOST } from "./clips";
-import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, fightKey, fightNumbers, newFightId, readFight, trimFights } from "./fights";
+import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, fightKey, fightNumbers, listed, momentKey, newFightId, readFight, readMoment, trimFights } from "./fights";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
@@ -2312,6 +2312,7 @@ export class Channel extends DurableObject<Env> {
   // stays theirs.
 
   fightsUploads: number[] = []; // (in memory: a sleep forgets, which only loosens it)
+  momentsUploads: number[] = []; // (the same, for scene moments)
 
   async fightList(): Promise<Fight[]> {
     const all = await this.ctx.storage.list<Fight>({ prefix: "fight:" });
@@ -2323,7 +2324,10 @@ export class Channel extends DurableObject<Env> {
 
   async dropFights(gone: Fight[]) {
     await this.ctx.storage.delete(gone.map((f) => "fight:" + f.id));
-    await this.env.CLIPS?.delete(gone.map((f) => fightKey(this.name, f.id)));
+    // (their scene moments with them, and the page's featured fight if it was one: 11/21/2026)
+    await this.env.CLIPS?.delete(gone.flatMap((f) => [fightKey(this.name, f.id), momentKey(this.name, f.id)]));
+    const featured = await this.ctx.storage.get<string>("fightFeatured");
+    if (featured && gone.some((f) => f.id === featured)) await this.ctx.storage.delete("fightFeatured");
   }
 
   /** Whether a request is the page's owner: a tending token (Authorization: Bearer) that's good, or the key (?key=).
@@ -2346,27 +2350,35 @@ export class Channel extends DurableObject<Env> {
     const owner = await this.fightOwner(request, q, ip);
     if (Array.isArray(owner)) return json({ error: owner[1] }, owner[0]);
     const id = q.get("id") || "";
+    // (the fight's scene moment, 11/21/2026: index.ts's /moment and /moment.bin)
+    const moment = q.get("moment") === "1";
     if (request.method === "GET" || request.method === "HEAD") {
       if (!owner && this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
       const list = await this.fightList();
       if (q.get("file") === "1") {
         const f = FIGHT_ID.test(id) ? list.find((x) => x.id === id) : undefined;
         if (!f || (!f.public && !owner)) return json({ error: "no such fight" }, 404);
-        const r = await serveFile(this.env.CLIPS, fightKey(this.name, f.id), request);
+        if (moment && !f.moment) return json({ error: "no moment kept of this fight" }, 404);
+        const r = await serveFile(this.env.CLIPS, moment ? momentKey(this.name, f.id) : fightKey(this.name, f.id), request);
         // (a fight kept to themselves, or on a friends-only page, never kept by a cache along the way; a shown one five
         // minutes, so one hidden again or taken down stops being served soon after)
         const h = new Headers(r.headers);
         h.set("cache-control", !f.public || this.meta.code ? "private, no-store" : "public, max-age=300");
         return new Response(r.body, { status: r.status, headers: h });
       }
-      return json({ fights: owner ? list : list.filter((f) => f.public), owner, ...fightNumbers(this.env) });
+      // (the featured one marked, and named only to whoever can see it)
+      return json({ ...listed(list, !!owner, await this.ctx.storage.get<string>("fightFeatured")), owner, ...fightNumbers(this.env) });
     }
     if (!owner) return json({ error: "only the page's own" }, 403);
     if (request.method === "DELETE") {
       if (!FIGHT_ID.test(id)) return json({ error: "which fight?" }, 400);
       const f = await this.ctx.storage.get<Fight>("fight:" + id);
       if (!f) return json({ error: "no such fight" }, 404);
-      await this.dropFights([f]);
+      if (moment) {
+        await this.env.CLIPS?.delete(momentKey(this.name, id));
+        delete f.moment;
+        await this.ctx.storage.put("fight:" + id, f);
+      } else await this.dropFights([f]);
       return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
     }
     if (request.method !== "POST") return new Response(null, { status: 405 });
@@ -2374,10 +2386,31 @@ export class Channel extends DurableObject<Env> {
       if (!FIGHT_ID.test(id)) return json({ error: "which fight?" }, 400);
       const f = await this.ctx.storage.get<Fight>("fight:" + id);
       if (!f) return json({ error: "no such fight" }, 404);
-      if (q.get("public") !== "1" && q.get("public") !== "0") return json({ error: "public=1 or public=0" }, 400);
-      f.public = q.get("public") === "1";
-      await this.ctx.storage.put("fight:" + id, f);
-      return json({ id, public: f.public });
+      if (moment) {
+        // the scene moment (fights.ts): one a fight, a new one in the old one's place
+        if (!this.env.CLIPS) return json({ error: "this relay doesn't keep fights" }, 503);
+        const now = Date.now();
+        this.momentsUploads = this.momentsUploads.filter((t) => now - t < 3_600_000);
+        if (this.momentsUploads.length >= MOMENTS_AN_HOUR) return json({ error: `${MOMENTS_AN_HOUR} moments an hour at most: try again later` }, 429);
+        const got = await readMoment(request, q, f.ticks);
+        if (Array.isArray(got)) return json({ error: got[1] }, got[0]);
+        this.momentsUploads.push(now);
+        await this.env.CLIPS.put(momentKey(this.name, id), got.file, { httpMetadata: { contentType: "application/octet-stream" } });
+        f.moment = { tick: got.tick, size: got.file.length, at: now };
+        await this.ctx.storage.put("fight:" + id, f);
+        return json({ id, moment: f.moment }, 201);
+      }
+      // shown or kept, and featured or not (either or both)
+      const pub = q.get("public"), feat = q.get("featured");
+      const ok = (v: string | null) => v === null || v === "1" || v === "0";
+      if ((pub === null && feat === null) || !ok(pub) || !ok(feat)) return json({ error: "public=1|0 or featured=1|0" }, 400);
+      if (pub !== null) {
+        f.public = pub === "1";
+        await this.ctx.storage.put("fight:" + id, f);
+      }
+      if (feat === "1") await this.ctx.storage.put("fightFeatured", id);
+      else if (feat === "0" && (await this.ctx.storage.get<string>("fightFeatured")) === id) await this.ctx.storage.delete("fightFeatured");
+      return json({ id, public: f.public, featured: (await this.ctx.storage.get<string>("fightFeatured")) === id });
     }
     if (!this.env.CLIPS) return json({ error: "this relay doesn't keep fights" }, 503);
     const now = Date.now(), most = FIGHTS_AN_HOUR;

@@ -1698,6 +1698,99 @@ class Fights(Base):
         self.assertEqual(self.listed(key=self.key)[1]["fights"], [])
 
 
+# a scene moment (ghillie's replay/3d/moment.js, 11/21/2026): "OMNT", a version, the rest, gzipped
+MOMENT = gzip.compress(b"OMNT\x01\x00\x02\x00\x01\x00\x00\x00{}" + bytes(10))
+
+
+class Moments(Base):
+    """A fight's scene moment and the page's featured fight (docs/protocol.md, "Recorded fights"): one moment a fight,
+    kept by the page's own with its tick, listed on the fight, served to whoever may see the fight, replaced, taken away,
+    and gone with the fight; one fight featured at a time, named only to whoever can see it."""
+
+    send, up, listed = Fights.send, Fights.up, Fights.listed
+
+    def keep(self, fid, body=MOMENT, tick="60", key=None, token=None):
+        headers = {"Content-Type": "application/octet-stream"}
+        path = "/fights/%s/%s/moment?tick=%s" % (self.ch, fid, tick)
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        else:
+            path += "&key=" + urllib.parse.quote(key or self.key)
+        st, _, out = self.send("POST", path, body, headers)
+        return st, (json.loads(out) if out else None)
+
+    def entry(self, fid, key=None):
+        return next(f for f in self.listed(key=key)[1]["fights"] if f["id"] == fid)
+
+    async def test_a_moment_kept_listed_served_replaced_and_gone_with_the_fight(self):
+        st, got = self.up(meta={"foe": "Vardorvis", "ticks": 210})
+        fid = got["fight"]["id"]
+        self.assertEqual(self.keep(fid, key="wrong-key-123456")[0], 403)
+        self.assertEqual(self.send("POST", "/fights/%s/%s/moment?tick=60" % (self.ch, fid), MOMENT, {})[0], 403)   # (anyone)
+        st, got = self.keep(fid)
+        self.assertEqual((st, got["moment"]["tick"], got["moment"]["size"]), (201, 60, len(MOMENT)))
+        self.assertEqual((self.entry(fid, key=self.key)["moment"]["tick"], self.entry(fid, key=self.key)["moment"]["size"]), (60, len(MOMENT)))
+        # (kept to themselves: the moment too)
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))[0], 404)
+        st, h, out = self.send("GET", "/fights/%s/%s/moment.bin?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))
+        self.assertEqual((st, out, h.get("cache-control"), h.get("content-type")), (200, MOMENT, "private, no-store", "application/octet-stream"))
+        self.send("POST", "/fights/%s/%s?key=%s&public=1" % (self.ch, fid, urllib.parse.quote(self.key)))
+        st, h, out = self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))
+        self.assertEqual((st, out, h.get("cache-control"), h.get("access-control-allow-origin")), (200, MOMENT, "public, max-age=300", "*"))
+        self.assertEqual(self.entry(fid)["moment"]["tick"], 60)
+        # (a new one in its place)
+        other = gzip.compress(b"OMNT\x01\x00\x02\x00\x02\x00\x00\x00{}" + bytes(20))
+        self.assertEqual(self.keep(fid, body=other, tick="200")[0], 201)
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))[2], other)
+        self.assertEqual(self.entry(fid)["moment"]["tick"], 200)
+        # (refused: no tick, past the end, not a moment, the fight not there)
+        self.assertEqual(self.keep(fid, tick="")[0], 400)
+        self.assertEqual(self.keep(fid, tick="999")[0], 400)
+        self.assertEqual(self.keep(fid, body=FIGHT)[0], 415)
+        self.assertEqual(self.keep("a" * 22)[0], 404)
+        # (taken away, then kept again, then gone with the fight)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s/moment?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))[0], 204)
+        self.assertNotIn("moment", self.entry(fid))
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))[0], 404)
+        self.assertEqual(self.keep(fid)[0], 201)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))[0], 204)
+        self.assertEqual(self.send("GET", "/fights/%s/%s/moment.bin?key=%s" % (self.ch, fid, urllib.parse.quote(self.key)))[0], 404)
+
+    async def test_a_tending_token_keeps_one_too(self):
+        token = secrets.token_urlsafe(32)
+        self.send("POST", "/tend/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), json.dumps({"token": token}).encode(), {"Content-Type": "application/json"})
+        fid = self.up(meta={"foe": "Duke Sucellus", "ticks": 100, "public": True}, token=token)[1]["fight"]["id"]
+        st, got = self.keep(fid, tick="5", token=token)
+        self.assertEqual((st, got["moment"]["tick"]), (201, 5))
+        self.assertEqual(self.keep(fid, token=secrets.token_urlsafe(32))[0], 403)
+
+    async def test_one_fight_featured_at_a_time(self):
+        a = self.up(meta={"foe": "Vardorvis", "public": True})[1]["fight"]["id"]
+        b = self.up(meta={"foe": "Duke Sucellus"})[1]["fight"]["id"]   # (kept to themselves)
+        q = "?key=" + urllib.parse.quote(self.key)
+        self.assertEqual(self.listed()[1]["featured"], None)
+        self.assertEqual(self.send("POST", "/fights/%s/%s?featured=1" % (self.ch, a))[0], 403)    # (anyone)
+        st, _, out = self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, a, q))
+        self.assertEqual((st, json.loads(out)["featured"]), (200, True))
+        self.assertEqual(self.listed()[1]["featured"], a)
+        self.assertEqual([f["id"] for f in self.listed()[1]["fights"] if f.get("featured")], [a])
+        # (another featured in its place; one kept to themselves named only to the owner)
+        self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, b, q))
+        self.assertEqual((self.listed(key=self.key)[1]["featured"], self.listed()[1]["featured"]), (b, None))
+        self.assertFalse(any(f.get("featured") for f in self.listed()[1]["fights"]))
+        # (shown and featured in one; then not featured; and the switch asked for)
+        st, _, out = self.send("POST", "/fights/%s/%s%s&public=1&featured=1" % (self.ch, b, q))
+        self.assertEqual((st, json.loads(out)["public"], self.listed()[1]["featured"]), (200, True, b))
+        self.send("POST", "/fights/%s/%s%s&featured=0" % (self.ch, b, q))
+        self.assertEqual(self.listed()[1]["featured"], None)
+        self.assertEqual(self.send("POST", "/fights/%s/%s%s" % (self.ch, b, q))[0], 400)
+        self.assertEqual(self.send("POST", "/fights/%s/%s%s&featured=2" % (self.ch, b, q))[0], 400)
+        # (a featured fight taken down is featured no more)
+        self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, a, q))
+        self.send("DELETE", "/fights/%s/%s%s" % (self.ch, a, q))
+        self.assertEqual(self.listed(key=self.key)[1]["featured"], None)
+
+
 class Clips(Base):
     """Clips on a player's Outside page (docs/protocol.md, "Clips"): uploaded with the channel's key, listed for
     anyone (with the watch code, if it has one), the files served whole or in ranges, told to viewers as they come,
