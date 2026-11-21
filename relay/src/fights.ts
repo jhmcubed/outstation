@@ -78,6 +78,7 @@ export interface Fight {
   moment?: { tick: number; size: number; at: number }; // its scene moment, if its owner kept one (at: when, unix ms)
   kept?: true; // kept for good: never trimmed by days or the most (11/21/2026)
   featured?: true; // (in a list only: the one the page features)
+  moment_missing?: string; // why the plugin sent it with no moment, in its own words (11/21/2026; the page may make one)
 }
 
 export function fightKey(channel: string, id: string): string {
@@ -256,6 +257,7 @@ export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "
     foe: text(m.foe, 48) || text(m.label, 48) || "a fight", label: text(m.label, 48),
     at: num(m.at, 1_577_836_800_000, now + 60_000), ticks: num(m.ticks, 0, 1_000_000), died: m.died === true,
     taken: num(m.taken, 0, 100_000_000), dealt: num(m.dealt, 0, 100_000_000), size: file.length,
+    ...(text(m.moment_missing, 120) ? { moment_missing: text(m.moment_missing, 120) } : {}),
   };
   // (its moment, if it carries one: checked as the moment route checks it, and the whole upload refused if it's bad)
   let moment: { file: Uint8Array; tick: number } | null = null;
