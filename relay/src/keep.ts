@@ -280,7 +280,9 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
 export const ARRANGE_READING = ["sec-skills", "sec-deeds", "sec-mega", "sec-pets", "sec-next", "sec-easy-ca", "sec-gains", "sec-movements",
   "sec-kills", "sec-rates", "sec-field", "sec-delve"];
 export const ARRANGE_WIDE = ["sec-year", "sec-heat", "sec-case"];
-export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank"];
+// (11/21/2026, round nine: "reports", the readings and the field reports, and "talk", the register and the aether, panels
+// of their own apart from the outstation's screen, which keeps only the transmission and its chat; hero.js's KNOWN)
+export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank", "reports", "talk"];
 // (the subject's box, the outstation and the encounters' stage stay where every file has them, always shown)
 export const HERO_FIXED = ["who", "screen", "stage"];
 export const HERO_COLS = 12, LAYOUT_MOST = 8 * 1024;

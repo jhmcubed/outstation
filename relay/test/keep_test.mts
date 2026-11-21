@@ -160,6 +160,11 @@ test("a layout: the top of the file's panels on twelve columns, the three that s
   strictEqual(typeof layoutShape({ hero: { ...h, o: ["kit", "kit"] } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, o: [...HERO_PANELS, "kit"] } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, off: ["screen"] } }), "string");                     // (the outstation's always shown)
+  // (11/21/2026, round nine: the field reports and the register, panels of their own: placed, moved and kept from visitors)
+  const t = { p: { reports: { x: 4, w: 5 }, talk: { x: 0, w: 4 } }, o: ["who", "stage", "screen", "reports", "talk"], off: ["reports"] };
+  deepStrictEqual(layoutShape({ hero: t }), { hero: t });
+  deepStrictEqual(layoutShape({ hero: { ...t, off: ["talk", "reports"] } }), { hero: { ...t, off: ["talk", "reports"] } });
+  deepStrictEqual(HERO_PANELS.slice(0, 10), ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank"]);   // (never reordered: added at the end)
   strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), "object");    // (anything else in a place is left out)
   deepStrictEqual(layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), { hero: { ...h, p: { kit: { x: 0, w: 4 } } } });
 });
