@@ -31,7 +31,7 @@ import { DurableObject } from "cloudflare:workers";
 import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { mendNotes } from "./mends";
 import { type Clip, fileKey, json, newId, readUpload, serveFile, trim, ID, KEPT_MOST } from "./clips";
-import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, fightKey, fightNumbers, listed, momentKey, newFightId, readFight, readMoment, trimFights } from "./fights";
+import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, fightKey, fightNumbers, keptAsked, listed, momentKey, newFightId, readFight, readMoment, trimFights } from "./fights";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
@@ -70,6 +70,7 @@ export interface Env {
   FIGHTS_PUBLIC?: string; // "1": a new fight is shown to anyone unless the player says otherwise; else kept to themselves
   FIGHTS_MOST?: string; // a page's fights at most (20)
   FIGHTS_DAYS?: string; // and for how long (30 days; 0: until taken down)
+  FIGHTS_KEPT?: string; // a page's fights kept for good at most (12; never trimmed by the two above)
   PRESENCE_FRESH_SECONDS?: string; // (tests) how long the Hub's plugin counts as here after its last POST (game.ts's PRESENCE_FRESH_MS: 70 minutes)
   WHERE_FRESH_SECONDS?: string; // (tests) how long a "where" or an "activity" shows on GET /channels after it came (game.ts's WHERE_FRESH_MS: 240)
   ALMANAC_UPSTREAM?: string; // (tests) the almanac's sources all fetched under this address instead of the real hosts (almanac.ts's urls)
@@ -2317,9 +2318,10 @@ export class Channel extends DurableObject<Env> {
   async fightList(): Promise<Fight[]> {
     const all = await this.ctx.storage.list<Fight>({ prefix: "fight:" });
     const { most, days } = fightNumbers(this.env);
-    const { kept, gone } = trimFights([...all.values()], most, days);
+    // (kept for good and the featured one stay, 11/21/2026)
+    const { stay, gone } = trimFights([...all.values()], most, days, Date.now(), (await this.ctx.storage.get<string>("fightFeatured")) ?? null);
     if (gone.length) await this.dropFights(gone);
-    return kept;
+    return stay;
   }
 
   async dropFights(gone: Fight[]) {
@@ -2400,27 +2402,50 @@ export class Channel extends DurableObject<Env> {
         await this.ctx.storage.put("fight:" + id, f);
         return json({ id, moment: f.moment }, 201);
       }
-      // shown or kept, and featured or not (either or both)
-      const pub = q.get("public"), feat = q.get("featured");
+      // shown or kept to themselves, featured or not, kept for good or not (any of them in one request; 11/21/2026: kept,
+      // fights.ts's "Kept for good": featuring keeps it, letting the featured one go unfeatures it)
+      const pub = q.get("public"), feat = q.get("featured"), keepQ = q.get("kept");
       const ok = (v: string | null) => v === null || v === "1" || v === "0";
-      if ((pub === null && feat === null) || !ok(pub) || !ok(feat)) return json({ error: "public=1|0 or featured=1|0" }, 400);
-      if (pub !== null) {
-        f.public = pub === "1";
-        await this.ctx.storage.put("fight:" + id, f);
+      if ((pub === null && feat === null && keepQ === null) || !ok(pub) || !ok(feat) || !ok(keepQ)) return json({ error: "public=1|0, featured=1|0 or kept=1|0" }, 400);
+      const keep = keptAsked(keepQ, feat);
+      if (Array.isArray(keep)) return json({ error: keep[1] }, keep[0]);
+      if (keep === true && !f.kept) {
+        const { kept: most } = fightNumbers(this.env);
+        const already = (await this.fightList()).filter((x) => x.kept && x.id !== id).length;
+        if (already >= most) {
+          return json({ error: most ? `${most} fights kept for good at most: let one go first` : "fights aren't kept for good here", kept: already, most }, 409);
+        }
       }
+      if (pub !== null) f.public = pub === "1";
+      if (keep === true) f.kept = true;
+      else if (keep === false) delete f.kept;
+      await this.ctx.storage.put("fight:" + id, f);
       if (feat === "1") await this.ctx.storage.put("fightFeatured", id);
-      else if (feat === "0" && (await this.ctx.storage.get<string>("fightFeatured")) === id) await this.ctx.storage.delete("fightFeatured");
-      return json({ id, public: f.public, featured: (await this.ctx.storage.get<string>("fightFeatured")) === id });
+      else if ((feat === "0" || keep === false) && (await this.ctx.storage.get<string>("fightFeatured")) === id) await this.ctx.storage.delete("fightFeatured");
+      return json({ id, public: f.public, featured: (await this.ctx.storage.get<string>("fightFeatured")) === id, kept: !!f.kept });
     }
     if (!this.env.CLIPS) return json({ error: "this relay doesn't keep fights" }, 503);
     const now = Date.now(), most = FIGHTS_AN_HOUR;
     this.fightsUploads = this.fightsUploads.filter((t) => now - t < 3_600_000);
-    if (this.fightsUploads.length >= most) return json({ error: `${most} fights an hour at most: try again later` }, 429);
+    if (this.fightsUploads.length >= most) {
+      // (when the oldest of the hour's leaves it, for the plugin's automatic sends to wait for: 11/21/2026)
+      const wait = Math.max(1, Math.ceil((this.fightsUploads[0] + 3_600_000 - now) / 1000));
+      const r = json({ error: `${most} fights an hour at most: try again later`, retry_after: wait }, 429);
+      r.headers.set("retry-after", String(wait));
+      r.headers.set("access-control-expose-headers", "retry-after");
+      return r;
+    }
     const got = await readFight(request);
     if (Array.isArray(got)) return json({ error: got[1] }, got[0]);
     this.fightsUploads.push(now);
     const fight: Fight = { id: newFightId(), ...got.meta, public: got.public ?? fightNumbers(this.env).public_default, up: now };
     await this.env.CLIPS.put(fightKey(this.name, fight.id), got.file, { httpMetadata: { contentType: "application/gzip" } });
+    // (its moment in the same upload, 11/21/2026: the plugin's automatic sends; not counted against MOMENTS_AN_HOUR, it
+    // came with its fight)
+    if (got.moment) {
+      await this.env.CLIPS.put(momentKey(this.name, fight.id), got.moment.file, { httpMetadata: { contentType: "application/octet-stream" } });
+      fight.moment = { tick: got.moment.tick, size: got.moment.file.length, at: now };
+    }
     await this.ctx.storage.put("fight:" + fight.id, fight);
     await this.fightList(); // (the oldest past the most go)
     return json({ fight }, 201);

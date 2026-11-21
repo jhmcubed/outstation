@@ -4,7 +4,7 @@
 //   node test/fights_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { gzipSync } from "node:zlib";
-import { firstLine, fightNumbers, fightsOn, isHeader, isMoment, listed, momentKey, newFightId, readFight, readMoment, trimFights, FIGHT_ID, MAX_MOMENT, type Fight } from "../src/fights.ts";
+import { firstLine, fightNumbers, fightsOn, isHeader, isMoment, keptAsked, listed, momentKey, momentTick, newFightId, readFight, readMoment, trimFights, FIGHT_ID, MAX_MOMENT, type Fight } from "../src/fights.ts";
 
 let passed = 0;
 const tests: [string, () => Promise<void> | void][] = [];
@@ -32,9 +32,9 @@ test("the switches: off unless FIGHTS is on; the defaults", () => {
   strictEqual(fightsOn({}), false);
   strictEqual(fightsOn({ FIGHTS: "off" }), false);
   strictEqual(fightsOn({ FIGHTS: " On " }), true);
-  deepStrictEqual(fightNumbers({}), { public_default: false, most: 20, days: 30 });
-  deepStrictEqual(fightNumbers({ FIGHTS_PUBLIC: "1", FIGHTS_MOST: "5", FIGHTS_DAYS: "0" }), { public_default: true, most: 5, days: 0 });
-  deepStrictEqual(fightNumbers({ FIGHTS_MOST: "-1", FIGHTS_DAYS: "x" }), { public_default: false, most: 20, days: 30 });
+  deepStrictEqual(fightNumbers({}), { public_default: false, most: 20, days: 30, kept: 12 });
+  deepStrictEqual(fightNumbers({ FIGHTS_PUBLIC: "1", FIGHTS_MOST: "5", FIGHTS_DAYS: "0" }), { public_default: true, most: 5, days: 0, kept: 12 });
+  deepStrictEqual(fightNumbers({ FIGHTS_MOST: "-1", FIGHTS_DAYS: "x" }), { public_default: false, most: 20, days: 30, kept: 12 });
 });
 
 test("an id: 22 base64url characters", () => {
@@ -47,10 +47,10 @@ const fight = (id: string, up: number): Fight => ({ id, foe: "x", label: "x", at
 test("the list: newest first, past the most and too old go", () => {
   const now = 100 * 86_400_000;
   const list = [fight("a", now - 40 * 86_400_000), fight("b", now - 1000), fight("c", now - 2000), fight("d", now - 3000)];
-  const { kept, gone } = trimFights(list, 2, 30, now);
+  const { stay: kept, gone } = trimFights(list, 2, 30, now);
   deepStrictEqual(kept.map((f) => f.id), ["b", "c"]);
   deepStrictEqual(gone.map((f) => f.id).sort(), ["a", "d"]);
-  deepStrictEqual(trimFights(list, 20, 0, now).kept.map((f) => f.id), ["b", "c", "d", "a"]); // (days 0: never too old)
+  deepStrictEqual(trimFights(list, 20, 0, now).stay.map((f) => f.id), ["b", "c", "d", "a"]); // (days 0: never too old)
 });
 
 const upload = (meta: unknown, file: Uint8Array) => {
@@ -108,7 +108,7 @@ test("a moment's upload: its tick from the query or the header; too big, no tick
   deepStrictEqual(await readMoment(...momentPost(rec([HEADER])), 688), [415, "that isn't a scene moment (gzipped)"]);
   const big = new Uint8Array(MAX_MOMENT + 1);
   big.set(MOMENT);
-  deepStrictEqual(await readMoment(...momentPost(big), 688), [413, "a moment is 2 MB at most"]);
+  deepStrictEqual(await readMoment(...momentPost(big), 688), [413, "a moment is 3 MB at most"]);
 });
 
 test("the list: the featured fight marked, and named only to whoever can see it", () => {
@@ -120,6 +120,77 @@ test("the list: the featured fight marked, and named only to whoever can see it"
   deepStrictEqual(listed([a, b, c], false, "c").featured, "c");
   deepStrictEqual(listed([a, c], false, "gone").featured, null); // (taken down since)
   deepStrictEqual(listed([a, c], false, null).fights.some((f) => f.featured), false);
+});
+
+// Kept for good, and one upload carrying the fight and its moment (11/21/2026; fights.ts's header)
+test("kept for good: never trimmed by days or the most, nor counted against it; the featured one spared alike", () => {
+  const now = 100 * 86_400_000, day = 86_400_000;
+  const list = [{ ...fight("old", now - 90 * day), kept: true as const }, fight("b", now - 1000), fight("c", now - 2000),
+                { ...fight("k", now - 2500), kept: true as const }, fight("d", now - 3000), fight("feat", now - 50 * day), fight("e", now - 60 * day)];
+  const { stay, gone } = trimFights(list, 2, 30, now, "feat");
+  deepStrictEqual(stay.map((f) => f.id), ["b", "c", "k", "feat", "old"]); // (newest first; two counted: b and c)
+  deepStrictEqual(gone.map((f) => f.id), ["d", "e"]);
+  deepStrictEqual(trimFights(list, 2, 30, now).gone.map((f) => f.id), ["d", "feat", "e"]); // (nothing featured)
+  deepStrictEqual(trimFights(list, 0, 0, now).stay.map((f) => f.id), ["k", "old"]);
+});
+
+test("FIGHTS_KEPT: 12 unless said; and what kept= and featured= ask together", () => {
+  strictEqual(fightNumbers({ FIGHTS_KEPT: "3" }).kept, 3);
+  strictEqual(fightNumbers({ FIGHTS_KEPT: "0" }).kept, 0);
+  strictEqual(fightNumbers({ FIGHTS_KEPT: "x" }).kept, 12);
+  strictEqual(fightNumbers({ FIGHTS_KEPT: "-2" }).kept, 12);
+  strictEqual(keptAsked("1", null), true);
+  strictEqual(keptAsked(null, "1"), true); // (featuring keeps it)
+  strictEqual(keptAsked("0", null), false);
+  strictEqual(keptAsked("0", "0"), false);
+  strictEqual(keptAsked(null, "0"), null);
+  strictEqual(keptAsked(null, null), null);
+  strictEqual(Array.isArray(keptAsked("0", "1")), true);
+});
+
+// a moment whose own meta says its tick, as moment.js writes it; version 2 (looping) as well
+const momentFile = (tick: number, version = 1) => {
+  const meta = Buffer.from(JSON.stringify({ kind: "outside-moment", v: version, tick }));
+  const head = Buffer.alloc(12);
+  head.write("OMNT", 0, "latin1"); head[4] = version; head.writeUInt16LE(meta.length, 6); head.writeUInt32LE(0, 8);
+  return new Uint8Array(gzipSync(Buffer.concat([head, meta, Buffer.alloc(30)])));
+};
+const uploadWith = (meta: unknown, moment: Uint8Array | null, tick?: string) => {
+  const form = new FormData();
+  form.set("meta", JSON.stringify(meta));
+  form.set("fight", new File([rec([HEADER])], "fight.jsonl.gz"));
+  if (moment) form.set("moment", new File([moment], "moment.bin"));
+  if (tick !== undefined) form.set("moment_tick", tick);
+  return new Request("https://relay/fights/x", { method: "POST", body: form });
+};
+
+test("a moment's tick read from its own meta", async () => {
+  strictEqual(await momentTick(momentFile(412)), 412);
+  strictEqual(await momentTick(momentFile(7, 2)), 7);
+  strictEqual(await momentTick(MOMENT), null); // (its meta is "{}")
+  strictEqual(await momentTick(rec([HEADER])), null);
+});
+
+test("an upload carrying its moment: the tick from moment_tick, meta, or the file; a bad one refuses the whole", async () => {
+  const none = await readFight(uploadWith({ ticks: 500 }, null));
+  if (Array.isArray(none)) throw new Error(none[1]);
+  strictEqual(none.moment, null);
+  const part = await readFight(uploadWith({ ticks: 500 }, momentFile(400, 2), "450"));
+  if (Array.isArray(part)) throw new Error(part[1]);
+  deepStrictEqual([part.moment?.tick, part.moment?.file.length], [450, momentFile(400, 2).length]);
+  const byMeta = await readFight(uploadWith({ ticks: 500, moment_tick: 300 }, momentFile(400)));
+  if (Array.isArray(byMeta)) throw new Error(byMeta[1]);
+  strictEqual(byMeta.moment?.tick, 300);
+  const byFile = await readFight(uploadWith({ ticks: 500 }, momentFile(400)));
+  if (Array.isArray(byFile)) throw new Error(byFile[1]);
+  strictEqual(byFile.moment?.tick, 400);
+  deepStrictEqual(await readFight(uploadWith({ ticks: 500 }, MOMENT)), [400, "which tick is the moment? (moment_tick)"]);
+  deepStrictEqual(await readFight(uploadWith({ ticks: 500 }, momentFile(400), "soon")), [400, "which tick is the moment? (moment_tick)"]);
+  deepStrictEqual(await readFight(uploadWith({ ticks: 500 }, momentFile(900))), [400, "that tick is past the fight's end"]);
+  deepStrictEqual(await readFight(uploadWith({ ticks: 500 }, rec([HEADER]), "5")), [415, "that isn't a scene moment (gzipped)"]);
+  const big = new Uint8Array(MAX_MOMENT + 1);
+  big.set(MOMENT);
+  deepStrictEqual(await readFight(uploadWith({ ticks: 500 }, big, "5")), [413, "a moment is 3 MB at most"]);
 });
 
 for (const [name, f] of tests) {

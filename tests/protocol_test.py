@@ -208,6 +208,11 @@ class UpstreamHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+# (kept for good, 11/21/2026: a page's fights at most and its kept ones at most, small so a test reaches both)
+FIGHTS_MOST = 4
+FIGHTS_KEPT = 3
+
+
 def setUpModule():
     global RELAY, PROC, STATE, UPSTREAM
     if MODE.startswith("ws"):
@@ -225,7 +230,9 @@ def setUpModule():
          "--var", "WHERE_FRESH_SECONDS:%g" % WHERE_FRESH_S, "--var", "PRESENCE_FRESH_SECONDS:%g" % PRESENCE_FRESH_S,
          "--var", "ALMANAC_UPSTREAM:" + UPSTREAM.base, "--var", "TEST_FORGET:1", "--test-scheduled",
          "--var", "LOOKUP_UPSTREAM:" + UPSTREAM.base, "--var", "WITNESS_WAIT_S:1", "--var", "WITNESS_LOOK_S:1", "--var", "NOTES_PAGE:4",
-         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "FIGHTS:on", "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS],
+         "--var", "LISTING_CHECK_SECONDS:%g" % LISTING_CHECK_S, "--var", "FIGHTS:on", "--var", "RECORD_CHUNKS:%d" % RECORD_CHUNKS,
+         "--var", "FIGHTS_MOST:%d" % FIGHTS_MOST, "--var", "FIGHTS_KEPT:%d" % FIGHTS_KEPT,
+         "--var", "FIGHTS_PUBLIC:0"],   # (wrangler.jsonc has "1" since 11/21/2026; these tests start from kept to themselves)
         cwd=os.path.join(ROOT, "relay"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         shell=sys.platform == "win32", start_new_session=sys.platform != "win32")
     up = wait_up(90)
@@ -1614,11 +1621,16 @@ def fetch(method, path, headers=None):
         return e.code, e.headers, e.read()
 
 
-def fight_upload(meta, fight):
+def fight_upload(meta, fight, moment=None, moment_tick=None):
     b = "fightboundary"
     out = b""
-    for name, kind, data in (("meta", "application/json", json.dumps(meta).encode()), ("fight", "application/gzip", fight)):
-        fn = '' if name == "meta" else '; filename="fight.jsonl.gz"'
+    parts = [("meta", "application/json", json.dumps(meta).encode()), ("fight", "application/gzip", fight)]
+    if moment is not None:   # (the fight and its moment in one upload, 11/21/2026)
+        parts.append(("moment", "application/octet-stream", moment))
+    if moment_tick is not None:
+        parts.append(("moment_tick", "text/plain", str(moment_tick).encode()))
+    for name, kind, data in parts:
+        fn = {"fight": '; filename="fight.jsonl.gz"', "moment": '; filename="moment.bin"'}.get(name, '')
         out += CRLF.join(["--" + b, 'Content-Disposition: form-data; name="%s"%s' % (name, fn), "Content-Type: " + kind, "", ""]).encode()
         out += data + CRLF.encode()
     return out + ("--%s--" % b + CRLF).encode(), "multipart/form-data; boundary=" + b
@@ -1789,6 +1801,81 @@ class Moments(Base):
         self.send("POST", "/fights/%s/%s%s&featured=1" % (self.ch, a, q))
         self.send("DELETE", "/fights/%s/%s%s" % (self.ch, a, q))
         self.assertEqual(self.listed(key=self.key)[1]["featured"], None)
+
+
+def moment_with_tick(tick, version=1):
+    """A scene moment whose own meta says its tick, as moment.js writes it (version 2: a looping one)."""
+    meta = json.dumps({"kind": "outside-moment", "v": version, "tick": tick}).encode()
+    return gzip.compress(b"OMNT" + bytes([version, 0]) + len(meta).to_bytes(2, "little") + bytes(4) + meta + bytes(30))
+
+
+class KeptFights(Base):
+    """Kept for good and one upload with its moment (docs/protocol.md, "Recorded fights", 11/21/2026): a kept fight never
+    trimmed by FIGHTS_MOST nor counted against it, at most FIGHTS_KEPT a page (409 past it), featuring keeps it, letting the
+    featured one go unfeatures it; the plugin's automatic send carrying the fight's moment, refused whole if it's bad."""
+
+    send, up, listed = Fights.send, Fights.up, Fights.listed
+
+    def mark(self, fid, query):
+        st, _, out = self.send("POST", "/fights/%s/%s?key=%s&%s" % (self.ch, fid, urllib.parse.quote(self.key), query))
+        return st, (json.loads(out) if out else None)
+
+    def ids(self):
+        return [f["id"] for f in self.listed(key=self.key)[1]["fights"]]
+
+    async def test_kept_ones_stay_past_the_most_and_are_capped(self):
+        first = [self.up(meta={"foe": "Vardorvis %d" % i})[1]["fight"]["id"] for i in range(3)]
+        st, got = self.mark(first[0], "kept=1")
+        self.assertEqual((st, got["kept"], got["featured"]), (200, True, False))
+        self.assertTrue(next(f for f in self.listed(key=self.key)[1]["fights"] if f["id"] == first[0])["kept"])
+        self.assertNotIn("kept", next(f for f in self.listed(key=self.key)[1]["fights"] if f["id"] == first[1]))
+        # (FIGHTS_MOST more put up: the oldest unkept go, the kept one stays and isn't counted)
+        later = [self.up(meta={"foe": "Duke %d" % i})[1]["fight"]["id"] for i in range(FIGHTS_MOST)]
+        ids = self.ids()
+        self.assertIn(first[0], ids)
+        self.assertNotIn(first[1], ids)
+        self.assertEqual(len(ids), FIGHTS_MOST + 1)
+        # (featuring keeps it; then the cap: FIGHTS_KEPT kept, one more refused with its reason)
+        st, got = self.mark(later[0], "featured=1")
+        self.assertEqual((st, got["kept"], got["featured"]), (200, True, True))
+        self.assertEqual(self.mark(later[1], "kept=1&public=0")[1]["public"], False)
+        st, got = self.mark(later[2], "kept=1")
+        self.assertEqual((st, got["most"]), (409, FIGHTS_KEPT))
+        self.assertIn("at most", got["error"])
+        st, got = self.mark(later[2], "featured=1")   # (featuring one past the cap: refused alike, the old one still featured)
+        self.assertEqual(st, 409)
+        self.assertEqual(self.listed(key=self.key)[1]["featured"], later[0])
+        self.assertEqual(self.mark(first[0], "kept=1")[0], 200)   # (already kept: fine)
+        # (kept=0 with featured=1 can't be; letting the featured one go unfeatures it)
+        self.assertEqual(self.mark(later[0], "kept=0&featured=1")[0], 400)
+        self.assertEqual(self.mark(later[0], "kept=2")[0], 400)
+        st, got = self.mark(later[0], "kept=0")
+        self.assertEqual((st, got["kept"], got["featured"]), (200, False, False))
+        self.assertEqual(self.listed(key=self.key)[1]["featured"], None)
+        self.assertEqual(self.mark(later[2], "kept=1")[0], 200)   # (room again)
+        # (a kept one taken down goes all the same)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, first[0], urllib.parse.quote(self.key)))[0], 204)
+        self.assertNotIn(first[0], self.ids())
+
+    async def test_one_upload_carries_the_fight_and_its_moment(self):
+        looping = moment_with_tick(380, version=2)
+        body, ct = fight_upload({"foe": "Vardorvis", "ticks": 400, "public": True}, FIGHT, moment=looping)
+        st, _, out = self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})
+        got = json.loads(out)
+        self.assertEqual((st, got["fight"]["moment"]["tick"], got["fight"]["moment"]["size"]), (201, 380, len(looping)))
+        fid = got["fight"]["id"]
+        st, _, out = self.send("GET", "/fights/%s/%s/moment.bin" % (self.ch, fid))
+        self.assertEqual((st, out), (200, looping))
+        # (the tick as its own part)
+        body, ct = fight_upload({"foe": "Duke", "ticks": 400}, FIGHT, moment=MOMENT, moment_tick=12)
+        st, _, out = self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})
+        self.assertEqual((st, json.loads(out)["fight"]["moment"]["tick"]), (201, 12))
+        # (refused whole: not a moment, no tick to be found, past the end; nothing more put up)
+        before = len(self.ids())
+        for moment, tick, want in ((FIGHT, 5, 415), (MOMENT, None, 400), (moment_with_tick(999), None, 400)):
+            body, ct = fight_upload({"foe": "Duke", "ticks": 400}, FIGHT, moment=moment, moment_tick=tick)
+            self.assertEqual(self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})[0], want)
+        self.assertEqual(len(self.ids()), before)
 
 
 class Clips(Base):

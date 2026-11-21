@@ -8,10 +8,12 @@
 //   GET    /fights/<channel>?code=<watch code>       {"fights": [Fight, ...] newest first, "public_default", "most", "days"}
 //                                                    (the owner's, with Authorization: Bearer <tend token> or ?key=, also
 //                                                    lists the fights they've kept to themselves)
-//   POST   /fights/<channel>?key= | Bearer <tend>    multipart: "meta" (JSON), "fight" (the recording, gzipped JSON lines)
+//   POST   /fights/<channel>?key= | Bearer <tend>    multipart: "meta" (JSON), "fight" (the recording, gzipped JSON lines),
+//                                                    and optionally "moment" (its scene moment, below) with "moment_tick"
 //   GET    /fights/<channel>/<id>.jsonl.gz           the recording (a fight kept to themselves: only with the owner's)
 //   POST   /fights/<channel>/<id>?public=1|0         shown to anyone, or kept to themselves (the owner's)
 //          /fights/<channel>/<id>?featured=1|0       the fight the page features (its stage), one at a time (the owner's)
+//          /fights/<channel>/<id>?kept=1|0           kept for good or not (the owner's; any of the three in one request)
 //   DELETE /fights/<channel>/<id>                    taken down (the owner's)
 //   POST   /fights/<channel>/<id>/moment?tick=<t>    the fight's scene moment (the owner's; the body the file, at most
 //                                                    MAX_MOMENT; the tick also as the X-Moment-Tick header), one a fight
@@ -23,13 +25,30 @@
 // "OMNT" gzipped), so the profile can show it with no game files. The relay checks only that it's gzip and starts "OMNT";
 // it holds nothing but the scene's colours and places (never a name: the foes in its meta are NPCs).
 //
+// Kept for good (11/21/2026; ghillie's claude/outstation.md, "Encounters, round two": every encounter goes up by itself,
+// so the player chooses a few to keep): a kept fight is never trimmed by FIGHTS_DAYS nor counted against FIGHTS_MOST; at
+// most FIGHTS_KEPT (12) a page, keeping one past that refused (409) with the reason. Featuring a fight keeps it (the
+// featured one is always kept: past the cap, featuring one not yet kept is refused alike); letting the featured one go
+// (?kept=0) unfeatures it too, rather than refusing (the side tab's one press does what it says; the answer's
+// "featured": false says so). A featured fight from before kept existed is spared by the trim all the same.
+//
+// One upload, the fight and its moment (11/21/2026): the Outside plugin sends each encounter by itself as it finishes,
+// with the moment it captured from the client's own scene, so the multipart upload may carry a "moment" part (the same
+// file as the moment route's, any version 1 to MOMENT_VERSION_MOST: looping moments are format 2) and its tick as a
+// "moment_tick" part (or meta's moment_tick; else the tick in the moment's own meta). A bad moment refuses the whole
+// upload, so nothing is half up. The hourly limits (FIGHTS_AN_HOUR, MOMENTS_AN_HOUR) were raised from 20 and 30 to 60
+// for it: a raid splits into parts every 5,000 ticks (50 minutes, so two or three an hour), but a busy hour of short
+// bosses (a 1-minute Zulrah or Vorkath, a 40-second Hunllef) can pass 40; 60 is one a minute, still a cap on a key run
+// away. A 429 says when to try again (Retry-After), so the plugin can wait and send it then.
+//
 // The owner is whoever holds the page's key (the Outside plugin, the outstation) or a tending token the plugin handed in
 // with it (POST /tend/<channel>, channel.ts: the link the plugin opens to the player's own page, outside.wiki/<name>#tend=).
 //
 // Switches, all Jace's (wrangler.jsonc's vars; his calls in ghillie's lab): FIGHTS "on" or anything else for off (every
 // route then 404s, and the page shows no section); FIGHTS_PUBLIC "1" if a new fight is shown to anyone unless the player
 // says otherwise, else kept to themselves until they show it; FIGHTS_MOST a page's fights at most (the oldest going
-// first); FIGHTS_DAYS how long one is kept (0: until the player takes it down or the page goes).
+// first); FIGHTS_DAYS how long one is kept (0: until the player takes it down or the page goes); FIGHTS_KEPT how many
+// may be kept for good (12).
 //
 // What the relay checks: the file is gzip, its first line Encounter Recorder's header (format 1 to FORMAT_MOST), at most
 // MAX_FIGHT. It can't unpack a whole file in a request's few milliseconds, so the stripping is the page's to do; the
@@ -38,10 +57,11 @@
 export const MAX_FIGHT = 8 * 1024 * 1024;
 export const FORMAT_MOST = 99;
 export const FIGHT_ID = /^[A-Za-z0-9_-]{22}$/;
-export const FIGHTS_AN_HOUR = 20;
-export const MAX_MOMENT = 2 * 1024 * 1024;
+export const FIGHTS_AN_HOUR = 60;
+export const MAX_MOMENT = 3 * 1024 * 1024; // (3 MB since 11/21/2026: looping moments carry each frame's moving dots)
 export const MOMENT_VERSION_MOST = 9;
-export const MOMENTS_AN_HOUR = 30;
+export const MOMENTS_AN_HOUR = 60;
+const MOMENT_TOO_BIG = "a moment is 3 MB at most";
 
 export interface Fight {
   id: string;
@@ -56,6 +76,7 @@ export interface Fight {
   public: boolean; // shown to anyone, or kept to themselves
   up: number; // when it was put up (unix ms)
   moment?: { tick: number; size: number; at: number }; // its scene moment, if its owner kept one (at: when, unix ms)
+  kept?: true; // kept for good: never trimmed by days or the most (11/21/2026)
   featured?: true; // (in a list only: the one the page features)
 }
 
@@ -84,14 +105,23 @@ export function fightsOn(env: { FIGHTS?: string }): boolean {
   return (env.FIGHTS || "").trim().toLowerCase() === "on";
 }
 
-export function fightNumbers(env: { FIGHTS_PUBLIC?: string; FIGHTS_MOST?: string; FIGHTS_DAYS?: string }) {
+export function fightNumbers(env: { FIGHTS_PUBLIC?: string; FIGHTS_MOST?: string; FIGHTS_DAYS?: string; FIGHTS_KEPT?: string }) {
   const most = parseInt(env.FIGHTS_MOST || "");
   const days = parseFloat(env.FIGHTS_DAYS || "");
+  const kept = parseInt(env.FIGHTS_KEPT || "");
   return {
     public_default: (env.FIGHTS_PUBLIC || "").trim() === "1",
     most: most > 0 ? Math.min(most, 500) : 20,
     days: isFinite(days) && days >= 0 ? days : 30,
+    kept: kept >= 0 && /^\s*\d+\s*$/.test(env.FIGHTS_KEPT || "") ? Math.min(kept, 500) : 12,
   };
+}
+
+/** The `kept=` asked for with `featured=` (featuring keeps it): true, false or unchanged (null); or why not. */
+export function keptAsked(kept: string | null, featured: string | null): boolean | null | [number, string] {
+  if (kept === "0" && featured === "1") return [400, "a featured fight is always kept: kept=0 with featured=1 can't be"];
+  if (kept === "1" || featured === "1") return true;
+  return kept === "0" ? false : null;
 }
 
 /** The first line of a gzipped file, unpacked, or null (not gzip, or no line in its first 64 KB). */
@@ -167,15 +197,32 @@ export async function bodyAtMost(request: Request, most: number): Promise<Uint8A
  *  unknown. */
 export async function readMoment(request: Request, q: URLSearchParams, ticks: number): Promise<{ file: Uint8Array; tick: number } | [number, string]> {
   const n = parseInt(request.headers.get("content-length") || "0") || 0;
-  if (n > MAX_MOMENT) return [413, "a moment is 2 MB at most"];
+  if (n > MAX_MOMENT) return [413, MOMENT_TOO_BIG];
   const t = q.get("tick") ?? request.headers.get("x-moment-tick") ?? "";
   if (!/^\d{1,7}$/.test(t.trim())) return [400, "which tick? (?tick=)"];
   const tick = parseInt(t.trim());
   if (ticks > 0 && tick > ticks + 1) return [400, "that tick is past the fight's end"];
   const file = await bodyAtMost(request, MAX_MOMENT);
-  if (!file) return [413, "a moment is 2 MB at most"];
+  if (!file) return [413, MOMENT_TOO_BIG];
   if (!(await isMoment(file))) return [415, "that isn't a scene moment (gzipped)"];
   return { file, tick };
+}
+
+/** The tick in a moment's own meta (the file's "OMNT", version, flags, the meta's length as a u16 at 6, the dots' count,
+ *  then the meta's JSON at 12: ghillie's replay/3d/moment.js), or null if it can't be read. */
+export async function momentTick(file: Uint8Array): Promise<number | null> {
+  const head = await firstBytes(file, 12);
+  if (!head) return null;
+  const len = head[6] | (head[7] << 8);
+  if (!len || len > 65535) return null;
+  const all = await firstBytes(file, 12 + len);
+  if (!all) return null;
+  try {
+    const t = (JSON.parse(new TextDecoder().decode(all.subarray(12))) as Record<string, unknown>).tick;
+    return typeof t === "number" && Number.isInteger(t) && t >= 0 && t < 10_000_000 ? t : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether a line is Encounter Recorder's header: {"t": 0, "e": "header", "format": n, ...}. */
@@ -190,9 +237,9 @@ export function isHeader(line: string | null): boolean {
 }
 
 /** An upload's parts, checked: the fight's entry (without its id, public or up) and its file, or why not. */
-export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "id" | "public" | "up">; file: Uint8Array; public: boolean | null } | [number, string]> {
+export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "id" | "public" | "up">; file: Uint8Array; public: boolean | null; moment: { file: Uint8Array; tick: number } | null } | [number, string]> {
   const n = parseInt(request.headers.get("content-length") || "0") || 0;
-  if (n > MAX_FIGHT + 64 * 1024) return [413, "a recording is 8 MB at most (gzipped)"];
+  if (n > MAX_FIGHT + MAX_MOMENT + 64 * 1024) return [413, "a recording is 8 MB at most (gzipped)"];
   let form: FormData;
   try { form = await request.formData(); } catch { return [400, "an upload is multipart: meta and fight"]; }
   const f = form.get("fight"), metaS = form.get("meta");
@@ -210,17 +257,37 @@ export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "
     at: num(m.at, 1_577_836_800_000, now + 60_000), ticks: num(m.ticks, 0, 1_000_000), died: m.died === true,
     taken: num(m.taken, 0, 100_000_000), dealt: num(m.dealt, 0, 100_000_000), size: file.length,
   };
-  return { meta, file, public: typeof m.public === "boolean" ? m.public : null };
+  // (its moment, if it carries one: checked as the moment route checks it, and the whole upload refused if it's bad)
+  let moment: { file: Uint8Array; tick: number } | null = null;
+  const mf = form.get("moment");
+  if (mf !== null) {
+    if (!(mf instanceof File)) return [400, "the moment is a file part"];
+    if (mf.size > MAX_MOMENT) return [413, MOMENT_TOO_BIG];
+    const mfile = new Uint8Array(await mf.arrayBuffer());
+    if (!(await isMoment(mfile))) return [415, "that isn't a scene moment (gzipped)"];
+    const said = form.get("moment_tick") ?? (m.moment_tick !== undefined ? String(m.moment_tick) : null);
+    let tick: number | null;
+    if (said !== null) {
+      if (typeof said !== "string" || !/^\d{1,7}$/.test(said.trim())) return [400, "which tick is the moment? (moment_tick)"];
+      tick = parseInt(said.trim());
+    } else tick = await momentTick(mfile);
+    if (tick === null) return [400, "which tick is the moment? (moment_tick)"];
+    if (meta.ticks > 0 && tick > meta.ticks + 1) return [400, "that tick is past the fight's end"];
+    moment = { file: mfile, tick };
+  }
+  return { meta, file, public: typeof m.public === "boolean" ? m.public : null, moment };
 }
 
 /** The list without what's too old or past the most, and what goes (whose files go too); newest first. days 0: none
- *  too old. */
-export function trimFights(list: Fight[], most: number, days: number, now = Date.now()): { kept: Fight[]; gone: Fight[] } {
+ *  too old. A fight kept for good, or the featured one, always stays and isn't counted against the most. */
+export function trimFights(list: Fight[], most: number, days: number, now = Date.now(), featured: string | null = null): { stay: Fight[]; gone: Fight[] } {
   const sorted = [...list].sort((a, b) => b.up - a.up);
-  const kept: Fight[] = [], gone: Fight[] = [];
+  const stay: Fight[] = [], gone: Fight[] = [];
+  let counted = 0;
   for (const f of sorted) {
-    if (kept.length < most && (days <= 0 || now - f.up <= days * 86_400_000)) kept.push(f);
+    if (f.kept || f.id === featured) stay.push(f);
+    else if (counted < most && (days <= 0 || now - f.up <= days * 86_400_000)) { stay.push(f); counted++; }
     else gone.push(f);
   }
-  return { kept, gone };
+  return { stay, gone };
 }

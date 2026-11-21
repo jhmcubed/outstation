@@ -775,22 +775,28 @@ page carries one, so a player with only the plugin can put fights up from their 
     GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "owner": bool, "public_default": bool,
                                                 "most": n, "days": n}: the ones shown to anyone; the owner's, all of them
                                                 (403 without a friends-only page's code, unless the owner)
-    POST   /fights/<channel>                    the owner's: multipart/form-data: meta (JSON), fight (the recording, gzipped)
-                                                201 {"fight": Fight}; 403 not the owner; 413 over 8 MB; 415 not gzip, or its
-                                                first line isn't Encounter Recorder's header; 429 over 20 an hour
+    POST   /fights/<channel>                    the owner's: multipart/form-data: meta (JSON), fight (the recording, gzipped),
+                                                and optionally moment (its scene moment) and moment_tick (below)
+                                                201 {"fight": Fight}; 400 a moment with no tick to be found, or one past the
+                                                fight's ticks; 403 not the owner; 413 over 8 MB (a moment over 3 MB); 415 not
+                                                gzip, or its first line isn't Encounter Recorder's header, or the moment
+                                                isn't one; 429 over 60 an hour (with Retry-After: the seconds until one of
+                                                the hour's leaves it, also as "retry_after")
     GET    /fights/<channel>/<id>.jsonl.gz      the recording (404 for one kept to themselves, unless the owner); a shown
                                                 one cached 5 minutes, any other never
-    POST   /fights/<channel>/<id>?public=1|0&featured=1|0
-                                                the owner's: shown to anyone or kept to themselves, and/or the page's
-                                                featured fight or not (one at a time: a new one takes the old one's place)
-                                                (200 {"id", "public", "featured": bool}; 400 neither asked)
+    POST   /fights/<channel>/<id>?public=1|0&featured=1|0&kept=1|0
+                                                the owner's, any of the three: shown to anyone or kept to themselves; the
+                                                page's featured fight or not (one at a time: a new one takes the old one's
+                                                place); kept for good or not (below). 200 {"id", "public", "featured":
+                                                bool, "kept": bool}; 400 none asked, or kept=0 with featured=1; 409 keeping
+                                                one past FIGHTS_KEPT ({"error", "kept", "most"}: let one go first)
     DELETE /fights/<channel>/<id>               the owner's: taken down (204), its moment with it
     POST   /fights/<channel>/<id>/moment?tick=<t>
                                                 the owner's: the fight's scene moment, the body the file
                                                 (application/octet-stream; the tick also as `X-Moment-Tick`); one a fight, a
                                                 new one in the old one's place. 201 {"id", "moment": {"tick", "size", "at"}};
                                                 400 no tick or one past the fight's `ticks`; 403 not the owner; 404 no such
-                                                fight; 413 over 2 MB; 415 not a moment; 429 over 30 an hour
+                                                fight; 413 over 3 MB; 415 not a moment; 429 over 60 an hour
     GET    /fights/<channel>/<id>/moment.bin    the moment, to whoever may see the fight (as its recording: 404 for one
                                                 kept to themselves unless the owner; cached alike)
     DELETE /fights/<channel>/<id>/moment        the owner's: the moment taken away (204)
@@ -798,9 +804,28 @@ page carries one, so a player with only the plugin can put fights up from their 
 meta: `{"foe", "label", "at": <the recording's startedMs>, "ticks", "died": bool, "taken", "dealt", "public"?: bool}`,
 each cleaned and bounded; without `public` a fight takes the relay's `FIGHTS_PUBLIC` ("0": kept to themselves). A Fight
 is the same with its `id`, `size`, `public` and `up` (when it was put up, ms), and `moment: {"tick", "size", "at"}` once its
-owner has kept one. The list also says which fight the page features: `"featured": <id>` (null when there's none, or it's
+owner has kept one, and `"kept": true` once it's kept for good. The list also says which fight the page features: `"featured": <id>` (null when there's none, or it's
 kept to themselves and the viewer isn't the owner), that entry marked `"featured": true`. At most `FIGHTS_MOST` (20) a page, the
-oldest going first, each kept `FIGHTS_DAYS` (30; 0 for good). The relay checks only the file's first line: other
+oldest going first, each kept `FIGHTS_DAYS` (30; 0 for good).
+
+**Kept for good (11/21/2026).** Once every encounter goes up by itself, the player keeps the few they want: a fight
+with `kept` is never trimmed by `FIGHTS_DAYS` and isn't counted against `FIGHTS_MOST`, at most `FIGHTS_KEPT` (12) a
+page; keeping one more answers 409 with its reason (a lowered `FIGHTS_KEPT` lets go of none already kept, it only
+refuses more). Featuring a fight keeps it (past the cap, featuring one not yet kept is refused alike); `kept=0` on the
+featured fight unfeatures it too (the answer says `"featured": false`), rather than being refused. A featured fight from
+before `kept` existed is spared by the trim all the same. Taking a kept fight down (`DELETE`) takes it down.
+
+**One upload with its moment (11/21/2026), for the plugin's automatic sends.** The upload may carry a `moment` part (a
+file part: the same file as the moment route's, any version 1 to 9: the looping moments are version 2) and its tick as a
+`moment_tick` part (or `moment_tick` in meta; without either, the `tick` in the moment's own meta, read from the file's
+header). The moment is checked as the moment route checks it, and a bad one refuses the whole upload, so nothing is
+half up; it isn't counted against the moments' hourly limit (it came with its fight). The separate moment route stays as
+it is (the page's own capture, for fights from Encounter Recorder's files). The hourly limits are 60 fights and 60
+moments a page (raised from 20 and 30 for the automatic sends: a raid splits into parts every 5,000 ticks, two or three
+an hour, but a busy hour of short bosses can pass 40; one a minute still caps a key run away), each kept in the
+channel's memory (a sleep forgets it, which only loosens it).
+
+The relay checks only the file's first line: other
 players' names, other people's chat, exact XP and mouse presses are taken out by the page before it sends
 (ghillie's strip.js). They go with the page when it's taken down (`DELETE /channels/<channel>`).
 
