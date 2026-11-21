@@ -408,12 +408,12 @@ final class Encounters
 	private String clickedKind, clickedName, clickedOption;
 	/** the inventory as it was, item by item (id to count), for a corpse's loot (what it gained after the click) */
 	private Map<Integer, Long> invBefore = new HashMap<>();
-	/** the loot's window whose picture is to be taken, its interface (-1: the inventory), client cycles to go */
-	private EncounterScene.Window pictureOf;
-	private int pictureGroup, pictureIn;
-	/** the pet's chat line whose picture is to be taken, the cycles to go and the tries left (round four) */
-	private EncounterScene.Window chatShot;
-	private int chatShotIn, chatShotTries;
+	/** the windows being taken as the client draws them (their `window` lines and the moment's picture; round five),
+	 *  their pictures as they come back from the frame, and those written and still open (for their `window_close`) */
+	private final List<Shot> shots = new ArrayList<>();
+	private final java.util.concurrent.ConcurrentLinkedQueue<Shot> shotsTaken = new java.util.concurrent.ConcurrentLinkedQueue<>();
+	private final List<Shot> shown = new ArrayList<>();
+	private int shotNo;
 	/** a boss's corpse waiting to be looted (its name; the kill's tick), or null */
 	private String corpseOf;
 	private int corpseSince;
@@ -570,6 +570,10 @@ final class Encounters
 			petChat = null;
 			destroyIndex = -1;
 			destroyTick = -1;
+			shots.clear();
+			shotsTaken.clear();
+			shown.clear();
+			shotNo = 0;
 		}
 		recording = new EncounterFiles.Writer(gson, () -> host.folder().joinSegment("encounters"), name, LocalDateTime.now());
 		scene = keep != null ? keep : new EncounterScene(client, host::itemLabel, host.otherPlayers());
@@ -1067,8 +1071,13 @@ final class Encounters
 			else if (whole() > waitingUntil)
 			{
 				waitingFor = null;
+				// (its window was shown all the same, empty as it was drawn: its `window` line; round five)
+				shoot("chest", w.window, null, new ArrayList<>(), -1, false, null);
 			}
 		}
+
+		// (a chat line's or the inventory's picture let go by now; round five)
+		shotsExpire();
 
 		// (a pet's line: the pet looked for beside them, as the follower that wasn't out before; round four)
 		if (petWaiting)
@@ -1221,51 +1230,9 @@ final class Encounters
 		{
 			scene.cycle();
 		}
-		// (the loot's window as the player sees it: its title read again now its scripts have run, its box, the next
-		// frame cropped to it; round three)
-		if (pictureOf != null && --pictureIn <= 0)
-		{
-			EncounterScene.Window w = pictureOf;
-			pictureOf = null;
-			if (w.title == null && pictureGroup >= 0)
-			{
-				w.title = windowTitle(pictureGroup);
-			}
-			java.awt.Rectangle bounds = pictureGroup >= 0 ? windowBounds(pictureGroup) : inventoryBounds();
-			if (bounds != null && bounds.width > 0 && bounds.height > 0)
-			{
-				host.picture(bounds, png ->
-				{
-					w.pw = bounds.width;
-					w.ph = bounds.height;
-					w.picture = png;
-				});
-			}
-		}
-		// (the pet's chat line as the chatbox drew it: once the line's there, the next frame cropped to its row; round four)
-		if (chatShot != null && --chatShotIn <= 0)
-		{
-			EncounterScene.Window w = chatShot;
-			java.awt.Rectangle bounds = chatLineBounds(w.title);
-			if (bounds != null)
-			{
-				chatShot = null;
-				host.picture(bounds, png ->
-				{
-					w.pw = bounds.width;
-					w.ph = bounds.height;
-					w.picture = png;
-				});
-			}
-			else if (--chatShotTries <= 0)
-			{
-				chatShot = null;
-			}
-			else
-			{
-				chatShotIn = 2;
-			}
-		}
+		// (the windows as the player sees them, each taken from the next frame the client draws once it's laid out: the
+		// loot's window for the moment as in round three, and every reward-type window for its `window` line; round five)
+		shotsCycle();
 		// Where the client is walking you, each time it changes: the tile it puts the red flag on (his dest line,
 		// without the click it came from: clicks aren't recorded here)
 		LocalPoint destination = client.getLocalDestinationLocation();
@@ -2217,10 +2184,9 @@ final class Encounters
 		{
 			petChat = new EncounterScene.Window("chat", null, -1, text, new ArrayList<>());
 			scene.pet(whole(), kind, petChat);
-			chatShot = petChat;
-			chatShotIn = 3;
-			chatShotTries = 12;
 		}
+		// (its row in the chatbox as drawn: the `window` line and the moment's second picture; round five)
+		shoot("chat", -1, text, new ArrayList<>(), -1, false, petChat);
 		// (an ending already due waits for it: petHolds)
 	}
 
@@ -2538,9 +2504,16 @@ final class Encounters
 	{
 		for (Chest c : CHESTS)
 		{
-			if (c.window != group || c.inv == InventoryID.DOM_LOOTPILE)
+			if (c.window == group && c.inv == InventoryID.DOM_LOOTPILE)
 			{
-				// (Doom's level-end window shows the pile before it's claimed: the claim is its loot, below)
+				// (Doom's level-end window shows the pile before it's claimed: the claim is its loot, below; but the window
+				// is the level's offer, taken each time it opens; round five, Jace: "I'd like if the replay showed loot too
+				// for each level")
+				shoot("burrow", c.window, null, null, c.inv, false, null);
+				continue;
+			}
+			if (c.window != group)
+			{
 				continue;
 			}
 			if (c.inv == InventoryID.TOB_CHESTS && !inTobChestRegion())
@@ -2548,11 +2521,16 @@ final class Encounters
 				continue;
 			}
 			List<int[]> got = itemsOf(client.getItemContainer(c.inv));
-			if (!got.isEmpty())
+			if (looted.contains(c.source))
+			{
+				// (opened again: its loot line was written, but the window's shown again; round five)
+				shoot("chest", c.window, null, null, c.inv, false, null);
+			}
+			else if (!got.isEmpty())
 			{
 				loot(c.source, got, c.window, false);
 			}
-			else if (!looted.contains(c.source))
+			else
 			{
 				waitingFor = c;
 				waitingUntil = whole() + 5;
@@ -2593,6 +2571,8 @@ final class Encounters
 			return;
 		}
 		String option = Text.removeTags(event.getMenuOption() == null ? "" : event.getMenuOption());
+		// (the player's next action lets a chat line's or the inventory's picture go; round five)
+		shotsActed();
 		// (a delve: the burrow's Leave, after the claim, ends it a few ticks on (Jace, 11/21/2026: "it should only end when
 		// the player dies or after they claim their loot and press the leave button on the burrow"); the Mokha Loot
 		// Tracker reads the same option; round four)
@@ -2879,19 +2859,22 @@ final class Encounters
 		}
 		line.add("items", list);
 		// (the scene moment: the chest's opening, the window as the player saw it laid over)
+		EncounterScene.Window w = null;
 		if (scene != null)
 		{
-			EncounterScene.Window w = new EncounterScene.Window(kind, source, window,
+			w = new EncounterScene.Window(kind, source, window,
 				window >= 0 ? windowTitle(window) : "destroyed".equals(kind) ? clickedOption : null, scened);
 			scene.loot(whole(), w, at, plane);
-			// (its picture a few client cycles on, once the window's laid out and drawn with its items; none for a corpse
-			// destroyed)
-			if (!"destroyed".equals(kind))
-			{
-				pictureOf = w;
-				pictureGroup = corpse ? -1 : window;
-				pictureIn = 3;
-			}
+		}
+		// (its picture a few client cycles on, once the window's laid out and drawn with its items, for its `window` line
+		// and the moment both. Doom's claim is a picture of the burrow's window again. None for a corpse: Jace, 11/21/2026,
+		// round five, of the inventory's crop popping in and out, "I just want to make sure the loot and inventory windows
+		// look clean and true to the game": the replay shows the inventory itself from its `items` lines, and the moment
+		// the items gained as a plain panel in the game's colours)
+		if (!corpse)
+		{
+			boolean burrow = window == InterfaceID.DOM_END_LEVEL_UI;
+			shoot(burrow ? "burrow" : "chest", window, window >= 0 ? windowTitle(window) : null, items, -1, burrow, w);
 		}
 		// (a boss outside a raid: ends a few ticks after its loot; a raid goes on to its treasure room's door)
 		boolean raid = raidArea() != null;
@@ -2910,6 +2893,337 @@ final class Encounters
 			if (endWhy == null)
 			{
 				endWhy = "looted";
+			}
+		}
+	}
+
+	// ---- the windows as they appear (11/21/2026, round five; ghillie's claude/outstation.md, "Encounters, round five";
+	// Jace: "I'd like if the replay showed loot too for each level, just as the replay shows the loot for the chest at the
+	// end of the raid"). Each reward-type window, as the player's client drew it, is a `window` line the replay lays over
+	// its view at that tick: a raid's or a boss's reward chest (every time it opens), Doom's burrow at every level and its
+	// claim, the pet's chat line (a corpse's loot is the inventory's own `items` lines: no crop of it, Jace's ask). The picture is a PNG of the window's box
+	// on the canvas only (RuneLite's DrawManager, the next frame once it's laid out, as round three's), base64 in the line;
+	// the same capture is the moment's picture. A `window_close` line, naming it by its number, when it goes: its interface
+	// closed, a newer picture of the same window, or (a chat line) the player's next action, CLOSE_LEAST to
+	// CLOSE_MOST ticks on. Nothing but what the player's own screen showed: no clicks, no layout of anything else.
+
+	/** a chat line's or the inventory's picture: kept at least this many ticks, gone at the next action after, and by the
+	 *  most whatever comes */
+	static final int CLOSE_LEAST = 2, CLOSE_MOST = 10;
+	/** client cycles after it's asked for before a picture that hasn't come is given up (its line goes without one) */
+	static final int SHOT_WAIT = 50;
+
+	/** A window being taken, and once written, open till its `window_close`. */
+	static final class Shot
+	{
+		final String kind;
+		final int group, n, inv;
+		final boolean claim;
+		final EncounterScene.Window moment;
+		volatile String title;
+		List<int[]> items;
+		int in = 3, tries, waited, closeBy = -1, openedAt;
+		boolean asked, closed;
+		volatile byte[] png;
+		java.awt.Rectangle box;
+		int cw, ch;
+
+		Shot(String kind, int group, int n, String title, List<int[]> items, int inv, boolean claim, EncounterScene.Window moment)
+		{
+			this.kind = kind;
+			this.group = group;
+			this.n = n;
+			this.title = title;
+			this.items = items;
+			this.inv = inv;
+			this.claim = claim;
+			this.moment = moment;
+			// (a chat row waits for the chatbox to draw it; a chest's inventory can fill a tick or two after its window)
+			this.tries = "chat".equals(kind) ? 12 : 60;
+		}
+
+		/** the one window it stands for: another picture of it replaces this one */
+		String place()
+		{
+			return group >= 0 ? "g" + group : kind;
+		}
+	}
+
+	/**
+	 * A picture as a PNG, as small as it goes without changing a pixel (round five: every window's picture is in the
+	 * recording now): the game's interfaces are drawn from few colours, so one of 256 colours or fewer is written with a
+	 * palette (8 bits a pixel or fewer) when that's the smaller, and one with more as it is (24 bits). Lossless either way.
+	 */
+	static byte[] png(java.awt.image.BufferedImage img) throws java.io.IOException
+	{
+		int w = img.getWidth(), h = img.getHeight();
+		int[] px = img.getRGB(0, 0, w, h, null, 0, w);
+		Map<Integer, Integer> colours = new java.util.LinkedHashMap<>();
+		for (int p : px)
+		{
+			int rgb = p & 0xffffff;
+			if (!colours.containsKey(rgb))
+			{
+				if (colours.size() == 256)
+				{
+					colours = null;
+					break;
+				}
+				colours.put(rgb, colours.size());
+			}
+		}
+		java.awt.image.BufferedImage out = img;
+		if (colours != null)
+		{
+			int n = Math.max(2, colours.size());
+			byte[] r = new byte[n], g = new byte[n], b = new byte[n];
+			for (Map.Entry<Integer, Integer> e : colours.entrySet())
+			{
+				int c = e.getKey(), i = e.getValue();
+				r[i] = (byte) (c >> 16);
+				g[i] = (byte) (c >> 8);
+				b[i] = (byte) c;
+			}
+			int bits = n <= 2 ? 1 : n <= 4 ? 2 : n <= 16 ? 4 : 8;
+			java.awt.image.IndexColorModel cm = new java.awt.image.IndexColorModel(bits, n, r, g, b);
+			out = new java.awt.image.BufferedImage(w, h, bits == 8 ? java.awt.image.BufferedImage.TYPE_BYTE_INDEXED
+				: java.awt.image.BufferedImage.TYPE_BYTE_BINARY, cm);
+			java.awt.image.WritableRaster ras = out.getRaster();
+			for (int y = 0; y < h; y++)
+			{
+				for (int x = 0; x < w; x++)
+				{
+					ras.setSample(x, y, 0, colours.get(px[y * w + x] & 0xffffff));
+				}
+			}
+		}
+		java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+		javax.imageio.ImageIO.write(out, "png", bytes);
+		if (out != img)
+		{
+			// (the smaller of the two: a picture that repeats can pack smaller in 24 bits)
+			java.io.ByteArrayOutputStream plain = new java.io.ByteArrayOutputStream();
+			javax.imageio.ImageIO.write(img, "png", plain);
+			if (plain.size() < bytes.size())
+			{
+				return plain.toByteArray();
+			}
+		}
+		return bytes.toByteArray();
+	}
+
+	/** A window to take: {@code group} its interface (-1: the inventory's crop, the chat line), {@code items} what's in it
+	 *  (null: read from {@code inv} once it's drawn), {@code moment} the moment's window the same picture is for. */
+	private void shoot(String kind, int group, String title, List<int[]> items, int inv, boolean claim, EncounterScene.Window moment)
+	{
+		if (recording == null)
+		{
+			return;
+		}
+		Shot s = new Shot(kind, group, ++shotNo, title, items, inv, claim, moment);
+		for (Shot o : new ArrayList<>(shots))
+		{
+			if (o.place().equals(s.place()))
+			{
+				shotClose(o);
+			}
+		}
+		for (Shot o : new ArrayList<>(shown))
+		{
+			if (o.place().equals(s.place()))
+			{
+				shotClose(o);
+			}
+		}
+		shots.add(s);
+	}
+
+	/** Each client cycle: each window due taken from the next frame (its box, its title and items as they stand now), and
+	 *  each whose picture has come written. */
+	private void shotsCycle()
+	{
+		for (java.util.Iterator<Shot> it = shots.iterator(); it.hasNext(); )
+		{
+			Shot s = it.next();
+			if (s.asked)
+			{
+				if (++s.waited > SHOT_WAIT)
+				{
+					it.remove();
+					shotWritten(s);
+				}
+				continue;
+			}
+			if (--s.in > 0)
+			{
+				continue;
+			}
+			if (s.group >= 0)
+			{
+				String t = windowTitle(s.group);
+				if (t != null)
+				{
+					s.title = t;
+				}
+			}
+			java.awt.Rectangle b = "chat".equals(s.kind) ? chatLineBounds(s.title) : s.group >= 0 ? windowBounds(s.group) : inventoryBounds();
+			List<int[]> got = s.items != null ? s.items : itemsOf(client.getItemContainer(s.inv));
+			boolean ready = b != null && b.width > 0 && b.height > 0 && (s.items != null || !got.isEmpty());
+			if (!ready && --s.tries > 0)
+			{
+				s.in = 2;
+				continue;
+			}
+			s.items = got;
+			if (b == null || b.width <= 0 || b.height <= 0)
+			{
+				// (never drawn where it could be found: written without its picture)
+				it.remove();
+				shotWritten(s);
+				continue;
+			}
+			s.asked = true;
+			s.box = new java.awt.Rectangle(b);
+			s.cw = client.getCanvasWidth();
+			s.ch = client.getCanvasHeight();
+			host.picture(b, png ->
+			{
+				s.png = png;
+				if (s.moment != null)
+				{
+					s.moment.pw = b.width;
+					s.moment.ph = b.height;
+					s.moment.picture = png;
+				}
+				shotsTaken.add(s);
+			});
+		}
+		for (Shot s; (s = shotsTaken.poll()) != null; )
+		{
+			if (shots.remove(s))
+			{
+				shotWritten(s);
+			}
+		}
+	}
+
+	/** A window's `window` line: what it is, its items with their prices, where it was on the canvas, its picture. */
+	private void shotWritten(Shot s)
+	{
+		if (recording == null)
+		{
+			return;
+		}
+		JsonObject line = emit("window");
+		line.addProperty("n", s.n);
+		line.addProperty("kind", s.kind);
+		if (s.group >= 0)
+		{
+			line.addProperty("group", s.group);
+		}
+		if (s.title != null)
+		{
+			line.addProperty("title", s.title);
+		}
+		JsonArray list = new JsonArray();
+		for (int[] it : s.items == null ? Collections.<int[]>emptyList() : s.items)
+		{
+			defineItem(it[0]);
+			long[] p = host.prices(it[0]);
+			JsonObject o = new JsonObject();
+			o.addProperty("id", it[0]);
+			o.addProperty("qty", it[1]);
+			o.addProperty("ge", p == null ? 0 : p[0]);
+			o.addProperty("ha", p == null ? 0 : p[1]);
+			list.add(o);
+		}
+		line.add("items", list);
+		if (s.claim)
+		{
+			line.addProperty("claim", true);
+		}
+		if (s.box != null)
+		{
+			JsonArray box = new JsonArray();
+			box.add(s.box.x);
+			box.add(s.box.y);
+			box.add(s.box.width);
+			box.add(s.box.height);
+			line.add("box", box);
+			JsonArray canvas = new JsonArray();
+			canvas.add(s.cw);
+			canvas.add(s.ch);
+			line.add("canvas", canvas);
+		}
+		byte[] png = s.png;
+		if (png != null && png.length > 0 && png.length <= EncounterScene.PICTURE_MOST)
+		{
+			line.addProperty("picture", java.util.Base64.getEncoder().encodeToString(png));
+		}
+		s.openedAt = whole();
+		if (s.group < 0)
+		{
+			s.closeBy = whole() + CLOSE_MOST;
+		}
+		if (s.closed)
+		{
+			emit("window_close").addProperty("n", s.n);
+			return;
+		}
+		shown.add(s);
+	}
+
+	/** A window gone: its `window_close` (one not written yet goes as soon as it is, then closes). */
+	private void shotClose(Shot s)
+	{
+		if (shown.remove(s))
+		{
+			JsonObject line = emit("window_close");
+			line.addProperty("n", s.n);
+			return;
+		}
+		s.closed = true;
+	}
+
+	/** An interface closed: its windows' pictures with it. */
+	private void shotsClosed(int group)
+	{
+		for (Shot s : new ArrayList<>(shown))
+		{
+			if (s.group == group)
+			{
+				shotClose(s);
+			}
+		}
+		for (Shot s : shots)
+		{
+			if (s.group == group)
+			{
+				s.closed = true;
+			}
+		}
+	}
+
+	/** The player's next action: a chat line's or the inventory's picture goes (once it's been up CLOSE_LEAST ticks). */
+	private void shotsActed()
+	{
+		for (Shot s : shown)
+		{
+			if (s.group < 0)
+			{
+				s.closeBy = Math.min(s.closeBy, Math.max(whole(), s.openedAt + CLOSE_LEAST));
+			}
+		}
+	}
+
+	/** Each tick: a chat line's or the inventory's picture past its time closed. */
+	private void shotsExpire()
+	{
+		for (Shot s : new ArrayList<>(shown))
+		{
+			if (s.group < 0 && s.closeBy >= 0 && whole() >= s.closeBy)
+			{
+				shotClose(s);
 			}
 		}
 	}
@@ -3145,6 +3459,7 @@ final class Encounters
 		if (recording != null)
 		{
 			emit("widget_close").addProperty("group", event.getGroupId());
+			shotsClosed(event.getGroupId());
 		}
 	}
 }

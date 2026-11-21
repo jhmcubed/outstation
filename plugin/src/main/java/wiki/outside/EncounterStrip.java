@@ -24,7 +24,9 @@ import java.util.regex.Pattern;
  * <li>other people's public chat goes, and other players' overhead text;</li>
  * <li>exact XP goes from stat lines (the levels stay);</li>
  * <li>mouse presses and the interface layout go (press, ui_layout, ui_widgets lines; a click's mx, my and wb);</li>
- * <li>the player's own name stays (it's their page).</li>
+ * <li>the player's own name stays (it's their page);</li>
+ * <li>the player's own windows stay (window and window_close lines, 11/21/2026, round five): a window's picture is
+ * never searched for names, its title is.</li>
  * </ul>
  * Checked line for line against strip.js run under node, on the four real recordings and on recordings this plugin
  * made in the local world (plugin/README.md, "Encounters", how it was checked): the same bytes out, the same counts and
@@ -300,7 +302,15 @@ final class EncounterStrip
 						}
 					}
 				}
-				if (!"header".equals(e) && nameRe != null)
+				if ("window".equals(e) && m.get("picture") instanceof String && nameRe != null)
+				{
+					// (a window's picture is never searched for names, its title is: strip.js's; round five)
+					Object pic = m.get("picture");
+					m.put("picture", "");
+					scrubInPlace(m, nameRe, removed);
+					m.put("picture", pic);
+				}
+				else if (!"header".equals(e) && nameRe != null)
 				{
 					scrubInPlace(m, nameRe, removed);
 				}

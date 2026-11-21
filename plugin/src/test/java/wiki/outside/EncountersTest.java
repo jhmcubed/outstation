@@ -128,4 +128,42 @@ public class EncountersTest
 	{
 		assertEquals(new HashSet<>(Arrays.asList(14707, 14708, 14709)), Encounters.DOOM_IDS);
 	}
+
+	/** Round five (11/21/2026): a window's picture written as small as it goes and not a pixel changed: a palette for 256
+	 *  colours or fewer (and 2, 4, 16), 24 bits past that, each read back the same. */
+	@Test
+	public void picturesAreWrittenSmallAndExact() throws Exception
+	{
+		for (int colours : new int[]{1, 2, 3, 16, 200, 256, 257, 5000})
+		{
+			java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(97, 61, java.awt.image.BufferedImage.TYPE_INT_RGB);
+			java.util.Random rnd = new java.util.Random(colours);
+			int[] pal = new int[colours];
+			for (int i = 0; i < colours; i++)
+			{
+				pal[i] = rnd.nextInt(0x1000000);
+			}
+			for (int y = 0; y < img.getHeight(); y++)
+			{
+				for (int x = 0; x < img.getWidth(); x++)
+				{
+					img.setRGB(x, y, pal[(x * 7 + y * 13 + rnd.nextInt(3)) % colours]);
+				}
+			}
+			byte[] png = Encounters.png(img);
+			java.awt.image.BufferedImage back = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+			assertEquals(img.getWidth(), back.getWidth());
+			assertEquals(img.getHeight(), back.getHeight());
+			for (int y = 0; y < img.getHeight(); y++)
+			{
+				for (int x = 0; x < img.getWidth(); x++)
+				{
+					assertEquals("colours " + colours + " at " + x + "," + y, img.getRGB(x, y) & 0xffffff, back.getRGB(x, y) & 0xffffff);
+				}
+			}
+			java.io.ByteArrayOutputStream plain = new java.io.ByteArrayOutputStream();
+			javax.imageio.ImageIO.write(img, "png", plain);
+			assertTrue("colours " + colours + ": " + png.length + " against " + plain.size(), png.length <= plain.size());
+		}
+	}
 }

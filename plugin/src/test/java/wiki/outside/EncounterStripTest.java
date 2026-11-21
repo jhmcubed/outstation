@@ -128,4 +128,30 @@ public class EncounterStripTest
 		assertEquals("{\"foe\":\"Man\",\"label\":" + EncounterStrip.Js.stringify(s.label) + ",\"at\":1795196500541,\"ticks\":7,"
 			+ "\"died\":true,\"taken\":5,\"dealt\":7,\"public\":false}", EncounterStrip.meta(s, false));
 	}
+
+	/** Round five (11/21/2026): a window's picture is never searched for names (a short one could match its base64 and
+	 *  break the PNG), its title is; the window and window_close lines kept. OUT from strip.js under node. */
+	static final String WIN_IN = "{\"t\":0,\"c\":1,\"e\":\"header\",\"format\":6,\"label\":\"x\",\"player\":\"Mr Me\"}\n"
+		+ "{\"t\":0,\"c\":2,\"e\":\"look\",\"who\":{\"k\":\"me\"},\"name\":\"Mr Me\"}\n"
+		+ "{\"t\":0,\"c\":2,\"e\":\"look\",\"who\":{\"k\":\"player\",\"i\":5},\"name\":\"Bob\"}\n"
+		+ "{\"t\":3,\"c\":9,\"e\":\"window\",\"n\":1,\"kind\":\"chest\",\"group\":973,\"title\":\"Bob's chest\",\"items\":[{\"id\":995,\"qty\":12,\"ge\":1,\"ha\":1}],\"box\":[138,101,488,300],\"canvas\":[765,503],\"picture\":\"iVBO+bob/Bob+AAA=\"}\n"
+		+ "{\"t\":5,\"c\":19,\"e\":\"window_close\",\"n\":1}\n"
+		+ "{\"t\":6,\"c\":29,\"e\":\"window\",\"n\":2,\"kind\":\"chat\",\"title\":\"You have a funny feeling like you're being followed. bob\",\"items\":[],\"picture\":\"AA+Bob/\"}\n"
+		+ "{\"t\":6,\"c\":29,\"e\":\"chat\",\"type\":\"GAMEMESSAGE\",\"text\":\"bob hi\"}\n";
+	static final String WIN_OUT = "{\"t\":0,\"c\":1,\"e\":\"header\",\"format\":6,\"label\":\"x\",\"player\":\"Mr Me\"}\n"
+		+ "{\"t\":0,\"c\":2,\"e\":\"look\",\"who\":{\"k\":\"me\"},\"name\":\"Mr Me\"}\n"
+		+ "{\"t\":0,\"c\":2,\"e\":\"look\",\"who\":{\"k\":\"player\",\"i\":5}}\n"
+		+ "{\"t\":3,\"c\":9,\"e\":\"window\",\"n\":1,\"kind\":\"chest\",\"group\":973,\"title\":\"a player's chest\",\"items\":[{\"id\":995,\"qty\":12,\"ge\":1,\"ha\":1}],\"box\":[138,101,488,300],\"canvas\":[765,503],\"picture\":\"iVBO+bob/Bob+AAA=\"}\n"
+		+ "{\"t\":5,\"c\":19,\"e\":\"window_close\",\"n\":1}\n"
+		+ "{\"t\":6,\"c\":29,\"e\":\"window\",\"n\":2,\"kind\":\"chat\",\"title\":\"You have a funny feeling like you're being followed. a player\",\"items\":[],\"picture\":\"AA+Bob/\"}\n"
+		+ "{\"t\":6,\"c\":29,\"e\":\"chat\",\"type\":\"GAMEMESSAGE\",\"text\":\"a player hi\"}\n";
+
+	@Test
+	public void keepsWindowPicturesAsStripJsDoes()
+	{
+		EncounterStrip.Stripped s = EncounterStrip.strip(WIN_IN);
+		assertEquals(WIN_OUT, s.text);
+		assertEquals(7, s.kept);
+		assertEquals(Integer.valueOf(4), s.removed.get("other players' names"));
+	}
 }
