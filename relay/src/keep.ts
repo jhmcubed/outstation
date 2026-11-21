@@ -274,7 +274,7 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
 //              "wide.0": [ids]}, "off": [ids kept from visitors]}
 //   "hero":    the top of the file's panels on twelve columns (hero.js): {"p": {key: {"x", "w"}}, "o": [keys, in the
 //              order they're packed], "off": [keys kept from visitors]}
-//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?}; the link read as theme.js reads it, a SoundCloud,
+//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?} (SoundCloud only, round nine); the link read as theme.js reads it, a SoundCloud,
 //              YouTube or Spotify song's own address and nothing else, and kept in its plain form
 // Only the sections and panels the page has today: a new one is added to these lists (at the end) as the page gains it.
 export const ARRANGE_READING = ["sec-skills", "sec-deeds", "sec-mega", "sec-pets", "sec-next", "sec-easy-ca", "sec-gains", "sec-movements",
@@ -386,14 +386,18 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
     const t = d.theme;
     if (t === null) out.theme = null;
     else {
-      if (!isObj(t)) return "theme: {link, title?, by?}";
-      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by") return "theme: link, title and by only";
+      // (SoundCloud only since 11/21/2026, round nine, Jace: "let's only allow soundcloud links since all spotify and
+      // youtube songs can be found on there anyway", the page's own player driving SoundCloud's; and where it starts,
+      // whole seconds, the page's "starts at")
+      if (!isObj(t)) return "theme: {link, title?, by?, start?}";
+      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start") return "theme: link, title, by and start only";
       const read = themeLink(t.link);
-      if (!read) return "theme's link: a song's or a set's own address on soundcloud, youtube or spotify";
+      if (!read || read.kind !== "soundcloud") return "theme's link: a song's or a set's own address on soundcloud";
       if (t.title !== undefined && typeof t.title !== "string") return "theme's title: words";
       if (t.by !== undefined && typeof t.by !== "string") return "theme's by: words";
-      const title = plain(t.title, 120), by = plain(t.by, 60);
-      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}) };
+      if (t.start !== undefined && !(Number.isInteger(t.start) && (t.start as number) >= 0 && (t.start as number) < 86_400)) return "theme's start: whole seconds into the song";
+      const title = plain(t.title, 120), by = plain(t.by, 60), start = (t.start as number) || 0;
+      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}) };
     }
   }
   return out;

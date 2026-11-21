@@ -322,12 +322,12 @@ the page, read by every visitor, and written only by the page's owner:
     columns (each place within them), the order they're packed and those kept from visitors. Only its panels
     (`HERO_PANELS`: who, screen, stage, kit, form, goal, where, encounter, clips, bank), each once; the subject, the
     outstation and the encounters' stage never kept from visitors.
-  - `"theme"`: `{"link", "title"?, "by"?}`: the link a song's or a set's own address on SoundCloud (soundcloud.com/<who>/
-    <song> or /sets/<set>), YouTube (watch?v=, youtu.be, shorts, embed, live; its start, t= or start=) or Spotify (track,
-    album, playlist, episode), read as the page's theme.js reads it and kept in its plain form as `{"kind", "id",
-    "what"?, "start"?, "link"}`; anything else is refused. The title (120 characters) and who made it (60), as the
-    platform's oEmbed told the page, plain text. The page shows the platform's own player only when a visitor presses
-    it. A song taken down on request is the keeper's DELETE with the key.
+  - `"theme"`: `{"link", "title"?, "by"?, "start"?}`: the link a song's or a set's own address on SoundCloud
+    (soundcloud.com/<who>/<song> or /sets/<set>; SoundCloud only since 11/21/2026, round nine: a YouTube or Spotify
+    link is refused, and one kept before is no longer shown), read as the page's theme.js reads it and kept in its
+    plain form as `{"kind", "id", "link"}`. The title (120 characters) and who made it (60), as SoundCloud's oEmbed told
+    the page, plain text; where it starts, whole seconds (under a day). The page plays it with its own player over
+    SoundCloud's, which comes onto the page only when a visitor presses play. A song taken down on request is the keeper's DELETE with the key.
 - A section or panel the page gains later goes in the lists at their end, the relay first; the page puts one the kept
   layout doesn't name at the end.
 - 60 writes an hour a channel, its own count apart from the plugin's uploads (`LAYOUT_AN_HOUR`); 429 past it. A change

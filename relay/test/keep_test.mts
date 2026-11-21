@@ -176,11 +176,15 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
                     "https://soundcloud.com/someone", "https://open.spotify.com/artist/4uLU6hMCjMI75M1A2tKUQC", "ftp://youtu.be/dQw4w9WgXcQ", "x".repeat(500), 42]) {
     strictEqual(themeLink(no), null, String(no));
   }
-  deepStrictEqual(layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title and by only");
-  deepStrictEqual(layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: "a\nsong  ", by: "x".repeat(99) } }),
-                  { theme: { kind: "youtube", id: "dQw4w9WgXcQ", link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "a song", by: "x".repeat(60) } });
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by and start only");
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "x".repeat(99), start: 90 } }),
+                  { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/a-song", link: "https://soundcloud.com/someone/a-song", title: "a song", by: "x".repeat(60), start: 90 } });
   strictEqual(typeof layoutShape({ theme: { link: "https://evil.example/x" } }), "string");
-  strictEqual(typeof layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: 5 } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: 5 } }), "string");
+  // (SoundCloud only since round nine; a start in whole seconds)
+  strictEqual(typeof layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ" } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC" } }), "string");
+  for (const bad of [-1, 1.5, 86_400, "90"]) strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", start: bad } }), "string", String(bad));
 });
 
 test("a layout: only its three parts, any taken away with null", () => {
