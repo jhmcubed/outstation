@@ -85,8 +85,8 @@ public class OutsidePanel extends PluginPanel
 		void openPage();
 
 		// hub:cut arrange
-		/** "Edit my page" (11/21/2026, update 6): the page opened with a link that can arrange it and set its theme song,
-		 *  and nothing else, for 2 hours. */
+		/** "Edit my page" (11/21/2026, update 6; round nine): the page opened as its owner, as the register's button
+		 *  opens it, for 12 hours. */
 		void editPage();
 		// hub:end arrange
 
@@ -337,7 +337,7 @@ public class OutsidePanel extends PluginPanel
 		openRow.add(button("Open my page", hooks::openPage));
 		// hub:cut arrange
 		JButton editButton = button("Edit my page", hooks::editPage);
-		editButton.setToolTipText("Open your page to arrange it and set its theme song (the link works for 2 hours)");
+		editButton.setToolTipText("Open your page as its owner: arrange it, set its theme song, keep your encounters' moments, tend its register (the link works for 12 hours)");
 		openRow.add(editButton);
 		// hub:end arrange
 		openRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
@@ -422,12 +422,13 @@ public class OutsidePanel extends PluginPanel
 		// (11/17/2026, Jace: the page's chat, while nothing transmits, is its register: visitors sign it, you read it later)
 		pageTab.add(left(heading("Your page's register")));
 		pageTab.add(left(small("<html><div style='width:155px'>Visitors sign your page's register. Read it, take back a note or"
-			+ " ban whoever wrote it, on your page itself: the link works for 12 hours, in the browser it opens in.</div></html>")));
+			+ " ban whoever wrote it, on your page itself, opened as its owner: the link works for 12 hours, in the browser it"
+			+ " opens in.</div></html>")));
 		notesLine.setForeground(LIME);
 		notesLine.setVisible(false);
 		pageTab.add(left(notesLine));
 		pageTab.add(Box.createVerticalStrut(6));
-		pageTab.add(wide(button("Read and tend my register", hooks::tendChat)));
+		pageTab.add(wide(button("Edit my page", hooks::tendChat)));
 		tendStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		pageTab.add(left(tendStatus));
 		pageTab.add(Box.createVerticalStrut(12));
@@ -806,7 +807,7 @@ public class OutsidePanel extends PluginPanel
 	}
 	// hub:end arrange
 
-	/** A line under "Read and tend my register". */
+	/** A line under the register's Edit my page. */
 	public void tendStatus(String words)
 	{
 		SwingUtilities.invokeLater(() -> tendStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>"));

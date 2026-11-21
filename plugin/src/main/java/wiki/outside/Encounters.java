@@ -3314,6 +3314,9 @@ final class Encounters
 			this.moment = moment;
 			// (a chat row waits for the chatbox to draw it; a chest's inventory can fill a tick or two after its window)
 			this.tries = "chat".equals(kind) ? 12 : 60;
+			// (a window waits about a second before its picture: the Fractured Archive's chest came up as the scene
+			// behind it, or its bare background, taken three cycles in; 11/21/2026, round nine, Jace's three raids)
+			this.in = group >= 0 ? 50 : 3;
 		}
 
 		/** the one window it stands for: another picture of it replaces this one */

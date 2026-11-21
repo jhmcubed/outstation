@@ -125,6 +125,19 @@ test("the goal's list: the rest beside the one shown, each checked as it is, no 
   strictEqual(typeof keepShape("goal", { id: 4151, name: "x", more: Array.from({ length: GOALS_MORE }, (_, i) => ({ id: 20000 + i, name: "z" })) }), "object");
 });
 
+test("the goal with none turning: \"nomodel\" kept at the top only, never beside a model (11/21/2026, round nine)", () => {
+  const model = { v: [0, 0, 0, 10, 0, 0, 0, 10, 0], f: [0, 1, 2], c: [100] };
+  deepStrictEqual(keepShape("goal", { id: 4151, name: "Abyssal whip", nomodel: true, more: [{ id: 11286, name: "Draconic visage", nomodel: true }] }),
+    { id: 4151, name: "Abyssal whip", nomodel: true, more: [{ id: 11286, name: "Draconic visage" }] });
+  // (left out, or a goal sent by an older plugin: as it was)
+  deepStrictEqual(keepShape("goal", { id: 4151, name: "Abyssal whip" }), { id: 4151, name: "Abyssal whip" });
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: false }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: 1 }), "string");
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: true, model }), "string");
+  // ("model": false, the other way it could have been said, is refused as before: the plugin never sends it)
+  strictEqual(typeof keepShape("goal", { id: 4151, name: "x", model: false }), "string");
+});
+
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {
   strictEqual(emoteKind(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "png");
   strictEqual(emoteKind(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), "jpg");
@@ -160,6 +173,11 @@ test("a layout: the top of the file's panels on twelve columns, the three that s
   strictEqual(typeof layoutShape({ hero: { ...h, o: ["kit", "kit"] } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, o: [...HERO_PANELS, "kit"] } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, off: ["screen"] } }), "string");                     // (the outstation's always shown)
+  // (11/21/2026, round nine: the field reports and the register, panels of their own: placed, moved and kept from visitors)
+  const t = { p: { reports: { x: 4, w: 5 }, talk: { x: 0, w: 4 } }, o: ["who", "stage", "screen", "reports", "talk"], off: ["reports"] };
+  deepStrictEqual(layoutShape({ hero: t }), { hero: t });
+  deepStrictEqual(layoutShape({ hero: { ...t, off: ["talk", "reports"] } }), { hero: { ...t, off: ["talk", "reports"] } });
+  deepStrictEqual(HERO_PANELS.slice(0, 10), ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank"]);   // (never reordered: added at the end)
   strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), "object");    // (anything else in a place is left out)
   deepStrictEqual(layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), { hero: { ...h, p: { kit: { x: 0, w: 4 } } } });
 });
@@ -176,11 +194,22 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
                     "https://soundcloud.com/someone", "https://open.spotify.com/artist/4uLU6hMCjMI75M1A2tKUQC", "ftp://youtu.be/dQw4w9WgXcQ", "x".repeat(500), 42]) {
     strictEqual(themeLink(no), null, String(no));
   }
-  deepStrictEqual(layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title and by only");
-  deepStrictEqual(layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: "a\nsong  ", by: "x".repeat(99) } }),
-                  { theme: { kind: "youtube", id: "dQw4w9WgXcQ", link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "a song", by: "x".repeat(60) } });
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by, start and tracks only");
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "x".repeat(99), start: 90 } }),
+                  { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/a-song", link: "https://soundcloud.com/someone/a-song", title: "a song", by: "x".repeat(60), start: 90 } });
   strictEqual(typeof layoutShape({ theme: { link: "https://evil.example/x" } }), "string");
-  strictEqual(typeof layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: 5 } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: 5 } }), "string");
+  // (SoundCloud only since round nine; a start in whole seconds)
+  strictEqual(typeof layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ" } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC" } }), "string");
+  for (const bad of [-1, 1.5, 86_400, "90"]) strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", start: bad } }), "string", String(bad));
+  // (a set's tracklist, round nine: titles, who made them and lengths, only for a set, 50 at most)
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "one\n", by: "them", dur: 1000 }, { title: "two" }] } }),
+                  { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/sets/a-set", link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "one", by: "them", dur: 1000 }, { title: "two" }] } });
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", tracks: [{ title: "x" }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: Array.from({ length: 51 }, () => ({ title: "x" })) } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "x", art: "y" }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "x", dur: -5 }] } }), "string");
 });
 
 test("a layout: only its three parts, any taken away with null", () => {

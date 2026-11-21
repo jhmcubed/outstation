@@ -14,7 +14,9 @@
 //     "counts"?: the plugin's kill and clue counts then, {"kills": {name: n}, "clues": {tier: n}}}}; the page works out
 //     how dry they are from the wiki's drop rates. Since 11/19/2026 (Cranky: "I'd like to have more than 1 goal item")
 //     the rest of their goals with it, "more": [{"id", "name", "got"?}, ...], GOALS_MORE at most, each item once; the
-//     one at the top is the one they chose to show turning, and the only one with a model
+//     one at the top is the one they chose to show turning, and the only one with a model. And since 11/21/2026 (round
+//     nine) "nomodel": true on the one at the top when they chose none turning (the plugin's No 3D model): the page
+//     builds a goal's model from the game's own files when it comes without one, and this tells it not to
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
@@ -112,6 +114,13 @@ export function keepShape(what: string, d: unknown): unknown | string {
       const m = modelShape(d.model, true);
       if (typeof m === "string") return "model's " + m;
       out.model = m;
+    }
+    // (11/21/2026, round nine: none turning, said; the page then builds none from the game's files. Only at the top, and
+    // never beside a model)
+    if (d.nomodel !== undefined) {
+      if (d.nomodel !== true) return "nomodel: true or none";
+      if (out.model) return "nomodel: a goal with a model has one";
+      out.nomodel = true;
     }
     // (11/19/2026, Cranky: "I'd like to have more than 1 goal item"; Jace: "choose ONE of the goal items to be displayed
     // as a 3d model, while the rest of the goal items are listed under the first"): the rest of their goals, each as the
@@ -274,16 +283,20 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
 //              "wide.0": [ids]}, "off": [ids kept from visitors]}
 //   "hero":    the top of the file's panels on twelve columns (hero.js): {"p": {key: {"x", "w"}}, "o": [keys, in the
 //              order they're packed], "off": [keys kept from visitors]}
-//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?}; the link read as theme.js reads it, a SoundCloud,
+//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?} (SoundCloud only, round nine); the link read as theme.js reads it, a SoundCloud,
 //              YouTube or Spotify song's own address and nothing else, and kept in its plain form
 // Only the sections and panels the page has today: a new one is added to these lists (at the end) as the page gains it.
 export const ARRANGE_READING = ["sec-skills", "sec-deeds", "sec-mega", "sec-pets", "sec-next", "sec-easy-ca", "sec-gains", "sec-movements",
   "sec-kills", "sec-rates", "sec-field", "sec-delve"];
 export const ARRANGE_WIDE = ["sec-year", "sec-heat", "sec-case"];
-export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank"];
+// (11/21/2026, round nine: "reports", the readings and the field reports, and "talk", the register and the aether, panels
+// of their own apart from the outstation's screen, which keeps only the transmission and its chat; hero.js's KNOWN)
+export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank", "reports", "talk"];
 // (the subject's box, the outstation and the encounters' stage stay where every file has them, always shown)
 export const HERO_FIXED = ["who", "screen", "stage"];
-export const HERO_COLS = 12, LAYOUT_MOST = 8 * 1024;
+export const HERO_COLS = 12, LAYOUT_MOST = 16 * 1024;
+// (a set's tracks kept with the theme, 50 at most: round nine; the layout's most raised from 8 KB for them)
+export const THEME_TRACKS = 50;
 // (written by the page as its owner arranges it, after "done" and as a song's set: its own count, apart from the plugin's
 // uploads, so arranging never uses up what "Update my page" needs)
 export const LAYOUT_AN_HOUR = 60;
@@ -386,14 +399,35 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
     const t = d.theme;
     if (t === null) out.theme = null;
     else {
-      if (!isObj(t)) return "theme: {link, title?, by?}";
-      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by") return "theme: link, title and by only";
+      // (SoundCloud only since 11/21/2026, round nine, Jace: "let's only allow soundcloud links since all spotify and
+      // youtube songs can be found on there anyway", the page's own player driving SoundCloud's; and where it starts,
+      // whole seconds, the page's "starts at")
+      if (!isObj(t)) return "theme: {link, title?, by?, start?}";
+      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start" && k !== "tracks") return "theme: link, title, by, start and tracks only";
       const read = themeLink(t.link);
-      if (!read) return "theme's link: a song's or a set's own address on soundcloud, youtube or spotify";
+      if (!read || read.kind !== "soundcloud") return "theme's link: a song's or a set's own address on soundcloud";
       if (t.title !== undefined && typeof t.title !== "string") return "theme's title: words";
       if (t.by !== undefined && typeof t.by !== "string") return "theme's by: words";
-      const title = plain(t.title, 120), by = plain(t.by, 60);
-      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}) };
+      if (t.start !== undefined && !(Number.isInteger(t.start) && (t.start as number) >= 0 && (t.start as number) < 86_400)) return "theme's start: whole seconds into the song";
+      // (a set's tracklist, round nine, Jace: "If someone links a soundcloud playlist could we show a small tracklist?":
+      // as the owner's page read it from SoundCloud's player when the set was chosen, so a visitor's page shows it
+      // without asking SoundCloud anything; each track's title, who made it and its length, 50 at most)
+      let tracks: { title: string; by?: string; dur?: number }[] | null = null;
+      if (t.tracks !== undefined) {
+        if (!Array.isArray(t.tracks) || t.tracks.length > THEME_TRACKS) return `theme's tracks: a list, ${THEME_TRACKS} at most`;
+        if (t.tracks.length && !/\/sets\//.test(String(read.id))) return "theme's tracks: only for a set";
+        tracks = [];
+        for (const x of t.tracks) {
+          if (!isObj(x)) return "theme's tracks: {title, by?, dur?} each";
+          for (const k of Object.keys(x)) if (k !== "title" && k !== "by" && k !== "dur") return "theme's tracks: title, by and dur only";
+          if (typeof x.title !== "string" || (x.by !== undefined && typeof x.by !== "string")) return "theme's tracks: words";
+          if (x.dur !== undefined && !(Number.isInteger(x.dur) && (x.dur as number) >= 0 && (x.dur as number) < 86_400_000)) return "theme's tracks: a length in whole milliseconds";
+          const tt = plain(x.title, 120), tb = plain(x.by, 60);
+          tracks.push({ title: tt, ...(tb ? { by: tb } : {}), ...(x.dur ? { dur: x.dur as number } : {}) });
+        }
+      }
+      const title = plain(t.title, 120), by = plain(t.by, 60), start = (t.start as number) || 0;
+      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}), ...(tracks && tracks.length ? { tracks } : {}) };
     }
   }
   return out;
