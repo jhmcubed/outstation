@@ -2971,62 +2971,38 @@ public class OutsidePlugin extends Plugin
 			}
 
 			// hub:cut arrange
-			/** "Edit my page" (11/21/2026, update 6; docs/protocol.md "Editing the page from the page"): a token made here
-			 *  on the press, handed to the relay with the page's key, and the page opened with it in the fragment. It
-			 *  arranges the page and sets its theme song, nothing else, for 2 hours. */
+			/** "Edit my page" (11/21/2026, update 6; round nine, Jace: "it should probably just be an edit your page
+			 *  button"): the page opened as its owner, as the register's button opens it (owned below): arranging, the
+			 *  theme song, the encounters' moments and the register, for 12 hours. */
 			@Override
 			public void editPage()
 			{
-				Attach a = key();
-				if (a == null)
-				{
-					panel.editStatus("log in on a character with a page first");
-					return;
-				}
-				String token = Tend.token(new java.security.SecureRandom());
-				String code = friendsOnly ? watchCode(false) : null;
-				panel.editStatus("opening your page to edit…");
-				http.newCall(new Request.Builder().url(a.editUrl())
-					.header("User-Agent", "outside-plugin/" + VERSION)
-					.post(RequestBody.create(JSON, Tend.body(token, gson))).build()).enqueue(new Callback()
-				{
-					@Override
-					public void onFailure(Call call, IOException ex)
-					{
-						panel.editStatus("the relay's out of reach: try again in a moment");
-					}
-
-					@Override
-					public void onResponse(Call call, Response r)
-					{
-						try (Response res = r)
-						{
-							if (res.code() != 200)
-							{
-								panel.editStatus("the relay said no (" + res.code() + ")");
-								return;
-							}
-						}
-						panel.editStatus("opened in your browser: arrange this file, and your theme song, for the next 2 hours");
-						net.runelite.client.util.LinkBrowser.browse(a.editPage(code, token));
-					}
-				});
+				owned(panel::editStatus);
 			}
 			// hub:end arrange
 
-			/** "Tend my page's chat" (11/16/2026; docs/protocol.md "Tending the page's chat from the page"): a token made
-			 *  here, handed to the relay with the page's key, and the page opened with it in the fragment. */
+			/** The register's own button, the same as Edit my page (round nine). */
 			@Override
 			public void tendChat()
+			{
+				owned(panel::tendStatus);
+			}
+
+			/** The page opened as its owner (11/16/2026, "Tend my page's chat"; since 11/21/2026, round nine, Edit my page
+			 *  too; docs/protocol.md "Tending the page's chat from the page"): a token made here, handed to the relay with
+			 *  the page's key, and the page opened with it in the fragment, which no server sees. The page, the relay
+			 *  and the fight pages take it for everything the owner does there, for 12 hours: the register, arranging
+			 *  and the theme song, the encounters' moments. */
+			private void owned(java.util.function.Consumer<String> status)
 			{
 				Attach a = key();
 				if (a == null)
 				{
-					panel.tendStatus("log in on a character with a page first");
+					status.accept("log in on a character with a page first");
 					return;
 				}
 				String token = Tend.token(new java.security.SecureRandom());
-				panel.tendStatus("opening your page's register…");
+				status.accept("opening your page…");
 				http.newCall(new Request.Builder().url(a.tendUrl())
 					.header("User-Agent", "outside-plugin/" + VERSION)
 					.post(RequestBody.create(JSON, Tend.body(token, gson))).build()).enqueue(new Callback()
@@ -3034,7 +3010,7 @@ public class OutsidePlugin extends Plugin
 					@Override
 					public void onFailure(Call call, IOException ex)
 					{
-						panel.tendStatus("the relay's out of reach: try again in a moment");
+						status.accept("the relay's out of reach: try again in a moment");
 					}
 
 					@Override
@@ -3044,11 +3020,11 @@ public class OutsidePlugin extends Plugin
 						{
 							if (res.code() != 200)
 							{
-								panel.tendStatus("the relay said no (" + res.code() + ")");
+								status.accept("the relay said no (" + res.code() + ")");
 								return;
 							}
 						}
-						panel.tendStatus("opened in your browser: each visitor's note has take back and ban");
+						status.accept("opened in your browser as its owner, for 12 hours in that browser");
 						// (read: what's there now isn't new any more)
 						if (notesLast > 0)
 						{

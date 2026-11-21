@@ -9,7 +9,7 @@ import java.util.Base64;
  * Tending the page's chat from the page (11/16/2026; docs/protocol.md, "Tending the page's chat from the page"): with the
  * plugin alone (the Plugin Hub's has no desk), "Tend my page's chat" makes a token, hands it to the relay with the page's
  * key (POST /tend/<channel>?key= {"token"}), and opens the page with it in the address's fragment, which no server sees.
- * There each visitor's line gets "take back" and "ban"; the token is good for 12 hours and can do nothing else. Kept apart
+ * There each visitor's line gets "take back" and "ban"; the token is good for 12 hours; since update 6 it is the owner's on the page for everything the page lets an owner do (arranging, the theme song, the encounters' moments: Edit my page, 11/21/2026). Kept apart
  * from RuneLite so it's tested.
  */
 final class Tend
