@@ -3028,6 +3028,7 @@ public class OutsidePlugin extends Plugin
 			@Override
 			public void encountersShown()
 			{
+				panel.encounterStatus(null);
 				listEncounters();
 				readFights();
 			}
@@ -5566,17 +5567,7 @@ public class OutsidePlugin extends Plugin
 				panel.encounterStatus("that was recorded on " + p.summary.player + ": log in on that character to put it on its page");
 				return;
 			}
-			byte[] gz;
-			try
-			{
-				gz = EncounterFiles.gzipText(p.stripped.text, (int) p.summary.ticks);
-			}
-			catch (IOException ex)
-			{
-				panel.putting(file, false);
-				panel.encounterStatus("it couldn't be packed: " + ex.getMessage());
-				return;
-			}
+			byte[] gz = p.gz;
 			if (gz.length > FIGHT_MOST)
 			{
 				panel.putting(file, false);
@@ -5584,7 +5575,7 @@ public class OutsidePlugin extends Plugin
 				return;
 			}
 			panel.encounterStatus(null);
-			panel.confirmPut(file, p.summary.who(), (int) p.summary.ticks, p.stripped.removed, shown, gz.length,
+			panel.confirmPut(file, p.summary.who(), (int) p.summary.ticks, p.removed, shown, gz.length,
 				() -> sendEncounter(a, file, p, gz, shown));
 		}, problem ->
 		{

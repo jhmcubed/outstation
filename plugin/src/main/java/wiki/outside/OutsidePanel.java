@@ -561,17 +561,7 @@ public class OutsidePanel extends PluginPanel
 		fightTab.add(fightList);
 		fightTab.add(Box.createVerticalStrut(8));
 		fightTab.add(wide(button("Copy the folder's place", hooks::copyEncountersFolder)));
-		// (its name is wider than a third of the tab bar less a tab's own 10-pixel sides: its sides are 2 pixels, the rest
-		// of the tab's border, its underline, as the others')
-		MaterialTab fightsTab = new MaterialTab("Encounters", tabs, fightTab)
-		{
-			@Override
-			public void setBorder(javax.swing.border.Border b)
-			{
-				super.setBorder(b instanceof javax.swing.border.CompoundBorder ? new javax.swing.border.CompoundBorder(
-					((javax.swing.border.CompoundBorder) b).getOutsideBorder(), BorderFactory.createEmptyBorder(5, 2, 4, 2)) : b);
-			}
-		};
+		MaterialTab fightsTab = new MaterialTab("Encounters", tabs, fightTab);
 		fightsTab.setOnSelectEvent(() ->
 		{
 			hooks.encountersShown();
@@ -582,6 +572,18 @@ public class OutsidePanel extends PluginPanel
 
 		// more: Dink, who sees it, the page's chat, and taking the page down (last, as it can't be undone)
 
+		// (11/21/2026: each tab as wide as its name needs and the rest shared out by that, where they were thirds:
+		// "Encounters" is wider than a third, less a tab's own sides)
+		java.awt.GridBagLayout bag = new java.awt.GridBagLayout();
+		tabs.setLayout(bag);
+		for (java.awt.Component c : tabs.getComponents())
+		{
+			java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
+			g.fill = java.awt.GridBagConstraints.HORIZONTAL;
+			g.weightx = c.getPreferredSize().width;
+			g.insets = new java.awt.Insets(0, 2, 0, 2);
+			bag.setConstraints(c, g);
+		}
 		tabs.select(first);
 		page.add(tabs);
 		page.add(Box.createVerticalStrut(8));
@@ -992,6 +994,12 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() ->
 		{
 			recordNow.setText(running ? "Stop" : "Record now");
+			if (running)
+			{
+				// (a recording under way: what the last press said is past)
+				fightStatus.setText(" ");
+				fightStatus.setVisible(false);
+			}
 			recordLine.setText(words == null ? " " : "<html><div style='width:155px'>recording: " + esc(words) + "</div></html>");
 			recordLine.setVisible(running && words != null);
 			revalidate();

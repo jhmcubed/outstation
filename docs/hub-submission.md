@@ -195,7 +195,7 @@ canonical ids, the still's model) runs on the client thread (loot events, chat c
 posted there, the side tab's buttons hand theirs over with clientThread.invokeLater); the Page tab's Talk in the
 aether as me reads only the plugin's settings.
 
-## Update 6: the key kept and found, the delve levels a death lost, more than one goal (11/19/2026, built, waiting for Jace's test in the game)
+## Update 6: the key kept and found, the delve levels a death lost, more than one goal, encounters (11/19/2026, encounters 11/21/2026; built, waiting for Jace's test in the game)
 
 Jace (11/19/2026): "Update 6 will include this and the other features we've added since update 5": the key (below),
 the delve levels a death lost (held till now as jhmcubed/outside-plugin#27, which this update carries, so that pull
@@ -227,6 +227,25 @@ Cranky, on Discord: "I'd like to have more than 1 goal item. maybe the button wo
 
 Order: the relay's half (outstation's `relay/`, e162bfc) goes live before this update: an older relay keeps only the fields it knows, so it would drop "more" (the goal at the top still shown), not refuse it. Then ghillie's profile (the list under the goal) synced to outside.wiki, and its `ON_THE_HUB.goals` on once the Hub has merged this.
 
+### Encounters (11/21/2026)
+
+Jace (11/21/2026): "include it in update 6 along with our other changes". Encounter Recorder (Mr Gnome's, on the Hub, BSD 2-Clause) folded into Outside as the part `encounters` (hub_cut.py, now in SUBMITTED), so a player needs only Outside: plugin/README.md, "Encounters", has all of it; ghillie's claude/outstation.md, "Encounters on Outside: the night's design", the why.
+
+- **Recorded to the player's computer**, in `.runelite/plugin-data/outside/encounters` (`getPluginDirectory()`, which needs the descriptor's `internalName = "outside"`, the Hub's own name: the Hub's rules let a plugin's files go only through `Filepath`), in his file format (his docs/FORMAT.md, format 6) with Outside's additions in new fields and the new line kind `obj_anim`, so his replay and outside.wiki read both plugins' files. On a thread of its own, crash-safe as his; the newest kept within "Keep up to (MB)" (200).
+- **By itself at bosses and raids** (RuneLite's Discord plugin's boss and raid areas, `Presence`; not Wintertodt or Tempoross) and for listed NPC ids (his list, and now a form change too), with "Record my encounters" on (on to begin with) and a page for the character; **by hand** from the side tab. **Ends** on the kill (the game's count line), the player's death (not in a raid) or leaving; splits at 5,000 ticks where his stopped. **Never** in the Wilderness, a PvP area or on a PvP or Deadman world (`OutsidePlugin.held`).
+- **His gaps closed**, each checked in the local world's test fight (`fightcheck.py`: 55 of 56 on time, the sound untested for want of an audio device): the starting state (varps, ground items, graphics, projectiles in flight), a restarted animation, the raids' friends-chat completion lines (names taken out), objects' animation changes, projectiles over in a cycle.
+- **Left out entirely**: mouse presses, clicks, their screen places, the interface layout, markers, hotkeys and his overlay.
+- **The side tab's third tab, Encounters**: Record my encounters, Record now / Stop, the recent ones (who, when, how long, killed or died), each with Put on my page (a window first, saying what was taken out and what goes), shown to anyone, Open, and ✕.
+- **Sent only on the player's press**: the recording stripped exactly as the page's strip.js strips one (other players' names, other people's chat, exact XP; checked byte for byte against strip.js), to the relay's existing `POST /fights/<channel>?key=`. Opening the tab reads `GET /fights/<channel>?key=` (what's on the page, whether a new one starts shown, and whether the relay takes encounters at all: its fights are off until Jace switches them on, and the tab says so plainly).
+
+**For the reviewer.** This adds the first thing in the Hub's version that reads other players: with "Players around you" on (as his default), a recording keeps the players near you (positions, gear, animations), as Encounter Recorder does on the Hub. It's on the player's computer; only Put on my page sends one fight, every other player's name taken out first (in any text too) with their chat. The manifest's `warning=` gains it:
+
+```
+warning=This plugin submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it), your account hash and your IP address to a 3rd-party server when you press Update my page, and hourly; and a recorded fight, other players' names taken out, when you press Put on my page. Your Outside page shows them publicly.
+```
+
+The order: nothing on the relay or the page changes for it (the routes are the relay's own since 11/20/2026); the relay's `FIGHTS` switch stays Jace's call, and until it's on the tab says encounters aren't taken yet and keeps them on the computer.
+
 ### Jace's test in the game, for the whole update
 
 `py run.py client` in a checkout of jhmcubed/outside-plugin at the exact commit the fork will name (run.py starts RuneLite with `-ea`), logged in. The client's log mustn't show anything from `wiki.outside` failing at any step.
@@ -235,3 +254,7 @@ Order: the relay's half (outstation's `relay/`, e162bfc) goes live before this u
 2. **Goals, carried over:** with the goal you set before (one), open the Page tab: it's the one row under Your goals, its dot filled. Your page still shows it turning.
 3. **Goals, the list:** press Add a goal item and pick an item, twice more: three rows, the first still shown. Pick another row's dot: a couple of seconds later your page turns that one, the others under it with their kills and bars. ✕ the shown one: the first left is shown. Pick No 3D model: a couple of seconds later nothing turns on your page, every goal listed with its picture; pick a goal's dot and it turns again. `::outsidegoal clear`: every row gone, the page says no goals. Add ten: the button greys out, its tip says ten is the most.
 4. **The delves:** if you're doing the Doom of Mokhaiotl anyway, die in a delve after finishing a level or two, then read the board beside the boss and press Update my page: your page leaves those levels out of the goal's odds where they drop (Show what's sent shows `delve_lost`). Not needed if you're not there: its counting is tested (`DelvesTest`).
+5. **Encounters, by hand:** the side tab's third tab, **Encounters** (its name whole, not cut short). Record my encounters is ticked. Press **Record now**: the button says Stop and a lime line under it counts the time and size. Do anything for half a minute (fight a goblin, cast at a dummy), press **Stop**: a row comes under Recent encounters (who, when, how long), and the folder (Copy the folder's place, pasted into Explorer) holds a `.jsonl.gz` of that name. Open it in Encounter Replay (encounter-replay.pages.dev) too: it should play there as his own do.
+6. **Encounters, by themselves:** go to a boss you do (any of Discord's bosses: Vorkath, Zulrah, the GWD rooms, the Giant Mole…): a recording starts as you arrive (the lime line, without pressing anything). Kill it: the game's kill count line ends it a few seconds later and the row says **killed**; the next kill there starts the next with your first hit. Leave by teleport: one running ends ("left"). Don't press Record now in the Wilderness: it should say no; walking into the Wilderness while one runs ends it at once.
+7. **Putting one on your page:** only once Jace has switched the relay's fights on (`FIGHTS` "on"); until then the tab says "Outside.wiki isn't taking encounters on pages yet" and Put on my page is greyed out. Then: **Put on my page** on a row: a window says what's taken out (exact xp, and other players' names if any were near) and asks; OK: the row says "on your page" with **Open**, which opens outside.wiki/<you>/fight/<id> and plays it. Untick **shown to anyone** (or tick it): your page's own list follows. ✕ a row: it asks, then the file's gone from your computer (one on your page stays there).
+8. **The client closing mid-recording:** start one, close RuneLite's window: it closes as before (a second or so), and the next start lists that recording, ended "client closed".

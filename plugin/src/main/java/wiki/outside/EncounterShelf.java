@@ -68,18 +68,20 @@ final class EncounterShelf
 		}
 	}
 
-	/** What goes on the page from a recording: the stripped text, its summary, and what was taken out. */
+	/** What goes on the page from a recording: the stripped copy gzipped, its summary, and what was taken out. */
 	static final class Prepared
 	{
 		final String file;
-		final EncounterStrip.Stripped stripped;
+		final byte[] gz;
 		final EncounterStrip.Summary summary;
+		final Map<String, Integer> removed;
 
-		Prepared(String file, EncounterStrip.Stripped stripped, EncounterStrip.Summary summary)
+		Prepared(String file, byte[] gz, EncounterStrip.Summary summary, Map<String, Integer> removed)
 		{
 			this.file = file;
-			this.stripped = stripped;
+			this.gz = gz;
 			this.summary = summary;
+			this.removed = removed;
 		}
 	}
 
@@ -196,7 +198,9 @@ final class EncounterShelf
 		{
 			return e;
 		}
-		EncounterStrip.Summary s = EncounterStrip.summary(EncounterFiles.readText(f));
+		EncounterStrip.Summarizer z = new EncounterStrip.Summarizer();
+		EncounterFiles.eachLine(f, z::line);
+		EncounterStrip.Summary s = z.finish();
 		JsonObject n = e != null ? e : new JsonObject();
 		n.addProperty("size", size);
 		n.addProperty("who", s.who());
@@ -311,7 +315,11 @@ final class EncounterShelf
 		return e.has(k) && e.get(k).isJsonPrimitive() && e.get(k).getAsBoolean();
 	}
 
-	/** A recording read whole and stripped for the page, with its summary (EncounterStrip, as the page's strip.js). */
+	/**
+	 * A recording stripped for the page (EncounterStrip, as the page's strip.js), gzipped, with its summary: read twice,
+	 * a line at a time (first every other player's name in it, then each line stripped and packed as it comes), so a long
+	 * raid is never whole in memory.
+	 */
 	void prepare(String file, Consumer<Prepared> ready, Consumer<String> problem)
 	{
 		run("reading " + file, () ->
@@ -321,13 +329,38 @@ final class EncounterShelf
 			{
 				throw new IOException("it isn't there any more");
 			}
-			String text = EncounterFiles.readText(f);
-			if (!EncounterFiles.isHeader(text.substring(0, Math.max(0, text.indexOf('\n')))))
+			if (!EncounterFiles.isHeader(EncounterFiles.firstLine(f)))
 			{
 				throw new IOException("it isn't an encounter recording");
 			}
-			EncounterStrip.Stripped stripped = EncounterStrip.strip(text);
-			ready.accept(new Prepared(file, stripped, EncounterStrip.summary(stripped.text)));
+			EncounterStrip.Names names = new EncounterStrip.Names();
+			EncounterFiles.eachLine(f, names::line);
+			EncounterStrip.Stripper st = new EncounterStrip.Stripper(names.pattern());
+			EncounterStrip.Summarizer z = new EncounterStrip.Summarizer();
+			EncounterFiles.Packer packer = new EncounterFiles.Packer();
+			IOException[] failed = new IOException[1];
+			EncounterFiles.eachLine(f, line ->
+			{
+				String kept = st.line(line);
+				if (kept != null && failed[0] == null)
+				{
+					z.line(kept);
+					try
+					{
+						packer.line(kept);
+					}
+					catch (IOException e)
+					{
+						failed[0] = e;
+					}
+				}
+			});
+			if (failed[0] != null)
+			{
+				throw failed[0];
+			}
+			EncounterStrip.Summary s = z.finish();
+			ready.accept(new Prepared(file, packer.finish((int) s.ticks), s, st.removed));
 		}, problem);
 	}
 

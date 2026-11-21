@@ -24,7 +24,12 @@ It also records your fights at bosses and raids to your computer, tick by tick, 
 At the top: your page's address, a box with whether it's proven yours, who sees it and when it was last updated, and
 three buttons: **Update my page** (it counts down if you press it within a minute of the last), **Open my page** and
 **Show what's sent** (exactly what Update my page would send now, every field of it, in a window; nothing is sent by
+<!-- hub:cut encounters -->
+opening it). Under them, three tabs:
+<!-- hub:end encounters -->
+<!-- hub:else encounters
 opening it). Under them, two tabs:
+-->
 
 - **Page:** when your page updates, and what goes with it; then, in this order:
   - **Your goals:** **Add a goal item**, and under it your goals, each with a ✕ that takes it off and a choice of the one your page shows as its 3D model, or No 3D model (the Goal items feature, below).
@@ -41,7 +46,12 @@ opening it). Under them, two tabs:
 
 ## Settings
 
+<!-- hub:cut encounters -->
+Under five headings, each switch on to begin with:
+<!-- hub:end encounters -->
+<!-- hub:else encounters
 Under four headings, each switch on to begin with:
+-->
 
 - **Your page:** **Send to my Outside page**, the main switch. Off, nothing is sent, and what it sent comes off your page.
 <!-- hub:cut goal -->

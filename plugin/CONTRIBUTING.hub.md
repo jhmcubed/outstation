@@ -33,6 +33,9 @@ It compiles the plugin against your installed RuneLite and opens RuneLite with O
 - `Progress.java`: quests, diaries, combat achievements and the slayer task
 - `Presence.java`: what you're doing, as RuneLite's Discord plugin shows it, and its table of areas
 - `Attach.java`: the page's key: the relay, the channel and the key
+<!-- hub:cut encounters -->
+- `Encounters.java`: the encounters' recorder (Encounter Recorder's, by Mr Gnome, folded in: `NOTICE`), with `EncounterSnap.java` (its lines), `EncounterFiles.java` (writing, packing and naming its files), `EncounterShelf.java` (the side tab's list) and `EncounterStrip.java` (what's taken out before one goes on the page, as the page's own strip.js)
+<!-- hub:end encounters -->
 - `OutsideConfig.java`: the settings
 
 ## Where changes are made

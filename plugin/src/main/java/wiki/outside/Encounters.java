@@ -570,7 +570,8 @@ final class Encounters
 	/** A part at the length limit ended, and the next begun at once (Outside's: his stops there). */
 	private void split()
 	{
-		String follows = recording.fileName();
+		// (the part before as it'll be once packed, a moment from now)
+		String follows = recording.fileName() + EncounterFiles.EXT;
 		boolean auto = automatic;
 		Presence.Area at = area;
 		Set<Integer> watched = watchedIds;

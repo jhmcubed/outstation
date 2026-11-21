@@ -37,6 +37,19 @@ public class AttachTest
 		assertEquals("https://outside.wiki/jhmcubed", a.page(""));
 	}
 
+	// hub:cut encounters
+	@Test
+	public void theEncountersRoutes()
+	{
+		Attach a = new Attach("relay.ghillie.workers.dev", "jhmcubed", "k3y-k3y-k3y");
+		assertEquals("https://relay.ghillie.workers.dev/fights/jhmcubed?key=k3y-k3y-k3y", a.fightsUrl());
+		assertEquals("https://relay.ghillie.workers.dev/fights/jhmcubed/upl1MVobEcCgDxIc-Z-MgQ?key=k3y-k3y-k3y&public=1",
+			a.fightUrl("upl1MVobEcCgDxIc-Z-MgQ", true));
+		assertEquals("https://outside.wiki/jhmcubed/fight/upl1MVobEcCgDxIc-Z-MgQ", a.fightPage("upl1MVobEcCgDxIc-Z-MgQ", null));
+		assertEquals("https://outside.wiki/jhmcubed/fight/upl1MVobEcCgDxIc-Z-MgQ?code=a-b_c", a.fightPage("upl1MVobEcCgDxIc-Z-MgQ", "a-b_c"));
+	}
+	// hub:end encounters
+
 	@Test
 	public void tendingThePagesChat()
 	{

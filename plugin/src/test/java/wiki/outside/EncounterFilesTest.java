@@ -61,7 +61,12 @@ public class EncounterFilesTest
 		assertEquals(LINES, unpack(gz));
 		assertEquals(2, EncounterFiles.ticksFromHeader(gz, gz.length));
 		assertTrue(EncounterFiles.isGzip(gz, gz.length));
-		byte[] page = EncounterFiles.gzipText(LINES, 2);
+		EncounterFiles.Packer packer = new EncounterFiles.Packer();
+		for (String line : LINES.substring(0, LINES.length() - 1).split("\n"))
+		{
+			packer.line(line);
+		}
+		byte[] page = packer.finish(2);
 		assertEquals(LINES, unpack(page));
 		assertEquals(2, EncounterFiles.ticksFromHeader(page, page.length));
 	}
@@ -147,7 +152,10 @@ public class EncounterFilesTest
 		Files.setLastModifiedTime(plain, FileTime.fromMillis(System.currentTimeMillis() - EncounterFiles.IDLE_MS - 1000));
 		assertEquals(Collections.singletonList("20261121-030000-Vorkath.jsonl.gz"), EncounterFiles.finishLeftovers(dir, System.currentTimeMillis()));
 		assertFalse(Files.exists(plain));
-		String text = EncounterFiles.readText(dir.joinSegment("20261121-030000-Vorkath.jsonl.gz"));
-		assertEquals(LINES + "{\"t\":2,\"e\":\"end\",\"reason\":\"not stopped: the client closed or crashed\",\"ticks\":2}\n", text);
+		StringBuilder text = new StringBuilder();
+		EncounterFiles.eachLine(dir.joinSegment("20261121-030000-Vorkath.jsonl.gz"), l -> text.append(l).append('\n'));
+		// (split as JavaScript splits: the piece after the last \n is the empty last line)
+		text.setLength(text.length() - 1);
+		assertEquals(LINES + "{\"t\":2,\"e\":\"end\",\"reason\":\"not stopped: the client closed or crashed\",\"ticks\":2}\n", text.toString());
 	}
 }

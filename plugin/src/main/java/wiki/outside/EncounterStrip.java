@@ -147,18 +147,16 @@ final class EncounterStrip
 		return b.toString();
 	}
 
-	static Stripped strip(String text)
+	/** Every other player's name a file holds (strip.js's first pass), line by line; then the pattern that finds them. */
+	static final class Names
 	{
-		List<String> out = new ArrayList<>();
-		Map<String, Integer> removed = new LinkedHashMap<>();
-		int kept = 0;
-		// (first, every other player's name the file holds, so it can be taken out of any text too)
-		Set<String> names = new LinkedHashSet<>(), me = new LinkedHashSet<>();
-		for (String line : text.split("\n", -1))
+		private final Set<String> names = new LinkedHashSet<>(), me = new LinkedHashSet<>();
+
+		void line(String line)
 		{
 			if (!line.contains("\"name\""))
 			{
-				continue;
+				return;
 			}
 			Object o;
 			try
@@ -167,7 +165,7 @@ final class EncounterStrip
 			}
 			catch (IllegalArgumentException e)
 			{
-				continue;
+				return;
 			}
 			Object e = Js.get(o, "e");
 			if ("look".equals(e) || "player_spawn".equals(e))
@@ -184,35 +182,56 @@ final class EncounterStrip
 				}
 			}
 		}
-		names.removeAll(me);
-		Pattern nameRe = null;
-		if (!names.isEmpty())
+
+		/** The names as one pattern (strip.js's nameRe), or null when there are none. */
+		Pattern pattern()
 		{
-			List<String> sorted = new ArrayList<>();
-			for (String n : names)
+			Set<String> names = new LinkedHashSet<>(this.names);
+			names.removeAll(me);
+			Pattern nameRe = null;
+			if (!names.isEmpty())
 			{
-				if (!n.isEmpty())
+				List<String> sorted = new ArrayList<>();
+				for (String n : names)
 				{
-					sorted.add(n);
+					if (!n.isEmpty())
+					{
+						sorted.add(n);
+					}
 				}
+				// (longest first, the rest as they came: JavaScript's sort is stable)
+				sorted.sort((a, b) -> b.length() - a.length());
+				List<String> parts = new ArrayList<>();
+				boolean ascii = true;
+				for (String n : sorted)
+				{
+					parts.add(esc(n));
+					ascii &= n.chars().allMatch(ch -> ch < 0x80);
+				}
+				nameRe = Pattern.compile("(^|[^A-Za-z0-9])(" + String.join("|", parts) + ")(?![A-Za-z0-9])",
+					Pattern.CASE_INSENSITIVE | (ascii ? 0 : Pattern.UNICODE_CASE));
 			}
-			// (longest first, the rest as they came: JavaScript's sort is stable)
-			sorted.sort((a, b) -> b.length() - a.length());
-			List<String> parts = new ArrayList<>();
-			boolean ascii = true;
-			for (String n : sorted)
-			{
-				parts.add(esc(n));
-				ascii &= n.chars().allMatch(ch -> ch < 0x80);
-			}
-			nameRe = Pattern.compile("(^|[^A-Za-z0-9])(" + String.join("|", parts) + ")(?![A-Za-z0-9])",
-				Pattern.CASE_INSENSITIVE | (ascii ? 0 : Pattern.UNICODE_CASE));
+			return nameRe;
 		}
-		for (String line : text.split("\n", -1))
+	}
+
+	/** strip.js's second pass, a line at a time: what's kept of each (null: dropped), what was taken out, how many kept. */
+	static final class Stripper
+	{
+		private final Pattern nameRe;
+		final Map<String, Integer> removed = new LinkedHashMap<>();
+		int kept;
+
+		Stripper(Pattern nameRe)
+		{
+			this.nameRe = nameRe;
+		}
+
+		String line(String line)
 		{
 			if (Js.trim(line).isEmpty())
 			{
-				continue;
+				return null;
 			}
 			Object o;
 			try
@@ -222,7 +241,7 @@ final class EncounterStrip
 			catch (IllegalArgumentException ex)
 			{
 				gone(removed, "broken lines");
-				continue;
+				return null;
 			}
 			if (o == null)
 			{
@@ -235,17 +254,17 @@ final class EncounterStrip
 			if ("press".equals(e) || "ui_layout".equals(e) || "ui_widgets".equals(e))
 			{
 				gone(removed, "mouse presses and interface layout");
-				continue;
+				return null;
 			}
 			if ("chat".equals(e) && Js.truthy(who) && !"me".equals(Js.get(who, "k")))
 			{
 				gone(removed, "other people's public chat");
-				continue;
+				return null;
 			}
 			if ("say".equals(e) && other)
 			{
 				gone(removed, "other players' overhead text");
-				continue;
+				return null;
 			}
 			if (o instanceof Map)
 			{
@@ -298,10 +317,35 @@ final class EncounterStrip
 				// (likewise a line that's a string: counted, sent as it was)
 				scrub(o, nameRe, removed);
 			}
-			out.add(Js.stringify(o));
 			kept++;
+			return Js.stringify(o);
 		}
-		return new Stripped(String.join("\n", out) + "\n", kept, removed);
+	}
+
+	/** A text split as JavaScript's text.split("\n") splits it: at each \n only, the piece after the last one too. */
+	static List<String> lines(String text)
+	{
+		return java.util.Arrays.asList(text.split("\n", -1));
+	}
+
+	static Stripped strip(String text)
+	{
+		Names names = new Names();
+		for (String line : lines(text))
+		{
+			names.line(line);
+		}
+		Stripper st = new Stripper(names.pattern());
+		List<String> out = new ArrayList<>();
+		for (String line : lines(text))
+		{
+			String kept = st.line(line);
+			if (kept != null)
+			{
+				out.add(kept);
+			}
+		}
+		return new Stripped(String.join("\n", out) + "\n", st.kept, st.removed);
 	}
 
 	private static void add(Set<String> names, Set<String> me, Object w, Object n)
@@ -312,7 +356,7 @@ final class EncounterStrip
 		}
 	}
 
-	private static void gone(Map<String, Integer> removed, String what)
+	static void gone(Map<String, Integer> removed, String what)
 	{
 		removed.merge(what, 1, Integer::sum);
 	}
@@ -415,18 +459,20 @@ final class EncounterStrip
 			: words.get(0) + ", " + words.get(1) + " and " + (words.size() - 2) + " more";
 	}
 
-	static Summary summary(String text)
+	/** strip.js's summary(), a line at a time: line() each, then finish(). */
+	static final class Summarizer
 	{
-		Summary s = new Summary();
-		Map<Object, Object> npcs = new LinkedHashMap<>();
-		Map<Object, Double> dealtTo = new LinkedHashMap<>();
+		private final Summary s = new Summary();
+		private final Map<Object, Object> npcs = new LinkedHashMap<>();
+		private final Map<Object, Double> dealtTo = new LinkedHashMap<>();
 		// (this plugin's own: the NPCs that died in it, by id)
-		Set<Object> deadIds = new LinkedHashSet<>();
-		for (String line : text.split("\n", -1))
+		private final Set<Object> deadIds = new LinkedHashSet<>();
+
+		void line(String line)
 		{
 			if (Js.trim(line).isEmpty())
 			{
-				continue;
+				return;
 			}
 			Object o;
 			try
@@ -435,7 +481,7 @@ final class EncounterStrip
 			}
 			catch (IllegalArgumentException ex)
 			{
-				continue;
+				return;
 			}
 			if (o == null)
 			{
@@ -494,24 +540,38 @@ final class EncounterStrip
 				deadIds.add(key(Js.get(who, "id")));
 			}
 		}
-		// (by name, in the order first hit: several ids can be one foe)
-		Map<Object, Double> byName = new LinkedHashMap<>();
-		Map<Object, List<Object>> idsByName = new LinkedHashMap<>();
-		for (Map.Entry<Object, Double> en : dealtTo.entrySet())
+
+		Summary finish()
 		{
-			Object d = npcs.get(en.getKey());
-			Object n = Js.truthy(d) ? Js.get(d, "name") : "npc " + Js.toStr(en.getKey());
-			Double was = byName.get(n);
-			byName.put(n, (was == null || was == 0 || was.isNaN() ? 0 : was) + en.getValue());
-			idsByName.computeIfAbsent(n, x -> new ArrayList<>()).add(en.getKey());
+			// (by name, in the order first hit: several ids can be one foe)
+			Map<Object, Double> byName = new LinkedHashMap<>();
+			Map<Object, List<Object>> idsByName = new LinkedHashMap<>();
+			for (Map.Entry<Object, Double> en : dealtTo.entrySet())
+			{
+				Object d = npcs.get(en.getKey());
+				Object n = Js.truthy(d) ? Js.get(d, "name") : "npc " + Js.toStr(en.getKey());
+				Double was = byName.get(n);
+				byName.put(n, (was == null || was == 0 || was.isNaN() ? 0 : was) + en.getValue());
+				idsByName.computeIfAbsent(n, x -> new ArrayList<>()).add(en.getKey());
+			}
+			String named = foes(byName);
+			s.foe = !named.isEmpty() ? named : Js.truthy(s.label) ? s.label : "a fight";
+			for (Object n : foeList(byName))
+			{
+				s.killed |= !Collections.disjoint(idsByName.get(n), deadIds);
+			}
+			return s;
 		}
-		String named = foes(byName);
-		s.foe = !named.isEmpty() ? named : Js.truthy(s.label) ? s.label : "a fight";
-		for (Object n : foeList(byName))
+	}
+
+	static Summary summary(String text)
+	{
+		Summarizer z = new Summarizer();
+		for (String line : lines(text))
 		{
-			s.killed |= !Collections.disjoint(idsByName.get(n), deadIds);
+			z.line(line);
 		}
-		return s;
+		return z.finish();
 	}
 
 	/** A Map key as JavaScript's Map has it (SameValueZero: -0 and 0 the same). */

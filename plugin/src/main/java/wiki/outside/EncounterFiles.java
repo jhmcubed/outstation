@@ -415,31 +415,6 @@ final class EncounterFiles
 		writeIntLE(out, size);
 	}
 
-	/** A text gzipped as a packed recording is, its length in the header's comment (Outside's: the stripped copy that
-	 *  goes on the page) */
-	static byte[] gzipText(String text, int ticks) throws IOException
-	{
-		byte[] raw = text.getBytes(StandardCharsets.UTF_8);
-		ByteArrayOutputStream out = new ByteArrayOutputStream(raw.length / 8 + 64);
-		writeHeader(out, ticks);
-		Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
-		try
-		{
-			DeflaterOutputStream deflate = new DeflaterOutputStream(out, deflater, 1 << 16);
-			deflate.write(raw);
-			deflate.finish();
-		}
-		finally
-		{
-			deflater.end();
-		}
-		CRC32 crc = new CRC32();
-		crc.update(raw);
-		writeIntLE(out, crc.getValue());
-		writeIntLE(out, raw.length);
-		return out.toByteArray();
-	}
-
 	private static void writeHeader(OutputStream out, int ticks) throws IOException
 	{
 		byte[] comment = ticks >= 0 ? ("{\"ticks\":" + ticks + "}").getBytes(StandardCharsets.ISO_8859_1) : null;
@@ -534,8 +509,12 @@ final class EncounterFiles
 		return length;
 	}
 
-	/** A recording's whole text, unpacked if it's gzipped (at most MAX_UNPACKED: past it, an IOException) */
-	static String readText(Filepath f) throws IOException
+	/**
+	 * Each line of a recording, unpacked if it's gzipped, as JavaScript's text.split("\n") gives them (at each \n only,
+	 * the piece after the last one too), read a piece at a time so a long raid is never whole in memory (at most
+	 * MAX_UNPACKED unpacked: past it, an IOException).
+	 */
+	static void eachLine(Filepath f, java.util.function.Consumer<String> line) throws IOException
 	{
 		byte[] head = new byte[2];
 		int length;
@@ -544,21 +523,71 @@ final class EncounterFiles
 			length = readUpTo(in, head);
 		}
 		try (InputStream raw = f.openInputStream();
-			InputStream in = isGzip(head, length) ? new GZIPInputStream(raw, 1 << 16) : raw)
+			InputStream in = isGzip(head, length) ? new GZIPInputStream(raw, 1 << 16) : raw;
+			java.io.Reader r = new java.io.InputStreamReader(in, StandardCharsets.UTF_8))
 		{
-			ByteArrayOutputStream out = new ByteArrayOutputStream(1 << 20);
-			byte[] chunk = new byte[1 << 16];
+			char[] chunk = new char[1 << 16];
+			StringBuilder cur = new StringBuilder(4096);
 			long total = 0;
-			for (int read; (read = in.read(chunk)) > 0; )
+			for (int read; (read = r.read(chunk)) > 0; )
 			{
 				total += read;
 				if (total > MAX_UNPACKED)
 				{
 					throw new IOException("past " + (MAX_UNPACKED >> 20) + " MB unpacked");
 				}
-				out.write(chunk, 0, read);
+				int from = 0;
+				for (int i = 0; i < read; i++)
+				{
+					if (chunk[i] == '\n')
+					{
+						cur.append(chunk, from, i - from);
+						line.accept(cur.toString());
+						cur.setLength(0);
+						from = i + 1;
+					}
+				}
+				cur.append(chunk, from, read - from);
 			}
-			return new String(out.toByteArray(), StandardCharsets.UTF_8);
+			line.accept(cur.toString());
+		}
+	}
+
+	/** Lines gzipped as they come, as a packed recording is (the length in the header's comment), held packed in memory
+	 *  only: what goes on the page, at most a few MB. */
+	static final class Packer
+	{
+		private final java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream(1 << 20);
+		private final Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+		private final DeflaterOutputStream deflate = new DeflaterOutputStream(body, deflater, 1 << 16);
+		private final CRC32 crc = new CRC32();
+		private long size;
+
+		void line(String text) throws IOException
+		{
+			byte[] b = (text + "\n").getBytes(StandardCharsets.UTF_8);
+			deflate.write(b);
+			crc.update(b);
+			size += b.length;
+		}
+
+		/** The gzip, its header saying {@code ticks} */
+		byte[] finish(int ticks) throws IOException
+		{
+			try
+			{
+				deflate.finish();
+			}
+			finally
+			{
+				deflater.end();
+			}
+			ByteArrayOutputStream out = new ByteArrayOutputStream(body.size() + 64);
+			writeHeader(out, ticks);
+			body.writeTo(out);
+			writeIntLE(out, crc.getValue());
+			writeIntLE(out, size);
+			return out.toByteArray();
 		}
 	}
 
