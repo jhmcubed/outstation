@@ -350,6 +350,49 @@ README.md, "Encounters", all of it.
    again and log in on the same character: within a minute or two the row is **on your page ✓**, once (your page lists
    it once). Log in on another character first: it waits for the right one.
 
+### Encounters, round four: a delve whole, a corpse's forfeit, a pet as the moment (11/21/2026)
+
+Jace (11/21/2026): Doom of Mokhaiotl's "loot 'chest' is Doom's burrow that you can either claim your loot from or
+descend deeper. Every doom/delve level as the player descends should be one continuous encounter recording, and it
+should only end when the player dies or after they claim their loot and press the leave button on the burrow";
+Araxxor's corpse has "Harvest" and "a right click option to destroy the corpse of Araxxor for a higher chance at the pet
+at the cost of receiving no loot"; the Royal Titans "you also pull the loot from their corpse"; and "Pet rolls from
+bosses/raid loot chests are counted as moments, correct?" (they weren't). ghillie's claude/outstation.md, "Encounters,
+round four", has the design; plugin/README.md, "Encounters", all of it.
+
+- **A delve is one recording.** No area of RuneLite's names Doom's arena, so Doom of Mokhaiotl appearing (any of its
+  three forms) starts it (with Record my encounters on). Each level's kill count and "Delve level" lines, the burrow's
+  window and Descend all go on. It ends with the player's death, or after the claim (the game's own claim script, as
+  RuneLite's Loot Tracker reads it) and the burrow's **Leave** a few seconds on; a claim and a teleport out ends it too;
+  unclaimed and out of the delve a while (a teleport), "left". Its moment is the claim's window as the player saw it,
+  or the fall.
+- **A corpse's forfeit:** Araxxor's **Destroy** and the Royal Titans' **Sacrifice** (the wiki's names; the Titans'
+  third choice, **Take pages**, counts as their loot). The recording waits for the choice as it waits for a Harvest or
+  Loot (the Titans' corpses by either titan's name: the count line names neither); a forfeit writes a `loot` line with
+  no items (`"choice": "destroy"` or `"sacrifice"`; a looted one says `"harvest"`, `"loot"`…), and its moment is the
+  kill and the destroying, or the destroying alone when the kill's too long before.
+- **A pet joins its moment.** The game's line (as Dink reads it: "You have a funny feeling like you're being
+  followed.", "You feel something weird sneaking into your backpack.", "...would have been followed..."), then the pet
+  beside you or in your backpack, joins the stretch it came with: "the kill, its drop and a pet", "the chest and a
+  pet", "the loot and a pet". A pet far from any of those is the moment by itself. The chat line is shown as the game
+  drew it (a picture of the chatbox's row, the same way the reward window's is taken), the pet named in the moment.
+- **Nothing new is sent or asked:** the pet's line is the game's own message to the player, already in the recording.
+
+**Jace's in-game steps for round four:**
+
+1. **A delve:** go down to Doom of Mokhaiotl with Record my encounters ticked: the lime line starts as Doom appears.
+   Finish a level, open the burrow, **Descend**; finish another (the line keeps going through both). Open the burrow,
+   **Claim and Leave**, take the loot, press **Leave**: the line stops a few seconds later, the row says **claimed**,
+   its length the whole delve. Its moment is the burrow's window as you saw it at the claim. (Or die in a delve: the row
+   says **died** and the moment is the fall.)
+2. **Araxxor:** kill it and **Harvest**: the moment shows the loot coming into your inventory. Next kill, right-click
+   **Destroy** (and answer the prompt): the recording ends a few seconds after the corpse goes; its moment is the kill
+   and the destroying (or the destroying alone after a long wait), no window.
+3. **The Royal Titans:** kill both, then **Loot** one: the recording waits for it, and the moment is the loot coming
+   into your inventory. (**Sacrifice** next time: as Araxxor's Destroy.)
+4. **A pet** (whenever one comes): its moment holds the pet's line as your chatbox showed it, low on the left, and the
+   pet beside you (or the backpack line). Nothing to do but hope.
+
 ### Jace's test in the game, for the whole update
 
 `py run.py client` in a checkout of jhmcubed/outside-plugin at the exact commit the fork will name (run.py starts RuneLite with `-ea`), logged in. The client's log mustn't show anything from `wiki.outside` failing at any step.

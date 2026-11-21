@@ -398,6 +398,12 @@ final class EncounterScene
 		}
 	}
 
+	/** Whether the player dealt damage to an NPC of this name this recording (round four: a corpse's name). */
+	boolean fought(String npc)
+	{
+		return npc != null && dealt.containsKey(npc);
+	}
+
 	private String boss()
 	{
 		String best = null;
@@ -1052,7 +1058,8 @@ final class EncounterScene
 			t.from = killTick >= 0 && t.to - (killTick - BEFORE) <= STRETCH_MOST ? killTick - BEFORE : lootTick - BEFORE;
 			t.anchor = lootTick;
 			t.killTick = killTick >= 0 && killTick >= t.from ? killTick : -1;
-			t.why = t.killTick >= 0 ? "the kill and the corpse destroyed" : "the corpse destroyed";
+			String done = "Sacrifice".equals(window.title) ? "the corpse sacrificed" : "the corpse destroyed";
+			t.why = t.killTick >= 0 ? "the kill and " + done : done;
 			t.lootTick = lootTick;
 			t.window = window;
 			t.npc = killNpc != null ? killNpc : boss();

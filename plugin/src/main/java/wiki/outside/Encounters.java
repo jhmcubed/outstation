@@ -170,6 +170,12 @@ import org.slf4j.LoggerFactory;
  * there only.</li>
  * <li><b>Never in the Wilderness, a PvP area or on a PvP or Deadman world</b> (the snapshot's rule, OutsidePlugin.held):
  * none starts there, and one running stops the tick it's found there, that tick's lines never written.</li>
+ * <li><b>Round four</b> (11/21/2026; ghillie's claude/outstation.md, "Encounters, round four"): a delve of Doom of
+ * Mokhaiotl one recording from its first level (Doom's forms start it: no area of RuneLite's names its arena) through
+ * every level's kill, window and descent, ended only by the player's death, or the claim (the game's claim script) and
+ * the burrow's Leave (or the claim and out of the delve's instance); a corpse's forfeit (Araxxor's Destroy, the Royal
+ * Titans' Sacrifice) as a loot line with nothing, "choice" saying which; and a pet: the game's line (a `pet` line), the
+ * pet seen beside them or in the backpack (`pet_seen`), its chat line's picture, and the moment with it in.</li>
  * <li>Not his: mouse presses, clicks, their screen positions, the interface layout and markers are never recorded (a
  * replay doesn't need them and the page's strip would take them out anyway), and there's no overlay or hotkey.</li>
  * </ul>
@@ -260,7 +266,12 @@ final class Encounters
 	static final int TOB_CHEST_REGION = 12867, TOB_LOBBY = 14642;
 	/** a menu option that opens or loots something (a chest, a corpse): where the loot came from is what was clicked */
 	static final Set<String> LOOT_OPTIONS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
-		"Open", "Search", "Loot", "Harvest", "Claim", "Take", "Take-loot", "Collect", "Grab", "Plunder")));
+		"Open", "Search", "Loot", "Harvest", "Claim", "Take", "Take-loot", "Collect", "Grab", "Plunder",
+		// (round four: the Royal Titans' third choice, their desiccated pages into the inventory, the wiki's "Take pages")
+		"Take pages")));
+	/** a corpse's option that gives up its loot for a better chance at the pet (round four, 11/21/2026; the wiki):
+	 *  Araxxor's "Destroy" (a prompt after), the Royal Titans' "Sacrifice" */
+	static final Set<String> FORFEIT_OPTIONS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList("Destroy", "Sacrifice")));
 
 	// ---- round four (11/21/2026; ghillie's claude/outstation.md, "Encounters, round four"): Doom of Mokhaiotl's delve
 	// whole, Araxxor's corpse harvested or destroyed, and a pet as the moment.
@@ -1808,7 +1819,6 @@ final class Encounters
 			return;
 		}
 		destroyIndex = -1;
-		clickedOption = "Destroy";
 		clickedTick = Math.max(clickedTick, whole() - 30);
 		loot("corpse", gained(invAtDestroy, itemsOf(client.getItemContainer(InventoryID.INV))), -1, "destroyed");
 	}
@@ -2600,7 +2610,7 @@ final class Encounters
 		// (Araxxor's corpse: Destroy, for a better chance at the pet and no loot (the wiki: "Harvest, Destroy", a prompt
 		// after); kept till the corpse goes; round four)
 		NPC on = event.getMenuEntry() == null ? null : event.getMenuEntry().getNpc();
-		if ("Destroy".equals(option) && on != null && scene != null && scene.killed() && raidArea() == null)
+		if (FORFEIT_OPTIONS.contains(option) && on != null && scene != null && scene.killed() && raidArea() == null)
 		{
 			destroyIndex = on.getIndex();
 			destroyTick = whole();
@@ -2716,7 +2726,7 @@ final class Encounters
 	 *  inventory"; the ground only when it's full, and that's the item lines). */
 	private void corpseLoot(ItemContainer inv)
 	{
-		if (!"npc".equals(clickedKind) || "Destroy".equals(clickedOption) || whole() - clickedTick > CORPSE_TAKE
+		if (!"npc".equals(clickedKind) || FORFEIT_OPTIONS.contains(clickedOption) || whole() - clickedTick > CORPSE_TAKE
 			|| looted.contains("corpse") || scene == null
 			|| !scene.killed() || raidArea() != null)
 		{
@@ -2747,7 +2757,10 @@ final class Encounters
 		{
 			net.runelite.api.NPCComposition def = npc.getTransformedComposition();
 			String name = npc.getName() == null ? "" : Text.removeTags(npc.getName());
-			if (def == null || !name.equalsIgnoreCase(killed) || npc.getWorldLocation().distanceTo(me.getWorldLocation()) > 15)
+			// (the killed one's name, or one fought: the Royal Titans' count line names neither titan, and each falls
+			// where it stood with its own name, Branda the Fire Queen's and Eldric the Ice King's; round four)
+			if (def == null || !(name.equalsIgnoreCase(killed) || scene.fought(name))
+				|| npc.getWorldLocation().distanceTo(me.getWorldLocation()) > 15)
 			{
 				continue;
 			}
@@ -2834,7 +2847,7 @@ final class Encounters
 		// (a corpse's: what the player chose, "harvest" or "destroy" (Araxxor's), "loot"...; round four)
 		if (corpse && clickedOption != null)
 		{
-			line.addProperty("choice", "destroyed".equals(kind) ? "destroy" : clickedOption.toLowerCase(java.util.Locale.ROOT));
+			line.addProperty("choice", clickedOption.toLowerCase(java.util.Locale.ROOT));
 		}
 		if (from != null)
 		{
@@ -2869,7 +2882,7 @@ final class Encounters
 		if (scene != null)
 		{
 			EncounterScene.Window w = new EncounterScene.Window(kind, source, window,
-				window >= 0 ? windowTitle(window) : null, scened);
+				window >= 0 ? windowTitle(window) : "destroyed".equals(kind) ? clickedOption : null, scened);
 			scene.loot(whole(), w, at, plane);
 			// (its picture a few client cycles on, once the window's laid out and drawn with its items; none for a corpse
 			// destroyed)
@@ -2901,7 +2914,7 @@ final class Encounters
 		}
 	}
 
-	/** The nearest object or NPC named a chest (or its corpse) within 10 tiles: {its tile, {kind, id, name}}, or null. */
+	/** The nearest object or NPC named a chest (or its corpse, or Doom's burrow) within 10 tiles: {its tile, {kind, id, name}}, or null. */
 	private Object[] nearestChest(WorldView wv, Player me)
 	{
 		if (me == null || me.getLocalLocation() == null)
@@ -2951,7 +2964,9 @@ final class Encounters
 					String name = def == null || def.getName() == null ? "" : Text.removeTags(def.getName());
 					LocalPoint lp = o.getLocalLocation();
 					int d = Math.max(Math.abs(lp.getX() - mine.getX()), Math.abs(lp.getY() - mine.getY()));
-					if ((name.toLowerCase().contains("chest") || name.toLowerCase().contains("coffer")) && d < bestD)
+					// (round four: Doom of Mokhaiotl's "Burrow hole", its pile's place)
+					String lower = name.toLowerCase();
+					if ((lower.contains("chest") || lower.contains("coffer") || lower.contains("burrow")) && d < bestD)
 					{
 						JsonObject f = new JsonObject();
 						f.addProperty("kind", "obj");
