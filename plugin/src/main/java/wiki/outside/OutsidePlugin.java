@@ -2970,6 +2970,50 @@ public class OutsidePlugin extends Plugin
 				});
 			}
 
+			// hub:cut arrange
+			/** "Edit my page" (11/21/2026, update 6; docs/protocol.md "Editing the page from the page"): a token made here
+			 *  on the press, handed to the relay with the page's key, and the page opened with it in the fragment. It
+			 *  arranges the page and sets its theme song, nothing else, for 2 hours. */
+			@Override
+			public void editPage()
+			{
+				Attach a = key();
+				if (a == null)
+				{
+					panel.editStatus("log in on a character with a page first");
+					return;
+				}
+				String token = Tend.token(new java.security.SecureRandom());
+				String code = friendsOnly ? watchCode(false) : null;
+				panel.editStatus("opening your page to edit…");
+				http.newCall(new Request.Builder().url(a.editUrl())
+					.header("User-Agent", "outside-plugin/" + VERSION)
+					.post(RequestBody.create(JSON, Tend.body(token, gson))).build()).enqueue(new Callback()
+				{
+					@Override
+					public void onFailure(Call call, IOException ex)
+					{
+						panel.editStatus("the relay's out of reach: try again in a moment");
+					}
+
+					@Override
+					public void onResponse(Call call, Response r)
+					{
+						try (Response res = r)
+						{
+							if (res.code() != 200)
+							{
+								panel.editStatus("the relay said no (" + res.code() + ")");
+								return;
+							}
+						}
+						panel.editStatus("opened in your browser: arrange this file, and your theme song, for the next 2 hours");
+						net.runelite.client.util.LinkBrowser.browse(a.editPage(code, token));
+					}
+				});
+			}
+			// hub:end arrange
+
 			/** "Tend my page's chat" (11/16/2026; docs/protocol.md "Tending the page's chat from the page"): a token made
 			 *  here, handed to the relay with the page's key, and the page opened with it in the fragment. */
 			@Override

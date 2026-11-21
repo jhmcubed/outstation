@@ -84,6 +84,12 @@ public class OutsidePanel extends PluginPanel
 
 		void openPage();
 
+		// hub:cut arrange
+		/** "Edit my page" (11/21/2026, update 6): the page opened with a link that can arrange it and set its theme song,
+		 *  and nothing else, for 2 hours. */
+		void editPage();
+		// hub:end arrange
+
 		void claim();
 
 		// hub:cut year
@@ -236,6 +242,10 @@ public class OutsidePanel extends PluginPanel
 	private boolean friends;
 	// (11/16/2026: the page's chat tended on the page, with the plugin alone)
 	private final JLabel tendStatus = small(" ");
+	// hub:cut arrange
+	// (11/21/2026, update 6: the page arranged, and its theme song set, on the page)
+	private final JLabel editStatus = small(" ");
+	// hub:end arrange
 	// hub:cut talk
 	private final JTextField emoteName = new JTextField();
 	private final JPanel emotes = new JPanel();
@@ -321,7 +331,22 @@ public class OutsidePanel extends PluginPanel
 		snapStatus.setVisible(false);
 		page.add(left(snapStatus));
 		page.add(Box.createVerticalStrut(4));
-		page.add(wide(button("Open my page", hooks::openPage)));
+		// (11/21/2026, update 6; Jace, of editing his own page and adding a song: "Build it, they should be a part of update
+		// 6"): Edit my page beside Open my page, the page opened to arrange it and set its theme song
+		JPanel openRow = new JPanel(new GridLayout(1, 0, 4, 0));
+		openRow.add(button("Open my page", hooks::openPage));
+		// hub:cut arrange
+		JButton editButton = button("Edit my page", hooks::editPage);
+		editButton.setToolTipText("Open your page to arrange it and set its theme song (the link works for 2 hours)");
+		openRow.add(editButton);
+		// hub:end arrange
+		openRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+		page.add(openRow);
+		// hub:cut arrange
+		editStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		editStatus.setVisible(false);
+		page.add(left(editStatus));
+		// hub:end arrange
 		page.add(Box.createVerticalStrut(4));
 		page.add(wide(button("Show what's sent", () -> hooks.showSent())));
 		snapClock.start();
@@ -767,6 +792,19 @@ public class OutsidePanel extends PluginPanel
 			revalidate();
 		});
 	}
+
+	// hub:cut arrange
+	/** A line under "Edit my page" (none: hidden). */
+	public void editStatus(String words)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			editStatus.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>");
+			editStatus.setVisible(words != null);
+			revalidate();
+		});
+	}
+	// hub:end arrange
 
 	/** A line under "Read and tend my register". */
 	public void tendStatus(String words)

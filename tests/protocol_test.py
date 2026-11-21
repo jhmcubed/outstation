@@ -3753,6 +3753,119 @@ class Tending(OwnPage):
         self.assertEqual(await t.recv_close(timeout=5), ("close", 4003))
 
 
+class EditingThePage(OwnPage):
+    """The page's arrangement and its theme song (11/21/2026, update 6; Jace: "Build it, they should be a part of update
+    6"): the plugin's "Edit my page" hands the relay a token with the page's key (POST /edit/<channel>?key= {"token"});
+    the page, opened with it in #edit=, writes the keep's "layout" with it as Bearer, and every visitor reads it with the
+    page's other kept things (GET /keep/<channel>/layout, the watch code as ever). The token may do nothing else; a
+    tending token and the key may write it too."""
+
+    def edit(self, name, key, body):
+        st, h, out = raw("POST", "/edit/%s?key=%s" % (name, urllib.parse.quote(key)), json.dumps(body).encode(),
+                         {"Content-Type": "application/json"})
+        return st, json.loads(out) if out else None
+
+    def write(self, name, body, token=None, key=None, method="POST"):
+        h = {"Content-Type": "application/json"}
+        if token:
+            h["Authorization"] = "Bearer " + token
+        q = "?key=" + urllib.parse.quote(key) if key else ""
+        st, _, out = raw(method, "/keep/%s/layout%s" % (name, q), json.dumps(body).encode() if body is not None else None, h)
+        return st, json.loads(out) if out else None
+
+    def token(self):
+        return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+
+    async def test_an_editing_token_writes_the_layout_and_nothing_else(self):
+        name, key = self.claim()
+        token = self.token()
+        # (refused: the wrong key, a bad token, the wrong method, nobody's channel)
+        self.assertEqual(self.edit(name, "not-its-key", {"token": token})[0], 403)
+        self.assertEqual(self.edit(name, key, {"token": "short"})[0], 400)
+        self.assertEqual(raw("PUT", "/edit/" + name)[0], 405)
+        self.assertEqual(self.edit("o" + secrets.token_hex(5), key, {"token": token})[0], 404)
+        # (a token nobody handed in: can't write, and the page is told it's run out)
+        theme = {"theme": {"link": "https://youtu.be/dQw4w9WgXcQ?t=5", "title": "a song", "by": "them"}}
+        self.assertEqual(self.write(name, theme, token=token)[0], 403)
+        self.assertEqual(raw("GET", "/edit/" + name, None, {"Authorization": "Bearer " + token})[0], 403)
+        self.assertEqual(raw("GET", "/keep/%s/layout" % name)[0], 404)
+        st, got = self.edit(name, key, {"token": token})
+        self.assertEqual(st, 200)
+        self.assertGreater(got["until"], time.time() * 1000 + 1.9 * 3600 * 1000)
+        self.assertLess(got["until"], time.time() * 1000 + 2.1 * 3600 * 1000)
+        st, _, out = raw("GET", "/edit/" + name, None, {"Authorization": "Bearer " + token})
+        self.assertEqual((st, json.loads(out)["may"]), (200, "edit"))
+        # (written: the theme read as the page reads it, kept in its plain form; then the arrangement beside it)
+        st, got = self.write(name, theme, token=token)
+        self.assertEqual(st, 200, got)
+        self.assertEqual(got["layout"]["theme"], {"kind": "youtube", "id": "dQw4w9WgXcQ", "start": 5, "link": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5", "title": "a song", "by": "them"})
+        arrange = {"arrange": {"boxes": {"reading.0": ["sec-kills", "sec-skills"]}, "off": ["sec-pets"]},
+                   "hero": {"p": {"kit": {"x": 8, "w": 4}}, "o": ["who", "stage", "screen", "kit"], "off": ["clips"]}}
+        self.assertEqual(self.write(name, arrange, token=token)[0], 200)
+        # (every visitor reads it: no token, no key)
+        st, _, out = raw("GET", "/keep/%s/layout" % name)
+        self.assertEqual(st, 200)
+        kept = json.loads(out)
+        self.assertEqual(set(kept["layout"]), {"arrange", "hero", "theme"})
+        self.assertEqual(kept["layout"]["hero"]["p"], {"kit": {"x": 8, "w": 4}})
+        # (refused: what isn't one of the page's own, or isn't a song on the three; nothing kept changes)
+        for bad in ({"theme": {"link": "https://evil.example/song"}}, {"theme": {"link": "javascript:alert(1)"}},
+                    {"arrange": {"boxes": {"reading.0": ["sec-nope"]}, "off": []}}, {"hero": {"p": {}, "o": [], "off": ["screen"]}},
+                    {"goal": {"id": 1}}, {"theme": {"link": "https://youtu.be/dQw4w9WgXcQ", "html": "<b>"}}):
+            self.assertEqual(self.write(name, bad, token=token)[0], 400, bad)
+        self.assertEqual(raw("POST", "/keep/%s/layout" % name, b"x" * 9000, {"Authorization": "Bearer " + token})[0], 413)
+        self.assertEqual(json.loads(raw("GET", "/keep/%s/layout" % name)[2])["layout"], kept["layout"])
+        # (without the token or the key: refused; a wrong token, refused)
+        self.assertEqual(self.write(name, {"theme": None})[0], 403)
+        self.assertEqual(self.write(name, {"theme": None}, token=self.token())[0], 403)
+        self.assertEqual(self.write(name, None, method="DELETE")[0], 403)
+        # (the editing token can do nothing else: not the bank, not the fights, not the chat's desk, not who sees it)
+        self.assertEqual(raw("POST", "/keep/%s/bank" % name, json.dumps({"items": []}).encode(), {"Authorization": "Bearer " + token})[0], 403)
+        self.assertEqual(raw("PUT", "/code/%s" % name, json.dumps({"code": "friends1"}).encode(), {"Authorization": "Bearer " + token})[0], 403)
+        t = await Client().open("%s/desk/%s?tend=%s" % (RELAY, name, token))
+        self.clients.append(t)
+        self.assertEqual(await t.recv_close(timeout=5), ("close", 4003))
+        if raw("GET", "/fights/" + name)[0] != 404:
+            self.assertEqual(raw("POST", "/fights/%s/%s" % (name, "A" * 22), b"{}", {"Authorization": "Bearer " + token})[0], 403)
+        # (a part taken away with null; the key and a tending token may write it too; DELETE takes it all away)
+        st, got = self.write(name, {"theme": None}, token=token)
+        self.assertEqual((st, set(got["layout"])), (200, {"arrange", "hero"}))
+        tend = self.token()
+        self.assertEqual(raw("POST", "/tend/%s?key=%s" % (name, urllib.parse.quote(key)), json.dumps({"token": tend}).encode(), {"Content-Type": "application/json"})[0], 200)
+        st, _, out = raw("GET", "/edit/" + name, None, {"Authorization": "Bearer " + tend})
+        self.assertEqual((st, json.loads(out)["may"]), (200, "tend"))
+        self.assertEqual(self.write(name, theme, token=tend)[0], 200)
+        self.assertEqual(self.write(name, {"hero": None}, key=key)[0], 200)
+        self.assertEqual(self.write(name, {"theme": None}, key="not-its-key")[0], 403)
+        self.assertEqual(self.write(name, None, token=token, method="DELETE")[0], 204)
+        self.assertEqual(raw("GET", "/keep/%s/layout" % name)[0], 404)
+        # (a new key: the editing tokens go with the old one)
+        self.assertEqual(raw("DELETE", "/channels/%s?key=%s" % (name, urllib.parse.quote(key)))[0], 204)
+        self.assertNotEqual(self.write(name, theme, token=token)[0], 200)
+
+    async def test_friends_only_stays_friends_only(self):
+        name, key = self.claim()
+        token = self.token()
+        self.assertEqual(self.edit(name, key, {"token": token})[0], 200)
+        self.assertEqual(self.write(name, {"theme": {"link": "https://soundcloud.com/someone/a-song"}}, token=token)[0], 200)
+        self.assertEqual(self.code(name, key, {"code": "friends1"}), (200, {"code": True}))
+        self.assertEqual(raw("GET", "/keep/%s/layout" % name)[0], 403)
+        self.assertEqual(raw("GET", "/keep/%s/layout?code=wrong-one" % name)[0], 403)
+        st, _, out = raw("GET", "/keep/%s/layout?code=friends1" % name)
+        self.assertEqual((st, json.loads(out)["layout"]["theme"]["kind"]), (200, "soundcloud"))
+        # (the owner still writes it, friends only or not)
+        self.assertEqual(self.write(name, {"arrange": {"boxes": {}, "off": ["sec-case"]}}, token=token)[0], 200)
+
+    async def test_changes_an_hour_are_counted(self):
+        name, key = self.claim()
+        token = self.token()
+        self.assertEqual(self.edit(name, key, {"token": token})[0], 200)
+        body = {"arrange": {"boxes": {}, "off": []}}
+        codes = [self.write(name, body, token=token)[0] for _ in range(61)]
+        self.assertEqual(codes[:60], [200] * 60)
+        self.assertEqual(codes[60], 429)
+
+
 class AppHere(Base):
     """The plugin told whether the outstation's app is attached ({"app": bool}, 11/16/2026, the permissions review): the
     exact path goes only while it is. The plugin's own chat desk (&talk=1) isn't the app."""

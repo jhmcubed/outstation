@@ -38,7 +38,7 @@ import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHe
          GAME_MESSAGE, GAME_POSTS_A_MINUTE, gamePresence, type Here, HERE_EVERY_MS, type Presence, PRESENCE_FRESH_MS,
          SNAP_CLEARS, SNAP_FIELDS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents, snapshotEvents } from "./array";
-import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
+import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LAYOUT_AN_HOUR, LAYOUT_MOST, layoutShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
 
 export interface Env {
@@ -108,6 +108,11 @@ const WRONG_KEYS = 10; // wrong keys from one address in a minute, then refused 
 // relay with its key (POST /tend/<channel>?key=), good for TEND_MS, TENDS_MOST at once (the oldest goes); the page opens
 // /desk/<channel>?tend=<token>, a socket that hears only the chat and the bans and may only take lines back, block and ban
 const TEND_MS = 12 * 3_600_000, TENDS_MOST = 4, TEND_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+// editing the page from the page (11/21/2026, update 6; Jace: "Build it, they should be a part of update 6"): the plugin's
+// "Edit my page" hands the relay a token with the page's key (POST /edit/<channel>?key= {"token"}), good for EDIT_MS,
+// EDITS_MOST at once (the oldest goes); the page, opened with it in #edit=, may arrange itself and set its theme song
+// (the keep's "layout") and nothing else: not the chat, not the fights, not the key's other writes
+const EDIT_MS = 2 * 3_600_000, EDITS_MOST = 4;
 // messages between portals (11/06/2026, Jace: "allow for messaging friends directly"): to a channel's desk, or held
 // for it till its portal next opens (relay.py's DMS_KEPT, DMS_DAYS, DMS_A_MINUTE)
 const DMS_KEPT = 20, DMS_DAYS = 7, DMS_A_MINUTE = 20;
@@ -232,6 +237,8 @@ interface Meta {
   challengers?: { keyHash: string; at: number; account?: string }[];
   // tending tokens (11/16/2026): each one's SHA-256 and when it runs out
   tends?: { hash: string; until: number }[];
+  // editing tokens (11/21/2026): each one's SHA-256 and when it runs out; they may write the page's layout and nothing else
+  edits?: { hash: string; until: number }[];
   code: string;
   cap: number; // the channel's own cap on viewers (the desk's {"cap"}): 0 none
   chatId: number;
@@ -728,6 +735,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "watch" && q.get("look") === "1") role = "look";
     if (role === "desk" && q.has("tend")) role = "tend";
     if (role === "_tend") return this.tendToken(request, q, ip);
+    if (role === "_edit") return this.editToken(request, q, ip);
 
     if (role === "_mint") return this.mint(q.get("new") === "1", q.get("claim") === "1", request.headers.get("x-account") || "");
     if (role === "_challenge") return this.challenge(request.headers.get("x-account") || "");
@@ -1343,7 +1351,7 @@ export class Channel extends DurableObject<Env> {
     this.gameDirty = false;
     this.game = new GameState();
     this.ctx.storage.delete("game");
-    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter", "keep:goal"]); // (the bank, the model, the encounter and the goal, keep.ts)
+    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter", "keep:goal", "keep:layout"]); // (the bank, the model, the encounter, the goal and the page's layout, keep.ts)
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("encounter")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("goal")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
@@ -2171,6 +2179,7 @@ export class Channel extends DurableObject<Env> {
       if (ch.account) this.meta.account = ch.account; else delete this.meta.account;
       // (the holder's links to tend the chat go with their key: 11/16/2026, the review's second pass)
       delete this.meta.tends;
+      delete this.meta.edits;
       for (const role of ["transmit", "desk", "sound", "game", "tend"] as Role[]) {
         for (const ws of this.sockets(role)) this.close(ws, 4003, "this name was proven by another: its key no longer opens it");
       }
@@ -2568,6 +2577,7 @@ export class Channel extends DurableObject<Env> {
     if (onlyNew) this.meta.pending = true; // (an invite's: not taken up till its key's used; the keeper's leaves it as it was)
     this.saveMeta();
     delete this.meta.tends; // (the old key's links to tend the chat go with it)
+    delete this.meta.edits; // (and its links to edit the page)
     this.saveMeta();
     for (const role of ["transmit", "desk", "sound", "game", "tend"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel has a new key");
@@ -2585,6 +2595,7 @@ export class Channel extends DurableObject<Env> {
     const what = q.get("what") || "";
     if (what === "motions" || what === "motion") return this.motions(request, q, ip, what);
     if (what === "live" || what === "livemotion" || what === "livemotions") return this.liveKeep(request, q, ip, what);
+    if (what === "layout" && request.method !== "GET") return this.layoutWrite(request, q, ip);
     if (!(what in KEEP_MOST)) return json({ error: "kept: bank, deathbank or model" }, 404);
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
@@ -2630,6 +2641,82 @@ export class Channel extends DurableObject<Env> {
   }
 
   keepKey(what: string): string { return `keep/${this.name}/${what}.json`; }
+
+  /** When an editing token runs out (ms), or 0 for none that's good (a bad shape, unknown, or run out). */
+  async editUntil(token: string): Promise<number> {
+    if (!TEND_TOKEN.test(token)) return 0;
+    const h = await this.hash(token), now = Date.now();
+    const t = (this.meta.edits || []).find((x) => x.hash === h && x.until > now);
+    return t ? t.until : 0;
+  }
+
+  /** /edit/<channel> (index.ts; 11/21/2026, update 6): POST ?key= {"token"} from the plugin's "Edit my page", a token of
+   *  43 base64url characters kept as its SHA-256 for EDIT_MS (200 {"until"}; 400 a bad token; 403 the wrong key; 404
+   *  nobody's); GET with Authorization: Bearer <token>, the page asking what its token may do: 200 {"until", "may":
+   *  "edit"} for an editing token, {"until", "may": "tend"} for a tending one (it may edit too); 403 run out or unknown. */
+  async editToken(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    if (request.method === "GET") {
+      const auth = request.headers.get("authorization") || "", t = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+      const e = await this.editUntil(t);
+      if (e) return json({ until: e, may: "edit" });
+      const td = await this.tendUntil(t);
+      if (td) return json({ until: td, may: "tend" });
+      return json({ error: "this link to edit your page has run out: open it again from the plugin" }, 403);
+    }
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const no = await this.checkKey(q.get("key") || "", ip);
+    if (no) return json({ error: no[1] }, 403);
+    let token: unknown;
+    try { token = ((await request.json()) as { token?: unknown }).token; } catch { token = undefined; }
+    if (typeof token !== "string" || !TEND_TOKEN.test(token)) return json({ error: "a token: 43 base64url characters" }, 400);
+    const now = Date.now(), until = now + EDIT_MS, h = await this.hash(token);
+    this.meta.edits = [...(this.meta.edits || []).filter((x) => x.until > now && x.hash !== h), { hash: h, until }].slice(-EDITS_MOST);
+    this.saveMeta();
+    return json({ until });
+  }
+
+  layoutUploads: number[] = []; // (in memory, as keepUploads)
+
+  /** POST or DELETE /keep/<channel>/layout (keep.ts's layout; 11/21/2026, update 6): the page's arrangement and its theme
+   *  song, written by its owner only: an editing token or a tending one (Authorization: Bearer), or the key (?key=).
+   *  A POST carries the parts it changes ({"arrange"?, "hero"?, "theme"?}, null taking one away), merged into what's
+   *  kept; DELETE takes the whole layout away (the page as every page has it). LAYOUT_AN_HOUR writes an hour. */
+  async layoutWrite(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+    if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
+    const auth = request.headers.get("authorization") || "";
+    if (auth.startsWith("Bearer ")) {
+      const t = auth.slice(7).trim();
+      if (!(await this.editUntil(t)) && !(await this.tendUntil(t))) return json({ error: "this link to edit your page has run out: open it again from the plugin" }, 403);
+    } else {
+      const no = await this.checkKey(q.get("key") || "", ip);
+      if (no) return json({ error: no[1] }, 403);
+    }
+    const now = Date.now();
+    this.layoutUploads = this.layoutUploads.filter((t) => now - t < 3_600_000);
+    if (this.layoutUploads.length >= LAYOUT_AN_HOUR) return json({ error: `${LAYOUT_AN_HOUR} changes an hour at most: try again later` }, 429);
+    if (request.method === "DELETE") {
+      this.layoutUploads.push(now);
+      await this.ctx.storage.delete("keep:layout");
+      this.tellClip({ kept: { what: "layout", at: null } });
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+    }
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const raw = await request.text();
+    if (raw.length > LAYOUT_MOST) return json({ error: `at most ${LAYOUT_MOST} bytes` }, 413);
+    let d: unknown;
+    try { d = JSON.parse(raw); } catch { return json({ error: "not JSON" }, 400); }
+    const shaped = layoutShape(d);
+    if (typeof shaped === "string") return json({ error: shaped }, 400);
+    this.layoutUploads.push(now);
+    const was = (await this.ctx.storage.get<{ data?: Record<string, unknown> }>("keep:layout"))?.data || {};
+    const next: Record<string, unknown> = { ...was };
+    for (const [k, v] of Object.entries(shaped)) { if (v === null) delete next[k]; else next[k] = v; }
+    if (Object.keys(next).length) await this.ctx.storage.put("keep:layout", { data: next, at: now });
+    else await this.ctx.storage.delete("keep:layout");
+    this.tellClip({ kept: { what: "layout", at: now } });
+    return json({ layout: next, at: now });
+  }
 
   // the live view (keep.ts, 11/15/2026): the model in their gear now, and a live motion an animation in that gear, in the
   // bucket; the list (keep:live: the gear, and each motion's animation and when) in the channel's storage
@@ -2874,6 +2961,7 @@ export class Channel extends DurableObject<Env> {
     delete this.meta.pending; // (handed out again later, it's pending only if an invite hands it out)
     this.saveMeta();
     delete this.meta.tends;
+    delete this.meta.edits;
     for (const role of ["transmit", "desk", "sound", "game", "tend"] as Role[]) {
       for (const ws of this.sockets(role)) this.close(ws, 4003, "this channel was taken back");
     }
