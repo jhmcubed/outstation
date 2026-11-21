@@ -22,8 +22,11 @@ It also records your fights at bosses and raids to your computer, tick by tick (
 ## The side tab
 
 At the top: your page's address, a box with whether it's proven yours, who sees it and when it was last updated, and
-three buttons: **Update my page** (it counts down if you press it within a minute of the last), **Open my page** and
-**Show what's sent** (exactly what Update my page would send now, every field of it, in a window; nothing is sent by
+three buttons: **Update my page** (it counts down if you press it within a minute of the last), **Open my page**
+<!-- hub:cut arrange -->
+(with **Edit my page** beside it, below)
+<!-- hub:end arrange -->
+and **Show what's sent** (exactly what Update my page would send now, every field of it, in a window; nothing is sent by
 <!-- hub:cut encounters -->
 opening it). Under them, three tabs:
 <!-- hub:end encounters -->
@@ -31,6 +34,18 @@ opening it). Under them, three tabs:
 opening it). Under them, two tabs:
 -->
 
+<!-- hub:cut arrange -->
+**Edit my page** opens your page in your browser so you can arrange it and give it a theme song, for the next 2 hours:
+**arrange this file** (under your name) lets you drag your page's sections into the order you want, hide the ones you'd
+rather visitors didn't see, and move and widen the panels at the top; **done** keeps it for everyone who opens your page,
+**never mind** leaves it as it was, **as it was** puts everything back. In the theme box in the page's right margin (a
+tab at the bottom right on a phone), paste a song's own link on YouTube, SoundCloud or Spotify and press **set**:
+visitors see its name and hear it in that site's own player when they press it (nothing is asked of that site until
+then; Spotify plays the whole song only to visitors signed in to Spotify, 30 seconds to anyone else). Visitors get no
+controls: only you, from this button. The link works for 2 hours, only in that browser, and can do nothing else. The
+plugin sends nothing from the game for it.
+
+<!-- hub:end arrange -->
 - **Page:** when your page updates, and what goes with it; then, in this order:
   - **Your goals:** **Add a goal item**, and under it your goals, each with a ✕ that takes it off and a choice of the one your page shows as its 3D model, or No 3D model (the Goal items feature, below).
   - **Who sees it:** whether your page is open to anyone (and on Outside.wiki's globe while you play) or friends only. **Make it friends only** / **Open it to anyone**, and **Copy the friends' link**.

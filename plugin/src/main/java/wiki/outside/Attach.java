@@ -236,6 +236,22 @@ public final class Attach
 		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/tend/" + enc(channel) + "?");
 	}
 
+	// hub:cut arrange
+	/** A token to edit the page from the page (its arrangement and its theme song), handed in by its own key (11/21/2026,
+	 *  update 6): http(s)://…/edit/<channel>?key=…. */
+	public String editUrl()
+	{
+		return keepUrl("x").replaceFirst("/keep/[^?]*\\?", "/edit/" + enc(channel) + "?");
+	}
+
+	/** The page, opened to arrange it and set its theme song: the token in the fragment, which no server sees, and the
+	 *  watch code when it's friends only (11/21/2026). */
+	public String editPage(String code, String token)
+	{
+		return page(code) + "#edit=" + token;
+	}
+	// hub:end arrange
+
 	/** The page, opened to tend its chat: the token in the fragment, which no server sees (11/16/2026). */
 	public String tendPage(String token)
 	{

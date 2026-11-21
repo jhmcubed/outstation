@@ -289,6 +289,50 @@ Both relays:
 - **It sends** only the desk's `{"hide": id}`, `{"block": who}`, `{"unblock": who}`, `{"ban": who}` and
   `{"unban": who}` (the first of them a message carries); anything else goes nowhere.
 
+## Editing the page from the page: its arrangement and its theme song (11/21/2026, update 6)
+
+Jace, of arranging his own page and adding a song: "Build it, they should be a part of update 6"; and earlier, when the
+sketch went live by mistake: "I should not be able to edit other people's pages". The page's arrangement (its readings'
+sections and the top of the file's panels, moved and kept from visitors) and its theme song are kept on the relay with
+the page, read by every visitor, and written only by the page's owner:
+
+    POST /edit/<channel>?key=<key>   {"token": <43 base64url characters>}
+                  200 {"until": ms}: an editing token, good for 2 hours (only its SHA-256 kept, 4 at once, the oldest
+                  going). 400 a bad token; 403 the wrong key; 404 nobody's channel; 405 not POST or GET
+    GET  /edit/<channel>             Authorization: Bearer <token>
+                  200 {"until", "may": "edit"} for an editing token, {"until", "may": "tend"} for a tending one (which may
+                  edit too); 403 a token not handed in, or run out
+    GET    /keep/<channel>/layout?code=<watch code>   {"layout": {...}, "at"}; 404 none kept; 403 friends only without the code
+    POST   /keep/<channel>/layout     the parts it changes, each replaced on its own, null taking one away: 200 {"layout": all
+                                      of it now, "at"}
+    DELETE /keep/<channel>/layout     all of it taken away (the page as every page has it): 204
+
+- **Who writes it:** an editing token or a tending token (`Authorization: Bearer <token>`), or the page's key (`?key=`).
+  Nothing else: 403. The editing token writes the layout and nothing else (not the chat's desk, the fights, the other
+  kept things or who sees it). It goes with the key (a new key, the page taken down, the name proven by another).
+- **The plugin's "Edit my page"** makes the token (32 random bytes), hands it in with its key on the press, and opens
+  `outside.wiki/<name>#edit=<token>`; no server sees the fragment, and the page takes it out of the address at once and
+  keeps it for the tab (sessionStorage). The page asks `GET /edit/<channel>` once, and only then shows its arranging
+  and its theme's link box.
+- **The layout** (relay/src/keep.ts, `layoutShape`; 8 KB at most; `{"arrange"?, "hero"?, "theme"?}`, nothing else):
+  - `"arrange"`: `{"boxes": {"reading.0": [ids], "reading.1": [ids], "wide.0": [ids]}, "off": [ids]}`, the readings'
+    sections in each column's order and across the page's (the year, the activity, the case file), and those kept from
+    visitors. Only the page's own sections (`ARRANGE_READING`, `ARRANGE_WIDE`), each once, each only where it can go.
+  - `"hero"`: `{"p": {key: {"x": 0-11, "w": 1-12}}, "o": [keys], "off": [keys]}`, the top of the file's panels on twelve
+    columns (each place within them), the order they're packed and those kept from visitors. Only its panels
+    (`HERO_PANELS`: who, screen, stage, kit, form, goal, where, encounter, clips, bank), each once; the subject, the
+    outstation and the encounters' stage never kept from visitors.
+  - `"theme"`: `{"link", "title"?, "by"?}`: the link a song's or a set's own address on SoundCloud (soundcloud.com/<who>/
+    <song> or /sets/<set>), YouTube (watch?v=, youtu.be, shorts, embed, live; its start, t= or start=) or Spotify (track,
+    album, playlist, episode), read as the page's theme.js reads it and kept in its plain form as `{"kind", "id",
+    "what"?, "start"?, "link"}`; anything else is refused. The title (120 characters) and who made it (60), as the
+    platform's oEmbed told the page, plain text. The page shows the platform's own player only when a visitor presses
+    it. A song taken down on request is the keeper's DELETE with the key.
+- A section or panel the page gains later goes in the lists at their end, the relay first; the page puts one the kept
+  layout doesn't name at the end.
+- 60 writes an hour a channel, its own count apart from the plugin's uploads (`LAYOUT_AN_HOUR`); 429 past it. A change
+  goes out as `{"kept": {"what": "layout", "at"}}` (null "at": taken away). Forgotten with the game's state.
+
 ## Claiming a name (11/15/2026)
 
 The Outside plugin's own channel, for a player who comes from the Plugin Hub with no outstation and no invite (Jace: the

@@ -59,6 +59,19 @@ public class AttachTest
 		assertEquals("https://outside.wiki/jhmcubed#tend=abc", a.tendPage("abc"));
 	}
 
+	// hub:cut arrange
+	@Test
+	public void editingThePage()
+	{
+		// (11/21/2026, update 6: the token handed in by the page's key, and the page opened with it in the fragment, the
+		// watch code in the address when it's friends only)
+		Attach a = new Attach("wss://relay.ghillie.workers.dev", "jhmcubed", "k3y-k3y-k3y");
+		assertEquals("https://relay.ghillie.workers.dev/edit/jhmcubed?key=k3y-k3y-k3y", a.editUrl());
+		assertEquals("https://outside.wiki/jhmcubed#edit=abc", a.editPage(null, "abc"));
+		assertEquals("https://outside.wiki/jhmcubed?code=a-b_c#edit=abc", a.editPage("a-b_c", "abc"));
+	}
+	// hub:end arrange
+
 	@Test
 	public void onlyTheOutsideRelay()
 	{

@@ -12,6 +12,8 @@
 //   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
 //   /fights/<channel>...                                                recorded fights on the player's page, their scene moments (fights.ts)
 //   /keep/<channel>/<bank|model>                                        their bank and their model, for the page (keep.ts)
+//   /keep/<channel>/layout                                              the page's arrangement and theme song (keep.ts; 11/21/2026)
+//   POST|GET /edit/<channel>                                            a token to edit the page from the page (channel.ts)
 //   /emotes/<channel>...                                                the broadcaster's own emotes (emotes.ts)
 //
 // Channels are handed out by the relay's owner (Authorization: Bearer <ADMIN_TOKEN>, a Worker secret):
@@ -105,7 +107,8 @@ import { fileKey, serveFile, ID } from "./clips";
 import { fightsOn } from "./fights";
 import { emoteKey } from "./emotes";
 const CORS_KEEP = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
-                    "access-control-allow-headers": "content-type", "access-control-max-age": "86400" };
+                    // (authorization: the page's own editing or tending token, for its layout; 11/21/2026)
+                    "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "86400" };
 import { attachCode, oneLine, pyjson, relayOf } from "./text";
 import { Almanac, type Day, type Kept, freshKept, httpFetch, urls } from "./almanac";
 import { LISTING_CHECK_MS, ListedRows, keptRow } from "./listed";
@@ -1013,6 +1016,15 @@ export default {
       if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
       if (request.method !== "POST") return new Response(null, { status: 405 });
       return channelStub(env, name).fetch(toChannel(request, name, "/_tend"));
+    }
+    // editing the page from the page (11/21/2026, update 6): POST /edit/<channel>?key= {"token"} (200 {"until"}) from the
+    // plugin's "Edit my page"; GET /edit/<channel> with the token as Bearer, what it may do (channel.ts, editToken)
+    if (parts[0] === "edit" && parts.length === 2) {
+      const name = parts[1];
+      if (!NAME.test(name)) return Response.json({ error: "which outstation?" }, { status: 400 });
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_KEEP });
+      if (request.method !== "POST" && request.method !== "GET") return new Response(null, { status: 405 });
+      return channelStub(env, name).fetch(toChannel(request, name, "/_edit"));
     }
     if (parts[0] === "code" && parts.length === 2) {
       const name = parts[1];

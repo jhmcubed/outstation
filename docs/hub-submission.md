@@ -467,6 +467,20 @@ plugin, not bosses, so nothing started them before. plugin/README.md, "Encounter
    and claim: the line keeps going until you leave the arena, then the row says **claimed**, its moment the chest's
    window as you saw it. (Die in a wave instead: **died**.)
 
+### Edit my page: arranging the page and its theme song (11/21/2026)
+
+Jace (11/21/2026), of editing his own page and adding a song: "Build it, they should be a part of update 6". The part
+`arrange` (hub_cut.py, in SUBMITTED): **Edit my page** beside Open my page in the side tab. On the press only, the plugin
+makes a token, hands it to the relay with the page's key (`POST /edit/<channel>?key=`, docs/protocol.md "Editing the
+page from the page") and opens `outside.wiki/<name>#edit=<token>` (with `?code=` when it's friends only). On the page,
+for 2 hours, "arrange this file" (move and hide its sections and the top of the file's panels) and the theme's link box
+(a SoundCloud, YouTube or Spotify link, shown in that platform's own player when a visitor presses it); every visitor
+then sees the page as arranged and the song, with no controls. The token can do nothing else. Nothing new is sent from
+the game: a token and a press. `Attach.editUrl`/`editPage` (AttachTest), the hook beside `tendChat`.
+
+Order: the relay's routes (`/edit/`, the keep's `layout`) go live first; then outside.wiki's sync, which carries
+arrange.js, hero.js and theme.js for the first time; then this update.
+
 ### Jace's test in the game, for the whole update
 
 `py run.py client` in a checkout of jhmcubed/outside-plugin at the exact commit the fork will name (run.py starts RuneLite with `-ea`), logged in. The client's log mustn't show anything from `wiki.outside` failing at any step.
@@ -479,3 +493,4 @@ plugin, not bosses, so nothing started them before. plugin/README.md, "Encounter
 6. **Encounters, by themselves:** go to a boss you do (any of Discord's bosses: Vorkath, Zulrah, the GWD rooms, the Giant Mole…): a recording starts as you arrive (the lime line, without pressing anything). Kill it: the game's kill count line ends it a few seconds later and the row says **killed**; the next kill there starts the next with your first hit. Leave by teleport: one running ends ("left"). Don't press Record now in the Wilderness: it should say no; walking into the Wilderness while one runs ends it at once.
 7. **Putting one on your page:** only once Jace has switched the relay's fights on (`FIGHTS` "on"); until then the tab says "Outside.wiki isn't taking encounters on pages yet" and Put on my page is greyed out. Then: **Put on my page** on a row: a window says what's taken out (exact xp, and other players' names if any were near) and asks; OK: the row says "on your page" with **Open**, which opens outside.wiki/<you>/fight/<id> and plays it. Untick **shown to anyone** (or tick it): your page's own list follows. ✕ a row: it asks, then the file's gone from your computer (one on your page stays there).
 8. **The client closing mid-recording:** start one, close RuneLite's window: it closes as before (a second or so), and the next start lists that recording, ended "client closed".
+9. **Edit my page** (once the relay and outside.wiki have it): in the side tab, press **Edit my page** beside Open my page: the line under it says it's opened, and your browser opens your page with **arrange this file** under your name and a box for your theme song in the right margin (or the ✼ tab at the bottom right in a narrow window). Move a section (drag its bar, or its arrows), hide one with its eye, pull a panel at the top wider, press **done**: it says it's kept. Paste a YouTube, SoundCloud or Spotify link in the theme's box and press **set**. Then open your page in a private window (or another browser): it's arranged as you left it, the hidden section gone, your song in the margin to press, and no arrange button or link box. Press **as it was** in the first window: everything goes back for everyone. Two hours later the link stops working (the page says so); Edit my page again makes a new one.

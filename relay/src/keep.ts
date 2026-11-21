@@ -36,6 +36,7 @@
 
 export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, deathbank: 64 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
   goal: 2 * 1024 * 1024,
+  layout: 8 * 1024,   // (the page's arrangement and its theme song, 11/21/2026: read here as the others are; written by layoutWrite)
   live: 4 * 1024 * 1024, livemotion: 4 * 1024 * 1024 };
 // (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
 export const MOTIONS_MOST = 8, MOTION_NAME = /^[a-z0-9_ -]{1,24}$/;
@@ -261,6 +262,139 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
       out.tex = tex;
     }
     if (d.b !== undefined) { if (typeof d.b !== "number" || !(d.b >= 0.3 && d.b <= 1.2)) return "b: the game's brightness"; out.b = d.b; }
+  }
+  return out;
+}
+
+// The page's arrangement and its theme song (11/21/2026, update 6; Jace, of editing his own page and adding a song:
+// "Build it, they should be a part of update 6"; ghillie's claude/outstation.md, "Arrange the file"). Kept as the keep's
+// "layout", one of a channel, every part optional and each replaced on its own (a POST carries the parts it changes;
+// null takes one away):
+//   "arrange": the readings' sections (the page's arrange.js): {"boxes": {"reading.0": [ids], "reading.1": [ids],
+//              "wide.0": [ids]}, "off": [ids kept from visitors]}
+//   "hero":    the top of the file's panels on twelve columns (hero.js): {"p": {key: {"x", "w"}}, "o": [keys, in the
+//              order they're packed], "off": [keys kept from visitors]}
+//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?}; the link read as theme.js reads it, a SoundCloud,
+//              YouTube or Spotify song's own address and nothing else, and kept in its plain form
+// Only the sections and panels the page has today: a new one is added to these lists (at the end) as the page gains it.
+export const ARRANGE_READING = ["sec-skills", "sec-deeds", "sec-mega", "sec-pets", "sec-next", "sec-easy-ca", "sec-gains", "sec-movements",
+  "sec-kills", "sec-rates", "sec-field", "sec-delve"];
+export const ARRANGE_WIDE = ["sec-year", "sec-heat", "sec-case"];
+export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank"];
+// (the subject's box, the outstation and the encounters' stage stay where every file has them, always shown)
+export const HERO_FIXED = ["who", "screen", "stage"];
+export const HERO_COLS = 12, LAYOUT_MOST = 8 * 1024;
+// (written by the page as its owner arranges it, after "done" and as a song's set: its own count, apart from the plugin's
+// uploads, so arranging never uses up what "Update my page" needs)
+export const LAYOUT_AN_HOUR = 60;
+
+/** A theme's link read (theme.js's read, the same): {kind, id, what?, start?, link} with the link in its plain form, or
+ *  null when it isn't a song's or a set's own address on one of the three. */
+export function themeLink(text: unknown): Record<string, unknown> | null {
+  if (typeof text !== "string" || text.length > 400) return null;
+  let u: URL;
+  try { u = new URL(text.trim()); } catch { return null; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  if (u.username || u.password || u.port) return null;
+  const host = u.hostname.toLowerCase().replace(/^(www|m|music)\./, ""), path = u.pathname;
+  const t = u.searchParams.get("t") || u.searchParams.get("start") || "";
+  const n = /^[0-9]{1,6}/.test(t) ? parseInt(t, 10) : 0;
+  const start = n > 0 && n < 86_400 ? n : 0;
+  const yt = (id: string) => ({ kind: "youtube", id, ...(start ? { start } : {}),
+    link: "https://www.youtube.com/watch?v=" + id + (start ? "&t=" + start : "") });
+  let m: RegExpExecArray | null;
+  const v = u.searchParams.get("v") || "";
+  if (host === "youtube.com" && path === "/watch" && /^[\w-]{11}$/.test(v)) return yt(v);
+  if (host === "youtube.com" && (m = /^\/(?:shorts|embed|live)\/([\w-]{11})(?:\/|$)/.exec(path))) return yt(m[1]);
+  if (host === "youtu.be" && (m = /^\/([\w-]{11})\/?$/.exec(path))) return yt(m[1]);
+  if (host === "soundcloud.com" && (m = /^\/([\w-]{1,100})\/((?:sets\/)?[\w-]{1,200})\/?$/.exec(path))) {
+    const id = "https://soundcloud.com/" + m[1] + "/" + m[2];
+    return { kind: "soundcloud", id, link: id };
+  }
+  if (host === "open.spotify.com" && (m = /^\/(?:intl-[\w-]{2,10}\/)?(track|album|playlist|episode)\/([A-Za-z0-9]{22})\/?$/.exec(path))) {
+    return { kind: "spotify", what: m[1], id: m[2], link: "https://open.spotify.com/" + m[1] + "/" + m[2] };
+  }
+  return null;
+}
+
+const plain = (s: unknown, most: number) => typeof s === "string" ? s.replace(/[\x00-\x1f\x7f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim().slice(0, most) : "";
+
+/** A layout's parts, checked (layout's header above): a copy with only what's known, or a reason it isn't one. A part
+ *  that's null stays null (taken away). */
+export function layoutShape(d: unknown): Record<string, unknown> | string {
+  if (!isObj(d)) return "not a JSON object";
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(d)) if (k !== "arrange" && k !== "hero" && k !== "theme") return "layout: arrange, hero and theme only";
+  if (!Object.keys(d).length) return "layout: arrange, hero or theme";
+  if (d.arrange !== undefined) {
+    const a = d.arrange;
+    if (a === null) out.arrange = null;
+    else {
+      if (!isObj(a) || !isObj(a.boxes) || !Array.isArray(a.off)) return "arrange: {boxes, off}";
+      for (const k of Object.keys(a)) if (k !== "boxes" && k !== "off") return "arrange: boxes and off only";
+      const boxes: Record<string, string[]> = {}, seen = new Set<string>();
+      for (const [box, ids] of Object.entries(a.boxes)) {
+        const known = box === "reading.0" || box === "reading.1" ? ARRANGE_READING : box === "wide.0" ? ARRANGE_WIDE : null;
+        if (!known) return "arrange's boxes: reading.0, reading.1 and wide.0";
+        if (!Array.isArray(ids) || ids.length > known.length) return "arrange's " + box + ": its sections";
+        for (const id of ids) {
+          if (typeof id !== "string" || !known.includes(id)) return "arrange's " + box + ": a section it doesn't hold";
+          if (seen.has(id)) return "arrange: each section once";
+          seen.add(id);
+        }
+        boxes[box] = ids.slice();
+      }
+      const all = [...ARRANGE_READING, ...ARRANGE_WIDE], off: string[] = [];
+      if (a.off.length > all.length) return "arrange's off: its sections";
+      for (const id of a.off) {
+        if (typeof id !== "string" || !all.includes(id)) return "arrange's off: a section the page doesn't have";
+        if (!off.includes(id)) off.push(id);
+      }
+      out.arrange = { boxes, off };
+    }
+  }
+  if (d.hero !== undefined) {
+    const h = d.hero;
+    if (h === null) out.hero = null;
+    else {
+      if (!isObj(h) || !isObj(h.p) || !Array.isArray(h.o) || !Array.isArray(h.off)) return "hero: {p, o, off}";
+      for (const k of Object.keys(h)) if (k !== "p" && k !== "o" && k !== "off") return "hero: p, o and off only";
+      const p: Record<string, { x: number; w: number }> = {};
+      for (const [k, s] of Object.entries(h.p)) {
+        if (!HERO_PANELS.includes(k)) return "hero's p: a panel the page doesn't have";
+        if (!isObj(s) || !whole(s.x, HERO_COLS - 1) || !whole(s.w, HERO_COLS) || (s.w as number) < 1 || (s.x as number) + (s.w as number) > HERO_COLS) return "hero's p: {x, w} on " + HERO_COLS + " columns";
+        p[k] = { x: s.x as number, w: s.w as number };
+      }
+      const o: string[] = [];
+      if (h.o.length > HERO_PANELS.length) return "hero's o: its panels";
+      for (const k of h.o) {
+        if (typeof k !== "string" || !HERO_PANELS.includes(k)) return "hero's o: a panel the page doesn't have";
+        if (o.includes(k)) return "hero's o: each panel once";
+        o.push(k);
+      }
+      const off: string[] = [];
+      if (h.off.length > HERO_PANELS.length) return "hero's off: its panels";
+      for (const k of h.off) {
+        if (typeof k !== "string" || !HERO_PANELS.includes(k)) return "hero's off: a panel the page doesn't have";
+        if (HERO_FIXED.includes(k)) return "hero's off: the subject, the outstation and the encounters are always shown";
+        if (!off.includes(k)) off.push(k);
+      }
+      out.hero = { p, o, off };
+    }
+  }
+  if (d.theme !== undefined) {
+    const t = d.theme;
+    if (t === null) out.theme = null;
+    else {
+      if (!isObj(t)) return "theme: {link, title?, by?}";
+      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by") return "theme: link, title and by only";
+      const read = themeLink(t.link);
+      if (!read) return "theme's link: a song's or a set's own address on soundcloud, youtube or spotify";
+      if (t.title !== undefined && typeof t.title !== "string") return "theme's title: words";
+      if (t.by !== undefined && typeof t.by !== "string") return "theme's by: words";
+      const title = plain(t.title, 120), by = plain(t.by, 60);
+      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}) };
+    }
   }
   return out;
 }

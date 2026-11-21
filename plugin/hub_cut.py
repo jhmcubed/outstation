@@ -47,6 +47,8 @@ The parts left out (SUBMITTED: those in the Hub's version now; add a part's name
   goal    the goal item (update 3): the item search, its model, got by the collection log's line
   encounters  (update 6, 11/21/2026) fights at bosses and raids recorded to the player's computer (Encounter Recorder's
           recorder folded in, BSD 2-Clause, NOTICE), and one put on their page on their press, stripped first
+  arrange (update 6, 11/21/2026) "Edit my page": the page opened with a link that arranges it and sets its theme song
+          (a SoundCloud, YouTube or Spotify link), for 2 hours; Jace: "Build it, they should be a part of update 6"
 
     python3 plugin/hub_cut.py ../outside-plugin           write the cut there (its .git and build left alone)
     python3 plugin/hub_cut.py --check ../outside-plugin   say whether it matches; write nothing
@@ -61,8 +63,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal", "encounters"]
-SUBMITTED = ["delve", "model", "bank", "deathbank", "goal", "encounters"]   # (the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update; 11/21/2026, update 6: the encounters, Jace: "include it in update 6 along with our other changes")
+PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal", "encounters", "arrange"]
+SUBMITTED = ["delve", "model", "bank", "deathbank", "goal", "encounters", "arrange"]   # (11/21/2026: "arrange", Edit my page, for update 6 too; the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update; 11/21/2026, update 6: the encounters, Jace: "include it in update 6 along with our other changes")
 
 # whole files that belong to a part (paths under this folder)
 J = "src/main/java/wiki/outside/"
@@ -72,6 +74,7 @@ PART_FILES = {
               T + "FollowTest.java", T + "ActivityTest.java", T + "StarsTest.java"],
     "year": [J + "Record.java", J + "Track.java", T + "RecordTest.java", T + "TrackTest.java", "src/test/resources"],
     "model": [],
+    "arrange": [],
     "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
     "goal": [J + "Goal.java", T + "GoalTest.java"],

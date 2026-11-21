@@ -3,7 +3,7 @@
 //
 //   node test/keep_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { keepShape, BANK_SLOTS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME } from "../src/keep.ts";
+import { keepShape, layoutShape, themeLink, BANK_SLOTS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME, ARRANGE_READING, HERO_PANELS } from "../src/keep.ts";
 import { emoteKind, EMOTE_NAME } from "../src/emotes.ts";
 
 let passed = 0;
@@ -133,6 +133,62 @@ test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {
   strictEqual(EMOTE_NAME.test("YEP"), true);
   strictEqual(EMOTE_NAME.test("a"), false);
   strictEqual(EMOTE_NAME.test("no spaces"), false);
+});
+
+// the page's arrangement and its theme song (11/21/2026, update 6): known sections and panels only, bounded, the theme a
+// song's own address on one of the three platforms, read as the page's theme.js reads it
+test("a layout: the readings' sections arranged, each once, only where they can go", () => {
+  const a = { boxes: { "reading.0": ["sec-kills", "sec-skills"], "reading.1": ["sec-gains"], "wide.0": ["sec-case", "sec-year"] }, off: ["sec-pets", "sec-pets"] };
+  deepStrictEqual(layoutShape({ arrange: a }), { arrange: { boxes: a.boxes, off: ["sec-pets"] } });
+  strictEqual(typeof layoutShape({ arrange: { ...a, boxes: { "reading.0": ["sec-year"] } } }), "string");          // (the year goes across the page only)
+  strictEqual(typeof layoutShape({ arrange: { ...a, boxes: { "wide.0": ["sec-skills"] } } }), "string");
+  strictEqual(typeof layoutShape({ arrange: { ...a, boxes: { "reading.2": [] } } }), "string");                    // (no third column)
+  strictEqual(typeof layoutShape({ arrange: { ...a, boxes: { "reading.0": ["sec-kills"], "reading.1": ["sec-kills"] } } }), "string");
+  strictEqual(typeof layoutShape({ arrange: { ...a, boxes: { "reading.0": ["<img src=x>"] } } }), "string");
+  strictEqual(typeof layoutShape({ arrange: { ...a, off: ["sec-nothing"] } }), "string");
+  strictEqual(typeof layoutShape({ arrange: { ...a, extra: 1 } }), "string");
+  strictEqual(typeof layoutShape({ arrange: { ...a, boxes: { "reading.0": Array(ARRANGE_READING.length + 1).fill("sec-skills") } } }), "string");
+});
+
+test("a layout: the top of the file's panels on twelve columns, the three that stay never hidden", () => {
+  const h = { p: { kit: { x: 0, w: 4 }, form: { x: 8, w: 4 } }, o: ["who", "stage", "screen", "form", "kit"], off: ["clips"] };
+  deepStrictEqual(layoutShape({ hero: h }), { hero: h });
+  strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 9, w: 4 } } } }), "string");        // (past the grid's edge)
+  strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 0 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 0.5, w: 4 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, p: { nope: { x: 0, w: 4 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, o: ["kit", "kit"] } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, o: [...HERO_PANELS, "kit"] } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, off: ["screen"] } }), "string");                     // (the outstation's always shown)
+  strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), "object");    // (anything else in a place is left out)
+  deepStrictEqual(layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), { hero: { ...h, p: { kit: { x: 0, w: 4 } } } });
+});
+
+test("a layout: the theme a song's own address on soundcloud, youtube or spotify, kept in its plain form", () => {
+  deepStrictEqual(themeLink("https://youtu.be/dQw4w9WgXcQ?t=42"), { kind: "youtube", id: "dQw4w9WgXcQ", start: 42, link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42" });
+  deepStrictEqual(themeLink("https://m.youtube.com/watch?v=dQw4w9WgXcQ&list=x"), { kind: "youtube", id: "dQw4w9WgXcQ", link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+  strictEqual((themeLink("https://www.youtube.com/shorts/dQw4w9WgXcQ") as { id: string }).id, "dQw4w9WgXcQ");
+  deepStrictEqual(themeLink("https://soundcloud.com/someone/a-song/"), { kind: "soundcloud", id: "https://soundcloud.com/someone/a-song", link: "https://soundcloud.com/someone/a-song" });
+  strictEqual((themeLink("https://soundcloud.com/someone/sets/a-set") as { id: string }).id, "https://soundcloud.com/someone/sets/a-set");
+  deepStrictEqual(themeLink("https://open.spotify.com/intl-de/track/4uLU6hMCjMI75M1A2tKUQC?si=x"), { kind: "spotify", what: "track", id: "4uLU6hMCjMI75M1A2tKUQC", link: "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC" });
+  for (const no of ["javascript:alert(1)", "https://evil.example/watch?v=dQw4w9WgXcQ", "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+                    "https://user:pw@youtube.com/watch?v=dQw4w9WgXcQ", "https://youtube.com:8443/watch?v=dQw4w9WgXcQ", "https://on.soundcloud.com/abc",
+                    "https://soundcloud.com/someone", "https://open.spotify.com/artist/4uLU6hMCjMI75M1A2tKUQC", "ftp://youtu.be/dQw4w9WgXcQ", "x".repeat(500), 42]) {
+    strictEqual(themeLink(no), null, String(no));
+  }
+  deepStrictEqual(layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title and by only");
+  deepStrictEqual(layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: "a\nsong  ", by: "x".repeat(99) } }),
+                  { theme: { kind: "youtube", id: "dQw4w9WgXcQ", link: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "a song", by: "x".repeat(60) } });
+  strictEqual(typeof layoutShape({ theme: { link: "https://evil.example/x" } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: "https://youtu.be/dQw4w9WgXcQ", title: 5 } }), "string");
+});
+
+test("a layout: only its three parts, any taken away with null", () => {
+  deepStrictEqual(layoutShape({ theme: null, hero: null }), { theme: null, hero: null });
+  strictEqual(typeof layoutShape({}), "string");
+  strictEqual(typeof layoutShape({ goal: {} }), "string");
+  strictEqual(typeof layoutShape([1]), "string");
+  strictEqual(typeof layoutShape("x"), "string");
 });
 
 for (const [name, f] of tests) {
