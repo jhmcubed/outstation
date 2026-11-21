@@ -43,7 +43,7 @@
     // to anyone unless its player says otherwise ("0": kept to themselves until they show it); FIGHTS_MOST a page's fights
     // at most, the oldest going first; FIGHTS_DAYS how long each is kept ("0": until its player takes it down); FIGHTS_KEPT
     // how many a page may keep for good (11/21/2026: never trimmed by the two before it; the featured one is always kept)
-    "FIGHTS": "off",
+    "FIGHTS": "on",   // (Jace, 11/21/2026: on with update 6, its test)
     "FIGHTS_PUBLIC": "1",   // (Jace, 11/21/2026: "shown to anyone unless you untick it")
     "FIGHTS_MOST": "20",
     "FIGHTS_DAYS": "30",
