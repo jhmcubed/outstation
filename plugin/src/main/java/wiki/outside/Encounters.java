@@ -262,6 +262,28 @@ final class Encounters
 	static final Set<String> LOOT_OPTIONS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
 		"Open", "Search", "Loot", "Harvest", "Claim", "Take", "Take-loot", "Collect", "Grab", "Plunder")));
 
+	// ---- round four (11/21/2026; ghillie's claude/outstation.md, "Encounters, round four"): Doom of Mokhaiotl's delve
+	// whole, Araxxor's corpse harvested or destroyed, and a pet as the moment.
+
+	/** Doom of Mokhaiotl as each of its forms (RuneLite's NpcID.DOM_BOSS, _SHIELDED, _BURROWED): no area of RuneLite's
+	 *  names its arena, so one of them appearing starts a delve's recording */
+	static final Set<Integer> DOOM_IDS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
+		net.runelite.api.gameval.NpcID.DOM_BOSS, net.runelite.api.gameval.NpcID.DOM_BOSS_SHIELDED,
+		net.runelite.api.gameval.NpcID.DOM_BOSS_BURROWED)));
+	static final String DOOM = "Doom of Mokhaiotl";
+	/** a delve: ticks out of the delve's instance before it counts as left (unclaimed: a teleport out; claimed: 2) */
+	static final int DELVE_OUT = 50, DELVE_LEFT = 2;
+	/** the game's pet lines, as Dink's PetNotifier reads them: "You have a funny feeling like you're being followed.",
+	 *  "You have a funny feeling like you would have been followed..." (one already owned), "You feel something weird
+	 *  sneaking into your backpack." (a follower already out) */
+	static final Pattern PET_LINE = Pattern.compile("^You (?:have a funny feeling like you|feel something weird sneaking).*");
+	/** the game's lines that can name the pet a few ticks after (Dink's: the collection log's, an untradeable drop's) */
+	static final Pattern PET_NAMED = Pattern.compile("^(?:New item added to your collection log|Untradeable drop): (.+?)\\s*$");
+	/** ticks after a pet's line within which it appears (beside them, or in the backpack) */
+	static final int PET_WAIT = 8;
+	/** after the click on a corpse's Destroy, the ticks within which its going is the destroying (a prompt answered) */
+	static final int DESTROY_WAIT = 100;
+
 	/** the game's kill and completion count lines ("Your Vorkath kill count is: 418.", "Your completed Chambers of Xeric
 	 *  count is: 12."), as Counts reads them */
 	static final Pattern KILL_LINE = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?([\\d,]+)\\b.*$");
@@ -372,15 +394,38 @@ final class Encounters
 	 *  kept for the loot line): its tile, floor, id, kind ("obj" or "npc"), name, NPC index, and the tick */
 	private LocalPoint clickedAt;
 	private int clickedPlane, clickedId, clickedIndex = -1, clickedTick = -1000;
-	private String clickedKind, clickedName;
+	private String clickedKind, clickedName, clickedOption;
 	/** the inventory as it was, item by item (id to count), for a corpse's loot (what it gained after the click) */
 	private Map<Integer, Long> invBefore = new HashMap<>();
 	/** the loot's window whose picture is to be taken, its interface (-1: the inventory), client cycles to go */
 	private EncounterScene.Window pictureOf;
 	private int pictureGroup, pictureIn;
+	/** the pet's chat line whose picture is to be taken, the cycles to go and the tries left (round four) */
+	private EncounterScene.Window chatShot;
+	private int chatShotIn, chatShotTries;
 	/** a boss's corpse waiting to be looted (its name; the kill's tick), or null */
 	private String corpseOf;
 	private int corpseSince;
+	// (round four, 11/21/2026)
+	/** a delve of Doom of Mokhaiotl: one recording from its first level to the death, or the claim and the leaving */
+	private boolean delve, delveClaimed;
+	/** ticks out of an instance in a delve; the tick the burrow's Leave was pressed (-1 not) */
+	private int delveOut, delveLeave = -1;
+	/** a delve stopped by hand: none starts again till they're out of its instance */
+	private boolean delveStopped;
+	/** a pet's line came (its tick, -1 none) and it's still to be seen: the follower that was out before it (its index,
+	 *  -1 none), the inventory as it was */
+	private int petAt = -1;
+	private boolean petWaiting;
+	private int followerBefore = -1;
+	private Map<Integer, Long> invAtPet = new HashMap<>();
+	/** the pet's chat line, its picture to be taken (round four: as the reward window's) */
+	private EncounterScene.Window petChat;
+	/** Destroy chosen on a corpse: its NPC index and the tick (-1 none), the inventory then */
+	private int destroyIndex = -1, destroyTick = -1;
+	private String destroyName;
+	private int destroyId;
+	private Map<Integer, Long> invAtDestroy = new HashMap<>();
 
 	Encounters(Client client, net.runelite.client.callback.ClientThread clientThread, Gson gson, Host host)
 	{
@@ -505,6 +550,15 @@ final class Encounters
 			looted.clear();
 			corpseOf = null;
 			waitingFor = null;
+			delve = false;
+			delveClaimed = false;
+			delveOut = 0;
+			delveLeave = -1;
+			petAt = -1;
+			petWaiting = false;
+			petChat = null;
+			destroyIndex = -1;
+			destroyTick = -1;
 		}
 		recording = new EncounterFiles.Writer(gson, () -> host.folder().joinSegment("encounters"), name, LocalDateTime.now());
 		scene = keep != null ? keep : new EncounterScene(client, host::itemLabel, host.otherPlayers());
@@ -707,6 +761,12 @@ final class Encounters
 		if (!split)
 		{
 			scene = null;
+			// (a delve ended, however: Doom's forms still about while the player falls or leaves start none again till
+			// they're out of its instance; round four)
+			if (delve)
+			{
+				delveStopped = true;
+			}
 		}
 		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason);
 		finishing.add(stopped);
@@ -961,6 +1021,8 @@ final class Encounters
 			{
 				watchedIndices.add(npc.getIndex());
 			}
+			// (Doom of Mokhaiotl about: a delve, however this recording started; round four)
+			delve |= DOOM_IDS.contains(npc.getId());
 			watchedSeen |= watchedIds.contains(npc.getId()) || watchedIndices.contains(npc.getIndex());
 		}
 		tick.add("npcs", npcs);
@@ -997,8 +1059,18 @@ final class Encounters
 			}
 		}
 
+		// (a pet's line: the pet looked for beside them, as the follower that wasn't out before; round four)
+		if (petWaiting)
+		{
+			petLook();
+		}
+
 		// (how it ends: the kill or a death a few ticks on, leaving, the listed NPCs gone)
-		if (endAt >= 0 && whole() >= endAt)
+		if (endAt >= 0 && whole() >= endAt && petHolds())
+		{
+			// (a pet's come: held till it's seen and a few ticks more, so the moment has it; round four)
+		}
+		else if (endAt >= 0 && whole() >= endAt)
 		{
 			// (a kill with no drop yet: held a little for it, the moment's anchor (11/21/2026); and a corpse to loot, till
 			// it's looted or goes (round three: Araxxor's, as the game's own loot needs a click on what's left))
@@ -1010,7 +1082,29 @@ final class Encounters
 				return;
 			}
 		}
-		if (automatic && area != null)
+		if (automatic && delve)
+		{
+			// (a delve (Jace, 11/21/2026): every level one recording, through each level's end, its window and the descent;
+			// it ends with the player's death (above), or the claim and the burrow's Leave a few ticks on (its click),
+			// or the claim and out of the delve's instance; unclaimed and out of it a while, a teleport: left)
+			delveOut = client.getTopLevelWorldView().isInstance() ? 0 : delveOut + 1;
+			if (endAt < 0 && delveClaimed && delveOut > DELVE_LEFT)
+			{
+				stopAuto("claimed");
+				return;
+			}
+			if (endAt < 0 && !delveClaimed && delveOut > DELVE_OUT)
+			{
+				stopAuto("left");
+				return;
+			}
+			if (whole() >= RAID_MOST)
+			{
+				stopAuto("the time limit");
+				return;
+			}
+		}
+		else if (automatic && area != null)
 		{
 			Presence.Area now = here();
 			boolean in = sameArea(now, area);
@@ -1063,7 +1157,8 @@ final class Encounters
 	{
 		Presence.Area a = area;
 		stop(why, false);
-		if (a != null && ("killed".equals(why) || "died".equals(why) || "completed".equals(why) || "looted".equals(why)))
+		if (a != null && ("killed".equals(why) || "died".equals(why) || "completed".equals(why) || "looted".equals(why)
+			|| "claimed".equals(why)))
 		{
 			afterKill = a;
 		}
@@ -1073,6 +1168,10 @@ final class Encounters
 	 *  its kill, till the next fight there). */
 	private void autoStartByArea()
 	{
+		if (delveStopped && client.getGameState() == GameState.LOGGED_IN && !client.getTopLevelWorldView().isInstance())
+		{
+			delveStopped = false;
+		}
 		Presence.Area a = client.getGameState() == GameState.LOGGED_IN ? bossArea() : null;
 		if (a == null || lastArea == null || !a.name.equals(lastArea.name))
 		{
@@ -1130,6 +1229,30 @@ final class Encounters
 					w.ph = bounds.height;
 					w.picture = png;
 				});
+			}
+		}
+		// (the pet's chat line as the chatbox drew it: once the line's there, the next frame cropped to its row; round four)
+		if (chatShot != null && --chatShotIn <= 0)
+		{
+			EncounterScene.Window w = chatShot;
+			java.awt.Rectangle bounds = chatLineBounds(w.title);
+			if (bounds != null)
+			{
+				chatShot = null;
+				host.picture(bounds, png ->
+				{
+					w.pw = bounds.width;
+					w.ph = bounds.height;
+					w.picture = png;
+				});
+			}
+			else if (--chatShotTries <= 0)
+			{
+				chatShot = null;
+			}
+			else
+			{
+				chatShotIn = 2;
 			}
 		}
 		// Where the client is walking you, each time it changes: the tile it puts the red flag on (his dest line,
@@ -1618,11 +1741,21 @@ final class Encounters
 			return;
 		}
 		npcSpawned(npc, false);
+		petSpawned(npc);
+		delve |= DOOM_IDS.contains(npc.getId());
 	}
 
 	/** A listed NPC appeared, or another turned into one: one starts (his auto-record list; a form change is Outside's). */
 	private void autoStartFor(NPC npc)
 	{
+		// (Doom of Mokhaiotl: no area of RuneLite's names its arena, so its forms start a delve's recording; round four)
+		if (DOOM_IDS.contains(npc.getId()) && !delveStopped && mayStart())
+		{
+			start(DOOM, true, null, DOOM_IDS, 1, null, null, 0);
+			delve = true;
+			watchedIndices.add(npc.getIndex());
+			return;
+		}
 		Set<Integer> ids = parseIds(host.npcIds());
 		if (ids.contains(npc.getId()) && mayStart())
 		{
@@ -1662,6 +1795,22 @@ final class Encounters
 		line.add("who", EncounterSnap.ref(client, npc));
 		line.addProperty("dead", npc.isDead());
 		EncounterSnap.actorTile(line, npc);
+		corpseGone(npc);
+	}
+
+	/** The corpse Destroy was chosen on went (or turned into something else) within DESTROY_WAIT ticks, unlooted: it
+	 *  was destroyed. A loot line with nothing (but what came into the inventory meanwhile: the elite clue it can still
+	 *  give), "choice": "destroy"; the moment is the kill and the destroying (round four). */
+	private void corpseGone(NPC npc)
+	{
+		if (destroyIndex < 0 || npc.getIndex() != destroyIndex || whole() - destroyTick > DESTROY_WAIT || looted.contains("corpse"))
+		{
+			return;
+		}
+		destroyIndex = -1;
+		clickedOption = "Destroy";
+		clickedTick = Math.max(clickedTick, whole() - 30);
+		loot("corpse", gained(invAtDestroy, itemsOf(client.getItemContainer(InventoryID.INV))), -1, "destroyed");
 	}
 
 	@Subscribe
@@ -1682,6 +1831,11 @@ final class Encounters
 		line.add("who", EncounterSnap.ref(client, npc));
 		line.addProperty("from", event.getOld() == null ? -1 : event.getOld().getId());
 		EncounterSnap.overrides(line, npc);
+		delve |= DOOM_IDS.contains(npc.getId());
+		if (npc.getId() != destroyId)
+		{
+			corpseGone(npc);
+		}
 	}
 
 	@Subscribe
@@ -1968,7 +2122,12 @@ final class Encounters
 		if (kill != null && kill.matches())
 		{
 			Presence.Area raid = raidArea();
-			if (raid != null)
+			if (delve)
+			{
+				// (a delve: each level's kill passes by, and nothing's its moment but the claim, a pet or the fall; round
+				// four)
+			}
+			else if (raid != null)
 			{
 				// (in a raid, nothing ends it here and nothing's its moment: the raid's own line is noted, a boss's inside
 				// it passed by; the treasure room's leaving ends it, the chest is its moment; round three)
@@ -1995,6 +2154,19 @@ final class Encounters
 		{
 			return;
 		}
+		// (a pet: the game's own line, as Dink reads it; round four)
+		if (event.getType() == ChatMessageType.GAMEMESSAGE && PET_LINE.matcher(text).matches())
+		{
+			petLine(text);
+		}
+		else if (petAt >= 0 && event.getType() == ChatMessageType.GAMEMESSAGE && scene != null)
+		{
+			Matcher named = PET_NAMED.matcher(text);
+			if (named.matches())
+			{
+				scene.petName(named.group(1));
+			}
+		}
 		ChatKind kind = chatKind(event.getType());
 		if (kind == ChatKind.NEVER || kind == ChatKind.COMPLETION && !completionLine(text))
 		{
@@ -2008,6 +2180,183 @@ final class Encounters
 			line.add("who", EncounterSnap.ref(client, speaker(event.getName())));
 		}
 		line.addProperty("text", kind == ChatKind.COMPLETION ? scrub(text, othersKnown()) : text);
+	}
+
+	// ---- a pet (11/21/2026, round four; Jace: "Pet rolls from bosses/raid loot chests are counted as moments,
+	// correct?"): the game's line, then the pet beside the player (the follower that wasn't out before) or in the
+	// backpack; a `pet` line at the message and a `pet_seen` line when it appears; the moment has both, the line's
+	// picture as the chatbox showed it.
+
+	/** The game's pet line: written, the moment told, and the pet looked for over the next PET_WAIT ticks. */
+	private void petLine(String text)
+	{
+		if (petAt >= 0)
+		{
+			return;
+		}
+		String kind = text.contains("would have been") ? "duplicate" : text.contains("backpack") ? "backpack" : "follower";
+		petAt = whole();
+		petWaiting = !"duplicate".equals(kind);
+		NPC f = client.getFollower();
+		followerBefore = f == null ? -1 : f.getIndex();
+		invAtPet = counts(client.getItemContainer(InventoryID.INV));
+		JsonObject line = emit("pet");
+		line.addProperty("text", text);
+		line.addProperty("kind", kind);
+		if (scene != null)
+		{
+			petChat = new EncounterScene.Window("chat", null, -1, text, new ArrayList<>());
+			scene.pet(whole(), kind, petChat);
+			chatShot = petChat;
+			chatShotIn = 3;
+			chatShotTries = 12;
+		}
+		// (an ending already due waits for it: petHolds)
+	}
+
+	/** Each tick while it's awaited: the follower out now that wasn't before is the pet; past PET_WAIT, given up. */
+	private void petLook()
+	{
+		NPC f = client.getFollower();
+		if (f != null && f.getIndex() != followerBefore)
+		{
+			petIs(f, -1);
+			return;
+		}
+		if (whole() > petAt + PET_WAIT)
+		{
+			petWaiting = false;
+		}
+	}
+
+	/** The pet seen: an NPC beside them ({@code npc}), or an item come into the backpack ({@code item}). */
+	private void petIs(NPC npc, int item)
+	{
+		petWaiting = false;
+		JsonObject line = emit("pet_seen");
+		String name = null;
+		if (npc != null)
+		{
+			defineNpc(npc);
+			line.add("who", EncounterSnap.ref(client, npc));
+			line.addProperty("npc", npc.getId());
+			name = npc.getName() == null ? null : Text.removeTags(npc.getName());
+		}
+		else
+		{
+			defineItem(item);
+			line.addProperty("item", item);
+			ItemComposition def = client.getItemDefinition(item);
+			name = def == null ? null : Text.removeTags(def.getName());
+		}
+		if (name != null)
+		{
+			line.addProperty("name", name);
+		}
+		if (scene != null)
+		{
+			scene.petSeen(whole(), npc == null ? -1 : npc.getId(), item, name);
+		}
+	}
+
+	/** Whether an ending due waits for a pet: its line came, and it's still awaited, or seen (or its line came) less than
+	 *  PET_AFTER ticks ago. */
+	private boolean petHolds()
+	{
+		if (petAt < 0 || scene == null)
+		{
+			return false;
+		}
+		return petWaiting || whole() <= petAt + EncounterScene.PET_AFTER || petSeenAt() >= 0 && whole() <= petSeenAt() + EncounterScene.PET_AFTER;
+	}
+
+	private int petSeenAt()
+	{
+		return scene == null ? -1 : scene.petSeenTick();
+	}
+
+	/** An NPC come beside them while a pet's awaited, one that can be picked up: the pet (when the client's follower
+	 *  isn't told). */
+	private void petSpawned(NPC npc)
+	{
+		Player me = client.getLocalPlayer();
+		if (!petWaiting || me == null || npc.getWorldLocation().distanceTo(me.getWorldLocation()) > 3)
+		{
+			return;
+		}
+		net.runelite.api.NPCComposition def = npc.getTransformedComposition();
+		if (def == null)
+		{
+			return;
+		}
+		for (String act : def.getActions())
+		{
+			if (act != null && "Pick-up".equals(Text.removeTags(act)))
+			{
+				petIs(npc, -1);
+				return;
+			}
+		}
+	}
+
+	/** The inventory changed while a pet's awaited: an untradeable single item come in is the pet in the backpack. */
+	private void petInBackpack(ItemContainer inv)
+	{
+		if (!petWaiting)
+		{
+			return;
+		}
+		for (int[] it : gained(invAtPet, itemsOf(inv)))
+		{
+			ItemComposition def = client.getItemDefinition(it[0]);
+			if (it[1] == 1 && def != null && !def.isTradeable() && !def.isStackable())
+			{
+				petIs(null, it[0]);
+				return;
+			}
+		}
+	}
+
+	/** The pet's line in the chatbox, where it's drawn on the canvas: the line's row across the chatbox (a pixel over and
+	 *  under), the newest that has its text; null while it isn't drawn (the chatbox closed, or not yet). */
+	private java.awt.Rectangle chatLineBounds(String text)
+	{
+		Widget area = client.getWidget(InterfaceID.Chatbox.SCROLLAREA);
+		if (area == null || area.isHidden() || text == null)
+		{
+			return null;
+		}
+		java.awt.Rectangle box = area.getBounds();
+		if (box == null || box.width <= 0 || box.height <= 0)
+		{
+			return null;
+		}
+		java.awt.Rectangle best = null;
+		Widget[] kids = area.getDynamicChildren();
+		for (int k = 0; kids != null && k < kids.length; k++)
+		{
+			Widget w = kids[k];
+			String t = w == null || w.getText() == null ? "" : Text.removeTags(w.getText());
+			if (w == null || w.isHidden() || !t.contains(text))
+			{
+				continue;
+			}
+			java.awt.Rectangle b = w.getBounds();
+			if (b == null || b.height <= 0 || !box.intersects(b))
+			{
+				continue;
+			}
+			if (best == null || b.y > best.y)
+			{
+				best = b;
+			}
+		}
+		if (best == null)
+		{
+			return null;
+		}
+		java.awt.Rectangle row = new java.awt.Rectangle(box.x, best.y - 1, box.width, best.height + 2).intersection(box);
+		return row.isEmpty() ? null : row;
 	}
 
 	/** Every other player's name the client knows now: the scene's and the friends chat's (not the player's own). */
@@ -2151,6 +2500,7 @@ final class Encounters
 		if (event.getContainerId() == InventoryID.INV)
 		{
 			containers(event.getItemContainer(), "inv");
+			petInBackpack(event.getItemContainer());
 			corpseLoot(event.getItemContainer());
 		}
 		else if (event.getContainerId() == InventoryID.WORN)
@@ -2228,9 +2578,54 @@ final class Encounters
 	@Subscribe
 	public void onMenuOptionClicked(net.runelite.api.events.MenuOptionClicked event)
 	{
-		if (recording == null || !LOOT_OPTIONS.contains(Text.removeTags(event.getMenuOption())))
+		if (recording == null)
 		{
 			return;
+		}
+		String option = Text.removeTags(event.getMenuOption() == null ? "" : event.getMenuOption());
+		// (a delve: the burrow's Leave, after the claim, ends it a few ticks on (Jace, 11/21/2026: "it should only end when
+		// the player dies or after they claim their loot and press the leave button on the burrow"); the Mokha Loot
+		// Tracker reads the same option; round four)
+		if (delve && "Leave".equals(option)
+			&& ((event.getParam1() >>> 16) == InterfaceID.DOM_END_LEVEL_UI || delveClaimed))
+		{
+			delveLeave = whole();
+			if (automatic)
+			{
+				endAt = whole() + LOOT_AFTER;
+				endWhy = delveClaimed ? "claimed" : "left";
+			}
+			return;
+		}
+		// (Araxxor's corpse: Destroy, for a better chance at the pet and no loot (the wiki: "Harvest, Destroy", a prompt
+		// after); kept till the corpse goes; round four)
+		NPC on = event.getMenuEntry() == null ? null : event.getMenuEntry().getNpc();
+		if ("Destroy".equals(option) && on != null && scene != null && scene.killed() && raidArea() == null)
+		{
+			destroyIndex = on.getIndex();
+			destroyTick = whole();
+			destroyId = on.getId();
+			destroyName = on.getName() == null ? null : Text.removeTags(on.getName());
+			invAtDestroy = counts(client.getItemContainer(InventoryID.INV));
+			clickedAt = on.getLocalLocation();
+			clickedPlane = client.getTopLevelWorldView().getPlane();
+			clickedId = on.getId();
+			clickedIndex = on.getIndex();
+			clickedKind = "npc";
+			clickedName = destroyName;
+			clickedOption = option;
+			clickedTick = whole();
+			return;
+		}
+		if (!LOOT_OPTIONS.contains(option))
+		{
+			return;
+		}
+		clickedOption = option;
+		if (on != null && on.getIndex() == destroyIndex)
+		{
+			// (Destroy's prompt answered no, and harvested after all)
+			destroyIndex = -1;
 		}
 		WorldView wv = client.getTopLevelWorldView();
 		net.runelite.api.MenuAction a = event.getMenuAction();
@@ -2321,7 +2716,8 @@ final class Encounters
 	 *  inventory"; the ground only when it's full, and that's the item lines). */
 	private void corpseLoot(ItemContainer inv)
 	{
-		if (!"npc".equals(clickedKind) || whole() - clickedTick > CORPSE_TAKE || looted.contains("corpse") || scene == null
+		if (!"npc".equals(clickedKind) || "Destroy".equals(clickedOption) || whole() - clickedTick > CORPSE_TAKE
+			|| looted.contains("corpse") || scene == null
 			|| !scene.killed() || raidArea() != null)
 		{
 			return;
@@ -2382,6 +2778,13 @@ final class Encounters
 	 */
 	private void loot(String source, List<int[]> items, int window, boolean corpse)
 	{
+		loot(source, items, window, corpse ? "inventory" : "reward");
+	}
+
+	/** {@code kind}: "reward", "inventory" (a corpse looted), "destroyed" (a corpse destroyed: no window, no picture). */
+	private void loot(String source, List<int[]> items, int window, String kind)
+	{
+		boolean corpse = !"reward".equals(kind);
 		if (!looted.add(source))
 		{
 			return;
@@ -2428,6 +2831,11 @@ final class Encounters
 		}
 		EncounterSnap.tile(line, wv, at, plane);
 		line.addProperty("at", from != null ? (corpse ? "corpse" : "chest") : "player");
+		// (a corpse's: what the player chose, "harvest" or "destroy" (Araxxor's), "loot"...; round four)
+		if (corpse && clickedOption != null)
+		{
+			line.addProperty("choice", "destroyed".equals(kind) ? "destroy" : clickedOption.toLowerCase(java.util.Locale.ROOT));
+		}
 		if (from != null)
 		{
 			line.add("from", from);
@@ -2460,13 +2868,17 @@ final class Encounters
 		// (the scene moment: the chest's opening, the window as the player saw it laid over)
 		if (scene != null)
 		{
-			EncounterScene.Window w = new EncounterScene.Window(corpse ? "inventory" : "reward", source, window,
+			EncounterScene.Window w = new EncounterScene.Window(kind, source, window,
 				window >= 0 ? windowTitle(window) : null, scened);
 			scene.loot(whole(), w, at, plane);
-			// (its picture a few client cycles on, once the window's laid out and drawn with its items)
-			pictureOf = w;
-			pictureGroup = corpse ? -1 : window;
-			pictureIn = 3;
+			// (its picture a few client cycles on, once the window's laid out and drawn with its items; none for a corpse
+			// destroyed)
+			if (!"destroyed".equals(kind))
+			{
+				pictureOf = w;
+				pictureGroup = corpse ? -1 : window;
+				pictureIn = 3;
+			}
 		}
 		// (a boss outside a raid: ends a few ticks after its loot; a raid goes on to its treasure room's door)
 		boolean raid = raidArea() != null;
@@ -2474,7 +2886,12 @@ final class Encounters
 		{
 			raid |= c.raid && c.source.equals(source);
 		}
-		if (automatic && !raid)
+		// (a delve's claim: it goes on to the burrow's Leave; round four)
+		if (DOOM.equals(source))
+		{
+			delveClaimed = true;
+		}
+		if (automatic && !raid && !delve)
 		{
 			endAt = Math.max(endAt, whole() + LOOT_AFTER);
 			if (endWhy == null)
@@ -2698,6 +3115,8 @@ final class Encounters
 		{
 			emit("widget_open").addProperty("group", event.getGroupId());
 			rewardWindow(event.getGroupId());
+			// (the burrow's window: a delve; round four)
+			delve |= event.getGroupId() == InterfaceID.DOM_END_LEVEL_UI;
 		}
 	}
 

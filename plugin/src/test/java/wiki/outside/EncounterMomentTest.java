@@ -393,4 +393,41 @@ public class EncounterMomentTest
 		// (without one: the flag off, the bytes as before)
 		assertArrayEquals(hex(GOLDEN_2), EncounterMoment.raw(two()));
 	}
+
+	/** (11/21/2026, round four) the pet's chat line as drawn rides in a second picture block (flag bit 2) after the first,
+	 *  or alone after the motion block, kept through thin and sparse, the pet's frames halved as the drop's */
+	@Test
+	public void theChatPictureBlock() throws Exception
+	{
+		EncounterMoment.Moment m = two();
+		Map<String, Object> pet = new LinkedHashMap<>();
+		pet.put("tick", d(12));
+		pet.put("frame", d(1));
+		pet.put("seenFrame", d(2));
+		Map<String, Object> win = new LinkedHashMap<>();
+		win.put("kind", "chat");
+		win.put("from", d(1));
+		pet.put("window", win);
+		m.meta.put("pet", pet);
+		m.chat = new byte[]{(byte) 0x89, 'P', 'N', 'G', 9, 8};
+		byte[] raw = EncounterMoment.raw(m);
+		assertEquals(EncounterMoment.FLAG_MOTION | EncounterMoment.FLAG_CHAT_PICTURE, raw[5]);
+		EncounterMoment.Moment back = EncounterMoment.decode(EncounterMoment.encode(m));
+		assertArrayEquals(m.chat, back.chat);
+		assertEquals(null, back.picture);
+		// (both: the window's first, the line's after it)
+		m.picture = new byte[]{(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
+		raw = EncounterMoment.raw(m);
+		assertEquals(EncounterMoment.FLAG_MOTION | EncounterMoment.FLAG_PICTURE | EncounterMoment.FLAG_CHAT_PICTURE, raw[5]);
+		back = EncounterMoment.decode(EncounterMoment.encode(m));
+		assertArrayEquals(m.picture, back.picture);
+		assertArrayEquals(m.chat, back.chat);
+		EncounterMoment.Moment t = EncounterMoment.thin(back);
+		assertArrayEquals(m.chat, t.chat);
+		Map<?, ?> tp = (Map<?, ?>) t.meta.get("pet");
+		assertEquals(1.0, EncounterMoment.num(tp.get("frame")), 0);
+		assertEquals(1.0, EncounterMoment.num(tp.get("seenFrame")), 0);
+		assertEquals(1.0, EncounterMoment.num(((Map<?, ?>) tp.get("window")).get("from")), 0);
+		assertArrayEquals(m.chat, EncounterMoment.sparse(back).chat);
+	}
 }

@@ -70,6 +70,9 @@ final class EncounterScene
 	static final int BEFORE = 6, AFTER = 5, STRETCH_MOST = 34, DROP_WAIT = 20;
 	/** ticks kept after the loot came (round three: the window read) */
 	static final int CHEST_AFTER = 8;
+	/** (round four, 11/21/2026) ticks kept after a pet came (its message, or it appearing beside the player when it did),
+	 *  and the most a stretch reaches back for the kill before a corpse destroyed */
+	static final int PET_AFTER = 5;
 	/** the loot window's picture, at most (a reward window is about 500 by 330 pixels: 100-200 KB as a PNG) */
 	static final int PICTURE_MOST = 600 * 1024;
 	/** client cycles between frames (2: 25 a second) */
@@ -191,6 +194,11 @@ final class EncounterScene
 		List<int[]> clock;
 		int from, to, anchor, killTick = -1, dropTick = -1, fallTick = -1, lootTick = -1;
 		Window window;
+		/** (round four) the pet: its message's tick, the tick it was seen (beside them or in the backpack; -1 not seen), how
+		 *  it came ("follower", "backpack", "duplicate"), its name and its NPC or item id when known, its chat line */
+		int petTick = -1, petSeenTick = -1, petNpc = -1, petItem = -1;
+		String petKind, petName;
+		Window petWindow;
 		String why, npc;
 		int plane;
 		long clientNanos, stillNanos, bufferBytes;
@@ -217,6 +225,10 @@ final class EncounterScene
 	/** the loot (round three): its tick (the whole recording's), the window, where it came from */
 	private int lootTick = -1;
 	private Window window;
+	/** the pet (round four): its message's tick, when it was seen, how it came, its name, ids, its chat line */
+	private int petTick = -1, petSeenTick = -1, petNpc = -1, petItem = -1;
+	private String petKind, petName;
+	private Window petWindow;
 	private final Map<String, Integer> dealt = new HashMap<>();
 	private boolean full, warned;
 
@@ -286,6 +298,69 @@ final class EncounterScene
 	int killTick()
 	{
 		return killTick;
+	}
+
+	/** A pet's message (round four, 11/21/2026; Jace: "Pet rolls from bosses/raid loot chests are counted as moments,
+	 *  correct?"): the moment then has the pet in it, with the chat line {@code w} as the game showed it. The first
+	 *  counts. */
+	void pet(int t, String kind, Window w)
+	{
+		if (petTick >= 0)
+		{
+			return;
+		}
+		petTick = t;
+		petKind = kind;
+		petWindow = w;
+		if (still == null)
+		{
+			takeStill();
+		}
+	}
+
+	/** The pet seen: beside the player as a follower ({@code npc} its id) or come into the backpack ({@code item}). */
+	void petSeen(int t, int npc, int item, String name)
+	{
+		if (petTick < 0 || petSeenTick >= 0)
+		{
+			return;
+		}
+		petSeenTick = t;
+		petNpc = npc;
+		petItem = item;
+		if (name != null)
+		{
+			petName = name;
+		}
+	}
+
+	/** The pet's name when the game said it some other way (the collection log's line, an untradeable drop's). */
+	void petName(String name)
+	{
+		if (petTick >= 0 && petName == null && name != null)
+		{
+			petName = name;
+		}
+	}
+
+	boolean petCame()
+	{
+		return petTick >= 0;
+	}
+
+	int petTick()
+	{
+		return petTick;
+	}
+
+	boolean petSeen()
+	{
+		return petSeenTick >= 0;
+	}
+
+	int petSeenTick()
+	{
+		return petSeenTick;
 	}
 
 	/** An item landed (not one there at the start): the first near the player from a tick before the kill on is the
@@ -424,7 +499,7 @@ final class EncounterScene
 	/** Whether a frame of tick {@code t} is within a kill's, a death's or the loot's stretch. */
 	private boolean anchored(int t)
 	{
-		return near(t, killTick) || near(t, deathTick) || near(t, lootTick);
+		return near(t, killTick) || near(t, deathTick) || near(t, lootTick) || near(t, petTick);
 	}
 
 	private static boolean near(int t, int anchor)
@@ -968,7 +1043,21 @@ final class EncounterScene
 			return null;
 		}
 		Taken t = new Taken();
-		if (lootTick >= 0)
+		if (lootTick >= 0 && "destroyed".equals(window.kind))
+		{
+			// a corpse destroyed for a better chance at the pet (round four, 11/21/2026: Araxxor's "Destroy"): no loot, so
+			// the kill and the destroying, 6 ticks before the kill to 5 after the corpse went, when that's within a
+			// stretch; else the destroying alone, held on the corpse going
+			t.to = lootTick + AFTER;
+			t.from = killTick >= 0 && t.to - (killTick - BEFORE) <= STRETCH_MOST ? killTick - BEFORE : lootTick - BEFORE;
+			t.anchor = lootTick;
+			t.killTick = killTick >= 0 && killTick >= t.from ? killTick : -1;
+			t.why = t.killTick >= 0 ? "the kill and the corpse destroyed" : "the corpse destroyed";
+			t.lootTick = lootTick;
+			t.window = window;
+			t.npc = killNpc != null ? killNpc : boss();
+		}
+		else if (lootTick >= 0)
 		{
 			// the chest's opening (round three): the player at the chest, its animation and the loot's window, 6 ticks
 			// before the loot came to 8 after, held a tick in, the window laid over from its frame
@@ -1011,6 +1100,10 @@ final class EncounterScene
 			t.anchor = at;
 			t.why = "round this tick";
 		}
+		if (petTick >= 0)
+		{
+			withPet(t);
+		}
 		int first = frames.peekFirst().tick, end = Math.min(last, frames.peekLast().tick);
 		t.from = Math.max(first, t.from);
 		t.to = Math.min(end, t.to);
@@ -1046,6 +1139,65 @@ final class EncounterScene
 		t.framesTaken = framesTaken;
 		frames.clear();
 		return t;
+	}
+
+	/**
+	 * The pet in the stretch (round four, 11/21/2026; Jace: a raid's pet is rolled as its chest opens, "you get a pet and
+	 * loot, or just loot"; a boss's appears beside you as its loot lands, or goes into the backpack): the pet joins the
+	 * stretch it came with (the chest, the kill and its drop, the loot, the fall), which runs on to 5 ticks after the pet
+	 * was seen, held a tick after it was; a pet far from any of those (or with none) is the moment by itself, its message
+	 * 6 ticks in. Above everything else: a stretch too long for both keeps the pet.
+	 */
+	private void withPet(Taken t)
+	{
+		int seen = petSeenTick >= 0 ? petSeenTick : petTick;
+		int pf = petTick - BEFORE, pt = seen + PET_AFTER;
+		int from = Math.min(t.from, pf), to = Math.max(t.to, pt);
+		boolean based = !"round this tick".equals(t.why);
+		if (based && pt >= t.from - BEFORE && pf <= t.to + BEFORE && to - from <= STRETCH_MOST)
+		{
+			t.from = from;
+			t.to = to;
+			t.why = andAPet(t.why);
+		}
+		else
+		{
+			t.from = pf;
+			t.to = pt;
+			t.why = "the pet";
+			// (what else falls inside it stays named)
+			t.killTick = t.killTick >= pf && t.killTick <= pt ? t.killTick : -1;
+			t.dropTick = t.dropTick >= pf && t.dropTick <= pt ? t.dropTick : -1;
+			t.fallTick = t.fallTick >= pf && t.fallTick <= pt ? t.fallTick : -1;
+			if (t.lootTick < pf || t.lootTick > pt)
+			{
+				t.lootTick = -1;
+				t.window = null;
+			}
+			if (t.npc == null)
+			{
+				t.npc = killNpc != null ? killNpc : boss();
+			}
+		}
+		t.anchor = seen + 1;
+		t.petTick = petTick;
+		t.petSeenTick = petSeenTick;
+		t.petKind = petKind;
+		t.petName = petName;
+		t.petNpc = petNpc;
+		t.petItem = petItem;
+		t.petWindow = petWindow;
+	}
+
+	/** "the kill and its drop" with a pet: "the kill, its drop and a pet"; "the chest": "the chest and a pet". */
+	static String andAPet(String why)
+	{
+		if (why == null)
+		{
+			return "the pet";
+		}
+		int and = why.lastIndexOf(" and ");
+		return (and < 0 ? why : why.substring(0, and) + "," + why.substring(and + 4)) + " and a pet";
 	}
 
 	/** The moment's file, made from what was taken (the moment thread). meta's fight, foes, label and at are the
@@ -1271,6 +1423,15 @@ final class EncounterScene
 			chest.put("source", w.source);
 			chest.put("kind", w.kind);
 			meta.put("chest", chest);
+		}
+		else
+		{
+			meta.put("chest", null);
+		}
+		// (a corpse destroyed has no window: nothing came; round four)
+		if (t.lootTick >= 0 && w != null && !"destroyed".equals(w.kind))
+		{
+			int lf = frameOf(cycleAt(t.clock, t.lootTick, fr), c0, count);
 			Map<String, Object> win = new LinkedHashMap<>();
 			win.put("kind", w.kind);
 			win.put("source", w.source);
@@ -1303,8 +1464,50 @@ final class EncounterScene
 		}
 		else
 		{
-			meta.put("chest", null);
 			meta.put("window", null);
+		}
+		// (round four, 11/21/2026: the pet, its message's frame, when it was seen, and its chat line as the game showed
+		// it, the second picture block)
+		byte[] chat = null;
+		if (t.petTick >= 0)
+		{
+			Map<String, Object> pet = new LinkedHashMap<>();
+			pet.put("tick", (double) t.petTick);
+			pet.put("frame", (double) frameOf(cycleAt(t.clock, t.petTick, fr), c0, count));
+			pet.put("seen", t.petSeenTick >= 0 ? (Object) (double) t.petSeenTick : null);
+			pet.put("seenFrame", t.petSeenTick >= 0 ? (Object) (double) frameOf(cycleAt(t.clock, t.petSeenTick, fr), c0, count) : null);
+			pet.put("kind", t.petKind);
+			pet.put("name", t.petName);
+			pet.put("npc", t.petNpc >= 0 ? (Object) (double) t.petNpc : null);
+			pet.put("item", t.petItem >= 0 ? (Object) (double) t.petItem : null);
+			Window pw = t.petWindow;
+			pet.put("message", pw == null ? null : pw.title);
+			if (pw != null)
+			{
+				Map<String, Object> win = new LinkedHashMap<>();
+				win.put("kind", "chat");
+				win.put("source", t.petName);
+				win.put("group", null);
+				win.put("title", pw.title);
+				win.put("from", pet.get("frame"));
+				win.put("items", new ArrayList<>());
+				byte[] png = pw.picture;
+				if (png != null && png.length > 0 && png.length <= PICTURE_MOST)
+				{
+					Map<String, Object> pic = new LinkedHashMap<>();
+					pic.put("w", (double) pw.pw);
+					pic.put("h", (double) pw.ph);
+					pic.put("type", "image/png");
+					win.put("picture", pic);
+					chat = png;
+				}
+				pet.put("window", win);
+			}
+			meta.put("pet", pet);
+		}
+		else
+		{
+			meta.put("pet", null);
 		}
 		meta.put("labels", labels);
 		meta.put("beams", beams);
@@ -1319,6 +1522,7 @@ final class EncounterScene
 		meta.put("taken", cost);
 		EncounterMoment.Moment m = b.moment(meta, count);
 		m.picture = picture;
+		m.chat = chat;
 		return EncounterMoment.fit(m, EncounterMoment.MOST, null);
 	}
 

@@ -95,4 +95,37 @@ public class EncountersTest
 		assertEquals(new HashSet<>(Arrays.asList("Chambers of Xeric", "Theatre of Blood", "Tombs of Amascut", "The Fractured Archive",
 			"Barrows", "Lunar Chest", "Fortis Colosseum", "Doom of Mokhaiotl")), sources);
 	}
+
+	/** (11/21/2026, round four) the game's pet lines, as Dink reads them, and the lines that can name it after */
+	@Test
+	public void thePetLines()
+	{
+		assertTrue(Encounters.PET_LINE.matcher("You have a funny feeling like you're being followed.").matches());
+		assertTrue(Encounters.PET_LINE.matcher("You have a funny feeling like you would have been followed...").matches());
+		assertTrue(Encounters.PET_LINE.matcher("You feel something weird sneaking into your backpack.").matches());
+		assertFalse(Encounters.PET_LINE.matcher("Your Araxxor kill count is: 12.").matches());
+		java.util.regex.Matcher m = Encounters.PET_NAMED.matcher("New item added to your collection log: Nid");
+		assertTrue(m.matches());
+		assertEquals("Nid", m.group(1));
+		m = Encounters.PET_NAMED.matcher("Untradeable drop: Dom");
+		assertTrue(m.matches());
+		assertEquals("Dom", m.group(1));
+	}
+
+	/** (round four) the pet joins the stretch it came with, by name */
+	@Test
+	public void aPetJoinsItsStretch()
+	{
+		assertEquals("the kill, its drop and a pet", EncounterScene.andAPet("the kill and its drop"));
+		assertEquals("the chest and a pet", EncounterScene.andAPet("the chest"));
+		assertEquals("the kill, the corpse destroyed and a pet", EncounterScene.andAPet("the kill and the corpse destroyed"));
+		assertEquals("the pet", EncounterScene.andAPet(null));
+	}
+
+	/** (round four) Doom of Mokhaiotl's forms start a delve */
+	@Test
+	public void doomsFormsAreADelve()
+	{
+		assertEquals(new HashSet<>(Arrays.asList(14707, 14708, 14709)), Encounters.DOOM_IDS);
+	}
 }

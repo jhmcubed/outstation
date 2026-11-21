@@ -45,6 +45,9 @@ final class EncounterMoment
 	static final int FLAG_MOTION = 1;
 	/** (round three, 11/21/2026) a picture block follows: the loot's window as the player's client drew it, a PNG */
 	static final int FLAG_PICTURE = 2;
+	/** (round four, 11/21/2026) a second picture block follows: the pet's chat line as the player's client drew it, a PNG
+	 *  (after the first picture block when there's one, else right after the motion block) */
+	static final int FLAG_CHAT_PICTURE = 4;
 	/** dots a moment (the still scene), tiles of full density and where it's thinned to none: moment.js's SET */
 	static final int POINTS = 200_000, CORE = 9, REACH = 15;
 	/** dots per area, by class: the ground, scenery, players and NPCs, effects and items */
@@ -88,6 +91,8 @@ final class EncounterMoment
 		List<Track> tracks;
 		/** the loot's window as drawn (PNG bytes), or null (round three; version 2 only) */
 		byte[] picture;
+		/** the pet's chat line as drawn (PNG bytes), or null (round four; version 2 only) */
+		byte[] chat;
 
 		boolean moving()
 		{
@@ -152,7 +157,8 @@ final class EncounterMoment
 		}
 		int head = 12 + metaBytes.length;
 		boolean pic = mo && m.picture != null && m.picture.length > 0;
-		long total = head + n * 10L + motionLen + (pic ? 4L + m.picture.length : 0);
+		boolean chat = mo && m.chat != null && m.chat.length > 0;
+		long total = head + n * 10L + motionLen + (pic ? 4L + m.picture.length : 0) + (chat ? 4L + m.chat.length : 0);
 		if (total > Integer.MAX_VALUE - 16)
 		{
 			throw new IllegalArgumentException("the moment is too big");
@@ -160,7 +166,7 @@ final class EncounterMoment
 		byte[] out = new byte[(int) total];
 		le32(out, 0, MAGIC);
 		out[4] = (byte) version;
-		out[5] = (byte) ((mo ? FLAG_MOTION : 0) | (pic ? FLAG_PICTURE : 0));
+		out[5] = (byte) ((mo ? FLAG_MOTION : 0) | (pic ? FLAG_PICTURE : 0) | (chat ? FLAG_CHAT_PICTURE : 0));
 		le16(out, 6, metaBytes.length);
 		le32(out, 8, n);
 		System.arraycopy(metaBytes, 0, out, 12, metaBytes.length);
@@ -246,6 +252,12 @@ final class EncounterMoment
 			{
 				le32(out, q, m.picture.length);
 				System.arraycopy(m.picture, 0, out, q + 4, m.picture.length);
+				q += 4 + m.picture.length;
+			}
+			if (chat)
+			{
+				le32(out, q, m.chat.length);
+				System.arraycopy(m.chat, 0, out, q + 4, m.chat.length);
 			}
 		}
 		return out;
@@ -387,6 +399,16 @@ final class EncounterMoment
 				{
 					m.picture = Arrays.copyOfRange(bytes, q + 4, q + 4 + len);
 				}
+				q += 4 + Math.max(0, len);
+			}
+			// (the second picture block: the pet's chat line as drawn; round four)
+			if ((bytes[5] & FLAG_CHAT_PICTURE) != 0 && bytes.length >= q + 4)
+			{
+				int len = rd32(bytes, q);
+				if (len > 0 && bytes.length >= q + 4L + len)
+				{
+					m.chat = Arrays.copyOfRange(bytes, q + 4, q + 4 + len);
+				}
 			}
 		}
 		return m;
@@ -466,6 +488,21 @@ final class EncounterMoment
 		{
 			Map<String, Object> d = (Map<String, Object>) meta.get("window");
 			d.put("from", Math.ceil(num(d.get("from")) / 2));
+		}
+		// (round four: the pet's message and its arrival, and its chat line's window, as the drop's)
+		if (meta.get("pet") instanceof Map)
+		{
+			Map<String, Object> d = (Map<String, Object>) meta.get("pet");
+			d.put("frame", Math.ceil(num(d.get("frame")) / 2));
+			if (d.get("seenFrame") instanceof Number)
+			{
+				d.put("seenFrame", Math.ceil(num(d.get("seenFrame")) / 2));
+			}
+			if (d.get("window") instanceof Map)
+			{
+				Map<String, Object> w = (Map<String, Object>) d.get("window");
+				w.put("from", Math.ceil(num(w.get("from")) / 2));
+			}
 		}
 		for (String list : new String[]{"labels", "beams"})
 		{
@@ -580,6 +617,7 @@ final class EncounterMoment
 		o.frames = m.frames;
 		o.tracks = m.tracks;
 		o.picture = m.picture;
+		o.chat = m.chat;
 		return o;
 	}
 
