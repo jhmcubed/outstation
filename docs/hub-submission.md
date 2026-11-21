@@ -430,6 +430,43 @@ click animations on the website". plugin/README.md, "Encounters", has it all.
    at its tick. (i puts all three over the view as well.)
 5. **A pet** (whenever one comes): its chat line appears flush in the replay's bottom-left corner at the tick it came.
 
+### Encounters, round six: the Gauntlet and the Fortis Colosseum, each run one recording (11/21/2026)
+
+Jace (11/21/2026): the Gauntlet (and the Corrupted Gauntlet) and the Fortis Colosseum should "start recording upon
+entering the instance. each one has an object to click on to enter." All three are minigames to RuneLite's Discord
+plugin, not bosses, so nothing started them before. plugin/README.md, "Encounters", round six, has it all.
+
+- **The start:** the click on the way in (the Gauntlet's **Enter** or **Enter-corrupted** in its lobby; the arena's
+  **Entrance** in the Colosseum's lobby), then the map of its instance: the recording starts as it loads, named "The
+  Gauntlet", "The Corrupted Gauntlet" or "Fortis Colosseum". The places are RuneLite's own (Discord's areas, the
+  Screenshot plugin's Gauntlet regions) and the objects the game's (revision 242's cache), none guessed.
+- **A Gauntlet** is the prep and the Hunllef: its completion line ends nothing; sent back to the lobby, it waits for
+  the **Reward Chest**. That chest has no window (the loot goes straight into your inventory), so its loot is read as a
+  corpse's is, from what the inventory gained, and the moment is "the loot", the items shown on a plain panel titled
+  "The Gauntlet". It ends a few seconds after the chest, or with your death, or on leaving the Gauntlet before the
+  kill.
+- **A Colosseum** is every wave: no wave's line or Sol Heredit's count line ends it. The rewards chest's window (already
+  read, as the Loot Tracker reads it) is its moment, and it ends a few seconds after you shut that window (the claim),
+  or once you're out of the arena; or with your death, or on leaving with nothing claimed.
+- **Kill counts with the game's colour codes:** the kill count lines are read with or without the colour code the game
+  has put in front of the number since its 08/26/2026 update (RuneLite's own chat commands and Dink read it the same).
+- **Nothing new is sent or asked.**
+
+**Jace's in-game steps for round six:**
+
+1. **The Gauntlet:** with Record my encounters ticked, click **Enter** on the Gauntlet in its lobby: the lime line in
+   the Encounters tab starts as the Gauntlet loads, named **The Gauntlet**. Prep, kill the Hunllef: the line keeps
+   going through the kill and back to the lobby. **Open** the Reward Chest: the line stops a few seconds later and the
+   row says **looted**, its length the whole run. Its moment (on your page) is you at the chest, your loot on a panel
+   titled "The Gauntlet".
+2. **The Corrupted Gauntlet** (if you do it): the same with **Enter-corrupted**, named **The Corrupted Gauntlet**.
+3. **Leaving or dying:** another run, leave by the starting room's Teleport Platform (or die): the row says **left**
+   (or **died**) a few seconds later, and nothing starts again till you're out of the Gauntlet.
+4. **The Fortis Colosseum:** click the **Entrance** in the Colosseum's lobby: the line starts as the arena loads,
+   named **Fortis Colosseum**. Clear a wave or more (each "Wave completed" line goes by), then search the rewards chest
+   and claim: the line stops a few seconds after the window shuts, the row says **claimed**, its moment the chest's
+   window as you saw it. (Die in a wave instead: **died**.)
+
 ### Jace's test in the game, for the whole update
 
 `py run.py client` in a checkout of jhmcubed/outside-plugin at the exact commit the fork will name (run.py starts RuneLite with `-ea`), logged in. The client's log mustn't show anything from `wiki.outside` failing at any step.

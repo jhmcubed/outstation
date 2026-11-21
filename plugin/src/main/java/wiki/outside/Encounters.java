@@ -301,9 +301,68 @@ final class Encounters
 	/** after the click on a corpse's Destroy, the ticks within which its going is the destroying (a prompt answered) */
 	static final int DESTROY_WAIT = 100;
 
+	// ---- round six (11/21/2026; ghillie's claude/outstation.md, "Encounters, round six"): the Gauntlet, the Corrupted
+	// Gauntlet and the Fortis Colosseum, each run one recording. Jace: they should "start recording upon entering the
+	// instance. each one has an object to click on to enter." None of the three is a boss or raid area of Discord's (all
+	// three are its minigames), so nothing started them before.
+
+	/**
+	 * A run in an instance entered by an object: its name, the region its instance is copied from (where the player
+	 * stands, read as its template), whether it's a Gauntlet. The ids were read, not guessed (11/21/2026): RuneLite
+	 * 1.13.7's Discord areas (MG_GAUNTLET 12127 and 7512, MG_CORRUPTED_GAUNTLET 7768, MG_FORTIS_COLOSSEUM 7216,
+	 * MG_FORTIS_COLOSSEUM_LOBBY 7316) and its Screenshot plugin (GAUNTLET_REGION 7512, CORRUPTED_GAUNTLET_REGION 7768,
+	 * isInsideGauntlet: an instance of either); the objects from revision 242's cache (its object definitions and map
+	 * squares, read with RuneLite's cache library): the Gauntlet's way in is 37340 in the lobby (region 12127), a
+	 * multiloc showing as "The Gauntlet" 36083 ("Enter") or 36084 ("Enter", "Enter-corrupted"); the Colosseum's arena is
+	 * entered by "Entrance" 50751 ("Enter") in its lobby (region 7316); the arena is an instance of 7216, whose plain
+	 * copy is the city's ground outside the Colosseum (its "Colosseum entrance" 50749 down to the lobby), so only an
+	 * instance counts.
+	 */
+	static final class Run
+	{
+		final String name;
+		final int region;
+		final boolean gauntlet;
+
+		Run(String name, int region, boolean gauntlet)
+		{
+			this.name = name;
+			this.region = region;
+			this.gauntlet = gauntlet;
+		}
+	}
+
+	static final Run GAUNTLET = new Run("The Gauntlet", 7512, true);
+	static final Run CORRUPTED = new Run("The Corrupted Gauntlet", 7768, true);
+	static final Run COLOSSEUM = new Run("Fortis Colosseum", 7216, false);
+	static final Run[] RUNS = {GAUNTLET, CORRUPTED, COLOSSEUM};
+	/** the objects that take the player in (ObjectID.GAUNTLET_ENTRANCE and the two it shows as, COLOSSEUM_ENTRANCE) */
+	static final Set<Integer> RUN_ENTRANCES = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
+		net.runelite.api.gameval.ObjectID.GAUNTLET_ENTRANCE, net.runelite.api.gameval.ObjectID.GAUNTLET_ENTRANCE_HM_DISABLED,
+		net.runelite.api.gameval.ObjectID.GAUNTLET_ENTRANCE_HM_ENABLED, net.runelite.api.gameval.ObjectID.COLOSSEUM_ENTRANCE)));
+	/** the Gauntlet's reward chest in its lobby (ObjectID.GAUNTLET_CHEST, a multiloc, and GAUNTLET_CHEST_CLOSED, the one
+	 *  with "Open", as it shows with a reward in it); no window: its loot goes straight into the inventory (the wiki's
+	 *  Reward Chest (The Gauntlet); RuneLite's Screenshot plugin takes it as "You find some treasure in the chest!" in
+	 *  region 12127, the Loot Tracker not at all), so it's taken as a corpse's is, by what the inventory gained */
+	static final Set<Integer> GAUNTLET_CHESTS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
+		net.runelite.api.gameval.ObjectID.GAUNTLET_CHEST, net.runelite.api.gameval.ObjectID.GAUNTLET_CHEST_CLOSED)));
+	/** the Gauntlet's lobby, where the player is sent after the Hunllef dies (or they die) and its chest stands */
+	static final int GAUNTLET_LOBBY = 12127;
+	/** a click on the way in counts for this many ticks: the map loading after it is the run's start */
+	static final int RUN_ARMED = 50;
+	/** ticks out of the run's instance (no kill, nothing claimed) before it counts as left: the teleport platform, the
+	 *  barrier's Escape, an escape crystal, the Colosseum's way out */
+	static final int RUN_LEFT = 5;
+	/** the Hunllef killed: the most it waits for the chest (5 minutes) */
+	static final int RUN_CHEST_WAIT = 500;
+	/** the Colosseum's reward window opened: the most it waits for it to close (the claim made) */
+	static final int CLAIM_MOST = 100;
+
 	/** the game's kill and completion count lines ("Your Vorkath kill count is: 418.", "Your completed Chambers of Xeric
-	 *  count is: 12."), as Counts reads them */
-	static final Pattern KILL_LINE = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?([\\d,]+)\\b.*$");
+	 *  count is: 12."), as Counts reads them; the count may open with one of the game's colour macros, "@mes_hl_red@",
+	 *  which Text.removeTags leaves (11/21/2026, round six: RuneLite 1.13.7's chat commands and Dink allow it; DropTracker
+	 *  dates it to the game's 08/26/2026 update) */
+	static final Pattern KILL_LINE = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?(?:@[A-Za-z0-9_]+@)?([\\d,]+)\\b.*$");
 	/** the raids' friends-chat lines kept: a completion or a time (everything else there can be about other players) */
 	static final Pattern COMPLETION = Pattern.compile("(?i)raid is complete|team size|duration|personal best|completion time|challenge complete|congratulations");
 
@@ -443,6 +502,18 @@ final class Encounters
 	private String destroyName;
 	private int destroyId;
 	private Map<Integer, Long> invAtDestroy = new HashMap<>();
+	// (round six, 11/21/2026)
+	/** the run this recording is (the Gauntlet, the Corrupted Gauntlet, the Colosseum), or null */
+	private Run run;
+	/** the way in clicked (the run it leads to by the option, and the tick, between recordings), or null */
+	private Run armed;
+	private int armedAt = -1000;
+	/** the run's kill (the Hunllef's count line or its death; Sol Heredit's count line), the whole recording's tick, or -1 */
+	private int runKill = -1;
+	/** ticks out of the run's instance */
+	private int runOut;
+	/** a run ended (or stopped by hand): none starts again till they're out of its instance */
+	private boolean runStopped;
 
 	Encounters(Client client, net.runelite.client.callback.ClientThread clientThread, Gson gson, Host host)
 	{
@@ -576,6 +647,8 @@ final class Encounters
 			petChat = null;
 			destroyIndex = -1;
 			destroyTick = -1;
+			runKill = -1;
+			runOut = 0;
 			shots.clear();
 			shotsTaken.clear();
 			shown.clear();
@@ -623,6 +696,11 @@ final class Encounters
 		if (at != null)
 		{
 			header.addProperty("area", at.name);
+		}
+		else if (run != null)
+		{
+			// (a run's: its own name, as the area is a boss's; round six)
+			header.addProperty("area", run.name);
 		}
 		if (partNo > 1)
 		{
@@ -787,6 +865,12 @@ final class Encounters
 			if (delve)
 			{
 				delveStopped = true;
+			}
+			// (a run ended, however: none starts again till they're out of its instance; round six)
+			if (run != null)
+			{
+				runStopped = true;
+				run = null;
 			}
 		}
 		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason);
@@ -1130,6 +1214,15 @@ final class Encounters
 				return;
 			}
 		}
+		else if (automatic && run != null)
+		{
+			String why = runEnds();
+			if (why != null)
+			{
+				stopAuto(why);
+				return;
+			}
+		}
 		else if (automatic && area != null)
 		{
 			Presence.Area now = here();
@@ -1194,6 +1287,10 @@ final class Encounters
 	 *  its kill, till the next fight there). */
 	private void autoStartByArea()
 	{
+		if (autoStartRun())
+		{
+			return;
+		}
 		if (delveStopped && client.getGameState() == GameState.LOGGED_IN && !client.getTopLevelWorldView().isInstance())
 		{
 			delveStopped = false;
@@ -1221,6 +1318,134 @@ final class Encounters
 			Presence.Area a = afterKill;
 			afterKill = null;
 			start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
+		}
+	}
+
+	// ---- a run (round six, 11/21/2026): the Gauntlet, the Corrupted Gauntlet, the Fortis Colosseum
+
+	/** The run whose instance a region (the player's, read as its template) is, or null: only in an instance. */
+	static Run runAt(int region, boolean instance)
+	{
+		if (!instance)
+		{
+			return null;
+		}
+		for (Run r : RUNS)
+		{
+			if (r.region == region)
+			{
+				return r;
+			}
+		}
+		return null;
+	}
+
+	/** The run a click on a way in leads to (the Gauntlet's "Enter-corrupted" is the Corrupted Gauntlet), or null. */
+	static Run runEntered(int objectId, String option)
+	{
+		if (!RUN_ENTRANCES.contains(objectId) || option == null || !option.startsWith("Enter"))
+		{
+			return null;
+		}
+		if (objectId == net.runelite.api.gameval.ObjectID.COLOSSEUM_ENTRANCE)
+		{
+			return COLOSSEUM;
+		}
+		return "Enter-corrupted".equals(option) ? CORRUPTED : GAUNTLET;
+	}
+
+	/** the run's instance the player stands in, or null */
+	private Run runHere()
+	{
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			return null;
+		}
+		Player me = client.getLocalPlayer();
+		WorldPoint at = OutsidePlugin.here(client, me);
+		return at == null ? null : runAt(at.getRegionID(), client.getTopLevelWorldView().isInstance());
+	}
+
+	/**
+	 * Not recording: in a run's instance, its recording starts (Jace, 11/21/2026: "start recording upon entering the
+	 * instance"): the click on its way in, then the map of its instance; arriving without the click seen (the plugin
+	 * switched on inside, say) starts it all the same. Not again in the instance a run was ended or stopped in. Whether
+	 * they're in one (a listed NPC there doesn't start a recording of its own).
+	 */
+	private boolean autoStartRun()
+	{
+		Run r = runHere();
+		if (r == null)
+		{
+			if (client.getGameState() == GameState.LOGGED_IN)
+			{
+				runStopped = false;
+			}
+			return false;
+		}
+		if (!runStopped && mayStart())
+		{
+			armed = null;
+			run = r;
+			start(r.name, true, null, Collections.emptySet(), 1, null, null, 0);
+		}
+		return true;
+	}
+
+	/**
+	 * Each tick of a run: why it ends now, or null. A Gauntlet: the Hunllef's kill sends them to the lobby, and the run
+	 * waits there for the chest (its loot ends it, by loot()), leaving the lobby, or RUN_CHEST_WAIT; out of the instance
+	 * with no kill (the platform, the barrier's Escape, an escape crystal): left. The Colosseum: every wave, Sol Heredit's
+	 * count line and the claim's window go on (the claim ends it once its window shuts, by onWidgetClosed); out of the
+	 * arena: "claimed" after the claim, else left. A death ends either (onActorDeath, as for a boss).
+	 */
+	private String runEnds()
+	{
+		boolean in = runHere() == run;
+		runOut = in ? 0 : runOut + 1;
+		Player me = client.getLocalPlayer();
+		WorldPoint at = OutsidePlugin.here(client, me);
+		boolean lobby = at != null && at.getRegionID() == GAUNTLET_LOBBY;
+		return runEnding(run, in, lobby, runOut, runKill, whole(), !looted.isEmpty(), endAt, endWhy);
+	}
+
+	/** runEnds's rule, apart from the game (so the tests can walk a run through it): {@code out} ticks out of the
+	 *  instance; {@code lobby} in the Gauntlet's lobby; {@code kill} the run's kill (-1 none); {@code now} the whole
+	 *  recording's tick; {@code looted} its loot written; {@code endAt} and {@code endWhy} an ending already due. */
+	static String runEnding(Run run, boolean in, boolean lobby, int out, int kill, int now, boolean looted, int endAt,
+		String endWhy)
+	{
+		if (endAt >= 0)
+		{
+			// (an ending due: the Colosseum's claim made, and out of the arena already, ends it now)
+			return "claimed".equals(endWhy) && out > RUN_LEFT ? "claimed" : null;
+		}
+		if (now >= RAID_MOST)
+		{
+			return "the time limit";
+		}
+		if (run.gauntlet && kill >= 0)
+		{
+			// (killed: the instance left for the lobby is the way to the chest, not leaving)
+			return !in && !lobby && out > RUN_LEFT || now >= kill + RUN_CHEST_WAIT ? "completed" : null;
+		}
+		if (out > RUN_LEFT)
+		{
+			return looted ? "claimed" : "left";
+		}
+		return null;
+	}
+
+	/** A kill in a run (its count line, or the Hunllef's death): noted, nothing ended. */
+	private void runKilled(String counted)
+	{
+		if (runKill < 0)
+		{
+			runKill = whole();
+		}
+		if (scene != null && !scene.killed())
+		{
+			scene.kill(whole(), counted);
 		}
 	}
 
@@ -1490,6 +1715,12 @@ final class Encounters
 					scanObjects(false);
 				}
 				sceneDirty = false;
+				// (the way into a run clicked, and a map loaded: the run's instance starts it now, before its first tick;
+				// round six)
+				if (recording == null && armed != null && tickNow - armedAt <= RUN_ARMED)
+				{
+					autoStartRun();
+				}
 				break;
 			case LOGIN_SCREEN:
 			case HOPPING:
@@ -1732,6 +1963,11 @@ final class Encounters
 	/** A listed NPC appeared, or another turned into one: one starts (his auto-record list; a form change is Outside's). */
 	private void autoStartFor(NPC npc)
 	{
+		// (in a run's instance: the run's recording, never one of a listed NPC's own; round six)
+		if (autoStartRun())
+		{
+			return;
+		}
 		// (Doom of Mokhaiotl: no area of RuneLite's names its arena, so its forms start a delve's recording; round four)
 		if (DOOM_IDS.contains(npc.getId()) && !delveStopped && mayStart())
 		{
@@ -2110,6 +2346,12 @@ final class Encounters
 				// (a delve: each level's kill passes by, and nothing's its moment but the claim, a pet or the fall; round
 				// four)
 			}
+			else if (run != null)
+			{
+				// (a run: the Gauntlet's completion line ("Your Gauntlet completion count is: N.", as RuneLite's chat
+				// commands read it) and Sol Heredit's kill line end nothing: the chest or the claim does; round six)
+				runKilled(kill.group(1));
+			}
 			else if (raid != null)
 			{
 				// (in a raid, nothing ends it here and nothing's its moment: the raid's own line is noted, a boss's inside
@@ -2484,6 +2726,7 @@ final class Encounters
 			containers(event.getItemContainer(), "inv");
 			petInBackpack(event.getItemContainer());
 			corpseLoot(event.getItemContainer());
+			gauntletChest(event.getItemContainer());
 		}
 		else if (event.getContainerId() == InventoryID.WORN)
 		{
@@ -2574,6 +2817,15 @@ final class Encounters
 	{
 		if (recording == null)
 		{
+			// (the way into a run clicked: armed for the map of its instance; round six)
+			net.runelite.api.MenuAction act = event.getMenuAction();
+			Run r = act != null && act.name().startsWith("GAME_OBJECT_")
+				? runEntered(event.getId(), Text.removeTags(event.getMenuOption() == null ? "" : event.getMenuOption())) : null;
+			if (r != null)
+			{
+				armed = r;
+				armedAt = tickNow;
+			}
 			return;
 		}
 		String option = Text.removeTags(event.getMenuOption() == null ? "" : event.getMenuOption());
@@ -2727,6 +2979,23 @@ final class Encounters
 		}
 	}
 
+	/** The inventory changed in a Gauntlet run: after a click on its reward chest, what it gained is the run's loot, as a
+	 *  corpse's is (no window: the inventory's own lines, and the moment's plain panel titled with the run's name). The
+	 *  extra items the game drops when the inventory's short of room are the item lines, as ever. Round six. */
+	private void gauntletChest(ItemContainer inv)
+	{
+		if (run == null || !run.gauntlet || !"obj".equals(clickedKind) || !GAUNTLET_CHESTS.contains(clickedId)
+			|| whole() - clickedTick > CORPSE_TAKE || looted.contains(run.name))
+		{
+			return;
+		}
+		List<int[]> got = gained(invBefore, itemsOf(inv));
+		if (!got.isEmpty())
+		{
+			loot(run.name, got, -1, "inventory");
+		}
+	}
+
 	/** Whether a kill's corpse is still there to loot (an NPC of the killed one's name near them, with a loot option and
 	 *  no Attack), so the recording waits for it, CORPSE_WAIT ticks at most. */
 	private boolean corpseWaiting()
@@ -2831,9 +3100,17 @@ final class Encounters
 			at = me.getLocalLocation();
 		}
 		EncounterSnap.tile(line, wv, at, plane);
-		line.addProperty("at", from != null ? (corpse ? "corpse" : "chest") : "player");
+		// (the Gauntlet's chest: a chest whose loot goes into the inventory, "into": "inventory", titled by the run, as a
+		// chest's window titles it; round six)
+		boolean runChest = corpse && run != null && run.name.equals(source);
+		line.addProperty("at", from != null ? (corpse && !runChest ? "corpse" : "chest") : "player");
+		if (runChest)
+		{
+			line.addProperty("into", "inventory");
+			line.addProperty("title", source);
+		}
 		// (a corpse's: what the player chose, "harvest" or "destroy" (Araxxor's), "loot"...; round four)
-		if (corpse && clickedOption != null)
+		else if (corpse && clickedOption != null)
 		{
 			line.addProperty("choice", clickedOption.toLowerCase(java.util.Locale.ROOT));
 		}
@@ -2871,7 +3148,7 @@ final class Encounters
 		if (scene != null)
 		{
 			w = new EncounterScene.Window(kind, source, window,
-				window >= 0 ? windowTitle(window) : "destroyed".equals(kind) ? clickedOption : null, scened);
+				window >= 0 ? windowTitle(window) : "destroyed".equals(kind) ? clickedOption : runChest ? source : null, scened);
 			scene.loot(whole(), w, at, plane);
 		}
 		// (its picture a few client cycles on, once the window's laid out and drawn with its items, for its `window` line
@@ -2895,7 +3172,14 @@ final class Encounters
 		{
 			delveClaimed = true;
 		}
-		if (automatic && !raid && !delve)
+		if (automatic && run == COLOSSEUM && COLOSSEUM.name.equals(source))
+		{
+			// (the Colosseum's claim: ends a few ticks after its window shuts (onWidgetClosed), CLAIM_MOST at most, or
+			// once out of the arena; round six)
+			endAt = endAt >= 0 ? endAt : whole() + CLAIM_MOST;
+			endWhy = endWhy != null ? endWhy : "claimed";
+		}
+		else if (automatic && !raid && !delve)
 		{
 			endAt = Math.max(endAt, whole() + LOOT_AFTER);
 			if (endWhy == null)
@@ -3536,6 +3820,12 @@ final class Encounters
 			return;
 		}
 		emit("death").add("who", EncounterSnap.ref(client, actor));
+		// (the Hunllef falling is a Gauntlet's kill, its count line or not; round six)
+		if (run != null && run.gauntlet && actor instanceof NPC && actor.getName() != null
+			&& Text.removeTags(actor.getName()).endsWith("Hunllef"))
+		{
+			runKilled(Text.removeTags(actor.getName()));
+		}
 		if (scene != null && actor == client.getLocalPlayer())
 		{
 			scene.died(whole());
@@ -3575,6 +3865,12 @@ final class Encounters
 		{
 			emit("widget_close").addProperty("group", event.getGroupId());
 			shotsClosed(event.getGroupId());
+			// (the Colosseum's claim window shut, its loot written: the run ends a few ticks on; round six)
+			if (automatic && run == COLOSSEUM && event.getGroupId() == InterfaceID.COLOSSEUM_REWARD_CHEST_2
+				&& looted.contains(COLOSSEUM.name) && endAt >= 0)
+			{
+				endAt = Math.min(endAt, whole() + LOOT_AFTER);
+			}
 		}
 	}
 }

@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  */
 final class Counts
 {
-	private static final Pattern KILL = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?([\\d,]+)\\b.*$");
+	private static final Pattern KILL = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?(?:@[A-Za-z0-9_]+@)?([\\d,]+)\\b.*$");
 	private static final Pattern CLUE = Pattern.compile("^You have completed ([\\d,]+) (beginner|easy|medium|hard|elite|master) Treasure Trails?\\.?\\s*$",
 		Pattern.CASE_INSENSITIVE);
 	/** at most this many bosses kept (the game has fewer) */
