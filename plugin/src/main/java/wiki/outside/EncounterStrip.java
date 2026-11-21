@@ -580,8 +580,10 @@ final class EncounterStrip
 		return v instanceof Double && (Double) v == 0 ? (Object) 0.0 : v;
 	}
 
-	/** The upload's meta, as ghillie's fights.js put() makes it: {foe, label, at, ticks, died, taken, dealt, public}. */
-	static String meta(Summary s, boolean shown)
+	/** The upload's meta, as ghillie's fights.js put() makes it: {foe, label, at, ticks, died, taken, dealt, public};
+	 *  without public when {@code shown} is null (11/21/2026: a send by itself the player hasn't chosen for, which the
+	 *  relay then shows or keeps as its public_default says). */
+	static String meta(Summary s, Boolean shown)
 	{
 		Map<String, Object> o = new LinkedHashMap<>();
 		o.put("foe", s.foe);
@@ -591,7 +593,10 @@ final class EncounterStrip
 		o.put("died", s.diedIn());
 		o.put("taken", s.taken);
 		o.put("dealt", s.dealt);
-		o.put("public", shown);
+		if (shown != null)
+		{
+			o.put("public", shown);
+		}
 		return Js.stringify(o);
 	}
 

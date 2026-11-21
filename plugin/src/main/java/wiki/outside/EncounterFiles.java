@@ -954,7 +954,7 @@ final class EncounterFiles
 		long total = 0;
 		for (Filepath f : all)
 		{
-			total += f.size();
+			total += f.size() + momentSize(dir, f);
 		}
 		List<String> gone = new ArrayList<>();
 		for (int i = all.size() - 1; i >= 0 && total > most; i--)
@@ -964,12 +964,20 @@ final class EncounterFiles
 			{
 				continue;
 			}
-			long size = f.size();
+			long size = f.size() + momentSize(dir, f);
 			f.deleteIfExists();
+			// (its scene moment beside it goes with it: 11/21/2026)
+			dir.joinSegment(EncounterShelf.momentName(f.getFileName())).deleteIfExists();
 			total -= size;
 			gone.add(f.getFileName());
 		}
 		return gone;
+	}
+
+	private static long momentSize(Filepath dir, Filepath f) throws IOException
+	{
+		Filepath m = dir.joinSegment(EncounterShelf.momentName(f.getFileName()));
+		return m.isFile() ? m.size() : 0;
 	}
 
 	/** A small file written whole or not at all: beside itself first, then moved over the old one */

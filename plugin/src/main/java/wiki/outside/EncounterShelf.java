@@ -51,6 +51,10 @@ final class EncounterShelf
 		/** its fight's id on the page (null: not on it), the page's channel, shown to anyone */
 		final String fight, channel;
 		final Boolean shown;
+		/** (11/21/2026, round two) kept for good on the page, the page's featured one; the sender's state for it
+		 *  (EncounterQueue: due, sending, sent, refused, held; null: never queued) and why; whether it has a moment */
+		boolean kept, featured, moment;
+		String send, why;
 
 		Row(String file, String who, LocalDateTime when, int ticks, boolean died, boolean killed, String player, String fight,
 			String channel, Boolean shown)
@@ -68,13 +72,16 @@ final class EncounterShelf
 		}
 	}
 
-	/** What goes on the page from a recording: the stripped copy gzipped, its summary, and what was taken out. */
+	/** What goes on the page from a recording: the stripped copy gzipped, its summary, and what was taken out; and its
+	 *  scene moment (null: none) and the moment's tick. */
 	static final class Prepared
 	{
 		final String file;
 		final byte[] gz;
 		final EncounterStrip.Summary summary;
 		final Map<String, Integer> removed;
+		byte[] moment;
+		int momentTick = -1;
 
 		Prepared(String file, byte[] gz, EncounterStrip.Summary summary, Map<String, Integer> removed)
 		{
@@ -98,6 +105,16 @@ final class EncounterShelf
 		t.setDaemon(true);
 		return t;
 	});
+	/** the scene moments' building (11/21/2026): seconds each, so a thread of their own, the lowest priority, one at a time */
+	private final ExecutorService moments = Executors.newSingleThreadExecutor(r ->
+	{
+		Thread t = new Thread(r, "outside-moments");
+		t.setDaemon(true);
+		t.setPriority(Thread.MIN_PRIORITY);
+		return t;
+	});
+	/** the recordings whose moment is still being built (the sender waits for it) */
+	private final Set<String> building = java.util.concurrent.ConcurrentHashMap.newKeySet();
 	/** the index, read once and kept here (only on the files thread), and whether it's changed since it was saved */
 	private JsonObject index;
 	private boolean dirty;
@@ -111,6 +128,14 @@ final class EncounterShelf
 	void shutDown()
 	{
 		files.shutdown();
+		moments.shutdownNow();
+	}
+
+	/** A recording's moment file, beside it (11/21/2026): its name and ".moment" (not a recording's name, so the
+	 *  folder's lists pass it by). */
+	static String momentName(String file)
+	{
+		return file + ".moment";
 	}
 
 	/** A file job, its failure logged and said (none once the plugin's off). */
@@ -207,6 +232,14 @@ final class EncounterShelf
 		n.addProperty("ticks", (int) s.ticks);
 		n.addProperty("died", s.diedIn());
 		n.addProperty("killed", s.killed);
+		if (s.label instanceof String)
+		{
+			n.addProperty("label", (String) s.label);
+		}
+		if (s.started instanceof Double)
+		{
+			n.addProperty("at", (Double) s.started);
+		}
 		if (s.player != null)
 		{
 			n.addProperty("player", s.player);
@@ -228,6 +261,18 @@ final class EncounterShelf
 			EncounterFiles.cap(d, most, busy);
 			Set<String> there = new HashSet<>(EncounterFiles.names(d));
 			boolean changed = index().entrySet().removeIf(en -> !there.contains(en.getKey()));
+			// (a scene moment whose recording's gone goes too: 11/21/2026)
+			try (java.util.stream.Stream<Filepath> all = d.walk(1))
+			{
+				for (Filepath f : (Iterable<Filepath>) all::iterator)
+				{
+					String n = f.getFileName();
+					if (n.endsWith(".moment") && !there.contains(n.substring(0, n.length() - ".moment".length())))
+					{
+						f.deleteIfExists();
+					}
+				}
+			}
 			if (changed)
 			{
 				saveIndex();
@@ -300,9 +345,15 @@ final class EncounterShelf
 		{
 			when = LocalDateTime.ofInstant(f.getLastModifiedTime().toInstant(), java.time.ZoneId.systemDefault());
 		}
-		return new Row(f.getFileName(), str(e, "who"), when, e.has("ticks") ? e.get("ticks").getAsInt() : 0,
+		Row r = new Row(f.getFileName(), str(e, "who"), when, e.has("ticks") ? e.get("ticks").getAsInt() : 0,
 			bool(e, "died"), bool(e, "killed"), str(e, "player"), str(e, "fight"), str(e, "channel"),
 			e.has("shown") ? e.get("shown").getAsBoolean() : null);
+		r.kept = bool(e, "kept");
+		r.featured = bool(e, "featured");
+		r.send = str(e, "send");
+		r.why = str(e, "why");
+		r.moment = f.getParent().joinSegment(momentName(f.getFileName())).isFile();
+		return r;
 	}
 
 	private static String str(JsonObject e, String k)
@@ -360,7 +411,28 @@ final class EncounterShelf
 				throw failed[0];
 			}
 			EncounterStrip.Summary s = z.finish();
-			ready.accept(new Prepared(file, packer.finish((int) s.ticks), s, st.removed));
+			Prepared p = new Prepared(file, packer.finish((int) s.ticks), s, st.removed);
+			// (its scene moment, if one was made: its tick read from its own meta, as the relay reads it)
+			Filepath mf = dir().joinSegment(momentName(file));
+			if (mf.isFile() && mf.size() <= 3 * 1024 * 1024)
+			{
+				try (InputStream in = mf.openInputStream())
+				{
+					byte[] b = in.readAllBytes();
+					EncounterMoment.Moment m = EncounterMoment.decode(b);
+					int tick = (int) EncounterMoment.num(m.meta.get("tick"));
+					if (tick >= 0 && tick <= s.ticks)
+					{
+						p.moment = b;
+						p.momentTick = tick;
+					}
+				}
+				catch (IOException | RuntimeException e)
+				{
+					log.warn("outside: the moment beside {} couldn't be read; it goes without", file, e);
+				}
+			}
+			ready.accept(p);
 		}, problem);
 	}
 
@@ -379,6 +451,8 @@ final class EncounterShelf
 			{
 				e.remove("fight");
 				e.remove("channel");
+				e.remove("kept");
+				e.remove("featured");
 			}
 			else
 			{
@@ -399,7 +473,7 @@ final class EncounterShelf
 	 * from here for that channel: one taken down on the page, or gone with its days, is no longer on it; one shown or
 	 * kept on the page is shown or kept here.
 	 */
-	void reconcile(String channel, Map<String, Boolean> fights, Runnable then)
+	void reconcile(String channel, Map<String, boolean[]> fights, Runnable then)
 	{
 		run("reading what's on the page", () ->
 		{
@@ -416,24 +490,281 @@ final class EncounterShelf
 				{
 					continue;
 				}
-				Boolean shown = fights.get(id);
-				if (shown == null)
+				// (each: shown, kept for good, featured)
+				boolean[] on = fights.get(id);
+				if (on == null)
 				{
 					e.remove("fight");
 					e.remove("channel");
+					e.remove("kept");
+					e.remove("featured");
+					// (taken down there: never sent again by itself)
+					if (EncounterQueue.SENT.equals(str(e, "send")))
+					{
+						e.addProperty("why", "taken down from your page");
+					}
 					changed = true;
+					continue;
 				}
-				else if (!shown.equals(e.has("shown") ? e.get("shown").getAsBoolean() : null))
-				{
-					e.addProperty("shown", shown);
-					changed = true;
-				}
+				changed |= set(e, "shown", on[0]) | set(e, "kept", on[1]) | set(e, "featured", on[2]);
 			}
 			if (changed)
 			{
 				saveIndex();
 			}
 			then.run();
+		}, null);
+	}
+
+	private static boolean set(JsonObject e, String k, boolean v)
+	{
+		if (e.has(k) && e.get(k).isJsonPrimitive() && e.get(k).getAsBoolean() == v)
+		{
+			return false;
+		}
+		e.addProperty(k, v);
+		return true;
+	}
+
+	/** Kept for good, or the page's featured one, as the relay answered (the featured one is always kept; a page has
+	 *  one featured, so the others' marks go). */
+	void marks(String file, Boolean kept, Boolean featured, Runnable then)
+	{
+		run("noting " + file, () ->
+		{
+			JsonObject e = entry(file);
+			if (e == null)
+			{
+				return;
+			}
+			if (Boolean.TRUE.equals(featured))
+			{
+				for (Map.Entry<String, JsonElement> en : index().entrySet())
+				{
+					if (en.getValue().isJsonObject())
+					{
+						en.getValue().getAsJsonObject().remove("featured");
+					}
+				}
+			}
+			if (kept != null)
+			{
+				e.addProperty("kept", kept);
+			}
+			if (featured != null)
+			{
+				e.addProperty("featured", featured);
+			}
+			saveIndex();
+			then.run();
+		}, null);
+	}
+
+	// ---- each encounter up by itself (11/21/2026; EncounterQueue)
+
+	/** A recording finished with "Put each encounter on my page" on: due to go up (once its moment's made). */
+	void queue(String file, Runnable then)
+	{
+		run("queueing " + file, () ->
+		{
+			JsonObject e = entry(file);
+			if (e == null)
+			{
+				e = new JsonObject();
+				index().add(file, e);
+			}
+			// (one on the page already, or queued once before: never twice)
+			if (e.has("fight") || e.has("send"))
+			{
+				then.run();
+				return;
+			}
+			e.addProperty("send", EncounterQueue.DUE);
+			e.addProperty("next", 0L);
+			e.addProperty("tries", 0);
+			saveIndex();
+			then.run();
+		}, null);
+	}
+
+	/** A send to make now: its file, its index entry as it was, and whether its last send went unanswered. */
+	static final class Due
+	{
+		final String file;
+		final boolean unsure;
+		final double at, ticks;
+
+		Due(String file, boolean unsure, double at, double ticks)
+		{
+			this.file = file;
+			this.unsure = unsure;
+			this.at = at;
+			this.ticks = ticks;
+		}
+	}
+
+	/**
+	 * The oldest recording due to go up now, for the character logged in ({@code me}; one recorded on another waits),
+	 * its moment made; marked "sending" (and its tries counted) before anything leaves, so a crash mid-send is known to
+	 * be unsure. Null when none is due. The files thread.
+	 */
+	void nextDue(long now, String me, Collection<String> busy, Consumer<Due> found)
+	{
+		run("finding what's due to go up", () ->
+		{
+			Filepath d = dir();
+			String best = null;
+			LocalDateTime bestWhen = null;
+			for (Map.Entry<String, JsonElement> en : index().entrySet())
+			{
+				if (!en.getValue().isJsonObject())
+				{
+					continue;
+				}
+				JsonObject e = en.getValue().getAsJsonObject();
+				String st = str(e, "send");
+				if (!EncounterQueue.DUE.equals(st) && !EncounterQueue.SENDING.equals(st) || e.has("fight"))
+				{
+					continue;
+				}
+				if (e.has("next") && e.get("next").getAsLong() > now || busy.contains(en.getKey()) || building.contains(en.getKey()))
+				{
+					continue;
+				}
+				String player = str(e, "player");
+				if (player != null && (me == null || !OutsidePanel.sameName(player, me)))
+				{
+					continue;
+				}
+				if (!d.joinSegment(en.getKey()).isFile())
+				{
+					continue;
+				}
+				LocalDateTime when = EncounterFiles.stamp(en.getKey());
+				if (best == null || when != null && bestWhen != null && when.isBefore(bestWhen))
+				{
+					best = en.getKey();
+					bestWhen = when;
+				}
+			}
+			if (best == null)
+			{
+				found.accept(null);
+				return;
+			}
+			JsonObject e = entry(best);
+			boolean unsure = EncounterQueue.SENDING.equals(str(e, "send"));
+			e.addProperty("send", EncounterQueue.SENDING);
+			e.addProperty("tries", (e.has("tries") ? e.get("tries").getAsInt() : 0) + 1);
+			saveIndex();
+			found.accept(new Due(best, unsure, e.has("at") ? e.get("at").getAsDouble() : 0, e.has("ticks") ? e.get("ticks").getAsDouble() : 0));
+		}, null);
+	}
+
+	/** A send's end: its state and when it's due again; on the page, its id and the page's channel too. */
+	void sent(String file, EncounterQueue.After after, String fight, String channel, Boolean shown, Runnable then)
+	{
+		run("noting " + file, () ->
+		{
+			JsonObject e = entry(file);
+			if (e == null)
+			{
+				return;
+			}
+			e.addProperty("send", after.state);
+			e.addProperty("next", after.next);
+			if (after.why == null)
+			{
+				e.remove("why");
+			}
+			else
+			{
+				e.addProperty("why", after.why);
+			}
+			if (fight != null)
+			{
+				e.addProperty("fight", fight);
+				e.addProperty("channel", channel);
+				e.addProperty("tries", 0);
+			}
+			if (shown != null)
+			{
+				e.addProperty("shown", shown);
+			}
+			saveIndex();
+			then.run();
+		}, null);
+	}
+
+	/** How many tries a recording's send has had. */
+	int triesOf(JsonObject e)
+	{
+		return e != null && e.has("tries") ? e.get("tries").getAsInt() : 0;
+	}
+
+	// ---- the scene moments (11/21/2026; EncounterScene)
+
+	/**
+	 * A recording's moment built from what its scene took (on the moments thread), once the recording's packed and
+	 * summarized: its foes and label from the summary (never a player's name), then written beside it. {@code then}
+	 * runs either way (made or not: the sender waits on it).
+	 */
+	void moment(String file, EncounterScene.Taken taken, Runnable then)
+	{
+		if (taken == null)
+		{
+			then.run();
+			return;
+		}
+		building.add(file);
+		run("reading " + file + "'s summary", () ->
+		{
+			JsonObject e = entry(file);
+			Map<String, Object> base = new java.util.LinkedHashMap<>();
+			base.put("fight", null);
+			base.put("foes", e != null && e.has("who") ? e.get("who").getAsString() : null);
+			base.put("label", e != null && e.has("label") ? e.get("label").getAsString() : null);
+			base.put("at", e != null && e.has("at") ? (Object) e.get("at").getAsDouble() : null);
+			Filepath target = dir().joinSegment(momentName(file));
+			try
+			{
+				moments.execute(() ->
+				{
+					try
+					{
+						long t0 = System.nanoTime();
+						byte[] bytes = EncounterScene.build(taken, base, file.hashCode());
+						long ms = (System.nanoTime() - t0) / 1_000_000;
+						run("writing " + file + "'s moment", () ->
+						{
+							try
+							{
+								target.write(bytes, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+									java.nio.file.StandardOpenOption.WRITE);
+								log.info("outside: {}'s moment: {} KB, built in {} ms; the client thread's share {} ms over {} frames taken ({} us a frame), the still scene {} ms, the buffer {} KB, {} frames kept",
+									file, bytes.length / 1024, ms, taken.clientNanos / 1_000_000, taken.framesTaken,
+									taken.framesTaken == 0 ? 0 : taken.clientNanos / 1000 / taken.framesTaken, taken.stillNanos / 1_000_000,
+									taken.bufferBytes / 1024, taken.frames.size());
+							}
+							finally
+							{
+								building.remove(file);
+								then.run();
+							}
+						}, null);
+					}
+					catch (IOException | RuntimeException | OutOfMemoryError ex)
+					{
+						log.warn("outside: {}'s moment couldn't be made; it goes without", file, ex);
+						building.remove(file);
+						then.run();
+					}
+				});
+			}
+			catch (java.util.concurrent.RejectedExecutionException ex)
+			{
+				building.remove(file);
+			}
 		}, null);
 	}
 
@@ -453,6 +784,7 @@ final class EncounterShelf
 				return;
 			}
 			dir().joinSegment(file).deleteIfExists();
+			dir().joinSegment(momentName(file)).deleteIfExists();
 			index().remove(file);
 			saveIndex();
 			then.run();

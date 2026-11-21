@@ -388,6 +388,13 @@ public class OutsidePlugin extends Plugin
 	/** an encounter's file going up gzipped: 8 MB at most (the relay's MAX_FIGHT) */
 	static final int FIGHT_MOST = 8 * 1024 * 1024;
 	private static final MediaType GZIP = MediaType.parse("application/gzip");
+	private static final MediaType OCTETS = MediaType.parse("application/octet-stream");
+	/** (11/21/2026, round two) each recording's scene moment makings, by its packed file, till it's packed and built; the
+	 *  recordings to queue once packed; the sender's timer and whether a send is under way */
+	private final Map<String, EncounterScene.Taken> takenFor = new java.util.concurrent.ConcurrentHashMap<>();
+	private final java.util.Set<String> queueWhenPacked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+	private ScheduledFuture<?> sendTimer;
+	private final java.util.concurrent.atomic.AtomicBoolean sending = new java.util.concurrent.atomic.AtomicBoolean();
 	// hub:end encounters
 	// hub:cut delve
 	/** the board beside the Doom of Mokhaiotl (the Delve Calculator plugin's: its scoreboard interface, each level's
@@ -424,6 +431,8 @@ public class OutsidePlugin extends Plugin
 		encounters = new Encounters(client, clientThread, gson, encounterHost());
 		eventBus.register(encounters);
 		shelf.tidy(encounterMost(), encounters.busy(), this::listEncounters);
+		// (each encounter up by itself: what's due tried every 30 s, and as each is ready; 11/21/2026)
+		sendTimer = executor.scheduleWithFixedDelay(this::pumpSends, 20, 30, TimeUnit.SECONDS);
 		// hub:end encounters
 		Attach a = key();
 		panel.who(a == null ? null : a.getChannel());
@@ -462,6 +471,11 @@ public class OutsidePlugin extends Plugin
 			clientThread.invoke(() -> e.shutDown("plugin turned off"));
 			eventBus.unregister(e);
 			encounters = null;
+		}
+		if (sendTimer != null)
+		{
+			sendTimer.cancel(false);
+			sendTimer = null;
 		}
 		if (shelf != null)
 		{
@@ -575,6 +589,12 @@ public class OutsidePlugin extends Plugin
 		if (e.getKey().equals("encounters") && panel != null)
 		{
 			panel.recordingOn(config.encounters());
+		}
+		if (e.getKey().equals("encounterSend") && panel != null)
+		{
+			panel.sendingOn(config.encounterSend());
+			// (switched on: what's waiting goes now; 11/21/2026)
+			pumpSends();
 		}
 		// hub:end encounters
 		// hub:cut talk
@@ -3052,6 +3072,36 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
+			public boolean sendingOn()
+			{
+				return config.encounterSend();
+			}
+
+			@Override
+			public void setSendingOn(boolean on)
+			{
+				configManager.setConfiguration(OutsideConfig.GROUP, "encounterSend", on);
+			}
+
+			@Override
+			public void keepFight(String file, boolean keep)
+			{
+				markEncounter(file, "kept=" + (keep ? "1" : "0"), keep ? "kept for good on your page" : "no longer kept for good: it goes with its days");
+			}
+
+			@Override
+			public void featureFight(String file)
+			{
+				markEncounter(file, "featured=1", "featured on your page (and kept for good)");
+			}
+
+			@Override
+			public void takeDownFight(String file)
+			{
+				takeDownEncounter(file);
+			}
+
+			@Override
 			public void deleteEncounter(String file)
 			{
 				if (shelf != null && encounters != null)
@@ -5458,12 +5508,88 @@ public class OutsidePlugin extends Plugin
 			public void filesChanged(String packed)
 			{
 				Encounters e = encounters;
-				if (shelf != null && packed != null)
+				EncounterShelf sh = shelf;
+				if (sh != null && packed != null)
 				{
-					shelf.packed(packed, encounterMost(), e == null ? java.util.Collections.emptySet() : e.busy(), OutsidePlugin.this::listEncounters);
+					sh.packed(packed, encounterMost(), e == null ? java.util.Collections.emptySet() : e.busy(), () ->
+					{
+						listEncounters();
+						// (11/21/2026, round two: queued to go up by itself, then its moment built; the sender waits for it)
+						if (queueWhenPacked.remove(packed))
+						{
+							sh.queue(packed, OutsidePlugin.this::listEncounters);
+						}
+						sh.moment(packed, takenFor.remove(packed), () ->
+						{
+							listEncounters();
+							pumpSends();
+						});
+					});
+				}
+			}
+
+			@Override
+			public Object[] itemLabel(int id, int qty)
+			{
+				return groundItemLabel(id, qty);
+			}
+
+			@Override
+			public void ended(String packed, EncounterScene.Taken taken, String reason)
+			{
+				if (taken != null)
+				{
+					takenFor.put(packed, taken);
+				}
+				// (never from anywhere dangerous; with the switch on, every other end goes up by itself)
+				if (config.encounterSend() && !"the Wilderness or PvP".equals(reason))
+				{
+					queueWhenPacked.add(packed);
 				}
 			}
 		};
+	}
+
+	/**
+	 * A ground item's name as RuneLite's Ground Items plugin writes it over its tile (1.13.7, GroundItemsOverlay with its
+	 * defaults; ghillie's replay/3d/moment.js itemText, the browser's twin): the name (a noted one's, the item it notes),
+	 * "(qty)" past 1, then for all but coins "(GE: … gp)" from RuneLite's own prices and "(HA: … gp)", each times the
+	 * quantity, by QuantityFormatter; its colour by the higher of the two (the plugin's tiers). {text, colour, value}.
+	 * The client's thread.
+	 */
+	private Object[] groundItemLabel(int id, int qty)
+	{
+		net.runelite.api.ItemComposition def = itemManager.getItemComposition(id);
+		if (def == null)
+		{
+			return null;
+		}
+		int real = def.getNote() != -1 ? def.getLinkedNoteId() : id;
+		net.runelite.api.ItemComposition base = real != id ? itemManager.getItemComposition(real) : def;
+		if (base == null)
+		{
+			return null;
+		}
+		boolean coins = real == net.runelite.api.gameval.ItemID.COINS;
+		long ge = coins ? 1 : itemManager.getItemPrice(real), ha = coins ? 1 : base.getHaPrice();
+		long value = Math.max(ge * qty, ha * qty);
+		StringBuilder text = new StringBuilder(base.getName());
+		if (qty > 1)
+		{
+			text.append(" (").append(net.runelite.client.util.QuantityFormatter.quantityToStackSize(qty)).append(")");
+		}
+		if (id != net.runelite.api.gameval.ItemID.COINS)
+		{
+			if (ge * qty > 0)
+			{
+				text.append(" (GE: ").append(net.runelite.client.util.QuantityFormatter.quantityToStackSize(ge * qty)).append(" gp)");
+			}
+			if (ha * qty > 0)
+			{
+				text.append(" (HA: ").append(net.runelite.client.util.QuantityFormatter.quantityToStackSize(ha * qty)).append(" gp)");
+			}
+		}
+		return new Object[]{text.toString(), EncounterScene.tier(value), value};
 	}
 
 	/** "Keep up to (MB)", in bytes. */
@@ -5484,7 +5610,8 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** The page's own list of its encounters (GET /fights/<channel>?key=, on the press that opens the tab): whether the
-	 *  page takes them at all (404: the relay's fights are off), whether a new one starts shown, and what's still on it. */
+	 *  page takes them at all (404: the relay's fights are off), whether a new one starts shown, what's still on it, which
+	 *  are kept for good and featured, and how many may be kept (11/21/2026). */
 	private void readFights()
 	{
 		Attach a = key();
@@ -5517,7 +5644,7 @@ public class OutsidePlugin extends Plugin
 					}
 					if (res.code() == 404 && o != null && o.has("error") && o.get("error").getAsString().contains("fights aren't on"))
 					{
-						panel.fightsState(false, false);
+						panel.fightsState(false, false, 0, 0);
 						return;
 					}
 					if (res.code() != 200 || o == null || !o.has("fights") || !o.get("fights").isJsonArray())
@@ -5526,16 +5653,22 @@ public class OutsidePlugin extends Plugin
 						return;
 					}
 					boolean first = o.has("public_default") && o.get("public_default").getAsBoolean();
-					Map<String, Boolean> fights = new HashMap<>();
+					int most = o.has("kept") && o.get("kept").isJsonPrimitive() ? o.get("kept").getAsInt() : 12;
+					String featured = o.has("featured") && o.get("featured").isJsonPrimitive() ? o.get("featured").getAsString() : null;
+					Map<String, boolean[]> fights = new HashMap<>();
+					int kept = 0;
 					for (JsonElement f : o.getAsJsonArray("fights"))
 					{
 						if (f.isJsonObject() && f.getAsJsonObject().has("id"))
 						{
 							JsonObject fo = f.getAsJsonObject();
-							fights.put(fo.get("id").getAsString(), fo.has("public") && fo.get("public").getAsBoolean());
+							String id = fo.get("id").getAsString();
+							boolean k = fo.has("kept") && fo.get("kept").getAsBoolean();
+							kept += k ? 1 : 0;
+							fights.put(id, new boolean[]{fo.has("public") && fo.get("public").getAsBoolean(), k, id.equals(featured)});
 						}
 					}
-					panel.fightsState(true, first);
+					panel.fightsState(true, first, kept, most);
 					shelf.reconcile(a.getChannel(), fights, OutsidePlugin.this::listEncounters);
 				}
 				catch (IOException | RuntimeException ex)
@@ -5547,7 +5680,7 @@ public class OutsidePlugin extends Plugin
 	}
 
 	/** "Put on my page" (the side tab): the recording stripped as the page strips one (EncounterStrip), what was taken out
-	 *  said, and only once that's agreed to, sent: POST /fights/<channel>?key=, multipart, meta and the gzipped fight. */
+	 *  said, and only once that's agreed to, sent with its moment (postFight). */
 	private void putEncounter(String file, boolean shown)
 	{
 		Attach a = key();
@@ -5567,16 +5700,15 @@ public class OutsidePlugin extends Plugin
 				panel.encounterStatus("that was recorded on " + p.summary.player + ": log in on that character to put it on its page");
 				return;
 			}
-			byte[] gz = p.gz;
-			if (gz.length > FIGHT_MOST)
+			if (p.gz.length + (p.moment == null ? 0 : p.moment.length) > FIGHT_MOST)
 			{
 				panel.putting(file, false);
-				panel.encounterStatus(String.format("it's %.1f MB packed: a page takes 8 MB at most", gz.length / 1048576.0));
+				panel.encounterStatus(String.format("it's %.1f MB packed: a page takes 8 MB at most", p.gz.length / 1048576.0));
 				return;
 			}
 			panel.encounterStatus(null);
-			panel.confirmPut(file, p.summary.who(), (int) p.summary.ticks, p.removed, shown, gz.length,
-				() -> sendEncounter(a, file, p, gz, shown));
+			panel.confirmPut(file, p.summary.who(), (int) p.summary.ticks, p.removed, shown, p.gz.length,
+				() -> postFight(a, p, shown, false, 1));
 		}, problem ->
 		{
 			panel.putting(file, false);
@@ -5584,20 +5716,163 @@ public class OutsidePlugin extends Plugin
 		});
 	}
 
-	private void sendEncounter(Attach a, String file, EncounterShelf.Prepared p, byte[] gz, boolean shown)
+	/**
+	 * Each encounter up by itself (11/21/2026; ghillie's claude/outstation.md, "Encounters, round two"; EncounterQueue):
+	 * with "Put each encounter on my page" on and a page for the character logged in, the oldest recording due goes, one
+	 * at a time, off the client's thread (the shelf's files thread strips it, OkHttp sends it). One whose last send went
+	 * unanswered is looked for on the page first, and not sent again if it's there.
+	 */
+	private void pumpSends()
 	{
-		panel.encounterStatus("putting it on your page…");
-		RequestBody body = new okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
+		EncounterShelf sh = shelf;
+		Encounters e = encounters;
+		Attach a = key();
+		String me = shownName;
+		if (sh == null || e == null || a == null || me == null || !config.encounterSend() || client.getGameState() != GameState.LOGGED_IN
+			|| !sending.compareAndSet(false, true))
+		{
+			return;
+		}
+		sh.nextDue(System.currentTimeMillis(), me, e.busy(), due ->
+		{
+			if (due == null)
+			{
+				sending.set(false);
+				return;
+			}
+			if (due.unsure)
+			{
+				findOnPage(a, due, () -> sendDue(a, due));
+			}
+			else
+			{
+				sendDue(a, due);
+			}
+		});
+	}
+
+	/** One sent before with no answer seen: the page's list read, and if it's there it's taken as sent (never twice). */
+	private void findOnPage(Attach a, EncounterShelf.Due due, Runnable notThere)
+	{
+		http.newCall(new Request.Builder().url(a.fightsUrl()).header("User-Agent", "outside-plugin/" + VERSION).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException ex)
+			{
+				// (still out of reach: as unsure as before, and later)
+				shelf.sent(due.file, EncounterQueue.lost(System.currentTimeMillis(), 1), null, null, null, OutsidePlugin.this::sendDone);
+			}
+
+			@Override
+			public void onResponse(Call call, Response r)
+			{
+				try (Response res = r)
+				{
+					JsonObject o = gson.fromJson(res.body() == null ? "" : res.body().string(), JsonObject.class);
+					if (res.code() == 200 && o != null && o.has("fights") && o.get("fights").isJsonArray())
+					{
+						for (JsonElement f : o.getAsJsonArray("fights"))
+						{
+							if (!f.isJsonObject())
+							{
+								continue;
+							}
+							JsonObject fo = f.getAsJsonObject();
+							Map<String, Object> m = new HashMap<>();
+							m.put("at", fo.has("at") ? fo.get("at").getAsDouble() : 0.0);
+							m.put("ticks", fo.has("ticks") ? fo.get("ticks").getAsDouble() : 0.0);
+							if (EncounterQueue.sameFight(m, due.at, due.ticks) && fo.has("id"))
+							{
+								log.debug("outside: {} was on the page already: not sent again", due.file);
+								shelf.sent(due.file, new EncounterQueue.After(EncounterQueue.SENT, 0, null), fo.get("id").getAsString(), a.getChannel(),
+									fo.has("public") && fo.get("public").getAsBoolean(), OutsidePlugin.this::sendDone);
+								return;
+							}
+						}
+					}
+				}
+				catch (IOException | RuntimeException ex)
+				{
+					// (an answer that can't be read: sent as if it isn't there; the relay's list is what's known)
+				}
+				notThere.run();
+			}
+		});
+	}
+
+	private void sendDue(Attach a, EncounterShelf.Due due)
+	{
+		String me = shownName;
+		shelf.prepare(due.file, p ->
+		{
+			if (p.summary.player != null && (me == null || !OutsidePanel.sameName(p.summary.player, me)))
+			{
+				shelf.sent(due.file, new EncounterQueue.After(EncounterQueue.DUE, 0, "waiting for " + p.summary.player + " to log in"), null, null,
+					null, this::sendDone);
+				return;
+			}
+			if (p.gz.length > FIGHT_MOST)
+			{
+				shelf.sent(due.file, new EncounterQueue.After(EncounterQueue.REFUSED, 0, String.format("%.1f MB packed: a page takes 8 MB at most",
+					p.gz.length / 1048576.0)), null, null, null, this::sendDone);
+				return;
+			}
+			if (p.gz.length + (p.moment == null ? 0 : p.moment.length) > FIGHT_MOST)
+			{
+				p.moment = null;
+			}
+			shelf.entryOf(due.file, e ->
+			{
+				Boolean shown = e != null && e.has("shown") ? e.get("shown").getAsBoolean() : null;
+				postFight(a, p, shown, true, e == null ? 1 : shelf.triesOf(e));
+			});
+		}, problem -> shelf.sent(due.file, new EncounterQueue.After(EncounterQueue.REFUSED, 0, problem), null, null, null, this::sendDone));
+	}
+
+	/** A send finished (whatever it came to): the next due one, if any. */
+	private void sendDone()
+	{
+		listEncounters();
+		sending.set(false);
+		if (sendTimer != null)
+		{
+			executor.schedule(this::pumpSends, 2, TimeUnit.SECONDS);
+		}
+	}
+
+	/**
+	 * A recording onto the page: POST /fights/<channel>?key=, multipart: meta (fights.js's put(): foe, label, at, ticks,
+	 * died, taken, dealt, and public only when the player's chosen; without it the relay's public_default), fight (the
+	 * stripped recording, gzipped), and its scene moment with moment_tick when it has one (docs/protocol.md, "One upload
+	 * with its moment"). {@code auto}: the sender's (its state kept by EncounterQueue), else Put on my page's.
+	 */
+	private void postFight(Attach a, EncounterShelf.Prepared p, Boolean shown, boolean auto, int tries)
+	{
+		String file = p.file;
+		if (!auto)
+		{
+			panel.encounterStatus("putting it on your page…");
+		}
+		okhttp3.MultipartBody.Builder mb = new okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
 			.addFormDataPart("meta", EncounterStrip.meta(p.summary, shown))
-			.addFormDataPart("fight", "fight.jsonl.gz", RequestBody.create(GZIP, gz))
-			.build();
-		http.newCall(new Request.Builder().url(a.fightsUrl()).header("User-Agent", "outside-plugin/" + VERSION).post(body).build()).enqueue(new Callback()
+			.addFormDataPart("fight", "fight.jsonl.gz", RequestBody.create(GZIP, p.gz));
+		if (p.moment != null)
+		{
+			mb.addFormDataPart("moment", "moment.bin", RequestBody.create(OCTETS, p.moment));
+			mb.addFormDataPart("moment_tick", String.valueOf(p.momentTick));
+		}
+		http.newCall(new Request.Builder().url(a.fightsUrl()).header("User-Agent", "outside-plugin/" + VERSION).post(mb.build()).build()).enqueue(new Callback()
 		{
 			@Override
 			public void onFailure(Call call, IOException ex)
 			{
 				panel.putting(file, false);
-				panel.encounterStatus("the relay's out of reach: nothing went; try again in a bit");
+				EncounterQueue.After after = EncounterQueue.lost(System.currentTimeMillis(), tries);
+				if (!auto)
+				{
+					panel.encounterStatus("the relay's out of reach: it goes up by itself once it can");
+				}
+				shelf.sent(file, after, null, null, null, auto ? OutsidePlugin.this::sendDone : OutsidePlugin.this::listEncounters);
 			}
 
 			@Override
@@ -5615,32 +5890,172 @@ public class OutsidePlugin extends Plugin
 					{
 						// (said by its code below)
 					}
+					String error = o != null && o.has("error") && o.get("error").isJsonPrimitive() ? o.get("error").getAsString() : null;
+					EncounterQueue.After after = EncounterQueue.answered(res.code(), res.header("Retry-After"), error, System.currentTimeMillis(), tries);
+					panel.putting(file, false);
 					if (res.code() == 201 && o != null && o.has("fight") && o.get("fight").isJsonObject())
 					{
 						JsonObject f = o.getAsJsonObject("fight");
 						String id = f.get("id").getAsString();
 						boolean pub = f.has("public") && f.get("public").getAsBoolean();
-						shelf.onPage(file, a.getChannel(), id, pub, OutsidePlugin.this::listEncounters);
-						panel.putting(file, false);
-						panel.encounterStatus(p.summary.who() + " is on your page" + (pub ? "" : ", kept to yourself"));
+						shelf.sent(file, after, id, a.getChannel(), pub, auto ? OutsidePlugin.this::sendDone : OutsidePlugin.this::listEncounters);
+						if (!auto)
+						{
+							panel.encounterStatus(p.summary.who() + " is on your page" + (pub ? "" : ", kept to yourself"));
+						}
 						return;
 					}
-					panel.putting(file, false);
-					if (res.code() == 404 && o != null && o.has("error") && o.get("error").getAsString().contains("fights aren't on"))
+					if (res.code() == 404 && error != null && error.contains("fights aren't on"))
 					{
-						panel.fightsState(false, false);
-						panel.encounterStatus(null);
-						return;
+						panel.fightsState(false, false, 0, 0);
 					}
-					panel.encounterStatus(res.code() == 403 ? "the relay didn't take your page's key: nothing went"
-						: "nothing went: " + (o != null && o.has("error") ? o.get("error").getAsString() : "the relay said " + res.code()));
+					if (!auto)
+					{
+						panel.encounterStatus(res.code() == 403 ? "the relay didn't take your page's key: nothing went"
+							: res.code() == 429 ? "nothing went: " + after.why : "nothing went: " + (error != null ? error : "the relay said " + res.code()));
+					}
+					// (Put on my page's own failure leaves a queued one as it was; the sender's, as the answer says)
+					if (auto || EncounterQueue.SENT.equals(after.state))
+					{
+						shelf.sent(file, after, null, null, null, auto ? OutsidePlugin.this::sendDone : OutsidePlugin.this::listEncounters);
+					}
+					else
+					{
+						listEncounters();
+					}
 				}
 				catch (IOException | RuntimeException ex)
 				{
 					panel.putting(file, false);
-					panel.encounterStatus("the relay's answer couldn't be read");
+					if (!auto)
+					{
+						panel.encounterStatus("the relay's answer couldn't be read");
+					}
+					shelf.sent(file, EncounterQueue.lost(System.currentTimeMillis(), tries), null, null, null,
+						auto ? OutsidePlugin.this::sendDone : OutsidePlugin.this::listEncounters);
 				}
 			}
+		});
+	}
+
+	/** One on the page changed (POST /fights/<channel>/<id>?…): kept for good or not, or featured (featuring keeps it). A
+	 *  409's reason (twelve kept already) said as the relay says it. */
+	private void markEncounter(String file, String what, String done)
+	{
+		Attach a = key();
+		if (shelf == null || a == null)
+		{
+			return;
+		}
+		shelf.entryOf(file, e ->
+		{
+			String id = e != null && e.has("fight") ? e.get("fight").getAsString() : null;
+			String channel = e != null && e.has("channel") ? e.get("channel").getAsString() : null;
+			if (id == null || !a.getChannel().equals(channel))
+			{
+				panel.encounterStatus("that one isn't on this character's page");
+				listEncounters();
+				return;
+			}
+			http.newCall(new Request.Builder().url(a.fightUrl(id, what)).header("User-Agent", "outside-plugin/" + VERSION)
+				.post(RequestBody.create(JSON, "{}")).build()).enqueue(new Callback()
+			{
+				@Override
+				public void onFailure(Call call, IOException ex)
+				{
+					panel.encounterStatus("the relay's out of reach: try again in a bit");
+					listEncounters();
+				}
+
+				@Override
+				public void onResponse(Call call, Response r)
+				{
+					try (Response res = r)
+					{
+						JsonObject o = null;
+						try
+						{
+							o = gson.fromJson(res.body() == null ? "" : res.body().string(), JsonObject.class);
+						}
+						catch (RuntimeException ignored)
+						{
+							// (said by its code)
+						}
+						if (res.code() == 200 && o != null)
+						{
+							Boolean kept = o.has("kept") ? o.get("kept").getAsBoolean() : null;
+							Boolean featured = o.has("featured") ? o.get("featured").getAsBoolean() : null;
+							shelf.marks(file, kept, featured, () ->
+							{
+								listEncounters();
+								readFights();
+							});
+							panel.encounterStatus(done);
+							return;
+						}
+						if (res.code() == 404)
+						{
+							shelf.onPage(file, null, null, null, OutsidePlugin.this::listEncounters);
+							panel.encounterStatus("that one isn't on your page any more");
+							return;
+						}
+						panel.encounterStatus(o != null && o.has("error") ? o.get("error").getAsString() : "the relay said " + res.code());
+						listEncounters();
+					}
+					catch (IOException ex)
+					{
+						panel.encounterStatus("the relay's answer couldn't be read");
+					}
+				}
+			});
+		});
+	}
+
+	/** "Take down": off the page (DELETE /fights/<channel>/<id>), its moment with it; the file stays here, and the sender
+	 *  never puts it up again by itself. */
+	private void takeDownEncounter(String file)
+	{
+		Attach a = key();
+		if (shelf == null || a == null)
+		{
+			return;
+		}
+		shelf.entryOf(file, e ->
+		{
+			String id = e != null && e.has("fight") ? e.get("fight").getAsString() : null;
+			if (id == null)
+			{
+				return;
+			}
+			http.newCall(new Request.Builder().url(a.fightUrl(id, (String) null)).header("User-Agent", "outside-plugin/" + VERSION)
+				.delete().build()).enqueue(new Callback()
+			{
+				@Override
+				public void onFailure(Call call, IOException ex)
+				{
+					panel.encounterStatus("the relay's out of reach: it's still up; try again in a bit");
+				}
+
+				@Override
+				public void onResponse(Call call, Response r)
+				{
+					try (Response res = r)
+					{
+						if (res.code() == 204 || res.code() == 404)
+						{
+							shelf.onPage(file, null, null, null, () ->
+							{
+								shelf.sent(file, new EncounterQueue.After(EncounterQueue.SENT, 0, "taken down from your page"), null, null, null,
+									OutsidePlugin.this::listEncounters);
+								readFights();
+							});
+							panel.encounterStatus("taken down from your page; it's still on this computer");
+							return;
+						}
+						panel.encounterStatus("the relay said " + res.code() + ": it's still up");
+					}
+				}
+			});
 		});
 	}
 

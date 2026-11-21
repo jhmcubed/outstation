@@ -829,31 +829,54 @@ The relay checks only the file's first line: other
 players' names, other people's chat, exact XP and mouse presses are taken out by the page before it sends
 (ghillie's strip.js). They go with the page when it's taken down (`DELETE /channels/<channel>`).
 
-**The Outside plugin as a sender (11/21/2026, update 6).** The plugin records encounters itself (Encounter Recorder's
-recorder folded in: plugin/README.md, "Encounters"; its files in `.runelite/plugin-data/outside/encounters`, format 6
-with `"recorder": "outside"` in the header) and puts one up from its side tab's Encounters tab, on the player's press
-only, with the page's key, as the page does with a tending token:
+**The Outside plugin as a sender (11/21/2026, update 6; rewritten the same day for round two).** The plugin records
+encounters itself (Encounter Recorder's recorder folded in: plugin/README.md, "Encounters"; its files in
+`.runelite/plugin-data/outside/encounters`, format 6 with `"recorder": "outside"` in the header) and, with "Put each
+encounter on my page" on (to begin with), sends each one as it ends, with the scene moment its own game drew round the
+kill (ghillie's claude/outstation.md, "Encounters, round two"). All with the page's key, as the page does with a tending
+token:
 
-    GET    /fights/<channel>?key=<key>          when the tab's opened (or its Refresh): what's on the page (each id and
-                                                public, matched against the ids the plugin keeps beside its files),
-                                                public_default (the "shown to anyone" box's start), and a 404 whose error
-                                                says "fights aren't on here" shown as plainly as that
-    POST   /fights/<channel>?key=<key>          "Put on my page", after a window saying what was taken out: multipart,
-                                                meta (exactly fights.js's put(): foe, label, at, ticks, died, taken, dealt,
-                                                public) and fight ("fight.jsonl.gz", application/gzip: the recording
-                                                stripped by EncounterStrip, strip.js's strip() in Java, byte for byte the
-                                                same, gzipped with the length in the header's comment as packed files
-                                                are); refused by the plugin itself over 8 MB. 201's fight.id is kept
-    POST   /fights/<channel>/<id>?key=…&public=1|0   "shown to anyone" ticked or not, once it's up
+    GET    /fights/<channel>?key=<key>          when the Encounters tab's opened (or its Refresh): what's on the page (each
+                                                id, public, kept, which is featured), public_default, kept (the most that
+                                                may be kept: "N of 12 kept for good"), and a 404 whose error says "fights
+                                                aren't on here" said as plainly as that. Also before a send whose last try
+                                                went unanswered (below)
+    POST   /fights/<channel>?key=<key>          each recording as it ends (by itself), or "Put on my page" (after a window
+                                                saying what was taken out): multipart, meta (fights.js's put(): foe, label,
+                                                at, ticks, died, taken, dealt, and public only where the player chose in
+                                                the row before it went: without it the relay's public_default), fight
+                                                ("fight.jsonl.gz", application/gzip: the recording stripped by EncounterStrip,
+                                                strip.js's strip() in Java, byte for byte the same, gzipped with the length
+                                                in the header's comment as packed files are), and, when it has one, moment
+                                                ("moment.bin", application/octet-stream: the scene moment, version 2, at most
+                                                2.9 MB) with moment_tick (its anchor's tick, as its own meta has it). The
+                                                plugin refuses itself over 8 MB (the moment left off first). 201's fight.id
+                                                is kept beside the file
+    POST   /fights/<channel>/<id>?key=…&public=1|0      "shown to anyone" ticked or not, once it's up
+    POST   /fights/<channel>/<id>?key=…&kept=1|0        "keep for good" ticked or not (409's error said in the tab)
+    POST   /fights/<channel>/<id>?key=…&featured=1      "✼ feature it" (which keeps it)
+    DELETE /fights/<channel>/<id>?key=…                 "take down" (after asking): off the page, its moment with it;
+                                                the file stays, and the sender never puts it up again by itself
     POST   /tend/<channel>?key=<key>            "Open" on one kept to themselves: a tending token, the fight's page opened
                                                 as outside.wiki/<channel>/fight/<id>#tend=<token>
 
-The relay needs nothing new for it: these are the routes above, the key as the owner. The plugin strips exactly as the
-page does, so a file put up either way is the same.
+**The sender** (EncounterQueue, its state in the folder's index.json beside each file, so it outlives the client): a
+recording that ends while the switch is on is queued once it's packed (not one stopped for the Wilderness or PvP), its
+moment built first on a thread of its own; then the oldest due goes, one at a time, only while the character it was
+recorded on is logged in with a page. **429**: sent again exactly when its Retry-After says. **No answer** (out of reach,
+the connection lost, the client closed mid-send): marked unsure, and before it's sent again the page's list is read and a
+fight with the same `at` and `ticks` taken as it: **never twice**. Out of reach or a 5xx: 1, 2, 5, 10, 30 minutes, then
+hourly. 404 "fights aren't on here": six hours. 403: held till the key's sorted. 400, 413, 415: not by itself again (Put
+on my page still offers it). One taken down, or on the page already, is never queued again.
+
+The relay needs nothing new for it: these are the routes above, the key as the owner; one upload carries the fight and its
+moment, so nothing is half up. The plugin strips exactly as the page does, so a file put up either way is the same.
 
 **The scene moment** (11/21/2026; ghillie's claude/outstation.md, "Encounters on Outside: the night's design"): a moment
 of a fight its owner kept, as coloured dots sampled from the replay's 3D scene at a tick, so the profile can show it
-turning with no game files (ghillie's replay/3d/moment.js, which writes and reads it). The file is gzip of: `OMNT`, a
+turning with no game files (ghillie's replay/3d/moment.js, which writes and reads it; since round two, version 2 loops
+over a stretch of frames, and the Outside plugin writes it from the game's own scene: EncounterMoment and EncounterScene,
+to ghillie's replay/3d/MOMENT-FORMAT.md, the whole format). Version 1's file is gzip of: `OMNT`, a
 version byte (1), a flags byte, the meta's length (u16, little-endian), the dots' count (u32), the meta (JSON: `kind`
 "outside-moment", `fight`, `tick`, `cycle`, `foes`, `label`, `at`, `made`, `plane`, `tile`, `camera` {yaw, pitch, zoom,
 H}, `grid`, `spacing`, `core`, `reach`, `count`), then ten planes of a byte a dot in Morton order (x, y and z as

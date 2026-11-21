@@ -195,7 +195,7 @@ canonical ids, the still's model) runs on the client thread (loot events, chat c
 posted there, the side tab's buttons hand theirs over with clientThread.invokeLater); the Page tab's Talk in the
 aether as me reads only the plugin's settings.
 
-## Update 6: the key kept and found, the delve levels a death lost, more than one goal, encounters (11/19/2026, encounters 11/21/2026; built, waiting for Jace's test in the game)
+## Update 6: the key kept and found, the delve levels a death lost, more than one goal, encounters (11/19/2026, encounters 11/21/2026, round two the same day; built, waiting for Jace's test in the game)
 
 Jace (11/19/2026): "Update 6 will include this and the other features we've added since update 5": the key (below),
 the delve levels a death lost (held till now as jhmcubed/outside-plugin#27, which this update carries, so that pull
@@ -236,15 +236,66 @@ Jace (11/21/2026): "include it in update 6 along with our other changes". Encoun
 - **His gaps closed**, each checked in the local world's test fight (`fightcheck.py`: 55 of 56 on time, the sound untested for want of an audio device): the starting state (varps, ground items, graphics, projectiles in flight), a restarted animation, the raids' friends-chat completion lines (names taken out), objects' animation changes, projectiles over in a cycle.
 - **Left out entirely**: mouse presses, clicks, their screen places, the interface layout, markers, hotkeys and his overlay.
 - **The side tab's third tab, Encounters**: Record my encounters, Record now / Stop, the recent ones (who, when, how long, killed or died), each with Put on my page (a window first, saying what was taken out and what goes), shown to anyone, Open, and ✕.
-- **Sent only on the player's press**: the recording stripped exactly as the page's strip.js strips one (other players' names, other people's chat, exact XP; checked byte for byte against strip.js), to the relay's existing `POST /fights/<channel>?key=`. Opening the tab reads `GET /fights/<channel>?key=` (what's on the page, whether a new one starts shown, and whether the relay takes encounters at all: its fights are off until Jace switches them on, and the tab says so plainly).
+- **Sent only on the player's press** (round one; since round two, below, each goes up by itself unless the player switches that off): the recording stripped exactly as the page's strip.js strips one (other players' names, other people's chat, exact XP; checked byte for byte against strip.js), to the relay's existing `POST /fights/<channel>?key=`. Opening the tab reads `GET /fights/<channel>?key=` (what's on the page, whether a new one starts shown, and whether the relay takes encounters at all: its fights are off until Jace switches them on, and the tab says so plainly).
 
 **For the reviewer.** This adds the first thing in the Hub's version that reads other players: with "Players around you" on (as his default), a recording keeps the players near you (positions, gear, animations), as Encounter Recorder does on the Hub. It's on the player's computer; only Put on my page sends one fight, every other player's name taken out first (in any text too) with their chat. The manifest's `warning=` gains it:
 
 ```
-warning=This plugin submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it), your account hash and your IP address to a 3rd-party server when you press Update my page, and hourly; and a recorded fight, other players' names taken out, when you press Put on my page. Your Outside page shows them publicly.
+warning=This plugin submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it), your account hash and your IP address to a 3rd-party server when you press Update my page, and hourly; and each boss fight it records as it ends (with a moment of its scene), other players' names taken out, unless you switch that off. Your Outside page shows them publicly.
 ```
 
 The order: nothing on the relay or the page changes for it (the routes are the relay's own since 11/20/2026); the relay's `FIGHTS` switch stays Jace's call, and until it's on the tab says encounters aren't taken yet and keeps them on the computer.
+
+### Encounters, round two: each one up by itself, kept for good, featured, its scene moment (11/21/2026)
+
+Jace (11/21/2026, his answers to the night's lab): "having it automatically upload every encounter takes the tediousness
+out", with some kept on the page for good, any taken down from the side tab, and the featured one's moment kept.
+ghillie's claude/outstation.md, "Encounters, round two", has the design; plugin/README.md, "Encounters", all of it;
+docs/protocol.md, "The Outside plugin as a sender", the routes.
+
+- **Put each encounter on my page** (a new setting, on to begin with; also a box in the Encounters tab): each recording
+  goes up by itself as it ends (`EncounterQueue`: one at a time, off the client's thread; a 429 waits its Retry-After;
+  out of reach, later, never twice: one whose answer never came is looked for on the page first). Never one stopped in
+  the Wilderness or PvP. Shown or kept to themselves as the page starts new ones (the relay's `public_default`), unless
+  the player ticked otherwise in its row. The confirm window is only for **Put on my page** now (with the switch off, or
+  for one that didn't go).
+- **The rows:** on your page ✓ · Open; **keep for good** (`?kept=`, "N of 12 kept for good", the relay's 409 said);
+  **shown to anyone**; **feature** (`?featured=1`, which keeps it); **take down** (`DELETE`, after asking; never up
+  again by itself); ✕ (the local file and its moment).
+- **Its scene moment**, captured from the client's own scene round the kill and its drop (or the player's fall), sent in
+  the same upload (`moment`, `moment_tick`): `EncounterScene` (a rolling buffer of the last 9 ticks' moving models, a
+  frame every 2 client cycles; 0.47 ms a frame on the client's thread in the local world, the buffer 11-16 MB; the
+  still scene read once at the kill) and `EncounterMoment` (the dots and the file, ghillie's MOMENT-FORMAT.md version 2,
+  byte for byte moment.js's writer on its golden vectors); the ground items' names and GE/HA prices as RuneLite's Ground
+  Items plugin shows them (ItemManager). The recording now waits up to 12 ticks after a kill for the drop to land, and 6
+  past one that does (it ended 5 after the kill before).
+- Checked: `gradle test` (150, the cut's below), hub_check.py and start_check.py both ways, and the local world with a
+  local relay (plugin/README.md, "How round two was checked").
+
+**The Hub risk, plainly.** The reviewer agreed to sends on the player's press ("Update my page") and an hourly sync
+(11/16/2026, "The reviewer's second answer"); not to a send after every fight that nobody presses. This is new ground:
+a recording (other players' names taken out, their chat too, but their positions and gear kept unnamed when "Players
+around you" is on) leaves the player's computer with no press. The update's description says so plainly, the setting's
+own words say so, and the manifest's `warning=` above names it. If the reviewer objects, the fallback is ready in one
+line: `encounterSend()`'s default to false (then nothing goes without a press, as in round one), and the description
+updated to match. That call is Jace's before it's sent: on by default (his ask) or off by default (the safer review).
+
+**Jace's in-game steps for round two** (with the relay's fights on, `FIGHTS` "on", in the same run as the steps below):
+
+1. In the Encounters tab: **Record my encounters** and **Put each on my page** both ticked; "N of 12 kept for good on
+   your page" under Recent encounters once the tab's read the page.
+2. Kill a boss you do (one with a drop on the floor, ideally): the recording ends a few seconds after the drop lands; a
+   few seconds later its row says **on your page ✓** without anything pressed. **Open**: its page plays; your page's
+   stage (or the encounter's tile) shows its moment turning, the drop on the ground with its name and price as Ground
+   Items shows it in the game, a beam over a drop worth over 1M.
+3. **keep for good** on it: "1 of 12 kept". **feature** on another: it says ✼ featured, and is kept too. **take down**
+   on a third: it asks; then the row says "taken down from your page", and your page no longer lists it.
+4. Die to a boss once (if you're doing one anyway): it goes up too, its moment your fall.
+5. Untick **Put each on my page**, kill again: the row stays with **Put on my page**; press it: the window says what's
+   taken out, then it goes up.
+6. Close RuneLite right after a kill (before its row says on your page): next start, it goes up by itself within a
+   minute or so, once only (your page lists it once). Not tried in the local world: if it doesn't, Put on my page
+   puts it up, and say so.
 
 ### Jace's test in the game, for the whole update
 

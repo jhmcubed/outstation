@@ -155,6 +155,20 @@ public class OutsidePanel extends PluginPanel
 		/** "Open": its page on Outside.wiki, outside.wiki/<name>/fight/<id>. */
 		void openFight(String file);
 
+		/** "Put each encounter on my page" (the setting, 11/21/2026): whether it's on, and switching it. */
+		boolean sendingOn();
+
+		void setSendingOn(boolean on);
+
+		/** "keep for good" ticked or not: kept on the page past its days (at most the relay's twelve), or let go. */
+		void keepFight(String file, boolean keep);
+
+		/** "✼ feature it": the page's featured encounter, its stage (and kept for good). */
+		void featureFight(String file);
+
+		/** "take down": off the page (the file stays on this computer). */
+		void takeDownFight(String file);
+
 		/** The ✕: the recording's file deleted from this computer (one on the page stays there). */
 		void deleteEncounter(String file);
 
@@ -229,6 +243,11 @@ public class OutsidePanel extends PluginPanel
 	// hub:end talk
 	// hub:cut encounters
 	private final javax.swing.JCheckBox recordOn = new javax.swing.JCheckBox("Record my encounters");
+	private final javax.swing.JCheckBox sendOn = new javax.swing.JCheckBox("Put each on my page");
+	private final JLabel keptLine = small(" ");
+	/** how many are kept for good on the page, and how many may be (the relay's FIGHTS_KEPT) */
+	private int fightsKept, fightsKeptMost = 12;
+	private boolean wasRecording;
 	private final JButton recordNow = new JButton("Record now");
 	private final JLabel recordLine = small(" ");
 	private final JLabel fightsOff = small(" ");
@@ -525,8 +544,8 @@ public class OutsidePanel extends PluginPanel
 		// Page and Model: recording at the top, then the recent ones, newest first)
 		JPanel fightTab = tab();
 		fightTab.add(left(small("<html><div style='width:155px'>Your fights at bosses and raids, recorded to this computer tick"
-			+ " by tick, from the start to the kill, your death or your leaving. Nothing leaves this computer until you put one"
-			+ " on your page, other players' names taken out first.</div></html>")));
+			+ " by tick, from the start to the kill, your death or your leaving. With Put each on my page, each goes to your"
+			+ " page as it ends, with a moment of its scene; other players' names taken out first.</div></html>")));
 		fightTab.add(Box.createVerticalStrut(6));
 		recordOn.setSelected(hooks.recordingOn());
 		recordOn.setToolTipText("<html><div style='width:220px'>On, a recording starts by itself at a boss or a raid, never in"
@@ -536,6 +555,17 @@ public class OutsidePanel extends PluginPanel
 		onRow.add(recordOn);
 		onRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
 		fightTab.add(onRow);
+		// (11/21/2026, round two: every encounter up by itself, Jace's ask; the Hub's warning in its tip)
+		sendOn.setSelected(hooks.sendingOn());
+		sendOn.setToolTipText("<html><div style='width:220px'>On, each encounter goes to your Outside page as it ends, with"
+			+ " its scene moment: other players' names, their chat and your exact experience taken out first, then sent to the"
+			+ " Outside relay, a server not controlled or verified by the RuneLite developers. Off, only when you press Put on"
+			+ " my page. Also in the plugin's settings.</div></html>");
+		sendOn.addActionListener(e -> hooks.setSendingOn(sendOn.isSelected()));
+		JPanel sendRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
+		sendRow.add(sendOn);
+		sendRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+		fightTab.add(sendRow);
 		recordNow.addActionListener(e -> hooks.recordToggle());
 		fightTab.add(wide(recordNow));
 		recordLine.setForeground(LIME);
@@ -553,6 +583,8 @@ public class OutsidePanel extends PluginPanel
 		fightsOff.setForeground(new Color(0xff, 0x69, 0xb4));
 		fightsOff.setVisible(false);
 		fightTab.add(left(fightsOff));
+		keptLine.setVisible(false);
+		fightTab.add(left(keptLine));
 		fightStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		fightStatus.setVisible(false);
 		fightTab.add(left(fightStatus));
@@ -994,12 +1026,14 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() ->
 		{
 			recordNow.setText(running ? "Stop" : "Record now");
-			if (running)
+			if (running && !wasRecording)
 			{
-				// (a recording under way: what the last press said is past)
+				// (a recording begun: what the last press said is past; not with each of its updates, 11/21/2026, or a
+				// keep's refusal went before it could be read)
 				fightStatus.setText(" ");
 				fightStatus.setVisible(false);
 			}
+			wasRecording = running;
 			recordLine.setText(words == null ? " " : "<html><div style='width:155px'>recording: " + esc(words) + "</div></html>");
 			recordLine.setVisible(running && words != null);
 			revalidate();
@@ -1012,14 +1046,25 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() -> recordOn.setSelected(on));
 	}
 
+	/** "Put each encounter on my page" switched in the settings: the box follows. */
+	public void sendingOn(boolean on)
+	{
+		SwingUtilities.invokeLater(() -> sendOn.setSelected(on));
+	}
+
 	/** Whether the page takes encounters (the relay's answer: false its fights are off, null not read yet), and whether
 	 *  a new one starts shown to anyone there. */
-	public void fightsState(Boolean on, boolean shownFirst)
+	public void fightsState(Boolean on, boolean shownFirst, int kept, int keptMost)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
 			fightsOn = on;
 			fightsShownFirst = shownFirst;
+			fightsKept = kept;
+			fightsKeptMost = keptMost;
+			keptLine.setText(kept + " of " + keptMost + " kept for good on your page");
+			keptLine.setForeground(kept >= keptMost ? new Color(0xff, 0x69, 0xb4) : ColorScheme.LIGHT_GRAY_COLOR);
+			keptLine.setVisible(Boolean.TRUE.equals(on));
 			fightsOff.setText(Boolean.FALSE.equals(on) ? "<html><div style='width:155px'>Outside.wiki isn't taking encounters on"
 				+ " pages yet. Yours are kept on this computer meanwhile.</div></html>" : " ");
 			fightsOff.setVisible(Boolean.FALSE.equals(on));
@@ -1151,9 +1196,10 @@ public class OutsidePanel extends PluginPanel
 		boolean shown = r.shown != null ? r.shown : fightsShownFirst;
 		if (r.fight != null)
 		{
+			// (on the page, 11/21/2026: on your page ✓ · open; keep for good; shown to anyone; feature it; take down)
 			JPanel on = new JPanel(new BorderLayout(4, 0));
 			on.setOpaque(false);
-			JLabel there = small("on your page");
+			JLabel there = small("on your page \u2713");
 			there.setForeground(LIME);
 			on.add(there, BorderLayout.CENTER);
 			JButton open = new JButton("Open");
@@ -1162,11 +1208,32 @@ public class OutsidePanel extends PluginPanel
 			on.add(open, BorderLayout.EAST);
 			on.setMaximumSize(new Dimension(Integer.MAX_VALUE, on.getPreferredSize().height));
 			box.add(on);
+			javax.swing.JCheckBox keep = new javax.swing.JCheckBox("keep for good", r.kept || r.featured);
+			keep.setOpaque(false);
+			keep.setFont(FontManager.getRunescapeSmallFont());
+			keep.setEnabled(theirs && !r.featured);
+			keep.setToolTipText(r.featured ? "The featured one is always kept; feature another to let this one go"
+				: "Ticked, it stays on your page past its days (" + fightsKept + " of " + fightsKeptMost + " kept); not, it goes"
+				+ " with its days or when newer ones push it off");
+			keep.addActionListener(e -> hooks.keepFight(r.file, keep.isSelected()));
+			JPanel keepRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+			keepRow.setOpaque(false);
+			keepRow.add(keep);
+			keepRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, keepRow.getPreferredSize().height));
+			box.add(keepRow);
 		}
 		else
 		{
-			boolean busy = putting.contains(r.file);
-			JButton put = new JButton(busy ? "Putting it up…" : "Put on my page");
+			boolean busy = putting.contains(r.file) || EncounterQueue.SENDING.equals(r.send);
+			String state = sendWords(r);
+			if (state != null)
+			{
+				JLabel st = small("<html><div style='width:150px'>" + esc(state) + "</div></html>");
+				st.setForeground(EncounterQueue.REFUSED.equals(r.send) || EncounterQueue.HELD.equals(r.send) ? new Color(0xff, 0x69, 0xb4)
+					: ColorScheme.LIGHT_GRAY_COLOR);
+				box.add(left(st));
+			}
+			JButton put = new JButton(busy ? "Going up…" : "Put on my page");
 			put.setEnabled(!busy && theirs && !Boolean.FALSE.equals(fightsOn));
 			put.setToolTipText(!theirs ? "Recorded on " + r.player + ": log in on that character to put it on its page"
 				: Boolean.FALSE.equals(fightsOn) ? "Outside.wiki isn't taking encounters on pages yet"
@@ -1186,9 +1253,55 @@ public class OutsidePanel extends PluginPanel
 		showRow.add(show);
 		showRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, showRow.getPreferredSize().height));
 		box.add(showRow);
+		if (r.fight != null && theirs)
+		{
+			JPanel acts = new JPanel(new GridLayout(1, 2, 4, 0));
+			acts.setOpaque(false);
+			JButton feature = new JButton(r.featured ? "\u273c featured" : "feature");
+			feature.setEnabled(!r.featured);
+			feature.setToolTipText("Your page's stage shows it first, its moment turning (featuring keeps it for good)");
+			feature.addActionListener(e -> hooks.featureFight(r.file));
+			acts.add(feature);
+			JButton down = new JButton("take down");
+			down.setToolTipText("Off your page (with its moment); it stays on this computer, and won't go up again by itself");
+			down.addActionListener(e ->
+			{
+				if (javax.swing.JOptionPane.showConfirmDialog(this, "<html><div style='width:240px'>Take " + esc(r.who)
+					+ " down from your page? It stays on this computer.</div></html>", "Take down", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+					javax.swing.JOptionPane.WARNING_MESSAGE) == javax.swing.JOptionPane.OK_OPTION)
+				{
+					hooks.takeDownFight(r.file);
+				}
+			});
+			acts.add(down);
+			acts.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+			box.add(acts);
+		}
 		box.putClientProperty("show", show);
 		box.setMaximumSize(new Dimension(Integer.MAX_VALUE, box.getPreferredSize().height));
 		return box;
+	}
+
+	/** What the sender's doing with one not on the page (EncounterQueue's states), as words; null for nothing to say. */
+	private String sendWords(EncounterShelf.Row r)
+	{
+		if (r.send == null)
+		{
+			return null;
+		}
+		switch (r.send)
+		{
+			case EncounterQueue.DUE:
+				return r.why != null ? r.why : r.moment ? "going up by itself, with its moment" : "going up by itself";
+			case EncounterQueue.SENDING:
+				return "going up…";
+			case EncounterQueue.REFUSED:
+				return "didn't go: " + (r.why == null ? "the relay said no" : r.why);
+			case EncounterQueue.HELD:
+				return r.why == null ? "waiting" : r.why;
+			default:
+				return r.why;
+		}
 	}
 
 	/** The "shown to anyone" box in the same row as a button. */

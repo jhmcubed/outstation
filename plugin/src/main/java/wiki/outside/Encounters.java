@@ -184,6 +184,9 @@ final class Encounters
 	static final int PART_TICKS = 5000;
 	/** after the kill (its count line) or the player's death, how many ticks more are kept: the death and the loot */
 	static final int AFTER_KILL = 5, AFTER_DEATH = 6;
+	/** after a kill with no drop yet, how long the recording waits for one (11/21/2026: the scene moment holds on the
+	 *  drop landing, and a long death animation drops it past AFTER_KILL); a drop seen keeps it to AFTER_KILL past it */
+	static final int DROP_WAIT = 12;
 	/** an automatic recording started for listed NPCs stops this many ticks after the last of them is seen (his) */
 	static final int WATCHED_GONE = 50;
 	/** ticks outside the area that started it before it counts as left: in a region no area names (a raid's room the
@@ -229,6 +232,14 @@ final class Encounters
 
 		/** a recording's packed (its file name), or files changed: the side tab's list read again */
 		void filesChanged(String packed);
+
+		/** a ground item's name, colour and value as RuneLite's Ground Items plugin shows them ({text, "#rrggbb", value as a
+		 *  Long}), or null; on the client's thread (11/21/2026, the scene moment's labels) */
+		Object[] itemLabel(int id, int qty);
+
+		/** a recording's ended: its file once packed ({@code packed}), why, and what its scene moment is made from (null:
+		 *  none, as for one stopped in the Wilderness); on the client's thread (11/21/2026, "Encounters, round two") */
+		void ended(String packed, EncounterScene.Taken taken, String reason);
 	}
 
 	private final Client client;
@@ -237,6 +248,8 @@ final class Encounters
 	private final Host host;
 
 	private volatile EncounterFiles.Writer recording;
+	/** the recording's scene, for its moment (11/21/2026; EncounterScene): its frames kept on this thread */
+	private EncounterScene scene;
 	/** recordings stopped but still being packed: closing the client waits for them */
 	private final Set<EncounterFiles.Writer> finishing = ConcurrentHashMap.newKeySet();
 	private final Set<Integer> definedNpcs = new HashSet<>();
@@ -385,6 +398,7 @@ final class Encounters
 		endWhy = null;
 		part = partNo;
 		recording = new EncounterFiles.Writer(gson, () -> host.folder().joinSegment("encounters"), name, LocalDateTime.now());
+		scene = new EncounterScene(client, host::itemLabel, host.otherPlayers());
 		definedNpcs.clear();
 		definedObjects.clear();
 		definedItems.clear();
@@ -556,6 +570,25 @@ final class Encounters
 		end.addProperty("reason", reason);
 		end.addProperty("ticks", stopped.ticks());
 		end.addProperty("endedMs", System.currentTimeMillis());
+		// (its scene moment's makings: nothing from anywhere dangerous; the rest built on the plugin's moment thread)
+		EncounterScene.Taken taken = null;
+		if (scene != null && !dropTick)
+		{
+			try
+			{
+				taken = scene.finish(stopped.ticks() - 1);
+			}
+			catch (RuntimeException e)
+			{
+				log.warn("outside: the encounter's scene couldn't be taken", e);
+			}
+		}
+		if (taken == null && !dropTick)
+		{
+			log.info("outside: encounter {} has no scene moment (nothing of the scene was taken)", stopped.fileName());
+		}
+		scene = null;
+		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason);
 		finishing.add(stopped);
 		recording = null;
 		stopped.close(packed ->
@@ -741,6 +774,10 @@ final class Encounters
 			return;
 		}
 		WorldView wv = client.getTopLevelWorldView();
+		if (scene != null)
+		{
+			scene.tick(recording.ticks());
+		}
 		JsonObject tick = emit("tick");
 		tick.addProperty("abs", client.getTickCount());
 		tick.addProperty("ms", System.currentTimeMillis());
@@ -787,8 +824,14 @@ final class Encounters
 		// (how it ends: the kill or a death a few ticks on, leaving, the listed NPCs gone)
 		if (endAt >= 0 && recording.ticks() >= endAt)
 		{
-			stopAuto(endWhy);
-			return;
+			// (a kill with no drop yet: held a little for it, the moment's anchor; 11/21/2026)
+			boolean waiting = "killed".equals(endWhy) && scene != null && scene.killed() && !scene.dropped()
+				&& recording.ticks() < scene.killTick() + DROP_WAIT;
+			if (!waiting)
+			{
+				stopAuto(endWhy);
+				return;
+			}
 		}
 		if (automatic && area != null)
 		{
@@ -869,6 +912,11 @@ final class Encounters
 		if (recording == null)
 		{
 			return;
+		}
+		// (the scene moment's frames: the moving things as the client poses them, every 2 cycles; 11/21/2026)
+		if (scene != null)
+		{
+			scene.cycle();
 		}
 		// Where the client is walking you, each time it changes: the tile it puts the red flag on (his dest line,
 		// without the click it came from: clicks aren't recorded here)
@@ -1577,6 +1625,11 @@ final class Encounters
 		{
 			return;
 		}
+		if (scene != null && (actor == client.getLocalPlayer() || actor instanceof NPC && event.getHitsplat().isMine()))
+		{
+			scene.hit(recording.ticks(), actor instanceof NPC && event.getHitsplat().isMine() ? Text.removeTags(((NPC) actor).getName()) : null,
+				event.getHitsplat().getAmount());
+		}
 		JsonObject line = emit("hit");
 		line.add("who", EncounterSnap.ref(client, actor));
 		line.addProperty("type", event.getHitsplat().getHitsplatType());
@@ -1697,11 +1750,19 @@ final class Encounters
 	{
 		String text = Text.removeTags(event.getMessage());
 		// (the kill: the game's count line ends an automatic recording a few ticks on)
-		if (recording != null && automatic && endAt < 0 && event.getType() == ChatMessageType.GAMEMESSAGE
-			&& KILL_LINE.matcher(text).matches())
+		Matcher kill = recording != null && event.getType() == ChatMessageType.GAMEMESSAGE ? KILL_LINE.matcher(text) : null;
+		if (kill != null && kill.matches())
 		{
-			endAt = recording.ticks() + AFTER_KILL;
-			endWhy = area != null && Presence.RAID.equals(area.kind) ? "completed" : "killed";
+			if (automatic && endAt < 0)
+			{
+				endAt = recording.ticks() + AFTER_KILL;
+				endWhy = area != null && Presence.RAID.equals(area.kind) ? "completed" : "killed";
+			}
+			// (the scene moment's kill, by hand or not: its still scene taken now)
+			if (scene != null)
+			{
+				scene.kill(recording.ticks(), kill.group(1));
+			}
 		}
 		if (recording == null)
 		{
@@ -1831,6 +1892,14 @@ final class Encounters
 			line.addProperty("id", event.getItem().getId());
 			line.addProperty("qty", event.getItem().getQuantity());
 			EncounterSnap.tile(line, client.getTopLevelWorldView(), event.getTile().getLocalLocation(), event.getTile().getPlane());
+			// (the drop, for the scene moment: the recording holds on till it's landed and a few ticks more; not what a
+			// map's load brings)
+			if (scene != null && client.getGameState() == GameState.LOGGED_IN
+				&& scene.itemLanded(recording.ticks(), event.getTile().getLocalLocation(), event.getTile().getPlane())
+				&& "killed".equals(endWhy) && endAt >= 0)
+			{
+				endAt = Math.max(endAt, recording.ticks() + AFTER_KILL + 1);
+			}
 		}
 	}
 
@@ -1917,6 +1986,10 @@ final class Encounters
 			return;
 		}
 		emit("death").add("who", EncounterSnap.ref(client, actor));
+		if (scene != null && actor == client.getLocalPlayer())
+		{
+			scene.died(recording.ticks());
+		}
 		// (a death ends an automatic recording a few ticks on: not in a raid, which goes on)
 		if (actor == client.getLocalPlayer() && automatic && endAt < 0 && (area == null || !Presence.RAID.equals(area.kind)))
 		{
