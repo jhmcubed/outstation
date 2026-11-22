@@ -622,4 +622,4 @@ went up, the Mole's instance started on entering, an instance entered and left w
 the loot tracker's and Dude Where's My Stuff's. Then the Hub README's theme song made SoundCloud only (it still said
 YouTube, SoundCloud or Spotify; they went 11/21): outside-plugin 6bed558, its only difference from 8b4e3f7 the README;
 hub_cut --check, hub_check, gradle test and start_check passed on it. The fork's `outside-update-6`: commit=
-6bed5584623c (jhmcubed/plugin-hub 5332153). Jace opened it 11/22/2026: runelite/plugin-hub#21147, "Update Outside: encounters, more than one goal, Edit my page". After it merges: the page's `ON_THE_HUB.goals` on, the revision log's plugin entry, the update 6 image for Discord.
+6bed5584623c (jhmcubed/plugin-hub 5332153). Jace opened it 11/22/2026: runelite/plugin-hub#21147, "Update Outside: encounters, more than one goal, Edit my page". **Merged 11/22/2026**, within the hour, size-xl and all. The page's `ON_THE_HUB.goals` on and the revision log's entry 37 (outside-wiki#164). After it merges: the page's `ON_THE_HUB.goals` on, the revision log's plugin entry, the update 6 image for Discord.
