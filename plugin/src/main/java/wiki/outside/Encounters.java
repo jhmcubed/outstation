@@ -2197,6 +2197,15 @@ final class Encounters
 			line.addProperty("name", Text.removeTags(def.getName()));
 			line.addProperty("stackable", def.isStackable());
 			line.addProperty("noted", def.getNote() != -1);
+			// (its GE price and high alchemy value each, RuneLite's own, as the Ground Items plugin reads them: the viewer
+			// names a pile on the ground with its worth, 11/22/2026, Jace: "how will people see the name of their drop and
+			// its value on the ground")
+			long[] p = host == null ? null : host.prices(id);
+			if (p != null && p.length >= 2)
+			{
+				line.addProperty("ge", p[0]);
+				line.addProperty("ha", p[1]);
+			}
 		}
 	}
 
