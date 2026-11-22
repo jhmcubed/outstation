@@ -561,6 +561,11 @@ note; update 8 is trips (the plugin's part: no gaps between an instance's kills,
 alone with no Hub update, kill times and personal bests from the game's own lines the recordings already keep. Then the
 year on areas only (on the log's diary), then a Discord post per PB. Update 7 goes to the Hub only once #21147 merges.
 
+Added to update 7 the same day (Jace: "yes, add it to update 7"): the personal bests RuneLite already keeps (ChatCommands'
+RSProfile group "personalbest", seconds by boss, written from the game's PB lines and the Adventure Log's boss times;
+read as Dink does), sent with the snapshot, so a page shows its best times without fresh kills, as "the game's best,
+not on file" until a recording matches it.
+
 Jace: "plan it for update 7". The collection log read by Outside itself, for players who don't use RuneProfile
 (SaluteCFlagg's page: "RuneProfile has no record of SaluteCFlagg ... the collection log's slots, drop rates and which
 pets are had stay dark"). The game gives a plugin the log only while it's open (as RuneProfile, WikiSync and
@@ -588,7 +593,7 @@ its handle (`Goal.Kept.move`, a lime line where it'll go; the page lists the res
 and `Delves.java` and `delve_lost` taken out (the page counts every level: each "already rolled for the loot", a unique
 claimed before going deeper). The cut's `gradle test`, `hub_check.py` and `start_check.py` passed again after both.
 
-### Update 7: built (11/22/2026, not committed or sent)
+### Update 7: built (11/22/2026; round two the same day, not sent)
 
 The collection log, part `clog` (`Clog.java`, in `PARTS` and `SUBMITTED`): "Send my collection log", off to begin
 with. What the reference plugins do (RuneProfile's plugin at b3615fc, WikiSync at 1ff4ea0, TempleOSRS at the Hub's
@@ -608,6 +613,17 @@ and held, the real cache's layout (5 tabs, 125 pages, 1,944 page items, about 63
 the chat's Twisted bow matched to 20997; the whole plugin against a local relay: Update my page sent the merged log,
 the relay kept it, the switch off took it down; the page drew it (a player with no RuneProfile). Jace: deploy the relay,
 then try it in the game (the list in the session's report).
+
+Round two (11/22/2026, Jace's answers): RuneLite's wiki forbids `Client.menuAction` "Except for the 1 exception", and its
+"Sensitive APIs" names it: "There is currently only 1 acceptable use case for this function - fetching collection log
+data: client.menuAction(-1, InterfaceID.Collection.SEARCH_TOGGLE, MenuAction.CC_OP, 1, -1, "Search", null)".
+`hub_check.py` now fails every other call and lists that one as sensitive (and takes a folder, so the cut is checked
+itself: before, it always checked this folder whatever it was given). So, as WikiSync's and TempleOSRS's: an **Outside**
+button in the log's header row (`ClogButton`, WikiSync's drawing, left of the other plugins' buttons), pressing it that
+call and the log's start (2240), only on the player's press. And the log is **sent as it's read** (Jace: people would
+think it broken), not held for the next update: a whole read at once (a minute apart at most), the chat's slots three
+minutes apart at most, merged (`Clog.Outbox`); held anywhere dangerous and sent on leaving, said in the chat. The chat says
+"your collection log is on your page: N slots"; the side tab's line says what the page has and when.
 
 ### Update 6 to the Hub (11/22/2026)
 
