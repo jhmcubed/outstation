@@ -116,6 +116,23 @@ final class Goal
 			return true;
 		}
 
+		/** Moved to this place in the list, counted without it (0: the top), as its row's dragged in the side tab
+		 *  (11/22/2026, Jace: re-ordering goals, "include goal re-ordering in this update too"); false when it isn't there
+		 *  or is there already. The page lists the rest in this order under the one shown. */
+		boolean move(int id, int to)
+		{
+			One g = find(id);
+			if (g == null)
+			{
+				return false;
+			}
+			int from = list.indexOf(g);
+			list.remove(from);
+			int at = Math.max(0, Math.min(list.size(), to));
+			list.add(at, g);
+			return at != from;
+		}
+
 		/** Taken off; the one shown taken off, the first left is shown. */
 		boolean forget(int id)
 		{

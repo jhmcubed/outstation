@@ -561,7 +561,8 @@ game's "New item added to your collection log" line; the side tab saying "open y
 count the plugin already sends has passed what was synced. The relay keeps it; the page uses it where RuneProfile has
 nothing, or whichever is newer.
 
-Also for update 7 (Jace, 11/22/2026, "yes schedule it for update 7"): the goals reordered in the side tab, each row
-dragged by a handle; the order sent as the list's, and the page lists them in it. And the delve levels a death lost
-(update 6's `delve_lost`): the page counts them again since 11/22/2026 (Jace: each level "already rolled for the loot",
-a unique claimed before going deeper), so the plugin's count is only shown, never taken off; update 7 can let it go.
+Moved into update 6 the same day (Jace: "include goal re-ordering in this update too", and of the levels a death
+lost, "why wait for update 7 when you can just drop it now"): the goals reordered in the side tab, each row dragged by
+its handle (`Goal.Kept.move`, a lime line where it'll go; the page lists the rest in that order under the one shown);
+and `Delves.java` and `delve_lost` taken out (the page counts every level: each "already rolled for the loot", a unique
+claimed before going deeper). The cut's `gradle test`, `hub_check.py` and `start_check.py` passed again after both.

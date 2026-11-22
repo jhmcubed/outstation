@@ -78,7 +78,7 @@ PART_FILES = {
     "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
     "goal": [J + "Goal.java", T + "GoalTest.java"],
-    "delve": [J + "Delves.java", T + "DelvesTest.java"],
+    "delve": [],   # (Delves.java, the levels a death lost, taken out 11/22/2026)
     "encounters": [J + "Encounters.java", J + "EncounterSnap.java", J + "EncounterFiles.java", J + "EncounterStrip.java",
                    J + "EncounterShelf.java", J + "EncounterMoment.java", J + "EncounterScene.java", J + "EncounterQueue.java",
                    T + "EncounterStripTest.java", T + "EncounterFilesTest.java", T + "EncountersTest.java",

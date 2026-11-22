@@ -75,7 +75,7 @@ To Jace's relay on Cloudflare, only while you're logged in, and only when you pr
 <!-- hub:end live -->
 - **item charges** (one switch, on; 11/14/2026): each worn or carried item's charges, as the game tells you them in its chat when you check one or as it's used (only the number, by the item; kept on this RuneLite's profile so they're known after a restart)
 <!-- hub:cut delve -->
-- **Doom of Mokhaiotl delves** (one switch, on; 11/14/2026): when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level and the waves past 8, as the Delve Calculator plugin reads it ("Credits"); and (11/19/2026, `delve_lost`) the levels a death lost, as they stood when the board was read: Delves.java counts a run's levels from the chat ("Delve level: 3 duration: ..."), a death in the lair (its regions, the Delve Calculator's) adds them up, kept on the profile per account, since this version only
+- **Doom of Mokhaiotl delves** (one switch, on; 11/14/2026): when you read the board beside the Doom of Mokhaiotl, how many delves you've finished at each level and the waves past 8, as the Delve Calculator plugin reads it ("Credits"). (The levels a death lost, `delve_lost`, were counted from 11/19 to 11/22/2026 and taken out: each level is rolled for a unique as it's finished, so the page counts them all.)
 <!-- hub:end delve -->
 <!-- hub:cut bank -->
 - **my bank on my page** (one switch, off to begin with, behind its own warning; 11/14/2026): your whole bank (each item, how many, a placeholder as none, and the tabs' counts), three ticks after you last used it, to your relay's keep for your page (docs/protocol.md, "Kept for the page"); switching it off takes it off your page

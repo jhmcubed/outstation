@@ -112,6 +112,9 @@ public class OutsidePanel extends PluginPanel
 		/** The ✕ beside a goal: taken off the page (update 4). */
 		void forgetGoal(int id);
 
+		/** A goal's row dragged by its handle to this place in the list, counted without it (11/22/2026). */
+		void moveGoal(int id, int to);
+
 		/** "No 3D model": every goal listed on the page with its picture, none turning (11/19/2026). */
 		void noGoalModel();
 		// hub:end goal
@@ -976,6 +979,9 @@ public class OutsidePanel extends PluginPanel
 	// hub:cut goal
 	private final JButton goalAdd = new JButton("Add a goal item");
 	private final JPanel goalList = new JPanel();
+	/** the goals' rows as listed, with their items, for a row dragged by its handle (11/22/2026) */
+	private final List<JPanel> goalRowsNow = new java.util.ArrayList<>();
+	private final List<Integer> goalIdsNow = new java.util.ArrayList<>();
 
 	/** A goal as the side tab lists it: the item, its name, whether it's got, and whether it's the one shown. */
 	public static final class GoalRow
@@ -1000,6 +1006,8 @@ public class OutsidePanel extends PluginPanel
 		SwingUtilities.invokeLater(() ->
 		{
 			goalList.removeAll();
+			goalRowsNow.clear();
+			goalIdsNow.clear();
 			ButtonGroup group = new ButtonGroup();
 			if (!rows.isEmpty())
 			{
@@ -1020,7 +1028,10 @@ public class OutsidePanel extends PluginPanel
 			}
 			for (GoalRow g : rows)
 			{
-				goalList.add(goalRow(g, group, rows.size() > 1));
+				JPanel row = goalRow(g, group, rows.size() > 1);
+				goalRowsNow.add(row);
+				goalIdsNow.add(g.id);
+				goalList.add(row);
 				goalList.add(Box.createVerticalStrut(2));
 			}
 			goalList.setVisible(!rows.isEmpty());
@@ -1045,6 +1056,43 @@ public class OutsidePanel extends PluginPanel
 		group.add(pick);
 		pick.addActionListener(e -> hooks.showGoal(g.id));
 		r.add(pick, BorderLayout.CENTER);
+		// (its handle: dragged up or down the list, the others making room, a lime line where it'll go; 11/22/2026, Jace:
+		// "making each of the goal lines draggable in the plugin sidetab")
+		if (choice)
+		{
+			JLabel grip = new JLabel();
+			grip.setFont(new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12));
+			grip.setText(grip.getFont().canDisplay('\u2807') ? "\u2807" : "=");
+			grip.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			grip.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.MOVE_CURSOR));
+			grip.setToolTipText("Drag to move " + g.name + " up or down your goals: your page lists them in this order");
+			java.awt.event.MouseAdapter drag = new java.awt.event.MouseAdapter()
+			{
+				private int to = -1;
+
+				@Override
+				public void mouseDragged(java.awt.event.MouseEvent e)
+				{
+					int y = SwingUtilities.convertPoint(grip, e.getPoint(), goalList).y;
+					to = goalDropAt(r, y);
+					goalDropShow(r, to);
+				}
+
+				@Override
+				public void mouseReleased(java.awt.event.MouseEvent e)
+				{
+					goalDropShow(null, -1);
+					if (to >= 0)
+					{
+						hooks.moveGoal(g.id, to);
+					}
+					to = -1;
+				}
+			};
+			grip.addMouseListener(drag);
+			grip.addMouseMotionListener(drag);
+			r.add(grip, BorderLayout.WEST);
+		}
 		JButton x = new JButton();
 		// (the game's own font has no ✕: a system font's, or × or x where that has none either)
 		x.setFont(new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12));
@@ -1055,6 +1103,57 @@ public class OutsidePanel extends PluginPanel
 		r.add(x, BorderLayout.EAST);
 		r.setMaximumSize(new Dimension(Integer.MAX_VALUE, r.getPreferredSize().height));
 		return r;
+	}
+
+	/** Where a dragged row would go, counted without it: the rows whose middles are above the pointer. */
+	private int goalDropAt(JPanel dragged, int y)
+	{
+		int n = 0;
+		for (JPanel row : goalRowsNow)
+		{
+			if (row != dragged && row.getY() + row.getHeight() / 2 < y)
+			{
+				n++;
+			}
+		}
+		return n;
+	}
+
+	/** The dragged row lit, and a lime line where it'll go (none: put back as it was). */
+	private void goalDropShow(JPanel dragged, int to)
+	{
+		int seen = 0;
+		boolean lineDrawn = false;
+		for (JPanel row : goalRowsNow)
+		{
+			boolean line = false;
+			if (dragged != null && row != dragged)
+			{
+				line = seen == to;
+				seen++;
+			}
+			if (line)
+			{
+				lineDrawn = true;
+			}
+			row.setBackground(row == dragged ? ColorScheme.DARK_GRAY_HOVER_COLOR : ColorScheme.DARKER_GRAY_COLOR);
+			row.setBorder(line ? BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(2, 0, 0, 0, LIME), BorderFactory.createEmptyBorder(1, 4, 3, 4))
+				: BorderFactory.createEmptyBorder(3, 4, 3, 4));
+		}
+		// (to the end: the line under the last)
+		if (dragged != null && !lineDrawn && !goalRowsNow.isEmpty())
+		{
+			JPanel last = goalRowsNow.get(goalRowsNow.size() - 1);
+			if (last == dragged && goalRowsNow.size() > 1)
+			{
+				last = goalRowsNow.get(goalRowsNow.size() - 2);
+			}
+			if (last != dragged)
+			{
+				last.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 2, 0, LIME), BorderFactory.createEmptyBorder(3, 4, 1, 4)));
+			}
+		}
+		goalList.repaint();
 	}
 	// hub:end goal
 

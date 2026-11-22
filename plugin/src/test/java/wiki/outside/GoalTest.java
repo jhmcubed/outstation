@@ -12,6 +12,29 @@ import org.junit.Test;
 
 public class GoalTest
 {
+	/** A goal's row dragged up or down (11/22/2026): the list reordered, the page's order following it under the one shown. */
+	@Test
+	public void movesAGoal()
+	{
+		Goal.Kept k = new Goal.Kept();
+		k.add(1); k.add(2); k.add(3); k.add(4);
+		assertTrue(k.move(4, 0));
+		assertEquals(4, k.list.get(0).id);
+		assertEquals(1, k.list.get(1).id);
+		assertTrue(k.move(4, 9));
+		assertEquals(4, k.list.get(3).id);
+		assertFalse(k.move(4, 3));
+		assertFalse(k.move(99, 0));
+		assertTrue(k.move(3, 0));
+		List<Integer> page = new ArrayList<>();
+		for (Goal.One g : k.pageOrder())
+		{
+			page.add(g.id);
+		}
+		// (1 shown first, the rest in the list's order)
+		assertEquals(java.util.Arrays.asList(1, 3, 2, 4), page);
+	}
+
 	@Test
 	public void theLogLineNamesTheGoalWhateverItsCase()
 	{

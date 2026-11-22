@@ -207,7 +207,7 @@ public class OutsidePlugin extends Plugin
 	static final long UPDATE_EVERY_MS = 60_000L;
 	/** what a snapshot carries (the rest of read()'s fields are the socket's) */
 	static final String[] SNAP_FIELDS = {"name", "type", "worn", "inv", "bag", "pouch", "seeds", "barrel", "quiver",
-		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve", "delve_lost", "clog", "counts"};   // (delve: update 2; clog: the collection log's counter; counts: kill and clue counts, 11/16/2026; delve_lost: the delve levels lost to deaths, 11/19/2026)
+		"charges", "skills", "quests", "diaries", "combat", "slayer", "delve", "clog", "counts"};   // (delve: update 2; clog: the collection log's counter; counts: kill and clue counts, 11/16/2026; delve_lost, the delve levels lost to deaths, 11/19 to 11/22/2026: taken out, the page counts every level)
 
 	@Inject
 	private Client client;
@@ -357,10 +357,6 @@ public class OutsidePlugin extends Plugin
 	// hub:cut delve
 	/** (11/14/2026) the Doom of Mokhaiotl board's counts as last read (also kept on the profile), or null */
 	private JsonElement delveSeen;
-	/** (11/19/2026) the delve levels lost to deaths (Delves: this run's, and all lost, kept on the profile), and those
-	 *  lost as they stood when the board was last read (sent beside it), or null */
-	private final Delves delves = new Delves();
-	private JsonElement delveLostSeen;
 	// hub:end delve
 	// hub:cut bank
 	/** (11/14/2026) the bank changed on this tick (sent a few ticks after the last change), or -1 */
@@ -402,8 +398,6 @@ public class OutsidePlugin extends Plugin
 	/** the board beside the Doom of Mokhaiotl (the Delve Calculator plugin's: its scoreboard interface, each level's
 	 *  count in child 46 + 3 a level, 1 to 8, then the waves past 8) */
 	private static final int DELVE_BOARD = 920, DELVE_FIRST = 46, DELVE_STEP = 3;
-	/** the Doom's lair, its delves' regions (the Delve Calculator plugin's: its DELVE_REGION_IDS) */
-	private static final int[] DELVE_REGIONS = {5269, 13668, 14180};
 	// hub:end delve
 
 	@Inject
@@ -678,9 +672,7 @@ public class OutsidePlugin extends Plugin
 			seedsSeen = barrelSeen = null;
 			charges.clear();
 			// hub:cut delve
-			delveSeen = delveLostSeen = null;
-			delves.left();
-			delves.load(null);
+			delveSeen = null;
 			// hub:end delve
 			// hub:cut live
 			liveGear = gearSeen = null;
@@ -751,13 +743,6 @@ public class OutsidePlugin extends Plugin
 			characterChanged();
 		}
 		ticks++;
-		// hub:cut delve
-		// (a delve's run over once they're away from the boss: claimed and gone, or left in the chest, nothing lost)
-		if (delves.running() && !atDelve())
-		{
-			delves.left();
-		}
-		// hub:end delve
 		// hub:cut bank
 		// (the bank: sent three ticks after it last changed, so a whole deposit goes once)
 		if (bankChanged >= 0 && ticks - bankChanged >= 3)
@@ -1323,14 +1308,11 @@ public class OutsidePlugin extends Plugin
 		if (config.delve() && delveSeen != null)
 		{
 			m.put("delve", delveSeen);
-			// (the levels lost to deaths as they stood when the board was read: Delves; none sent till it's read again)
-			m.put("delve_lost", delveLostSeen == null ? JsonNull.INSTANCE : delveLostSeen);
 		}
 		else
 		{
 			// (switched off: taken off the page, as quests and slayer are; the relay keeps each field as last sent)
 			m.put("delve", JsonNull.INSTANCE);
-			m.put("delve_lost", JsonNull.INSTANCE);
 		}
 		// hub:end delve
 		if (config.skills())
@@ -1691,13 +1673,6 @@ public class OutsidePlugin extends Plugin
 				configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "counts", gson.toJson(counts.json()));
 			}
 		}
-		// hub:cut delve
-		// (a delve level done, counted in its run: Delves)
-		if ((e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM) && config.delve())
-		{
-			delves.done(Text.removeTags(e.getMessage()));
-		}
-		// hub:end delve
 		// hub:cut deathbank
 		if (e.getType() == ChatMessageType.GAMEMESSAGE || e.getType() == ChatMessageType.SPAM)
 		{
@@ -1803,13 +1778,6 @@ public class OutsidePlugin extends Plugin
 		if (any)
 		{
 			delveSeen = counts;
-			// (the levels lost to deaths, as they stand now: the board just read counts them too)
-			JsonArray lost = new JsonArray();
-			for (int n : delves.lost)
-			{
-				lost.add(n);
-			}
-			delveLostSeen = lost;
 			saveKept();
 		}
 	}
@@ -2270,6 +2238,19 @@ public class OutsidePlugin extends Plugin
 		goalPanel(k);
 	}
 
+	/** One goal moved up or down the list (its row dragged; on the client's thread; 11/22/2026). */
+	private void goalMove(int id, int to)
+	{
+		Goal.Kept k = goals();
+		if (!k.move(id, to))
+		{
+			return;
+		}
+		goalsKeep(k);
+		sendGoalSoon();
+		goalPanel(k);
+	}
+
 	/** One goal taken off (its \u2715; on the client's thread). */
 	private void goalForget(int id)
 	{
@@ -2569,6 +2550,12 @@ public class OutsidePlugin extends Plugin
 			public void forgetGoal(int id)
 			{
 				clientThread.invokeLater(() -> goalForget(id));
+			}
+
+			@Override
+			public void moveGoal(int id, int to)
+			{
+				clientThread.invokeLater(() -> goalMove(id, to));
 			}
 
 			@Override
@@ -4254,36 +4241,10 @@ public class OutsidePlugin extends Plugin
 		{
 			return;
 		}
-		// hub:cut delve
-		if (config.delve() && atDelve() && delves.died())
-		{
-			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delveLost", delves.keep());
-		}
-		// hub:end delve
 		// hub:cut deathbank
 		deathbankDied();
 		// hub:end deathbank
 	}
-
-	// hub:cut delve
-	/** Whether they're in the Doom of Mokhaiotl's lair (DELVE_REGIONS, by the instance's own map). */
-	private boolean atDelve()
-	{
-		WorldPoint at = here();
-		if (at == null)
-		{
-			return false;
-		}
-		for (int r : DELVE_REGIONS)
-		{
-			if (at.getRegionID() == r)
-			{
-				return true;
-			}
-		}
-		return false;
-	}
-	// hub:end delve
 
 	// hub:cut deathbank
 	/** Their own death (11/16/2026): what they carried and wore as they fell, and where. */
@@ -4545,9 +4506,6 @@ public class OutsidePlugin extends Plugin
 			// hub:cut delve
 			String d = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delve");
 			delveSeen = d == null ? null : gson.fromJson(d, JsonArray.class);
-			delves.load(configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delveLost"));
-			String dl = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, "delveLostSeen");
-			delveLostSeen = dl == null ? null : gson.fromJson(dl, JsonArray.class);
 			// hub:end delve
 		}
 		catch (RuntimeException e)
@@ -4568,10 +4526,6 @@ public class OutsidePlugin extends Plugin
 		if (delveSeen != null)
 		{
 			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delve", gson.toJson(delveSeen));
-		}
-		if (delveLostSeen != null)
-		{
-			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, "delveLostSeen", gson.toJson(delveLostSeen));
 		}
 		// hub:end delve
 	}
