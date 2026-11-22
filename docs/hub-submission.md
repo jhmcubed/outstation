@@ -561,6 +561,18 @@ game's "New item added to your collection log" line; the side tab saying "open y
 count the plugin already sends has passed what was synced. The relay keeps it; the page uses it where RuneProfile has
 nothing, or whichever is newer.
 
+**Trips** (11/22/2026, Jace: "People consider instances with bosses that respawn a 'trip' with multiple kills in
+succession over a period of 1-3 hours"; "yes plan trips for update 7"). Each kill stays its own recording (findable,
+its own time and PB, the length limit's 50-minute parts never cutting a fight, a crash losing one kill), and the kills
+of one instance visit are joined into a trip:
+- no gaps: in an instance, the next recording starts as the last one ends (the respawn wait and re-gearing kept), so
+  played end to end the trip is whole;
+- a trip id on each, the same for every kill of one instance visit, ended by leaving it or dying;
+- on the page, one card a trip (the boss, kills, the whole time, what dropped, how it ended), played straight through
+  with a mark at each kill to jump to; a kill still shared alone;
+- each kill uploaded as it ends, so a trip shows while it's going and a crash keeps what came before.
+Instances first; an open area's kills in a row maybe later (others come and go, and the 90 s quiet ends one).
+
 Moved into update 6 the same day (Jace: "include goal re-ordering in this update too", and of the levels a death
 lost, "why wait for update 7 when you can just drop it now"): the goals reordered in the side tab, each row dragged by
 its handle (`Goal.Kept.move`, a lime line where it'll go; the page lists the rest in that order under the one shown);
@@ -584,3 +596,13 @@ his first kill (someone else hit first: no kill credit, no count line) never end
 in outside-plugin 50837e2 (outstation 61b0078): in a boss area that isn't an instance a recording starts with the fight
 (a hit either way, or the attack on its boss), the boss fought dying ends it with or without the count line, and 90 s
 with no hits ends a fight given up. Its checks pass; the fork stays at daf45c6 until he's tried 50837e2 in the game.
+
+The boss audit (outstation ab804a7, outside-plugin c89762c) and then the upload rule (11/22/2026, Jace: "upload by
+itself only when the fight had a result"; leaving "when the boss is alive" is "a failure"): `Encounters.sendsByItself`,
+outstation cb3b172, outside-plugin 8b4e3f7. A kill (with or without credit), a completion, a chest, a death, a failed run,
+leaving once fought, and anything from Record now go by themselves; the open area's quiet, an instance left before any
+fight, watched NPCs gone, the three-hour limit, logging out or hopping, the client closed and the plugin turned off stay
+on the computer for Put on my page. Checks on 8b4e3f7: gradle test (both), hub_check passed, start_check passed; the local
+world's twelve stages pass (ghillie's tools/local-world/stagecheck.py, the Mole's instance and Vorkath left before and
+after a fight new), and with uploads on the plugin queued exactly the kill and the fought-then-left one. The fork stays at
+daf45c6 until Jace has tried 8b4e3f7 in the game with `-ea`.
