@@ -220,7 +220,7 @@ test("a layout: a panel's own beyond its place (the stage's folds, the globe's s
   deepStrictEqual(layoutShape({ hero: { ...h, p: { stage: { x: 4, w: 2 } } } }), { hero: { ...h, p: { stage: { x: 4, w: 2 } } } });
   // (the featured stage and the tiles each folded or not, each once; the globe's size in whole px)
   deepStrictEqual(HERO_FOLDS, ["featured", "tiles"]);
-  deepStrictEqual(Object.keys(HERO_OWN), ["stage", "where"]);
+  deepStrictEqual(Object.keys(HERO_OWN), ["stage", "where", "goal", "reports"]);
   const both = { stage: { fold: ["featured", "tiles"] }, where: { h: 420 } };
   deepStrictEqual(layoutShape({ hero: { ...h, panel: both } }), { hero: { ...h, panel: both } });
   deepStrictEqual(layoutShape({ hero: { ...h, panel: { stage: { fold: ["tiles", "tiles"] } } } }), { hero: { ...h, panel: { stage: { fold: ["tiles"] } } } });
@@ -231,8 +231,18 @@ test("a layout: a panel's own beyond its place (the stage's folds, the globe's s
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { h: 300.5 } } } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { h: "300" } } } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { fold: ["tiles"] } } } }), "string");     // (only the stage folds)
-  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { h: 300 } } } }), "string");            // (only the globe's sized)
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { h: 300 } } } }), "string");            // (only the globe, the goal and the field reports sized)
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { kit: { h: 300 } } } }), "string");
+  // (11/22/2026: the goal's model and the field reports sized as the globe is, in the same bounds; never folded)
+  const sized = { where: { h: 420 }, goal: { h: 260 }, reports: { h: HERO_TALL[1] } };
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: sized } }), { hero: { ...h, panel: sized } });
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: { goal: { h: HERO_TALL[0] } } } }), { hero: { ...h, panel: { goal: { h: HERO_TALL[0] } } } });
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { goal: { h: HERO_TALL[0] - 1 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { reports: { h: HERO_TALL[1] + 1 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { reports: { h: 200.5 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { goal: { fold: ["tiles"] } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { reports: { fold: ["featured"] } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { talk: { h: 300 } } } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { fold: ["stage"] } } } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { fold: "tiles" } } } }), "string");
   strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { fold: ["tiles", "featured", "tiles"] } } } }), "string");

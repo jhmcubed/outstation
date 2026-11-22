@@ -326,7 +326,11 @@ the page, read by every visitor, and written only by the page's owner:
     has something: the encounters' stage's `{"fold": [parts]}`, the parts that start folded for visitors
     (`HERO_FOLDS`: `"featured"`, the featured stage; `"tiles"`, the thumbnails under its bar), each once, a visitor
     still opening or folding each for their visit; the globe's (`"where"`) `{"h": px}`, its size in whole px
-    (`HERO_TALL`, 120 to 960; the page keeps it to 140 to 720 and never wider than its panel, a phone its default).
+    (`HERO_TALL`, 120 to 960; the page keeps it to 140 to 720 and never wider than its panel, a phone its default);
+    and (11/22/2026) the goal's (`"goal"`) `{"h": px}`, its model's frame's height (the page keeps it to 120 to 560, at
+    the frame's own shape, 180 by 140, never wider than its panel), and the field reports' (`"reports"`) `{"h": px}`,
+    the panel's height, its reports scrolling inside it (the page keeps it to 160 to 960), both in `HERO_TALL` too and
+    a phone's their default.
     The stage's place is its `p.stage` as any panel's is: on the page it stays in its row, `"x"` 4 or more (dragged
     right, never left of where it starts) and `"w"` 2 or more, to the grid's edge.
   - `"theme"`: `{"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?, "repeat"?}`: the link a song's or a set's own address on SoundCloud
@@ -846,9 +850,10 @@ The owner is whoever holds the page's key (`?key=`) or a tending token handed in
 the page's chat from the page"), sent as `Authorization: Bearer <token>`: the link the plugin opens to the player's own
 page carries one, so a player with only the plugin can put fights up from their page.
 
-    GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "owner": bool, "public_default": bool,
-                                                "most": n, "days": n}: the ones shown to anyone; the owner's, all of them
-                                                (403 without a friends-only page's code, unless the owner)
+    GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "history": [TimeEntry, …] oldest first,
+                                                "owner": bool, "public_default": bool, "most": n, "days": n, "kept": n}: the
+                                                ones shown to anyone and their times; the owner's, all of them (403 without
+                                                a friends-only page's code, unless the owner)
     POST   /fights/<channel>                    the owner's: multipart/form-data: meta (JSON), fight (the recording, gzipped),
                                                 and optionally moment (its scene moment) and moment_tick (below)
                                                 201 {"fight": Fight}; 400 a moment with no tick to be found, or one past the

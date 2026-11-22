@@ -375,11 +375,13 @@ export const HERO_FIXED = ["who", "screen", "stage"];
 // start folded for visitors (Jace: "allow for it to be expanded or collapsed by default when a visitor views the page",
 // and "allow for separating the default expanded/collapsed state between the main 'featured' encounter viewer and the
 // smaller thumbnail encounters": "featured", the stage, and "tiles", the rows under its bar), and the globe's size
-// (Jace: "allow for vertical scaling of the where the subject stands section": "h", whole px, HERO_TALL). Added to as
-// the page gains more)
+// (Jace: "allow for vertical scaling of the where the subject stands section": "h", whole px, HERO_TALL); the same day
+// the goal's and the field reports' ("apply the same scaling logic to the subject's goal and field reports": the goal's
+// model's frame's height, the field reports' panel's, each "h" in the same bounds; the page keeps the goal to 120 to 560
+// and the field reports to 160 to 960). Added to as the page gains more)
 export const HERO_FOLDS = ["featured", "tiles"];
 export const HERO_TALL = [120, 960];
-export const HERO_OWN: Record<string, string[]> = { stage: ["fold"], where: ["h"] };
+export const HERO_OWN: Record<string, string[]> = { stage: ["fold"], where: ["h"], goal: ["h"], reports: ["h"] };
 export const HERO_COLS = 12, LAYOUT_MOST = 16 * 1024;
 // (a set's tracks kept with the theme, 50 at most: round nine; the layout's most raised from 8 KB for them)
 export const THEME_TRACKS = 50;
