@@ -355,11 +355,12 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
 //              "wide.0": [ids]}, "off": [ids kept from visitors]}
 //   "hero":    the top of the file's panels on twelve columns (hero.js): {"p": {key: {"x", "w"}}, "o": [keys, in the
 //              order they're packed], "off": [keys kept from visitors]}
-//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?} (SoundCloud
+//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?, "repeat"?} (SoundCloud
 //              only, round nine); each link read as theme.js reads it, a SoundCloud song's or set's own address and nothing
 //              else, and kept in its plain form. A list (11/22/2026): the first song in the theme's own fields, up to nine
 //              more in "more" ({"link", "title"?, "by"?} each), "order" "shuffle" or not; a start and a set's tracks only
-//              for a song alone
+//              for a song alone. "order" and "repeat" ("one" or "all", absent off; 11/22/2026) are only where each visit
+//              starts: every visitor can change both for their own visit
 // Only the sections and panels the page has today: a new one is added to these lists (at the end) as the page gains it.
 export const ARRANGE_READING = ["sec-skills", "sec-deeds", "sec-mega", "sec-pets", "sec-next", "sec-easy-ca", "sec-gains", "sec-movements",
   "sec-kills", "sec-rates", "sec-field", "sec-delve"];
@@ -481,7 +482,7 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
       // youtube songs can be found on there anyway", the page's own player driving SoundCloud's; and where it starts,
       // whole seconds, the page's "starts at")
       if (!isObj(t)) return "theme: {link, title?, by?, start?}";
-      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start" && k !== "tracks" && k !== "more" && k !== "order") return "theme: link, title, by, start, tracks, more and order only";
+      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start" && k !== "tracks" && k !== "more" && k !== "order" && k !== "repeat") return "theme: link, title, by, start, tracks, more, order and repeat only";
       const read = themeLink(t.link);
       if (!read || read.kind !== "soundcloud") return "theme's link: a song's or a set's own address on soundcloud";
       if (t.title !== undefined && typeof t.title !== "string") return "theme's title: words";
@@ -524,12 +525,15 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
         }
       }
       if (t.order !== undefined && t.order !== "shuffle" && t.order !== "in order") return "theme's order: \"shuffle\" or \"in order\"";
+      // (where repeat starts for each visitor, 11/22/2026: one song, all of them (a list, or a set's tracks), or off when
+      // absent; a visitor's page can change it for their visit, never here)
+      if (t.repeat !== undefined && t.repeat !== "one" && t.repeat !== "all") return "theme's repeat: \"one\" or \"all\"";
       const list = !!(more && more.length);
       if (list && t.start) return "theme's start: for a song alone, not a list";
       if (list && tracks && tracks.length) return "theme's tracks: for a set alone, not a list";
       const title = plain(t.title, 120), by = plain(t.by, 60), start = (t.start as number) || 0;
       out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}), ...(tracks && tracks.length ? { tracks } : {}),
-        ...(list ? { more } : {}), ...(list && t.order === "shuffle" ? { order: "shuffle" } : {}) };
+        ...(list ? { more } : {}), ...(list && t.order === "shuffle" ? { order: "shuffle" } : {}), ...(t.repeat ? { repeat: t.repeat as string } : {}) };
     }
   }
   return out;

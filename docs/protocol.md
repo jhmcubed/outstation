@@ -322,7 +322,7 @@ the page, read by every visitor, and written only by the page's owner:
     columns (each place within them), the order they're packed and those kept from visitors. Only its panels
     (`HERO_PANELS`: who, screen, stage, kit, form, goal, where, encounter, clips, bank), each once; the subject, the
     outstation and the encounters' stage never kept from visitors.
-  - `"theme"`: `{"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?}`: the link a song's or a set's own address on SoundCloud
+  - `"theme"`: `{"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?, "repeat"?}`: the link a song's or a set's own address on SoundCloud
     (soundcloud.com/<who>/<song> or /sets/<set>; SoundCloud only since 11/21/2026, round nine: a YouTube or Spotify
     link is refused, and one kept before is no longer shown), read as the page's theme.js reads it and kept in its
     plain form as `{"kind", "id", "link"}`. The title (120 characters) and who made it (60), as SoundCloud's oEmbed told
@@ -337,6 +337,15 @@ the page, read by every visitor, and written only by the page's owner:
       tracklist (`"tracks"`) are for a song alone: sent with a list, refused; a set in a list has its tracks read from
       SoundCloud's player as it plays. An empty `"more"` is a song alone, and an order without a list is let go. A
       theme kept before the list reads as it did, and a page from before it plays the list's first song.
+    - **Shuffle and repeat** (11/22/2026; Jace: "The profile holder should only be setting the default behavior of the
+      playlist ... and the page visitor should still have the freedom to toggle on/off shuffle and turn repeat"):
+      `"order"` and `"repeat"` are only where each visit starts. `"repeat"` is `"one"` (the song that's on plays
+      again; for a song alone, its loop from its start) or `"all"` (after the last, the list starts again from the
+      first, shuffled afresh if shuffle's on; a set alone starts its tracks again); absent, off. Anything else is
+      refused. Each visitor's page has its own shuffle (a list only) and repeat switches, starting where these say;
+      what a visitor changes is for that visit alone and never sent. A theme kept before it, or with only `"order"`,
+      reads as it did with repeat off (a page from before it reads `"repeat"` as nothing, its loop off). The page
+      reads `"all"` on a song alone as `"one"`.
 - A section or panel the page gains later goes in the lists at their end, the relay first; the page puts one the kept
   layout doesn't name at the end.
 - 60 writes an hour a channel, its own count apart from the plugin's uploads (`LAYOUT_AN_HOUR`); 429 past it. A change

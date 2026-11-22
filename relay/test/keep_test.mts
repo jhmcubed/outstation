@@ -225,7 +225,7 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
                     "https://soundcloud.com/someone", "https://open.spotify.com/artist/4uLU6hMCjMI75M1A2tKUQC", "ftp://youtu.be/dQw4w9WgXcQ", "x".repeat(500), 42]) {
     strictEqual(themeLink(no), null, String(no));
   }
-  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by, start, tracks, more and order only");
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by, start, tracks, more, order and repeat only");
   deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "x".repeat(99), start: 90 } }),
                   { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/a-song", link: "https://soundcloud.com/someone/a-song", title: "a song", by: "x".repeat(60), start: 90 } });
   strictEqual(typeof layoutShape({ theme: { link: "https://evil.example/x" } }), "string");
@@ -294,6 +294,22 @@ test("a layout: only its three parts, any taken away with null", () => {
   strictEqual(typeof layoutShape({ goal: {} }), "string");
   strictEqual(typeof layoutShape([1]), "string");
   strictEqual(typeof layoutShape("x"), "string");
+});
+
+// (where shuffle and repeat start for each visitor, 11/22/2026: "repeat" one song or all, absent off; a theme from before
+// it, or with only its order, kept as it was)
+test("a layout: the theme's repeat, one or all, beside its order", () => {
+  const sc = (who: string, what: string) => "https://soundcloud.com/" + who + "/" + what;
+  const plainOf = (link: string) => ({ kind: "soundcloud", id: link, link });
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two") }], order: "shuffle", repeat: "all" } }),
+                  { theme: { ...plainOf(sc("a", "one")), more: [plainOf(sc("b", "two"))], order: "shuffle", repeat: "all" } });
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one"), start: 30, repeat: "one" } }), { theme: { ...plainOf(sc("a", "one")), start: 30, repeat: "one" } });
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "sets/s"), repeat: "all" } }), { theme: { ...plainOf(sc("a", "sets/s")), repeat: "all" } });
+  // (before it: only the order, or neither)
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two") }], order: "shuffle" } }),
+                  { theme: { ...plainOf(sc("a", "one")), more: [plainOf(sc("b", "two"))], order: "shuffle" } });
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one") } }), { theme: plainOf(sc("a", "one")) });
+  for (const bad of ["off", "list", "", "ONE", 1, true, null, ["one"]]) strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), repeat: bad } }), "string", String(bad));
 });
 
 for (const [name, f] of tests) {
