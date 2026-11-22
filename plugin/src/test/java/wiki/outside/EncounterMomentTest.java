@@ -430,4 +430,11 @@ public class EncounterMomentTest
 		assertEquals(1.0, EncounterMoment.num(((Map<?, ?>) tp.get("window")).get("from")), 0);
 		assertArrayEquals(m.chat, EncounterMoment.sparse(back).chat);
 	}
+
+	/** A scene with nothing near its middle has no moment, said as NoMoment, which the shelf logs as one line (11/22/2026). */
+	@Test(expected = EncounterMoment.NoMoment.class)
+	public void nothingNearTheMiddle()
+	{
+		new EncounterMoment.Builder(0, 0, 0, id -> null, 1).still(new ArrayList<>(), EncounterMoment.POINTS);
+	}
 }

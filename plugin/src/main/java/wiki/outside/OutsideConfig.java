@@ -534,6 +534,28 @@ public interface OutsideConfig extends Config
 	}
 	// hub:end goal
 
+	// hub:cut clog
+	// (update 7, 11/22/2026: the collection log read by Outside itself, for players who don't use RuneProfile)
+	@ConfigItem(
+		keyName = "clog",
+		name = "Send my collection log",
+		description = "Off to begin with. On: when you open your collection log and press its search once (the game then"
+			+ " hands over every page), the slots you have and how many of each go"
+			+ " to your Outside page with your next update (Update my page, or the hourly one), and each slot the game's"
+			+ " chat says you've added goes with the update after it. Your page uses it where RuneProfile has nothing, or"
+			+ " where it's newer. Never from the Wilderness or a PvP world. Off takes it off your page",
+		warning = "On, your collection log's slots (each item you have in it and how many) go to the Outside relay, a server"
+			+ " not controlled or verified by the RuneLite developers, with your next update after you open your log, and"
+			+ " your Outside page shows them to anyone who opens it. Switching it off takes them off your page.",
+		position = 11,
+		section = shownSection
+	)
+	default boolean clog()
+	{
+		return false;
+	}
+	// hub:end clog
+
 	// hub:cut encounters
 	// (11/21/2026, ghillie's claude/outstation.md, "Encounters on Outside: the night's design": Encounter Recorder's
 	// recorder folded in, its files on this computer; round two, each one up by itself unless that's switched off)

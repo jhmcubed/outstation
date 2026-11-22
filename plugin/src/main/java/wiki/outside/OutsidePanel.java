@@ -235,6 +235,10 @@ public class OutsidePanel extends PluginPanel
 	private JButton updateButton;
 	private final JLabel dinkStatus = small(" ");
 	private final JLabel notesLine = small(" ");
+	// hub:cut clog
+	/** under Update my page: "open your collection log once" (update 7) */
+	private final JLabel clogLine = small(" ");
+	// hub:end clog
 	private volatile long updateWaits;
 	private final javax.swing.Timer updateClock = new javax.swing.Timer(250, e -> updateCount());
 	// (11/16/2026, the permissions review: who sees the page, and taking it down, with the plugin alone)
@@ -333,6 +337,11 @@ public class OutsidePanel extends PluginPanel
 		snapStatus.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		snapStatus.setVisible(false);
 		page.add(left(snapStatus));
+		// hub:cut clog
+		clogLine.setForeground(LIME);
+		clogLine.setVisible(false);
+		page.add(left(clogLine));
+		// hub:end clog
 		page.add(Box.createVerticalStrut(4));
 		// (11/21/2026, update 6; Jace, of editing his own page and adding a song: "Build it, they should be a part of update
 		// 6"): Edit my page beside Open my page, the page opened to arrange it and set its theme song
@@ -796,6 +805,19 @@ public class OutsidePanel extends PluginPanel
 			revalidate();
 		});
 	}
+
+	// hub:cut clog
+	/** The collection log's line under Update my page (null: hidden). */
+	public void clogLine(String words)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			clogLine.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>");
+			clogLine.setVisible(words != null);
+			revalidate();
+		});
+	}
+	// hub:end clog
 
 	// hub:cut arrange
 	/** A line under "Edit my page" (none: hidden). */

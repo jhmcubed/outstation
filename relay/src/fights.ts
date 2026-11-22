@@ -19,6 +19,16 @@
 //                                                    MAX_MOMENT; the tick also as the X-Moment-Tick header), one a fight
 //   GET    /fights/<channel>/<id>/moment.bin         the moment (whoever may see the fight)
 //   DELETE /fights/<channel>/<id>/moment             the moment taken away (the owner's)
+//   POST   /fights/<channel>/<id>?times=1            its kill times (the owner's; the body {"times": [FightTime, ...]},
+//                                                    at most MAX_TIMES_BODY bytes, [] for "read: the game gave none")
+//
+// Kill times (11/22/2026; ghillie's replay/times.js): the game's own time lines in a recording ("Fight duration: 1:48.
+// Personal best: 1:12", a raid's completion time...), read by the page from the file, since the relay can't unpack a
+// whole recording in a request's few milliseconds (a 79-minute raid is 3.6 MB gzipped, 72 MB of lines). The page that
+// has a recording open (its owner's, which reads each one that has no times yet) sends what it read, and the list
+// carries it as `times`, so a visitor's page shows every encounter's time and each boss's best without downloading a
+// recording. An upload's meta may carry them too (`times`, the same shape). Checked here for shape and size only: they're
+// the owner's own words about their own recording, as the recording itself is.
 //
 // The scene moment (11/21/2026; ghillie's claude/outstation.md, "Encounters on Outside: the night's design"): a moment of
 // a fight its owner kept, as dots sampled from the replay's 3D scene at a tick (ghillie's replay/3d/moment.js, its file
@@ -79,6 +89,58 @@ export interface Fight {
   kept?: true; // kept for good: never trimmed by days or the most (11/21/2026)
   featured?: true; // (in a list only: the one the page features)
   moment_missing?: string; // why the plugin sent it with no moment, in its own words (11/21/2026; the page may make one)
+  times?: FightTime[]; // the game's kill times in it, as its page read them ([]: read, none); absent: not read yet (11/22/2026)
+}
+
+/** A kill's time, as the game's chat line gave it (ghillie's replay/times.js, short()). */
+export interface FightTime {
+  boss: string | null; // whose (the kill count line's name, else null: the fight's own label stands for it)
+  time: string; // the game's time, as written: "1:48", "28:28.80", "1:02:03"
+  t: number; // the recording's tick of the line
+  pb?: string; // the personal best the line named, when it isn't this time
+  best?: true; // a personal best: a new one, or the same as the one it named
+  team?: string; // a raid's team size, as the line said it ("3 players", "Solo")
+}
+
+export const MAX_TIMES = 8;
+export const MAX_TIMES_BODY = 4096;
+const TIME_RE = /^\d{1,3}(?::\d{2}){1,2}(?:\.\d{1,3})?$/;
+
+/** Kill times sent by the page (or an upload's meta), checked: at most MAX_TIMES, each its fields bounded; or why not. */
+export function readTimes(v: unknown): FightTime[] | [number, string] {
+  if (!Array.isArray(v)) return [400, "times is a list"];
+  if (v.length > MAX_TIMES) return [400, `${MAX_TIMES} times at most`];
+  const text = (x: unknown, most: number) => (typeof x === "string" ? x.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, most) : "");
+  const out: FightTime[] = [];
+  for (const k of v) {
+    if (!k || typeof k !== "object") return [400, "each time is an object"];
+    const o = k as Record<string, unknown>;
+    if (typeof o.time !== "string" || !TIME_RE.test(o.time)) return [400, "a time is the game's, like 1:48 or 28:28.80"];
+    if (o.pb !== undefined && (typeof o.pb !== "string" || !TIME_RE.test(o.pb))) return [400, "a personal best is the game's, like 1:12"];
+    const t: FightTime = { boss: text(o.boss, 48) || null, time: o.time, t: typeof o.t === "number" && Number.isInteger(o.t) && o.t >= 0 && o.t < 10_000_000 ? o.t : 0 };
+    if (typeof o.pb === "string" && o.pb !== o.time) t.pb = o.pb;
+    if (o.best === true) t.best = true;
+    const team = text(o.team, 16);
+    if (team) t.team = team;
+    out.push(t);
+  }
+  return out;
+}
+
+/** Whether readTimes said no (its [status, words]) rather than giving times. */
+export function timesRefused(x: FightTime[] | [number, string]): x is [number, string] {
+  return x.length === 2 && typeof x[0] === "number";
+}
+
+/** The body of POST /<id>?times=1: {"times": [...]}, at most MAX_TIMES_BODY bytes; checked as readTimes does. */
+export async function readTimesBody(request: Request): Promise<FightTime[] | [number, string]> {
+  const n = parseInt(request.headers.get("content-length") || "0") || 0;
+  if (n > MAX_TIMES_BODY) return [413, "times are 4 KB at most"];
+  const body = await bodyAtMost(request, MAX_TIMES_BODY);
+  if (!body) return [413, "times are 4 KB at most"];
+  let j: unknown;
+  try { j = JSON.parse(new TextDecoder().decode(body)); } catch { return [400, "times are JSON: {\"times\": [...]}"]; }
+  return readTimes(j && typeof j === "object" ? (j as Record<string, unknown>).times : undefined);
 }
 
 export function fightKey(channel: string, id: string): string {
@@ -258,7 +320,13 @@ export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "
     at: num(m.at, 1_577_836_800_000, now + 60_000), ticks: num(m.ticks, 0, 1_000_000), died: m.died === true,
     taken: num(m.taken, 0, 100_000_000), dealt: num(m.dealt, 0, 100_000_000), size: file.length,
     ...(text(m.moment_missing, 120) ? { moment_missing: text(m.moment_missing, 120) } : {}),
-  };
+  } as Omit<Fight, "id" | "public" | "up">;
+  // (its kill times, if the sender read them: the same shape as POST /<id>?times=1's; bad ones refuse the upload)
+  if (m.times !== undefined) {
+    const times = readTimes(m.times);
+    if (timesRefused(times)) return times;
+    meta.times = times;
+  }
   // (its moment, if it carries one: checked as the moment route checks it, and the whole upload refused if it's bad)
   let moment: { file: Uint8Array; tick: number } | null = null;
   const mf = form.get("moment");

@@ -4,7 +4,7 @@
 //   node test/fights_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { gzipSync } from "node:zlib";
-import { firstLine, fightNumbers, fightsOn, isHeader, isMoment, keptAsked, listed, momentKey, momentTick, newFightId, readFight, readMoment, trimFights, FIGHT_ID, MAX_MOMENT, type Fight } from "../src/fights.ts";
+import { firstLine, fightNumbers, fightsOn, isHeader, isMoment, keptAsked, listed, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timesRefused, trimFights, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight } from "../src/fights.ts";
 
 let passed = 0;
 const tests: [string, () => Promise<void> | void][] = [];
@@ -191,6 +191,34 @@ test("an upload carrying its moment: the tick from moment_tick, meta, or the fil
   const big = new Uint8Array(MAX_MOMENT + 1);
   big.set(MOMENT);
   deepStrictEqual(await readFight(uploadWith({ ticks: 500 }, big, "5")), [413, "a moment is 3 MB at most"]);
+});
+
+test("kill times: the game's, bounded; [] is read and none; anything else refused", async () => {
+  deepStrictEqual(readTimes([]), []);
+  deepStrictEqual(readTimes([{ boss: "Fractured Archive\n", time: "28:28.80", pb: "24:45.00", t: 7678, team: "3 players", extra: 1 }]),
+    [{ boss: "Fractured Archive", time: "28:28.80", t: 7678, pb: "24:45.00", team: "3 players" }]);
+  // (a new personal best: pb the same as the time isn't kept twice; best only if true)
+  deepStrictEqual(readTimes([{ boss: "", time: "1:12", pb: "1:12", best: true, t: -3 }]), [{ boss: null, time: "1:12", t: 0, best: true }]);
+  deepStrictEqual(readTimes([{ time: "1:02:03.4", best: "yes" }]), [{ boss: null, time: "1:02:03.4", t: 0 }]);
+  strictEqual(timesRefused(readTimes([{ time: "soon" }])), true);
+  strictEqual(timesRefused(readTimes([{ time: "1:12", pb: "<b>" }])), true);
+  strictEqual(timesRefused(readTimes({ time: "1:12" })), true);
+  strictEqual(timesRefused(readTimes(Array.from({ length: MAX_TIMES + 1 }, () => ({ time: "1:12" })))), true);
+  strictEqual(timesRefused(readTimes([])), false);
+  const post = (body: string) => new Request("https://relay/fights/x/id?times=1", { method: "POST", body });
+  deepStrictEqual(await readTimesBody(post('{"times":[{"time":"1:48","pb":"1:12","t":90}]}')), [{ boss: null, time: "1:48", t: 90, pb: "1:12" }]);
+  deepStrictEqual(await readTimesBody(post("not json")), [400, 'times are JSON: {"times": [...]}']);
+  deepStrictEqual(await readTimesBody(post(JSON.stringify({ times: [], pad: "x".repeat(5000) }))), [413, "times are 4 KB at most"]);
+});
+
+test("an upload's meta may carry its kill times; bad ones refuse it", async () => {
+  const got = await readFight(upload({ foe: "Giant Mole", times: [{ boss: "Giant Mole", time: "1:12", best: true, t: 140 }] }, rec([HEADER])));
+  if (Array.isArray(got)) throw new Error(got[1]);
+  deepStrictEqual(got.meta.times, [{ boss: "Giant Mole", time: "1:12", t: 140, best: true }]);
+  deepStrictEqual(await readFight(upload({ times: [{ time: "later" }] }, rec([HEADER]))), [400, "a time is the game's, like 1:48 or 28:28.80"]);
+  const none = await readFight(upload({}, rec([HEADER])));
+  if (Array.isArray(none)) throw new Error(none[1]);
+  strictEqual("times" in none.meta, false);
 });
 
 for (const [name, f] of tests) {

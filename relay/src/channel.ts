@@ -31,14 +31,14 @@ import { DurableObject } from "cloudflare:workers";
 import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { mendNotes } from "./mends";
 import { type Clip, fileKey, json, newId, readUpload, serveFile, trim, ID, KEPT_MOST } from "./clips";
-import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, fightKey, fightNumbers, keptAsked, listed, momentKey, newFightId, readFight, readMoment, trimFights } from "./fights";
+import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, fightKey, fightNumbers, keptAsked, listed, momentKey, newFightId, readFight, readMoment, readTimesBody, timesRefused, trimFights } from "./fights";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
          GAME_MESSAGE, GAME_POSTS_A_MINUTE, gamePresence, type Here, HERE_EVERY_MS, type Presence, PRESENCE_FRESH_MS,
          SNAP_CLEARS, SNAP_FIELDS, type StarReport, type Where, WHERE_EVERY_MS } from "./game";
 import { arrayEvents, snapshotEvents } from "./array";
-import { ANIM, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LAYOUT_AN_HOUR, LAYOUT_MOST, layoutShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
+import { ANIM, clogMerge, GEAR, KEEP_AN_HOUR, KEEP_MOST, keepShape, LAYOUT_AN_HOUR, LAYOUT_MOST, layoutShape, LIVE_MOST, MOTIONS_MOST, MOTION_NAME } from "./keep";
 import { type Emote, EMOTE_BYTES, EMOTE_NAME, EMOTES_AN_HOUR, EMOTES_BYTES, EMOTES_MOST, emoteKey, emoteKind, EMOTE_TYPES } from "./emotes";
 
 export interface Env {
@@ -1351,7 +1351,7 @@ export class Channel extends DurableObject<Env> {
     this.gameDirty = false;
     this.game = new GameState();
     this.ctx.storage.delete("game");
-    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter", "keep:goal", "keep:layout"]); // (the bank, the model, the encounter, the goal and the page's layout, keep.ts)
+    this.ctx.storage.delete(["keep:bank", "keep:model", "keep:encounter", "keep:goal", "keep:layout", "keep:clog"]); // (the bank, the model, the encounter, the goal, the page's layout and the collection log, keep.ts)
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("encounter")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("goal")) ?? Promise.resolve());
     this.ctx.waitUntil(this.env.CLIPS?.delete(this.keepKey("model")) ?? Promise.resolve());
@@ -2420,6 +2420,14 @@ export class Channel extends DurableObject<Env> {
         await this.ctx.storage.put("fight:" + id, f);
         return json({ id, moment: f.moment }, 201);
       }
+      // its kill times, as its page read them from the file (fights.ts, "Kill times", 11/22/2026)
+      if (q.get("times") === "1") {
+        const times = await readTimesBody(request);
+        if (timesRefused(times)) return json({ error: times[1] }, times[0]);
+        f.times = times;
+        await this.ctx.storage.put("fight:" + id, f);
+        return json({ id, times });
+      }
       // shown or kept to themselves, featured or not, kept for good or not (any of them in one request; 11/21/2026: kept,
       // fights.ts's "Kept for good": featuring keeps it, letting the featured one go unfeatures it)
       const pub = q.get("public"), feat = q.get("featured"), keepQ = q.get("kept");
@@ -2605,7 +2613,7 @@ export class Channel extends DurableObject<Env> {
     if (what === "motions" || what === "motion") return this.motions(request, q, ip, what);
     if (what === "live" || what === "livemotion" || what === "livemotions") return this.liveKeep(request, q, ip, what);
     if (what === "layout" && request.method !== "GET") return this.layoutWrite(request, q, ip);
-    if (!(what in KEEP_MOST)) return json({ error: "kept: bank, deathbank or model" }, 404);
+    if (!(what in KEEP_MOST)) return json({ error: "kept: bank, deathbank, clog or model" }, 404);
     if (request.method === "GET") {
       if (this.meta.code && (q.get("code") || "") !== this.meta.code) return json({ error: "wrong watch code" }, 403);
       const got = await this.ctx.storage.get<{ data?: unknown; at: number; r2?: boolean }>("keep:" + what);
@@ -2643,7 +2651,9 @@ export class Channel extends DurableObject<Env> {
       await this.ctx.storage.put("keep:" + what, { at: now, r2: true });
     } else {
       if (raw.length > 1900 * 1024) return json({ error: "too big for this relay" }, 413);
-      await this.ctx.storage.put("keep:" + what, { data: shaped, at: now });
+      // (the collection log's added slots go into what's kept: update 7, keep.ts's clogMerge)
+      const data = what === "clog" ? clogMerge((await this.ctx.storage.get<{ data?: unknown }>("keep:clog"))?.data, shaped as Record<string, unknown>) : shaped;
+      await this.ctx.storage.put("keep:" + what, { data, at: now });
     }
     this.tellClip({ kept: { what, at: now } });
     return json({ what, at: now });

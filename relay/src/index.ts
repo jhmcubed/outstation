@@ -11,7 +11,7 @@
 //   POST <relay>/dink/<channel>?key=<key>                              Dink, as to a Discord webhook (a fallback)
 //   /clips/<channel>...                                                 clips on the player's Outside page (clips.ts)
 //   /fights/<channel>...                                                recorded fights on the player's page, their scene moments (fights.ts)
-//   /keep/<channel>/<bank|model>                                        their bank and their model, for the page (keep.ts)
+//   /keep/<channel>/<bank|model|clog>                                   their bank, their model and their collection log, for the page (keep.ts)
 //   /keep/<channel>/layout                                              the page's arrangement and theme song (keep.ts; 11/21/2026)
 //   POST|GET /edit/<channel>                                            a token to edit the page from the page (channel.ts)
 //   /emotes/<channel>...                                                the broadcaster's own emotes (emotes.ts)

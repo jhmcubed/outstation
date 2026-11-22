@@ -882,7 +882,14 @@ final class EncounterShelf
 					}
 					catch (IOException | RuntimeException | OutOfMemoryError ex)
 					{
-						log.warn("outside: {}'s moment couldn't be made; it goes without", file, ex);
+						if (ex instanceof EncounterMoment.NoMoment)
+						{
+							log.info("outside: {}'s moment couldn't be made ({}); it goes without", file, ex.getMessage());
+						}
+						else
+						{
+							log.warn("outside: {}'s moment couldn't be made; it goes without", file, ex);
+						}
 						String why = "it couldn't be made: " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
 						run("noting why " + file + " has no moment", () ->
 						{

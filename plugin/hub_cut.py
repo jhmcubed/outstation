@@ -49,6 +49,8 @@ The parts left out (SUBMITTED: those in the Hub's version now; add a part's name
           recorder folded in, BSD 2-Clause, NOTICE), and one put on their page on their press, stripped first
   arrange (update 6, 11/21/2026) "Edit my page": the page opened with a link that arranges it and sets its theme song
           (a SoundCloud, YouTube or Spotify link), for 2 hours; Jace: "Build it, they should be a part of update 6"
+  clog    (update 7, 11/22/2026) "Send my collection log", off to begin with: the log's slots read as it's opened, and
+          the slots the chat names after, held for the next update; for players who don't use RuneProfile
 
     python3 plugin/hub_cut.py ../outside-plugin           write the cut there (its .git and build left alone)
     python3 plugin/hub_cut.py --check ../outside-plugin   say whether it matches; write nothing
@@ -63,8 +65,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal", "encounters", "arrange"]
-SUBMITTED = ["delve", "model", "bank", "deathbank", "goal", "encounters", "arrange"]   # (11/21/2026: "arrange", Edit my page, for update 6 too; the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update; 11/21/2026, update 6: the encounters, Jace: "include it in update 6 along with our other changes")
+PARTS = ["live", "reports", "globe", "delve", "year", "model", "bank", "deathbank", "talk", "goal", "encounters", "arrange", "clog"]
+SUBMITTED = ["delve", "model", "bank", "deathbank", "goal", "encounters", "arrange", "clog"]   # (11/21/2026: "arrange", Edit my page, for update 6 too; the parts in the Hub's version beyond the snapshot; 11/16/2026: the delve board; 11/17/2026, update 2: the model, the bank and the deathbank, the bank's and the deathbank's held for the next update; 11/18/2026, update 3: the goal item, its "got" held for the next update; 11/21/2026, update 6: the encounters, Jace: "include it in update 6 along with our other changes")
 
 # whole files that belong to a part (paths under this folder)
 J = "src/main/java/wiki/outside/"
@@ -78,6 +80,7 @@ PART_FILES = {
     "talk": [J + "Talk.java", J + "Emotes.java", T + "TalkTest.java", T + "EmotesTest.java"],
     "reports": [J + "Reports.java", T + "ReportsTest.java"],
     "goal": [J + "Goal.java", T + "GoalTest.java"],
+    "clog": [J + "Clog.java", T + "ClogTest.java"],
     "delve": [],   # (Delves.java, the levels a death lost, taken out 11/22/2026)
     "encounters": [J + "Encounters.java", J + "EncounterSnap.java", J + "EncounterFiles.java", J + "EncounterStrip.java",
                    J + "EncounterShelf.java", J + "EncounterMoment.java", J + "EncounterScene.java", J + "EncounterQueue.java",

@@ -68,6 +68,16 @@ final class EncounterMoment
 	// ---- the moment as the file holds it
 
 	/** A moving model's dots over the frames it's in. */
+	/** A scene with nothing to make a moment of (11/22/2026): not a fault, so it's logged as one line, not a warning
+	 *  with its stack (EncounterShelf). */
+	static final class NoMoment extends IllegalStateException
+	{
+		NoMoment(String why)
+		{
+			super(why);
+		}
+	}
+
 	static final class Track
 	{
 		int from, len, n, cls, kind, thin;
@@ -951,7 +961,7 @@ final class EncounterMoment
 			}
 			if (est <= 0)
 			{
-				throw new IllegalStateException("nothing drawn near the middle");
+				throw new NoMoment("nothing drawn near the middle");
 			}
 			density = points / est;
 			ShortList p = new ShortList();

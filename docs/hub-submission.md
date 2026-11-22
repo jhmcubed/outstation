@@ -588,6 +588,27 @@ its handle (`Goal.Kept.move`, a lime line where it'll go; the page lists the res
 and `Delves.java` and `delve_lost` taken out (the page counts every level: each "already rolled for the loot", a unique
 claimed before going deeper). The cut's `gradle test`, `hub_check.py` and `start_check.py` passed again after both.
 
+### Update 7: built (11/22/2026, not committed or sent)
+
+The collection log, part `clog` (`Clog.java`, in `PARTS` and `SUBMITTED`): "Send my collection log", off to begin
+with. What the reference plugins do (RuneProfile's plugin at b3615fc, WikiSync at 1ff4ea0, TempleOSRS at the Hub's
+b8d1f89): the game hands a plugin the open log's slots by its script 4100 (args: item, how many), only the page shown
+until the log's search is pressed; all three press it themselves with `Client.menuAction` (RuneProfile and TempleOSRS
+as the log opens, WikiSync from a button), which `hub_check.py` forbids, so Outside asks the player to press Search
+once (the chat, once a session, as the log opens while the page is behind; the side tab's line under Update my page).
+The log's pages from the cache (enum 2102, params 683, 689, 690, replacements 3721, as WikiSync and TempleOSRS); the
+chat's "New item added to your collection log" matched by name to the log's own items. Held for the next update in
+both versions (never from anywhere dangerous). The relay's keep `clog` (docs/protocol.md, "Kept for the page"); the
+page's `logGet` in ghillie's outside.js. With it, the encounter moment's "nothing drawn near the middle" is one info
+line (`EncounterMoment.NoMoment`), not a warning with its stack.
+
+Checked: gradle test (whole 194, cut 138), hub_check (both), hub_cut --check, start_check (both), the relay's tests and
+tsc. In the local world (ghillie's tools/local-world, stage `clog`, the cut with `-ea`): the server's 4100 calls read
+and held, the real cache's layout (5 tabs, 125 pages, 1,944 page items, about 63 KB), a short read sent as additions,
+the chat's Twisted bow matched to 20997; the whole plugin against a local relay: Update my page sent the merged log,
+the relay kept it, the switch off took it down; the page drew it (a player with no RuneProfile). Jace: deploy the relay,
+then try it in the game (the list in the session's report).
+
 ### Update 6 to the Hub (11/22/2026)
 
 Jace's test of e6da89f: it starts and its tabs work; the key kept and copied; more than one goal, the model's choice and

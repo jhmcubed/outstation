@@ -3,7 +3,7 @@
 //
 //   node test/keep_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { keepShape, layoutShape, themeLink, BANK_SLOTS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME, ARRANGE_READING, HERO_PANELS } from "../src/keep.ts";
+import { clogMerge, keepShape, layoutShape, themeLink, BANK_SLOTS, CLOG_SLOTS, CLOG_PAGE_ITEMS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME, ARRANGE_READING, HERO_PANELS } from "../src/keep.ts";
 import { emoteKind, EMOTE_NAME } from "../src/emotes.ts";
 
 let passed = 0;
@@ -136,6 +136,37 @@ test("the goal with none turning: \"nomodel\" kept at the top only, never beside
   strictEqual(typeof keepShape("goal", { id: 4151, name: "x", nomodel: true, model }), "string");
   // ("model": false, the other way it could have been said, is refused as before: the plugin never sends it)
   strictEqual(typeof keepShape("goal", { id: 4151, name: "x", model: false }), "string");
+});
+
+test("the collection log: a whole read checked, cleaned, anything else left out (update 7, 11/22/2026)", () => {
+  const log = { read: 1_800_000_000_000, count: 2, max: 1699, had: [[22106, 1], [11286, 3], [22106, 1]],
+    tabs: [{ name: "Bosses", pages: [{ name: "Vorkath\n", items: [22106, 11286, 22111] }], x: 1 }],
+    names: { "22106": "Vorki", "11286": "Draconic\tvisage", bad: "x" }, extra: 1 };
+  deepStrictEqual(keepShape("clog", log), { read: 1_800_000_000_000, count: 2, max: 1699, had: [[22106, 1], [11286, 3]],
+    tabs: [{ name: "Bosses", pages: [{ name: "Vorkath", items: [22106, 11286, 22111] }] }], names: { "22106": "Vorki", "11286": "Draconic visage" } });
+  strictEqual(typeof keepShape("clog", { ...log, had: [[22106, 0]] }), "string");                       // (a slot had is one at least)
+  strictEqual(typeof keepShape("clog", { ...log, had: Array(CLOG_SLOTS + 1).fill([1, 1]) }), "string");
+  strictEqual(typeof keepShape("clog", { ...log, count: 1700 }), "string");                             // (more than the most)
+  strictEqual(typeof keepShape("clog", { ...log, read: 5 }), "string");
+  strictEqual(typeof keepShape("clog", { ...log, tabs: [] }), "string");
+  strictEqual(typeof keepShape("clog", { ...log, tabs: [{ name: "Bosses", pages: [{ name: "Vorkath", items: Array(CLOG_PAGE_ITEMS + 1).fill(1) }] }] }), "string");
+  strictEqual(typeof keepShape("clog", { ...log, tabs: [{ name: "", pages: [] }] }), "string");
+  strictEqual(typeof keepShape("clog", { ...log, names: [] }), "string");
+});
+
+test("the collection log: slots to add, merged into what's kept (update 7, 11/22/2026)", () => {
+  deepStrictEqual(keepShape("clog", { add: [[20997, 1]], x: 1 }), { add: [[20997, 1]] });
+  strictEqual(typeof keepShape("clog", { add: [] }), "string");
+  strictEqual(typeof keepShape("clog", { add: [[20997, 1]], had: [] }), "string");
+  strictEqual(typeof keepShape("clog", { add: [[0, 1]] }), "string");
+  const whole = keepShape("clog", { read: 1_800_000_000_000, count: 1, max: 9, had: [[22106, 1]], tabs: [{ name: "Bosses", pages: [] }], names: {} }) as Record<string, unknown>;
+  deepStrictEqual(clogMerge({ had: [[1, 1]] }, whole), whole);                                          // (a whole read replaces)
+  const more = clogMerge(whole, { add: [[20997, 1], [22106, 1]] });
+  deepStrictEqual(more.had, [[22106, 1], [20997, 1]]);                                                  // (one already there keeps its count)
+  strictEqual(more.count, 2);
+  deepStrictEqual(more.tabs, whole.tabs);
+  deepStrictEqual(whole.had, [[22106, 1]]);                                                             // (what was kept, left as it was)
+  deepStrictEqual(clogMerge(undefined, { add: [[20997, 1]] }), { had: [[20997, 1]] });                  // (nothing kept: the slots alone)
 });
 
 test("emotes: PNG, JPEG and GIF by their own first bytes; names", () => {

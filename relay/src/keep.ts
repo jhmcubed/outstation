@@ -17,6 +17,11 @@
 //     one at the top is the one they chose to show turning, and the only one with a model. And since 11/21/2026 (round
 //     nine) "nomodel": true on the one at the top when they chose none turning (the plugin's No 3D model): the page
 //     builds a goal's model from the game's own files when it comes without one, and this tells it not to
+//   - "clog" (update 7, 11/22/2026: the collection log read by Outside itself, for players who don't use RuneProfile):
+//     the log as the plugin read it when it was opened, {"read": ms, "count", "max" (the game's counts then), "tabs":
+//     [{"name", "pages": [{"name", "items": [ids]}]}] and "names": {id: name} (the log's pages, from the game's cache),
+//     "had": [[id, how many], ...]}; or slots to add to what's kept, {"add": [[id, how many], ...]} (the chat's "New item
+//     added to your collection log" lines, or a read that found fewer than the game's count), merged by clogMerge
 //   - "model" (Jace: "upload a captured model of their character onto their profile page just as RuneProfile does"):
 //     {"v": [x, y, z, ...] the vertices (whole numbers, the game's units, |n| <= 8192), "f": [a, b, c, ...] the faces
 //     (each three vertices' places), "c": [one colour each face: the game's packed HSL, 0-65535, or -1: drawn grey
@@ -38,6 +43,7 @@
 
 export const KEEP_MOST: Record<string, number> = { bank: 256 * 1024, deathbank: 64 * 1024, model: 4 * 1024 * 1024, motion: 4 * 1024 * 1024, encounter: 4 * 1024 * 1024,
   goal: 2 * 1024 * 1024,
+  clog: 256 * 1024,   // (update 7, 11/22/2026: about 90 KB for a log of 1,700 slots with its pages' names and items)
   layout: 8 * 1024,   // (the page's arrangement and its theme song, 11/21/2026: read here as the others are; written by layoutWrite)
   live: 4 * 1024 * 1024, livemotion: 4 * 1024 * 1024 };
 // (11/15/2026, Jace: "build the motion library"): a player's recorded motions, each under a name, MOTIONS_MOST of them
@@ -49,6 +55,9 @@ export const MOTION_FRAMES = 60;
 export const KEEP_AN_HOUR = 12;
 // (11/19/2026: a goal's "more", the rest of a player's goals beside the one shown; the plugin keeps 10 in all)
 export const GOALS_MORE = 19;
+// (update 7: the collection log's slots, tabs, pages and a page's items, each at most; the game has about 1,700 slots in
+// five tabs and 230 pages)
+export const CLOG_SLOTS = 4000, CLOG_TABS = 8, CLOG_PAGES = 400, CLOG_PAGE_ITEMS = 600;
 export const BANK_SLOTS = 1600, DEATHBANK_SLOTS = 200, MODEL_VERTICES = 20000, MODEL_FACES = 30000;
 // (11/15/2026, Jace: "can you build the effects (spot animations) and the ground into the model viewer/capturer?"): a
 // still model's effects ("fx": FX_MOST models), a motion's ("frames.fx": FX_MODELS models by key, and each frame's
@@ -97,6 +106,7 @@ export function keepShape(what: string, d: unknown): unknown | string {
     if (d.from !== undefined && d.from !== "death") return "from: \"death\" or none";
     return { where: d.where, locked: d.locked, items: items.map((s) => [s[0], s[1]]), names: n, ...(d.from ? { from: d.from } : {}) };
   }
+  if (what === "clog") return clogShape(d);
   if (what === "model") return modelShape(d, true);
   // (11/15/2026: the last boss they fought, "the encounter": its name and its model as the fight ended)
   if (what === "encounter") {
@@ -148,7 +158,69 @@ export function keepShape(what: string, d: unknown): unknown | string {
     if (!(m as Record<string, unknown>).frames) return "a motion has its frames";
     return m;
   }
-  return "kept: bank, deathbank or model";
+  return "kept: bank, deathbank, clog or model";
+}
+
+const clogPairs = (v: unknown): number[][] | string => {
+  if (!Array.isArray(v) || v.length > CLOG_SLOTS) return "at most " + CLOG_SLOTS + " slots";
+  const out: number[][] = [], seen = new Set<number>();
+  for (const s of v) {
+    if (!Array.isArray(s) || s.length !== 2 || !whole(s[0], 200_000) || s[0] < 1 || !whole(s[1]) || s[1] < 1) return "[item, how many] each";
+    if (!seen.has(s[0])) { seen.add(s[0]); out.push([s[0], s[1]]); }
+  }
+  return out;
+};
+
+/** The collection log, checked (keep.ts's header, "clog"): a whole read or slots to add, or a reason it isn't one. */
+function clogShape(d: Record<string, unknown>): Record<string, unknown> | string {
+  if (d.add !== undefined) {
+    if (d.had !== undefined) return "clog: a whole read (had) or slots to add (add), not both";
+    const add = clogPairs(d.add);
+    if (typeof add === "string") return "add: " + add;
+    if (!add.length) return "add: a slot at least";
+    return { add };
+  }
+  const had = clogPairs(d.had);
+  if (typeof had === "string") return "had: " + had;
+  if (!whole(d.read, Number.MAX_SAFE_INTEGER) || (d.read as number) < 1_262_304_000_000) return "read: when the log was read (ms)";
+  if (!whole(d.count, CLOG_SLOTS) || !whole(d.max, CLOG_SLOTS) || (d.count as number) > (d.max as number)) return "count, max: the game's counts";
+  if (!Array.isArray(d.tabs) || !d.tabs.length || d.tabs.length > CLOG_TABS) return "tabs: 1 to " + CLOG_TABS;
+  const tabs: unknown[] = [];
+  let pages = 0;
+  for (const t of d.tabs) {
+    if (!isObj(t) || !Array.isArray(t.pages)) return "tabs: {name, pages} each";
+    const name = plain(t.name, 40);
+    if (!name) return "tabs: a name each";
+    const ps: unknown[] = [];
+    for (const p of t.pages) {
+      if (++pages > CLOG_PAGES) return "tabs: " + CLOG_PAGES + " pages at most";
+      if (!isObj(p) || !ints(p.items, 1, 200_000, CLOG_PAGE_ITEMS)) return "pages: {name, items: [ids]} each";
+      const pn = plain(p.name, 60);
+      if (!pn) return "pages: a name each";
+      ps.push({ name: pn, items: (p.items as number[]).slice() });
+    }
+    tabs.push({ name, pages: ps });
+  }
+  if (!isObj(d.names)) return "names: {id: name}";
+  const names: Record<string, string> = {};
+  for (const [k, v] of Object.entries(d.names).slice(0, CLOG_SLOTS)) {
+    if (ID.test(k) && typeof v === "string") names[k] = plain(v, 60);
+  }
+  return { read: d.read, count: d.count, max: d.max, tabs, names, had };
+}
+
+/** What's kept once a clog's taken: a whole read replaces what was; slots to add go into what's kept (a slot already
+ *  there keeps its count; the count raised to the slots had), or start a log of slots alone, with no pages. */
+export function clogMerge(kept: unknown, shaped: Record<string, unknown>): Record<string, unknown> {
+  if (!shaped.add) return shaped;
+  const was = isObj(kept) && Array.isArray(kept.had) ? kept : { had: [] as number[][] };
+  const had = (was.had as number[][]).slice(0, CLOG_SLOTS), there = new Set(had.map((p) => p[0]));
+  for (const p of shaped.add as number[][]) {
+    if (!there.has(p[0]) && had.length < CLOG_SLOTS) { there.add(p[0]); had.push(p); }
+  }
+  const out: Record<string, unknown> = { ...was, had };
+  if (whole(out.count)) out.count = Math.min(CLOG_SLOTS, Math.max(out.count as number, had.length));
+  return out;
 }
 
 /** A goal's item and when it was got, checked (its model apart: only the goal at the top carries one), or a reason. */
