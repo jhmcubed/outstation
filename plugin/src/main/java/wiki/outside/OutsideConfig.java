@@ -554,12 +554,15 @@ public interface OutsideConfig extends Config
 		return true;
 	}
 
-	// (11/21/2026, ghillie's claude/outstation.md, "Encounters, round two": every encounter up by itself, Jace's ask)
+	// (11/21/2026, ghillie's claude/outstation.md, "Encounters, round two": every encounter up by itself, Jace's ask;
+	// 11/22/2026, only those with a result: Encounters.sendsByItself)
 	@ConfigItem(
 		keyName = "encounterSend",
 		name = "Put each encounter on my page",
-		description = "On (to begin with): each recording (one you started with Record now too, and one cut off by the client"
-			+ " closing, at the next start) goes to your Outside page by itself as it ends, with its scene moment (the scene"
+		description = "On (to begin with): each fight with a result (a kill, a completion, a chest, your death, a failed run, or"
+			+ " leaving mid-fight) and each recording you started with Record now goes to your Outside page by itself as it"
+			+ " ends; the rest (a fight given up in the open, an instance left before any fight, logging out or hopping) stay"
+			+ " on your computer for Put on my page. Each goes with its scene moment (the scene"
 			+ " your game drew round the kill, as coloured dots; for a chest's loot, its reward window as you saw it): stripped"
 			+ " first as Put on my page strips"
 			+ " one (other players' names, their chat, your exact experience), then sent to the Outside relay, a server not"

@@ -5521,14 +5521,15 @@ public class OutsidePlugin extends Plugin
 			}
 
 			@Override
-			public void ended(String packed, EncounterScene.Taken taken, String reason)
+			public void ended(String packed, EncounterScene.Taken taken, String reason, boolean byItself)
 			{
 				if (taken != null)
 				{
 					takenFor.put(packed, taken);
 				}
-				// (never from anywhere dangerous; with the switch on, every other end goes up by itself, "Record now"'s
-				// too (Jace, 11/21/2026: "in case someone wants to record something that isn't a fight"). Queued now,
+				// (never from anywhere dangerous; with the switch on, an end with a result goes up by itself, "Record now"'s
+				// however it ended (Jace, 11/21/2026: "in case someone wants to record something that isn't a fight"; and
+				// 11/22/2026, only a fight with a result: Encounters.sendsByItself; the rest stay for Put on my page). Queued now,
 				// in the index before it's even packed, so a client closed meanwhile still sends it next time; the sender
 				// waits for its file and its moment. A part split at the length limit isn't sent: the last part sends
 				// them all, joined; round three)
@@ -5540,7 +5541,7 @@ public class OutsidePlugin extends Plugin
 				{
 					shelf.expect(packed);
 				}
-				if (shelf != null && config.encounterSend() && !"the Wilderness or PvP".equals(reason))
+				if (shelf != null && config.encounterSend() && byItself)
 				{
 					shelf.queue(packed, OutsidePlugin.this::listEncounters);
 				}

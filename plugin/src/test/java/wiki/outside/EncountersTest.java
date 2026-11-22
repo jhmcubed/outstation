@@ -275,4 +275,28 @@ public class EncountersTest
 		assertFalse(Encounters.fightStopped(Encounters.OPEN_IDLE - 1, 0));
 		assertTrue(Encounters.fightStopped(Encounters.OPEN_IDLE, 0));
 	}
+
+	/** What goes to the page by itself (11/22/2026, Jace: only a fight with a result; leaving once fought is a failure) */
+	@Test
+	public void sendsByItselfOnlyWithAResult()
+	{
+		for (String r : new String[]{"killed", "completed", "looted", "claimed", "died", "failed", "stopped by hand"})
+		{
+			assertTrue(r, Encounters.sendsByItself(r, true, true));
+			assertTrue(r, Encounters.sendsByItself(r, true, false));
+		}
+		assertTrue(Encounters.sendsByItself("left", true, true));
+		assertFalse(Encounters.sendsByItself("left", true, false));
+		for (String r : new String[]{"the fight stopped", "watched NPCs gone", "the time limit", "logged out or hopped",
+			"client closed", "plugin turned off"})
+		{
+			assertFalse(r, Encounters.sendsByItself(r, true, true));
+		}
+		// (Record now: however it ended, but never from anywhere dangerous or a part split at the length limit)
+		assertTrue(Encounters.sendsByItself("logged out or hopped", false, false));
+		assertTrue(Encounters.sendsByItself("client closed", false, false));
+		assertFalse(Encounters.sendsByItself("the Wilderness or PvP", false, true));
+		assertFalse(Encounters.sendsByItself("the Wilderness or PvP", true, true));
+		assertFalse(Encounters.sendsByItself(Encounters.SPLIT, false, true));
+	}
 }

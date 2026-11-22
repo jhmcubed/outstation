@@ -425,9 +425,10 @@ final class Encounters
 		 *  Long}), or null; on the client's thread (11/21/2026, the scene moment's labels) */
 		Object[] itemLabel(int id, int qty);
 
-		/** a recording's ended: its file once packed ({@code packed}), why, and what its scene moment is made from (null:
-		 *  none, as for one stopped in the Wilderness); on the client's thread (11/21/2026, "Encounters, round two") */
-		void ended(String packed, EncounterScene.Taken taken, String reason);
+		/** a recording's ended: its file once packed ({@code packed}), why, what its scene moment is made from (null:
+		 *  none, as for one stopped in the Wilderness), and whether it goes to the page by itself with "Put each encounter
+		 *  on my page" on ({@link #sendsByItself}); on the client's thread (11/21/2026, "Encounters, round two") */
+		void ended(String packed, EncounterScene.Taken taken, String reason, boolean byItself);
 
 		/** an item's GE price (RuneLite's own) and high alchemy value, each, as the Ground Items plugin reads them (a
 		 *  noted item's, the item it notes): {ge, ha}; on the client's thread (11/21/2026, round three) */
@@ -872,6 +873,43 @@ final class Encounters
 		stop(reason, dropTick, false);
 	}
 
+	/**
+	 * Whether a recording that ended so goes to the page by itself, with "Put each encounter on my page" on (11/22/2026,
+	 * Jace: "upload by itself only when the fight had a result"; "i would consider teleporting out when the boss is alive
+	 * a failure"). A result: a kill (with credit or without), a completion, a chest looted or claimed, the player's death,
+	 * a run failed, and leaving once they'd fought (any hitsplat on them or by them in it: a teleport out with the boss
+	 * up). Not one: the open area's quiet ("the fight stopped"), leaving before any fight (an instance walked into and
+	 * out of), watched NPCs gone, the three-hour limit, logging out or hopping, the client closed, the plugin turned off.
+	 * One started by hand (Record now) goes however it ended: they chose to record it. Never from anywhere dangerous.
+	 * Every recording stays on the computer either way, for Put on my page.
+	 */
+	static boolean sendsByItself(String reason, boolean automatic, boolean fought)
+	{
+		if (reason == null || "the Wilderness or PvP".equals(reason) || SPLIT.equals(reason))
+		{
+			return false;
+		}
+		if (!automatic)
+		{
+			return true;
+		}
+		switch (reason)
+		{
+			case "killed":
+			case "completed":
+			case "looted":
+			case "claimed":
+			case "died":
+			case "failed":
+			case "stopped by hand":
+				return true;
+			case "left":
+				return fought;
+			default:
+				return false;
+		}
+	}
+
 	/** {@code split}: the part ends at the length limit and the next goes on (its scene kept, no moment yet, and nothing
 	 *  sent: the parts go up joined, as one, once the last has ended; EncounterShelf.prepare). */
 	private void stop(String reason, boolean dropTick, boolean split)
@@ -933,7 +971,7 @@ final class Encounters
 				run = null;
 			}
 		}
-		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason);
+		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason, !split && sendsByItself(reason, automatic, lastFight >= 0));
 		finishing.add(stopped);
 		recording = null;
 		stopped.close(packed ->
