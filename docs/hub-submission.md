@@ -553,6 +553,35 @@ open: nothing naming `wiki.outside` failing, and no "must be called on client th
 Then: the warning with recorded fights (above) on the fork's file, the commit= there, and once merged the page's
 `ON_THE_HUB.goals` on and the revision log's entry for the plugin.
 
+## Update 8 (planned, 11/22/2026): alts under one page
+
+Jace: "plan the alts linking for update 8" (after "people like might being able to have one profile that ties all of
+their characters together as a package"; done without Outside.wiki accounts). Trips move to update 9.
+
+- **Each character keeps its own key and page.** Updates never collide; nothing about how a character sends changes.
+- **Linking by a one-time code, never the main's key.** The main's key is the whole page's control, so it never leaves
+  the main's client (pasting it into an alt's, or a key derived from it, would put that control in a second place).
+  - The main's side tab, Page tab: **Add a character** asks the relay for a code (6 to 8 characters, 10 minutes, one use,
+    made with the main's key) and shows it with how long it lasts.
+  - The alt's side tab: **Link to my main**, a box for the code. The alt's plugin sends it with the alt's own key; the
+    relay checks both and records the link. Both side tabs say it's done, naming the other character.
+  - At most a handful of alts a main (say 10); an alt has one main; a main can't be someone's alt.
+- **Unlinking** from either side tab (Unlink this character / each alt's ✕ on the main), at once, no code.
+- **Shown or not:** each link is public (both pages show it) or private (only the owner, opened from Edit my page, sees
+  it), chosen on the main, private to begin with, so nobody's alts are shown by surprise.
+- **The relay:** `POST /link/<channel>?key=` (the main asks for a code), `POST /link/<alt>?key=&code=` (the alt claims it),
+  `DELETE /link/<channel>/<other>?key=` (either side), the links in the channel's record and on GET /game as
+  `alts: [...]` / `main: "<name>"` when public. Codes kept hashed, 10 minutes, one use; tried codes limited.
+- **The page:** outside.wiki/<main> gains a character switcher under the name (each character's own page, its own
+  readings, as tabs or a small row of their names and account-type badges); an alt's page says "an alt of <main>" with a
+  link, when public. Search by an alt's name lands on the alt's page as now.
+- **For the Hub:** no new game data; two buttons and a code box; the README says what linking shares (that the
+  characters are one person's, only when public). The warning stays as the reviewer wrote it.
+- **Checks:** relay tests for every route (codes expire, are single-use, can't be guessed fast, can't link a main as an
+  alt), the local world with two characters on one machine (two clients), the page at both widths.
+- **Jace's calls before building:** public or private to begin with (Claude: private); how the main's page shows the
+  others (a switcher row under the name, Claude's pick, or a section); whether an alt's page lists its siblings.
+
 ## Update 7 (planned, 11/22/2026)
 
 **The order (11/22/2026, Jace: "yes, go with that order"):** update 7 is the collection log alone (small, one new kind
