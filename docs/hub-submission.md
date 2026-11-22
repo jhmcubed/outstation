@@ -555,6 +555,12 @@ Then: the warning with recorded fights (above) on the fork's file, the commit= t
 
 ## Update 7 (planned, 11/22/2026)
 
+**The order (11/22/2026, Jace: "yes, go with that order"):** update 7 is the collection log alone (small, one new kind
+of data behind its own switch, readable in one sitting), with the "moment couldn't be made" warning made a one-line
+note; update 8 is trips (the plugin's part: no gaps between an instance's kills, a trip id); meanwhile, on outside.wiki
+alone with no Hub update, kill times and personal bests from the game's own lines the recordings already keep. Then the
+year on areas only (on the log's diary), then a Discord post per PB. Update 7 goes to the Hub only once #21147 merges.
+
 Jace: "plan it for update 7". The collection log read by Outside itself, for players who don't use RuneProfile
 (SaluteCFlagg's page: "RuneProfile has no record of SaluteCFlagg ... the collection log's slots, drop rates and which
 pets are had stay dark"). The game gives a plugin the log only while it's open (as RuneProfile, WikiSync and
