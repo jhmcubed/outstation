@@ -28,10 +28,10 @@
 // itself is kept by record.ts's Records, never here.
 
 import { DurableObject } from "cloudflare:workers";
-import { aetherText, attachCode, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
+import { aetherText, attachCode, channelForm, dinkReport, dinkSafe, oneLine, pyjson, relayOf } from "./text";
 import { mendNotes } from "./mends";
 import { type Clip, fileKey, json, newId, readUpload, serveFile, trim, ID, KEPT_MOST } from "./clips";
-import { type Fight, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, fightKey, fightNumbers, keptAsked, listed, momentKey, newFightId, readFight, readMoment, readTimesBody, timesRefused, trimFights } from "./fights";
+import { type Fight, type TimeEntry, FIGHT_ID, FIGHTS_AN_HOUR, MOMENTS_AN_HOUR, bestShowKey, bestShownSet, fightKey, fightNumbers, historyGone, historyPublic, historyPut, historyShown, keptAsked, listed, markBest, momentKey, newFightId, readFight, readMoment, readTimesBody, timesRefused, trimFights } from "./fights";
 import { nameFits, claimsFrom, judge, noteLook, noteSaid, readXp, reported, type Seen, WITNESS_LOOK, WITNESS_WAITS, type Xp } from "./witness";
 import { USER_AGENT } from "./lookup";
 import { type Activity, type Fields, GameState, gameActivity, gameFields, gameHere, gameStar, gameWhere, GAME_A_SECOND,
@@ -89,6 +89,8 @@ const CHAT_PAGE = 50;
 // as asked (GET /register/<channel>?before=<id>, NOTES_PAGE at a time; the tests' NOTES_PAGE sets both); NOTE_BURST a
 // socket's notes in NOTE_WINDOW at most
 const NOTES_KEPT = 500, NOTES_SENT = 50, NOTES_PAGE = 50, NOTE_BURST = 3, NOTE_WINDOW = 60_000;
+// (a note signed as a page, 11/22/2026: the key given with it at most this long; the page's own say 8 to 400)
+const NOTE_KEY_MAX = 400;
 const SAY_MAX = 300, SAY_BURST = 20, SAY_WINDOW = 10_000;
 const NAME_MAX = 20;
 const TITLE_MAX = 100; // the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
@@ -195,6 +197,10 @@ interface Att {
   name?: string;
   says?: number[];
   notes?: number[]; // (when its last notes went, 11/17/2026)
+  // (a watching socket's address, 11/22/2026: only to have a page's key checked under it when a note's signed as that
+  // page, so its wrong keys count against this address as any socket's would; never sent, gone with the socket)
+  ip?: string;
+  signer?: { kh: string; page: string }; // (the page a note was last signed as, and its name's and key's hash: once a socket)
   lastPing?: number;
   host?: string; // a desk's name in the chat
   talk?: boolean; // a desk that said &talk=1: the Outside plugin's chat in the game (11/16/2026)
@@ -811,7 +817,8 @@ export class Channel extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, ws] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(ws, [no ? "refused" : role]);
-    const a: Att = { role: (no ? "refused" : role) as Role, ...(prover && !no ? { prover } : {}), ...(tendUntil && !no ? { tendUntil } : {}) };
+    const a: Att = { role: (no ? "refused" : role) as Role, ...(prover && !no ? { prover } : {}), ...(tendUntil && !no ? { tendUntil } : {}),
+                     ...(role === "watch" && !no && ip ? { ip } : {}) };
     this.keep(ws, a);
     this.moved();
 
@@ -1413,7 +1420,8 @@ export class Channel extends DurableObject<Env> {
 
   // messages
 
-  // (not async: nothing here waits, and a frame needn't make a promise)
+  // (not async: nothing here waits, and a frame needn't make a promise; only a note signed as a page does, its key
+  // checked by that page's channel: fromViewer's promise then, 11/22/2026)
   webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
     const size = typeof msg === "string" ? msg.length : msg.byteLength;
     if (size > MAX_MESSAGE) return;
@@ -1424,7 +1432,7 @@ export class Channel extends DurableObject<Env> {
       const now = Date.now();
       if (this.meta.liveSince && now - (this.meta.liveSeen || 0) > 60_000) { this.meta.liveSeen = now; this.saveMeta(); }
     } else if (a.role === "watch") {
-      if (typeof msg === "string" && msg.length <= VIEWER_TEXT) this.fromViewer(ws, a, msg);
+      if (typeof msg === "string" && msg.length <= VIEWER_TEXT) return this.fromViewer(ws, a, msg);
     } else if (a.role === "desk") {
       if (typeof msg === "string") this.fromDesk(a.host || this.name, msg, ws);
     } else if (a.role === "tend") {
@@ -1687,15 +1695,63 @@ export class Channel extends DurableObject<Env> {
     this.broadcast(line);
   }
 
-  note(name: string, text: string, who: number, device: string) {
+  /** A note kept and told to everyone; `page`, the page it was signed as with that page's key (proven, 11/22/2026). */
+  note(name: string, text: string, who: number, device: string, page = "") {
     this.meta.noteId = (this.meta.noteId || 0) + 1;
     const id = this.meta.noteId;
-    const line = pyjson({ note: { id, name, text, who, at: Date.now() } });
+    const line = pyjson({ note: { id, name, text, who, at: Date.now(), ...(page ? { proven: true, page } : {}) } });
     this.notes.push([id, line, device]);
     this.notes = this.notes.slice(-NOTES_KEPT);
     this.saveMeta();
     this.saveNotes();
     this.broadcast(line);
+  }
+
+  /** A note signed as a page (11/22/2026, Jace: "allow for inputting your key in the register just like you can in the
+   *  aether… with a way of showing it's actually you rather than someone impersonating you, but still allow for anyone
+   *  to type there"; docs/protocol.md "The register"): `as`, the page's name as its owner writes it, and `key`, its key,
+   *  checked by that page's own channel as the aether checks one (its wrong keys counted against the sender's address
+   *  there, WRONG_KEYS a minute). Once right, the socket keeps which page it proved (by the name's and key's hash), so
+   *  its next notes as that page aren't checked again. Kept marked proven, under the name as written. Wrong, or not a
+   *  page's name: the note goes nowhere and only that socket hears {"note_refused": {"code", "why"}}, the codes the
+   *  aether's (4001, 4003, 4029; 1013 to try again). A ban holds on to the page it signed as, too (fromViewer's ban). */
+  async noteAs(ws: WebSocket, text: string, as: unknown, key: unknown): Promise<void> {
+    const name = oneLine(as, NAME_MAX), form = channelForm(name), k = typeof key === "string" ? key : "";
+    let no: [number, string] | null = null, page = "";
+    if (!name || !form) no = [4002, "a page's name, to sign as it"];
+    else if (k.length < 8 || k.length > NOTE_KEY_MAX) no = [4001, "a transmit key needs at least 8 characters"];
+    const kh = no ? "" : await this.hash(form + "\n" + k);
+    let a = this.att(ws);
+    if (!no && a.signer && a.signer.kh === kh) page = a.signer.page;
+    else if (!no) [no, page] = await this.signer(form, k, a.ip || "");
+    if (ws.readyState !== OPEN) return;
+    a = this.att(ws);
+    if (no) { this.send(ws, pyjson({ note_refused: { code: no[0], why: no[1] } })); return; }
+    if (!a.signer || a.signer.kh !== kh) { a.signer = { kh, page }; this.keep(ws, a); }
+    // (banned while the key was being checked, or the page itself banned here)
+    if (this.isBlocked(a) || this.meta.blocked.includes("c:" + page)) return;
+    this.note(name, text, a.who || 0, a.device || "", page);
+  }
+
+  /** Whose page a name is (the Directory's, as the aether asks it) and whether `key` is its key, checked by its own
+   *  channel (here, when it's this one): why not (checkKey's reasons), and the page. */
+  async signer(form: string, key: string, ip: string): Promise<[[number, string] | null, string]> {
+    let page: string | null = null;
+    try {
+      const t = (await (await this.dir().fetch("https://dir/taken?name=" + encodeURIComponent(form))).json()) as { taken: boolean; channel?: string | null };
+      page = t.taken && t.channel ? t.channel : null;
+    } catch {
+      return [[1013, "the relay couldn't check the key: try again"], ""];
+    }
+    if (!page) return [[4003, "no page by that name"], ""];
+    if (page === this.name) return [await this.checkKey(key, ip), page];
+    try {
+      const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(page)).fetch(new Request(
+        "https://channel/_key?key=" + encodeURIComponent(key), { headers: { "x-channel": page, "cf-connecting-ip": ip } }));
+      return [((await r.json()) as { no: [number, string] | null }).no, page];
+    } catch {
+      return [[1013, "the relay couldn't check the key: try again"], ""];
+    }
   }
 
   unnote(id: number) {
@@ -1754,6 +1810,9 @@ export class Channel extends DurableObject<Env> {
       notes.push(now);
       a.notes = notes;
       this.keep(ws, a);
+      // (signed as a page, with its key: proven, 11/22/2026. Counted above as any note is, so a socket asks for a key's
+      // check NOTE_BURST times a NOTE_WINDOW at most, right or wrong)
+      if ("as" in m || "key" in m) return this.noteAs(ws, text, m.as, m.key);
       this.note(a.name || "visitor", text, a.who || 0, a.device || "");
       return;
     }
@@ -1856,8 +1915,14 @@ export class Channel extends DurableObject<Env> {
         }
       }
       name = name || this.lastName(who) || "visitor";
-      // (the register's notes are kept for days: the device each came from holds the ban after their socket's gone)
-      for (const [, line, dev] of this.notes) if (dev && JSON.parse(line).note.who === who) tags.add("d:" + dev);
+      // (the register's notes are kept for days: the device each came from holds the ban after their socket's gone; and
+      // a note signed as a page, the page, so it can't sign here again from another device, 11/22/2026)
+      for (const [, line, dev] of this.notes) {
+        const n = JSON.parse(line).note;
+        if (n.who !== who) continue;
+        if (dev) tags.add("d:" + dev);
+        if (n.page) tags.add("c:" + n.page);
+      }
       this.meta.blocked = [...new Set([...this.meta.blocked, ...tags])];
       this.meta.bans = [...(this.meta.bans || []).filter((b) => b.who !== who), { who, name, tags: [...tags] }];
       this.saveMeta();
@@ -2333,16 +2398,37 @@ export class Channel extends DurableObject<Env> {
   fightsUploads: number[] = []; // (in memory: a sleep forgets, which only loosens it)
   momentsUploads: number[] = []; // (the same, for scene moments)
 
+  /** The list, trimmed (kept for good, the featured one and each boss's best stay: 11/21-22/2026), each boss's best
+   *  marked `best`. */
   async fightList(): Promise<Fight[]> {
-    const all = await this.ctx.storage.list<Fight>({ prefix: "fight:" });
+    await this.fightTimes(); // (begun before any trim takes a fight's times)
+    const all = [...(await this.ctx.storage.list<Fight>({ prefix: "fight:" })).values()];
     const { most, days } = fightNumbers(this.env);
-    // (kept for good and the featured one stay, 11/21/2026)
-    const { stay, gone } = trimFights([...all.values()], most, days, Date.now(), (await this.ctx.storage.get<string>("fightFeatured")) ?? null);
+    const { stay, gone } = trimFights(all, most, days, Date.now(), (await this.ctx.storage.get<string>("fightFeatured")) ?? null);
     if (gone.length) await this.dropFights(gone);
-    return stay;
+    // (each boss's best marked, and placed with the kept ones where its owner chose: fights.ts, "with the kept ones")
+    return markBest(stay, await this.fightBestShown());
   }
 
-  async dropFights(gone: Fight[]) {
+  /** The bosses (their keys) whose best its owner shows with the kept ones. */
+  async fightBestShown(): Promise<string[]> {
+    return (await this.ctx.storage.get<string[]>("fightBestShown")) ?? [];
+  }
+
+  /** The times' history (fights.ts, "The times' history"): begun, the first time it's asked for, from the times the
+   *  fights on the page already had. */
+  async fightTimes(): Promise<TimeEntry[]> {
+    const had = await this.ctx.storage.get<TimeEntry[]>("fightTimes");
+    if (had) return had;
+    let h: TimeEntry[] = [];
+    for (const f of (await this.ctx.storage.list<Fight>({ prefix: "fight:" })).values()) if (f.times?.length) h = historyPut(h, f);
+    await this.ctx.storage.put("fightTimes", h);
+    return h;
+  }
+
+  /** Fights gone: trimmed (their times stay in the history, without their ids) or taken down (their times go too). */
+  async dropFights(gone: Fight[], takenDown = false) {
+    await this.ctx.storage.put("fightTimes", historyGone(await this.fightTimes(), gone.map((f) => f.id), takenDown));
     await this.ctx.storage.delete(gone.map((f) => "fight:" + f.id));
     // (their scene moments with them, and the page's featured fight if it was one: 11/21/2026)
     await this.env.CLIPS?.delete(gone.flatMap((f) => [fightKey(this.name, f.id), momentKey(this.name, f.id)]));
@@ -2386,8 +2472,10 @@ export class Channel extends DurableObject<Env> {
         h.set("cache-control", !f.public || this.meta.code ? "private, no-store" : "public, max-age=300");
         return new Response(r.body, { status: r.status, headers: h });
       }
-      // (the featured one marked, and named only to whoever can see it)
-      return json({ ...listed(list, !!owner, await this.ctx.storage.get<string>("fightFeatured")), owner, ...fightNumbers(this.env) });
+      // (the featured one marked, and named only to whoever can see it; the times' history as this viewer may see it)
+      const shown = listed(list, !!owner, await this.ctx.storage.get<string>("fightFeatured"));
+      return json({ ...shown, history: historyShown(await this.fightTimes(), !!owner, shown.fights),
+        ...(owner ? { best_shown: await this.fightBestShown() } : {}), owner, ...fightNumbers(this.env) });
     }
     if (!owner) return json({ error: "only the page's own" }, 403);
     if (request.method === "DELETE") {
@@ -2398,7 +2486,7 @@ export class Channel extends DurableObject<Env> {
         await this.env.CLIPS?.delete(momentKey(this.name, id));
         delete f.moment;
         await this.ctx.storage.put("fight:" + id, f);
-      } else await this.dropFights([f]);
+      } else await this.dropFights([f], true);
       return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
     }
     if (request.method !== "POST") return new Response(null, { status: 405 });
@@ -2426,6 +2514,7 @@ export class Channel extends DurableObject<Env> {
         if (timesRefused(times)) return json({ error: times[1] }, times[0]);
         f.times = times;
         await this.ctx.storage.put("fight:" + id, f);
+        await this.ctx.storage.put("fightTimes", historyPut(await this.fightTimes(), f, times));
         return json({ id, times });
       }
       // shown or kept to themselves, featured or not, kept for good or not (any of them in one request; 11/21/2026: kept,
@@ -2446,9 +2535,22 @@ export class Channel extends DurableObject<Env> {
       if (keep === true) f.kept = true;
       else if (keep === false) delete f.kept;
       await this.ctx.storage.put("fight:" + id, f);
+      // (its times in the history shown or kept to themselves with it)
+      if (pub !== null) await this.ctx.storage.put("fightTimes", historyPublic(await this.fightTimes(), id, f.public));
       if (feat === "1") await this.ctx.storage.put("fightFeatured", id);
       else if ((feat === "0" || keep === false) && (await this.ctx.storage.get<string>("fightFeatured")) === id) await this.ctx.storage.delete("fightFeatured");
       return json({ id, public: f.public, featured: (await this.ctx.storage.get<string>("fightFeatured")) === id, kept: !!f.kept });
+    }
+    // a boss's best shown with the kept ones or not (fights.ts, "A boss's best with the kept ones"; 11/22/2026)
+    if (q.has("bestshow")) {
+      const key = bestShowKey(q.get("bestshow"));
+      if (Array.isArray(key)) return json({ error: key[1] }, key[0]);
+      const on = q.get("on");
+      if (on !== "1" && on !== "0") return json({ error: "on=1|0" }, 400);
+      const shown = bestShownSet(await this.fightBestShown(), key, on === "1");
+      if (typeof shown[0] === "number") return json({ error: shown[1] }, shown[0]);
+      await this.ctx.storage.put("fightBestShown", shown);
+      return json({ boss: key, on: on === "1", best_shown: shown });
     }
     if (!this.env.CLIPS) return json({ error: "this relay doesn't keep fights" }, 503);
     const now = Date.now(), most = FIGHTS_AN_HOUR;
@@ -2473,6 +2575,8 @@ export class Channel extends DurableObject<Env> {
       fight.moment = { tick: got.moment.tick, size: got.moment.file.length, at: now };
     }
     await this.ctx.storage.put("fight:" + fight.id, fight);
+    // (its kill times, if its meta carried them, into the times' history)
+    if (fight.times?.length) await this.ctx.storage.put("fightTimes", historyPut(await this.fightTimes(), fight));
     await this.fightList(); // (the oldest past the most go)
     return json({ fight }, 201);
   }
@@ -2934,7 +3038,7 @@ export class Channel extends DurableObject<Env> {
     const clips = await this.ctx.storage.list<Clip>({ prefix: "clip:" });
     if (clips.size) await this.dropClips([...clips.values()]);
     const fights = await this.ctx.storage.list<Fight>({ prefix: "fight:" });
-    if (fights.size) await this.dropFights([...fights.values()]);
+    if (fights.size) await this.dropFights([...fights.values()], true);
     await this.ctx.storage.deleteAll();
     this.meta = { keyHash: null, code: "", cap: 0, chatId: 0, pollId: 0, nextWho: 0, seq: 0,
                   hostNames: [], blocked: [], soundInfo: null, state: "open" };

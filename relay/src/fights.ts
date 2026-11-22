@@ -5,9 +5,10 @@
 // presses), then played back on outside.wiki/<name>/fight/<id> in the page's own 2D and 3D replay. docs/protocol.md,
 // "Recorded fights".
 //
-//   GET    /fights/<channel>?code=<watch code>       {"fights": [Fight, ...] newest first, "public_default", "most", "days"}
-//                                                    (the owner's, with Authorization: Bearer <tend token> or ?key=, also
-//                                                    lists the fights they've kept to themselves)
+//   GET    /fights/<channel>?code=<watch code>       {"fights": [Fight, ...] newest first, "history": [TimeEntry, ...]
+//                                                    oldest first, "public_default", "most", "days", "kept"} (the owner's,
+//                                                    with Authorization: Bearer <tend token> or ?key=, also lists the
+//                                                    fights they've kept to themselves, and their times)
 //   POST   /fights/<channel>?key= | Bearer <tend>    multipart: "meta" (JSON), "fight" (the recording, gzipped JSON lines),
 //                                                    and optionally "moment" (its scene moment, below) with "moment_tick"
 //   GET    /fights/<channel>/<id>.jsonl.gz           the recording (a fight kept to themselves: only with the owner's)
@@ -19,6 +20,8 @@
 //                                                    MAX_MOMENT; the tick also as the X-Moment-Tick header), one a fight
 //   GET    /fights/<channel>/<id>/moment.bin         the moment (whoever may see the fight)
 //   DELETE /fights/<channel>/<id>/moment             the moment taken away (the owner's)
+//   POST   /fights/<channel>?bestshow=<boss>&on=1|0  a boss's best shown with the kept ones or not (the owner's; off to
+//                                                    begin with)
 //   POST   /fights/<channel>/<id>?times=1            its kill times (the owner's; the body {"times": [FightTime, ...]},
 //                                                    at most MAX_TIMES_BODY bytes, [] for "read: the game gave none")
 //
@@ -50,6 +53,30 @@
 // for it: a raid splits into parts every 5,000 ticks (50 minutes, so two or three an hour), but a busy hour of short
 // bosses (a 1-minute Zulrah or Vorkath, a 40-second Hunllef) can pass 40; 60 is one a minute, still a cap on a key run
 // away. A 429 says when to try again (Retry-After), so the plugin can wait and send it then.
+//
+// The times' history (11/22/2026; Jace: "yes, build both"): a page's kill times outlive its recordings. Every timed kill
+// is copied, as it's set (?times=1, or an upload's meta), into a history of its own in the channel's storage
+// ("fightTimes": TimeEntry[], oldest first, at most HISTORY_MOST), which the trim never touches: a fight trimmed (its days
+// up, or past the most) leaves its times there without its `id`, so a boss's record never shrinks and the page shows
+// them unlinked. Taken down by its owner, a fight's times go with it (a take-down means gone); the page taken down, all
+// of it. A time is shown as its fight was: one kept to themselves is in the owner's history only, and stays so once
+// its fight is gone. Past HISTORY_MOST the oldest go first, never a boss's best nor a time whose fight is still up. The
+// list carries it as `history` (historyShown). Fights that had times before the history existed are copied in the first
+// time the list is read.
+//
+// Each boss's best kept (11/22/2026): the fight holding a boss's quickest time on file (per boss, and per team size when
+// the time says it: a raid's) is spared by the trim as a kept one is, isn't counted against FIGHTS_MOST nor
+// FIGHTS_KEPT, and is marked `"best": true` in the list (worked out here from the fights' own times each time the list
+// is read: never stored, never set by the page). Beaten, it's let go and rejoins the trim; taken down, the next quickest
+// still up holds it. A tie goes to the earlier.
+//
+// A boss's best with the kept ones (11/22/2026; Jace: "add a switch to keep the kept best in their encounters section at
+// the top with their other kept encounters"): every boss's best is always kept; the owner chooses, boss by boss (the
+// switch in its panel in entities slain), whether its best's tile sits with the kept ones at the top of the encounters
+// rather than in time order among the rest: POST /fights/<channel>?bestshow=<boss or its key>&on=1|0. It follows the
+// boss, not the fight: beaten, the new best goes where the old one went. Never counted against FIGHTS_KEPT. Kept in the
+// channel's storage ("fightBestShown": boss keys, at most BEST_SHOWN_MOST); the owner's list carries the keys as
+// `best_shown`, and every viewer's list marks such a best `"with_kept": true`, so each page places it alike.
 //
 // The owner is whoever holds the page's key (the Outside plugin, the outstation) or a tending token the plugin handed in
 // with it (POST /tend/<channel>, channel.ts: the link the plugin opens to the player's own page, outside.wiki/<name>#tend=).
@@ -90,6 +117,8 @@ export interface Fight {
   featured?: true; // (in a list only: the one the page features)
   moment_missing?: string; // why the plugin sent it with no moment, in its own words (11/21/2026; the page may make one)
   times?: FightTime[]; // the game's kill times in it, as its page read them ([]: read, none); absent: not read yet (11/22/2026)
+  best?: true; // (in a list only, worked out here: it holds a boss's best time on file, so it's kept; 11/22/2026)
+  with_kept?: true; // (in a list only: a best whose boss its owner shows with the kept ones, at the top; 11/22/2026)
 }
 
 /** A kill's time, as the game's chat line gave it (ghillie's replay/times.js, short()). */
@@ -349,15 +378,182 @@ export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "
 }
 
 /** The list without what's too old or past the most, and what goes (whose files go too); newest first. days 0: none
- *  too old. A fight kept for good, or the featured one, always stays and isn't counted against the most. */
+ *  too old. A fight kept for good, the featured one, or one holding a boss's best time (bestIds) always stays and isn't
+ *  counted against the most. */
 export function trimFights(list: Fight[], most: number, days: number, now = Date.now(), featured: string | null = null): { stay: Fight[]; gone: Fight[] } {
   const sorted = [...list].sort((a, b) => b.up - a.up);
+  const best = bestIds(list);
   const stay: Fight[] = [], gone: Fight[] = [];
   let counted = 0;
   for (const f of sorted) {
-    if (f.kept || f.id === featured) stay.push(f);
+    if (f.kept || f.id === featured || best.has(f.id)) stay.push(f);
     else if (counted < most && (days <= 0 || now - f.up <= days * 86_400_000)) { stay.push(f); counted++; }
     else gone.push(f);
   }
   return { stay, gone };
+}
+
+// ---- the times' history and each boss's best (11/22/2026; the header's "The times' history" and "Each boss's best") --
+
+export const HISTORY_MOST = 2000;
+
+/** A timed kill on the page's record: kept apart from the list and never trimmed with it. */
+export interface TimeEntry {
+  key: string; // the boss's key (bossKey), the same as the page matches its kill rows by
+  boss: string; // whose, as shown: the line's name, else its fight's label, else its foe
+  at: number; // when its fight began (unix ms)
+  t: number; // the line's tick in the recording
+  time: string; // the game's time, as written
+  pb?: string; // the personal best the line named, when it isn't this time
+  best?: true; // the game called it a personal best
+  team?: string; // a raid's team size, as the line said it
+  id?: string; // its fight, while that's on the page
+  hidden?: true; // its fight was kept to themselves (the owner's history only)
+}
+
+/** A boss's name as the page matches it (ghillie's fights.js and outside.js, bossKey): lower case, a leading "The" or
+ *  "subdued" aside, anything not a letter or a digit a space, a trailing " mode" aside. */
+export function bossKey(name: string): string {
+  return String(name || "").toLowerCase().replace(/^(the|subdued) /, "").replace(/[^a-z0-9]+/g, " ").replace(/ mode$/, "").trim();
+}
+
+/** The game's time in seconds ("1:02:03.4"), as RuneLite's timeStringToSeconds (ghillie's replay/times.js, seconds). */
+export function timeSeconds(s: string): number {
+  const p = String(s).split(":");
+  if (p.length === 2) return parseInt(p[0], 10) * 60 + parseFloat(p[1]);
+  if (p.length === 3) return parseInt(p[0], 10) * 3600 + parseInt(p[1], 10) * 60 + parseFloat(p[2]);
+  return parseFloat(s);
+}
+
+// (a time's group: its boss, and its team size when it says one)
+const groupOf = (key: string, team: string | undefined) => key + (team ? "|" + team.toLowerCase() : "");
+
+/** A fight's times as history entries. */
+export function historyOf(f: Fight, times: FightTime[] = f.times ?? []): TimeEntry[] {
+  return times.map((k) => {
+    const boss = k.boss || f.label || f.foe || "a fight";
+    const e: TimeEntry = { key: bossKey(boss), boss, at: f.at, t: k.t, time: k.time };
+    if (k.pb) e.pb = k.pb;
+    if (k.best) e.best = true;
+    if (k.team) e.team = k.team;
+    e.id = f.id;
+    if (!f.public) e.hidden = true;
+    return e;
+  });
+}
+
+/** The history with a fight's times put in (in place of any it had: times set again), oldest first, at most `most`. */
+export function historyPut(history: TimeEntry[], f: Fight, times: FightTime[] = f.times ?? [], most = HISTORY_MOST): TimeEntry[] {
+  const rest = history.filter((e) => e.id !== f.id);
+  return historyCap(rest.concat(historyOf(f, times)), most);
+}
+
+/** Oldest first; past `most`, the oldest go, never a group's quickest nor a time whose fight is still up (unless
+ *  nothing else is left to go). */
+export function historyCap(history: TimeEntry[], most = HISTORY_MOST): TimeEntry[] {
+  const all = [...history].sort((a, b) => a.at - b.at || a.t - b.t);
+  if (all.length <= most) return all;
+  const quickest = new Map<string, TimeEntry>();
+  for (const e of all) {
+    const g = groupOf(e.key, e.team), q = quickest.get(g);
+    if (!q || timeSeconds(e.time) < timeSeconds(q.time) - 0.005) quickest.set(g, e);
+  }
+  const keep = new Set<TimeEntry>([...quickest.values()]);
+  for (const e of all) if (e.id) keep.add(e);
+  let over = all.length - most;
+  const out: TimeEntry[] = [];
+  for (const e of all) {
+    if (over > 0 && !keep.has(e)) { over--; continue; }
+    out.push(e);
+  }
+  // (only bests and fights still up left, and still too many: the oldest of them go too)
+  return out.length > most ? out.slice(out.length - most) : out;
+}
+
+/** The history once fights have gone: trimmed, their times stay without their ids; taken down, their times go. */
+export function historyGone(history: TimeEntry[], ids: Iterable<string>, takenDown: boolean): TimeEntry[] {
+  const gone = new Set(ids);
+  if (takenDown) return history.filter((e) => !e.id || !gone.has(e.id));
+  return history.map((e) => {
+    if (!e.id || !gone.has(e.id)) return e;
+    const { id: _, ...rest } = e;
+    return rest;
+  });
+}
+
+/** The history once a fight's been shown or kept to themselves: its times follow it. */
+export function historyPublic(history: TimeEntry[], id: string, shown: boolean): TimeEntry[] {
+  return history.map((e) => {
+    if (e.id !== id) return e;
+    const { hidden: _, ...rest } = e;
+    return shown ? rest : { ...rest, hidden: true as const };
+  });
+}
+
+/** The history as a viewer sees it: the owner's whole; anyone else's without the times of fights kept to themselves.
+ *  An id only where its fight is in `list` (what this viewer is shown). */
+export function historyShown(history: TimeEntry[], owner: boolean, list: Fight[]): TimeEntry[] {
+  const up = new Set(list.map((f) => f.id));
+  return history.filter((e) => owner || !e.hidden).map((e) => {
+    let o = e;
+    if (o.id && !up.has(o.id)) { const { id: _, ...rest } = o; o = rest; }
+    if (!owner && o.hidden) { const { hidden: _, ...rest } = o; o = rest; }
+    return o;
+  });
+}
+
+/** The fights holding a boss's best time on file: per boss (and team size, when the time says one), the quickest of the
+ *  fights' own times; a tie to the earlier. */
+export function bestIds(list: Fight[]): Set<string> {
+  return new Set(bestOf(list).keys());
+}
+
+/** The same, each with the bosses (their keys) it holds the best of. */
+export function bestOf(list: Fight[]): Map<string, string[]> {
+  const quickest = new Map<string, { id: string; key: string; sec: number; at: number }>();
+  for (const f of list) {
+    for (const k of f.times ?? []) {
+      const sec = timeSeconds(k.time);
+      if (!isFinite(sec)) continue;
+      const key = bossKey(k.boss || f.label || f.foe || "a fight"), g = groupOf(key, k.team), q = quickest.get(g);
+      if (!q || sec < q.sec - 0.005 || (Math.abs(sec - q.sec) <= 0.005 && f.at < q.at)) quickest.set(g, { id: f.id, key, sec, at: f.at });
+    }
+  }
+  const out = new Map<string, string[]>();
+  for (const q of quickest.values()) {
+    const keys = out.get(q.id) ?? [];
+    if (!keys.includes(q.key)) keys.push(q.key);
+    out.set(q.id, keys);
+  }
+  return out;
+}
+
+/** The list with each fight holding a boss's best marked `best`, and `with_kept` where one of those bosses is in
+ *  `shown` (its owner's choice: with the kept ones at the top). Copies; a stored `best` or `with_kept` never counts. */
+export function markBest(list: Fight[], shown: Iterable<string> = []): Fight[] {
+  const best = bestOf(list), with_ = new Set(shown);
+  return list.map((f) => {
+    const { best: _, with_kept: __, ...rest } = f;
+    const keys = best.get(f.id);
+    if (!keys) return rest;
+    return keys.some((k) => with_.has(k)) ? { ...rest, best: true as const, with_kept: true as const } : { ...rest, best: true as const };
+  });
+}
+
+export const BEST_SHOWN_MOST = 500;
+
+/** A boss named for ?bestshow=: its key (bossKey), or why not. */
+export function bestShowKey(v: string | null): string | [number, string] {
+  const key = bossKey((v || "").slice(0, 120));
+  if (!key || key.length > 80) return [400, "which boss? (bestshow=<its name>)"];
+  return key;
+}
+
+/** The bosses whose best is shown with the kept ones, with one switched on or off; at most BEST_SHOWN_MOST (one more
+ *  past that refused, with why). */
+export function bestShownSet(shown: string[], key: string, on: boolean): string[] | [number, string] {
+  const rest = shown.filter((k) => k !== key);
+  if (!on) return rest;
+  if (rest.length >= BEST_SHOWN_MOST) return [409, `${BEST_SHOWN_MOST} bosses at most with their best shown with the kept ones`];
+  return [...rest, key].sort();
 }

@@ -250,9 +250,23 @@ the 'chat' into a guestbox… build it and call it the register"; then, of the c
 "yes, separate them". A page's register is its guestbook: notes left by visitors for the owner to read later, kept apart
 from the chat (the chat is for while the outstation transmits; the page shows its tab only then).
 
-- **A note**, from a watching socket: `{"note": "<words>"}` (300 characters at most, one line), under the name its
-  `hello` gave. Three a minute a socket (`NOTE_BURST`, `NOTE_WINDOW`); never from a blocked or banned visitor. Everyone's
-  sockets (watchers, desks, tending) get `{"note": {"id", "name", "text", "who", "at"}}`.
+- **A note**, from a watching socket: `{"note": "<words>"}`, under the name its `hello` gave. Its rows are cleaned as the
+  aether's are (up to 32 rows of 80, below, "The aether"; one line of 300 until 11/17/2026). Three a minute a socket
+  (`NOTE_BURST`, `NOTE_WINDOW`); never from a blocked or banned visitor. Everyone's sockets (watchers, desks, tending) get
+  `{"note": {"id", "name", "text", "who", "at"}}`.
+- **A note signed as a page** (11/22/2026, Jace: "allow for inputting your key in the register just like you can in the
+  aether to comment on someone's profile with a way of showing it's actually you rather than someone impersonating you,
+  but still allow for anyone to type there"): `{"note": "<words>", "as": "<a page's name>", "key": "<that page's key>"}`.
+  The Directory says whose page the name is (case and spaces aside, as the aether's `/taken`), and that page's own
+  channel checks the key, as the aether has it checked (its wrong keys counted against the sender's address there, 10 a
+  minute, then 4029). Right: it's kept and told as any note, under `as` as written (even on its own page, where a
+  `hello` can't take the host's name), with `"proven": true, "page": "<the page's channel>"` added. Wrong, or no page's
+  name: it goes nowhere, and only that socket hears `{"note_refused": {"code", "why"}}`: 4001 a key under 8 characters
+  (or over 400), 4002 no name, 4003 the wrong key or no page by that name, 4029 too many wrong keys, 1013 the relay
+  couldn't check just then (try again). It counts towards the three a minute either way, so a socket asks for at most
+  three checks a minute; once a key's right, that socket's later notes as the same page with the same key aren't checked
+  again. A note without `as` and `key` is never proven, whatever its name (anyone may still sign any name). The key is
+  never kept or sent on: only its hash, with the name, in the socket's own attachment, gone with it.
 - **Kept:** the last 500 (`NOTES_KEPT`), with the device each came from (never sent: it's what a ban holds on to after the
   visitor's socket has gone). Someone just come gets the last 50 (`NOTES_SENT`), after the chat so far; a tending socket
   gets them all. The chat keeps its own last 50 lines, as before.
@@ -260,8 +274,10 @@ from the chat (the chat is for while the outstation transmits; the page shows it
   to 50 notes before that id, oldest first; `more` when there are older still. The watch code as watching (403 without
   it on a friends-only page); 404 for no page. (`GET /chat/<channel>?before=` reads the chat's the same way, as
   `{"lines"}`.)
-- **Taken back:** a desk's or a tending socket's `{"hide_note": <id>}`; everyone gets `{"unnote": <id>}`. A ban (`{"ban"}`)
-  takes back the banned visitor's notes as well as their lines.
+- **Taken back:** a desk's or a tending socket's `{"hide_note": <id>}`; everyone gets `{"unnote": <id>}`, a proven note's
+  the same. A ban (`{"ban"}`) takes back the banned visitor's notes as well as their lines, and holds on to the device
+  each of their notes came from and (11/22/2026) the page any of them was signed as, so that page can't sign a proven
+  note here again from another device (its unproven notes, under any name, are a new visitor's).
 - **New notes, to the page's own key:** `GET /proof/<channel>?key=<key>&seen=<id>` adds
   `"notes": {"n": <notes after that id>, "last": <the newest note's id>}`, for the plugin's side tab ("3 new notes in
   your register"). It remembers `last` once the owner opens the register to tend it.
@@ -852,8 +868,13 @@ page carries one, so a player with only the plugin can put fights up from their 
 
     GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "history": [TimeEntry, …] oldest first,
                                                 "owner": bool, "public_default": bool, "most": n, "days": n, "kept": n}: the
-                                                ones shown to anyone and their times; the owner's, all of them (403 without
-                                                a friends-only page's code, unless the owner)
+                                                ones shown to anyone and their times; the owner's, all of them, and
+                                                "best_shown": [boss key, …] (below) (403 without a friends-only page's
+                                                code, unless the owner)
+    POST   /fights/<channel>?bestshow=<boss>&on=1|0
+                                                the owner's: a boss's best shown with the kept ones or not (below). 200
+                                                {"boss": its key, "on": bool, "best_shown": [boss key, …]}; 400 no boss, or
+                                                on not 1 or 0; 409 a 501st boss
     POST   /fights/<channel>                    the owner's: multipart/form-data: meta (JSON), fight (the recording, gzipped),
                                                 and optionally moment (its scene moment) and moment_tick (below)
                                                 201 {"fight": Fight}; 400 a moment with no tick to be found, or one past the
@@ -893,6 +914,38 @@ page; keeping one more answers 409 with its reason (a lowered `FIGHTS_KEPT` lets
 refuses more). Featuring a fight keeps it (past the cap, featuring one not yet kept is refused alike); `kept=0` on the
 featured fight unfeatures it too (the answer says `"featured": false`), rather than being refused. A featured fight from
 before `kept` existed is spared by the trim all the same. Taking a kept fight down (`DELETE`) takes it down.
+
+**Kill times (11/22/2026).** `POST /fights/<channel>/<id>?times=1` (the owner's), body `{"times": [FightTime, …]}` (at
+most 8, 4 KB; `[]` for "read: the game gave none"), or `times` in an upload's meta: the game's own time lines the page
+read from the recording, each `{"boss": name | null, "time": "1:48", "t": tick, "pb"?: "1:12", "best"?: true, "team"?:
+"3 players"}`. 200 `{"id", "times"}`. The Fight carries them as `times`.
+
+**The times' history (11/22/2026).** A page's kill times outlive its recordings: each one set (either way above) is
+copied into a history of its own in the channel's storage, which the trim never touches. The list carries it as
+`"history"`, oldest first: each a TimeEntry, `{"key": <the boss's key, as the page's bossKey>, "boss": <the line's
+name, else the fight's label, else its foe>, "at": <its fight's start, ms>, "t", "time", "pb"?, "best"?, "team"?,
+"id"?}`. `id` is its fight's only while that fight is on the page (and shown to this viewer): a fight trimmed (its days
+up, or past the most) leaves its times without it, and the page shows those unlinked. Taken down (`DELETE`), a fight's
+times go with it; the page taken down, all of it. A time is shown as its fight is: one kept to themselves is in the
+owner's history only (marked `"hidden": true` there), and stays so once its fight's gone; `?public=` carries over to its
+times. At most 2,000 a page, the oldest going first, but never a boss's best nor a time whose fight is still up. Fights
+that had times before the history existed are copied in the first time the list is read.
+
+**Each boss's best kept (11/22/2026).** The fight holding a boss's quickest time on file (per boss key, and per team
+size when the time says one: a raid's) is never trimmed, isn't counted against `FIGHTS_MOST` nor `FIGHTS_KEPT`, and is
+marked `"best": true` in the list, worked out by the relay from the fights' own times each time the list is read (never
+stored; nothing the page sends sets it). Beaten, it's let go and rejoins the trim. Taken down, the next quickest still
+up holds it. A tie goes to the earlier fight.
+
+**A boss's best with the kept ones (11/22/2026).** Every boss's best is kept; its owner chooses, boss by boss (the
+switch in the boss's panel in entities slain), whether its tile sits with the kept ones at the top of the encounters
+rather than in time order among the rest: `POST /fights/<channel>?bestshow=<the boss's name or key>&on=1` (`on=0` puts
+it back; off to begin with). The key is as `bossKey` makes it (lower case, a leading "The" or "subdued" aside, anything
+but letters and digits a space, a trailing "mode" aside), so a raid's every team size at once; a boss with nothing on
+file yet may be chosen, for its next. It follows the boss, not the fight: beaten (or taken down), the boss's new best goes
+where the old one went. Never counted against `FIGHTS_KEPT`. The bosses chosen are kept in the channel's storage, at
+most 500, and listed to the owner only as `"best_shown"`; every viewer's list marks such a best `"with_kept": true`
+(worked out by the relay, as `best` is), so each page places it alike.
 
 **One upload with its moment (11/21/2026), for the plugin's automatic sends.** The upload may carry a `moment` part (a
 file part: the same file as the moment route's, any version 1 to 9: the looping moments are version 2) and its tick as a
@@ -1110,7 +1163,10 @@ with every character escaped) isn't read.
 
 **Everyone in the room hears:**
 - `{"aether": {"id", "name", "text", "from", "at"}}`: a line, its sender included. `id` goes up with each line; `from` is
-  `"outstation"` or `"visitor"`; `at` in ms. Never a device or a key.
+  `"outstation"` or `"visitor"`; `at` in ms. Never a device or a key. An outstation's line (one sent with its page's key:
+  its own socket's, or its owner's from a page) adds `"page"`, its channel (11/22/2026, Jace: the lime star "in the
+  aether and register"): Outside marks its name with the ✼ and links it to that page, as it marks a proven note in the
+  register. Lines kept from before have none; the page then works it out from the name.
 - `{"aether_here": n}`: how many are here, each visitor's device and each outstation counted once, however many sockets
   it has open. Sent to everyone as it changes, at most once every 2 s (a change in between waits its turn); whoever's
   just come hears it at once.

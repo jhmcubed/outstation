@@ -4,7 +4,7 @@
 //   node test/fights_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { gzipSync } from "node:zlib";
-import { firstLine, fightNumbers, fightsOn, isHeader, isMoment, keptAsked, listed, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timesRefused, trimFights, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight } from "../src/fights.ts";
+import { BEST_SHOWN_MOST, bestIds, bestShowKey, bestShownSet, bossKey, firstLine, fightNumbers, fightsOn, historyCap, historyGone, historyOf, historyPublic, historyPut, historyShown, isHeader, isMoment, keptAsked, listed, markBest, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timeSeconds, timesRefused, trimFights, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight, type FightTime, type TimeEntry } from "../src/fights.ts";
 
 let passed = 0;
 const tests: [string, () => Promise<void> | void][] = [];
@@ -219,6 +219,175 @@ test("an upload's meta may carry its kill times; bad ones refuse it", async () =
   const none = await readFight(upload({}, rec([HEADER])));
   if (Array.isArray(none)) throw new Error(none[1]);
   strictEqual("times" in none.meta, false);
+});
+
+// The times' history and each boss's best (11/22/2026; fights.ts's header). The channel's own steps, as channel.ts
+// takes them: an upload or ?times=1 puts a fight's times in (historyPut), the trim's gone go without their ids
+// (historyGone, false), a take-down's go whole (historyGone, true), ?public= carries over (historyPublic), and the list
+// is served as historyShown.
+const day = 86_400_000, NOW = 200 * day;
+const timed = (id: string, ago: number, times: FightTime[], o: Partial<Fight> = {}): Fight =>
+  ({ ...fight(id, NOW - ago * day), foe: "Vardorvis", label: "Vardorvis", times, ...o });
+const kill = (time: string, o: Partial<FightTime> = {}): FightTime => ({ boss: "Vardorvis", time, t: 100, ...o });
+// (the channel as a whole: its fights and its history, trimmed as fightList trims them)
+function channel(fights: Fight[], most = 20, days = 30) {
+  let history: TimeEntry[] = [];
+  for (const f of fights) history = historyPut(history, f);
+  const { stay, gone } = trimFights(fights, most, days, NOW);
+  history = historyGone(history, gone.map((f) => f.id), false);
+  return { stay, gone, history };
+}
+
+test("a boss's key, as the page's; the game's times in seconds", () => {
+  strictEqual(bossKey("The Nightmare"), "nightmare");
+  strictEqual(bossKey("subdued Wintertodt"), "wintertodt");
+  strictEqual(bossKey("Tombs of Amascut: Expert Mode"), "tombs of amascut expert");
+  strictEqual(timeSeconds("1:12"), 72);
+  strictEqual(timeSeconds("28:28.80"), 1708.8);
+  strictEqual(timeSeconds("1:02:03"), 3723);
+});
+
+test("a fight's times as history: the fight's name when the line named none, its id, hidden if kept to themselves", () => {
+  const f = timed("a".repeat(22), 1, [kill("1:12", { best: true }), { boss: null, time: "1:30", t: 9 }], { public: false, label: "Duke Sucellus" });
+  deepStrictEqual(historyOf(f), [
+    { key: "vardorvis", boss: "Vardorvis", at: f.at, t: 100, time: "1:12", best: true, id: f.id, hidden: true },
+    { key: "duke sucellus", boss: "Duke Sucellus", at: f.at, t: 9, time: "1:30", id: f.id, hidden: true }]);
+});
+
+test("the history outlives a trim: past the most and past the days, the times stay without their ids", () => {
+  const fights = [timed("old", 45, [kill("2:59")]), ...Array.from({ length: 22 }, (_, i) => timed("f" + i, i * 0.1, [kill("2:" + (10 + i))]))];
+  const { stay, gone, history } = channel(fights, 20, 30);
+  deepStrictEqual(gone.map((f) => f.id), ["f21", "old"]); // (f0, the best, kept uncounted: so twenty more)
+  strictEqual(history.length, 23); // (every time still there)
+  const ups = new Set(stay.map((f) => f.id));
+  for (const e of history) strictEqual(!!e.id, ups.has(e.id ?? ""), "an id only while its fight is up");
+  strictEqual(history.find((e) => e.time === "2:59")?.id, undefined); // (the 45-day-old one: trimmed, but on record)
+  strictEqual(history[0].time, "2:59"); // (oldest first)
+});
+
+test("a take-down takes its times with it; a trim doesn't", () => {
+  let h = historyPut([], timed("a", 1, [kill("1:12"), kill("1:20", { t: 300 })]));
+  h = historyPut(h, timed("b", 2, [kill("1:40")]));
+  deepStrictEqual(historyGone(h, ["a"], true).map((e) => e.time), ["1:40"]);
+  deepStrictEqual(historyGone(h, ["a"], false).map((e) => [e.time, e.id ?? null]), [["1:40", "b"], ["1:12", null], ["1:20", null]]);
+  // (times set again: the fight's old ones replaced, not doubled)
+  deepStrictEqual(historyPut(h, timed("a", 1, [kill("1:11")])).map((e) => e.time), ["1:40", "1:11"]);
+  deepStrictEqual(historyPut(h, timed("a", 1, [])).map((e) => e.time), ["1:40"]);
+});
+
+test("the history never shows a visitor the times of a fight kept to themselves, up or gone", () => {
+  const pub = timed("pub", 1, [kill("1:20")]), priv = timed("priv", 2, [kill("1:10")], { public: false });
+  let h = historyPut(historyPut([], pub), priv);
+  const list = [pub, priv];
+  deepStrictEqual(historyShown(h, false, list.filter((f) => f.public)).map((e) => e.time), ["1:20"]);
+  deepStrictEqual(historyShown(h, true, list).map((e) => [e.time, e.id, !!e.hidden]), [["1:10", "priv", true], ["1:20", "pub", false]]);
+  strictEqual(historyShown(h, false, [pub]).some((e) => "hidden" in e), false);
+  // (trimmed while kept to themselves: still the owner's only)
+  const trimmed = historyGone(h, ["priv"], false);
+  deepStrictEqual(historyShown(trimmed, false, [pub]).map((e) => e.time), ["1:20"]);
+  // (shown later, kept to themselves again: the times follow)
+  h = historyPublic(h, "priv", true);
+  deepStrictEqual(historyShown(h, false, list).map((e) => e.time), ["1:10", "1:20"]);
+  h = historyPublic(h, "pub", false);
+  deepStrictEqual(historyShown(h, false, [priv]).map((e) => e.time), ["1:10"]);
+  // (an id only for a fight this viewer is shown)
+  deepStrictEqual(historyShown(h, false, []).map((e) => e.id ?? null), [null]);
+});
+
+test("the history's cap: the oldest go first, never a boss's best nor a fight still up", () => {
+  let h: TimeEntry[] = [];
+  h = historyPut(h, timed("best", 100, [kill("0:59")]));
+  for (let i = 0; i < 30; i++) h = historyGone(historyPut(h, timed("g" + i, 90 - i, [kill("1:" + (10 + i))])), ["g" + i], false);
+  h = historyPut(h, timed("up", 95, [kill("2:00")]));
+  h = historyGone(h, ["best"], false);
+  const capped = historyCap(h, 10);
+  strictEqual(capped.length, 10);
+  strictEqual(capped[0].time, "0:59"); // (the best, oldest of all, kept)
+  strictEqual(capped.some((e) => e.id === "up"), true); // (its fight's still up)
+  deepStrictEqual(capped.slice(2).map((e) => e.time), ["1:32", "1:33", "1:34", "1:35", "1:36", "1:37", "1:38", "1:39"]);
+});
+
+test("each boss's best is kept past the most and past the days, uncounted", () => {
+  const best = timed("best", 50, [kill("1:02")]);
+  const rest = Array.from({ length: 20 }, (_, i) => timed("f" + i, i * 0.1, [kill("1:" + (30 + i))]));
+  const { stay, gone } = trimFights([best, ...rest], 20, 30, NOW);
+  deepStrictEqual(gone, []);
+  strictEqual(stay.length, 21); // (twenty counted, and the best)
+  strictEqual(stay.some((f) => f.id === "best"), true);
+  // (the best of another boss too, and a raid's per team size)
+  const raid = (id: string, ago: number, time: string, team: string) => timed(id, ago, [{ boss: "Chambers of Xeric", time, t: 1, team }]);
+  const raids = [raid("solo", 60, "40:00", "Solo"), raid("trio", 61, "30:00", "3 players"), raid("trio2", 62, "31:00", "3 players")];
+  deepStrictEqual([...bestIds([best, ...rest, ...raids])].sort(), ["best", "solo", "trio"]);
+  deepStrictEqual(trimFights([best, ...rest, ...raids], 20, 30, NOW).gone.map((f) => f.id), ["trio2"]);
+  // (nothing timed: none kept for it)
+  strictEqual(bestIds([fight("x", 1)]).size, 0);
+});
+
+test("a best beaten is let go (and its time stays on record); taken down, the next quickest holds it", () => {
+  const old = timed("old", 40, [kill("1:05")]), mid = timed("mid", 35, [kill("1:08")]), now = timed("new", 0, [kill("1:01")]);
+  deepStrictEqual(trimFights([old, mid], 20, 30, NOW).stay.map((f) => f.id), ["old"]); // (old holds it; mid's days are up)
+  const after = channel([old, mid, now], 20, 30);
+  deepStrictEqual(after.stay.map((f) => f.id), ["new"]); // (beaten: old rejoins the trim and goes)
+  deepStrictEqual(after.history.map((e) => [e.time, e.id ?? null]), [["1:05", null], ["1:08", null], ["1:01", "new"]]);
+  // (the best taken down: the next quickest still up holds it)
+  deepStrictEqual([...bestIds([old, mid])], ["old"]);
+  deepStrictEqual([...bestIds([mid])], ["mid"]);
+  // (a tie: the earlier keeps it)
+  deepStrictEqual([...bestIds([timed("later", 1, [kill("1:05")]), old])], ["old"]);
+});
+
+test("the best marked in the list, worked out here: a stored best never counts", () => {
+  const a = timed("a", 1, [kill("1:05")]), b = { ...timed("b", 2, [kill("1:30")]), best: true as const }, c = fight("c", 3);
+  deepStrictEqual(markBest([a, b, c]).map((f) => !!f.best), [true, false, false]);
+  strictEqual("best" in markBest([b])[0], true); // (alone, b is the best)
+  strictEqual("best" in markBest([c])[0], false);
+});
+
+test("the 12 kept for good don't count a best: the count is of kept alone", () => {
+  // (channel.ts's ?kept=1 counts the list's `kept`; a best isn't kept unless its owner kept it)
+  const list = markBest([timed("best", 1, [kill("1:00")]), { ...timed("k", 2, []), kept: true as const }]);
+  strictEqual(list.filter((x) => x.kept).length, 1);
+  strictEqual(list.filter((x) => x.best).length, 1);
+});
+
+// A boss's best with the kept ones (11/22/2026): its owner's switch in its panel; channel.ts keeps the keys and hands
+// them to markBest, which marks such a best `with_kept` for every viewer
+test("a boss's best shown with the kept ones: marked with_kept; every best still kept, none counted against the 12", () => {
+  const vard = timed("vard", 50, [kill("1:02")]), duke = timed("duke", 55, [{ boss: "Duke Sucellus", time: "1:50", t: 1 }]);
+  const rest = Array.from({ length: 3 }, (_, i) => timed("f" + i, i, [kill("1:" + (30 + i))]));
+  const list = [vard, duke, ...rest];
+  deepStrictEqual(trimFights(list, 20, 30, NOW).gone, []); // (both bests kept, shown or not)
+  const marked = markBest(list, ["vardorvis"]);
+  deepStrictEqual(marked.map((f) => [f.id, !!f.best, !!f.with_kept]),
+    [["vard", true, true], ["duke", true, false], ["f0", false, false], ["f1", false, false], ["f2", false, false]]);
+  strictEqual(marked.filter((f) => f.kept).length, 0); // (with the kept ones isn't kept for good: the 12 untouched)
+  // (it follows the boss, not the fight: beaten, the new best's the one shown)
+  const now = timed("new", 0, [kill("0:58")]);
+  deepStrictEqual(markBest([...list, now], ["vardorvis"]).filter((f) => f.with_kept).map((f) => f.id), ["new"]);
+  // (taken down: the next quickest still up)
+  deepStrictEqual(markBest(rest, ["vardorvis"]).filter((f) => f.with_kept).map((f) => f.id), ["f0"]);
+  // (a raid's, every team size; a stored with_kept never counts)
+  const raid = (id: string, team: string, time: string) => timed(id, 60, [{ boss: "Chambers of Xeric", time, t: 1, team }]);
+  deepStrictEqual(markBest([raid("solo", "Solo", "40:00"), raid("trio", "3 players", "30:00"), raid("trio2", "3 players", "31:00")], ["chambers of xeric"])
+    .map((f) => !!f.with_kept), [true, true, false]);
+  strictEqual("with_kept" in markBest([{ ...fight("x", 1), with_kept: true as const }], ["vardorvis"])[0], false);
+  strictEqual("with_kept" in markBest(list)[0], false); // (none chosen: none)
+});
+
+test("?bestshow=: a boss by its name or key; on and off, kept sorted and once; at most BEST_SHOWN_MOST", () => {
+  strictEqual(bestShowKey("The Fractured Archive"), "fractured archive");
+  strictEqual(bestShowKey("vardorvis"), "vardorvis");
+  deepStrictEqual(bestShowKey(""), [400, "which boss? (bestshow=<its name>)"]);
+  deepStrictEqual(bestShowKey("!!!"), [400, "which boss? (bestshow=<its name>)"]);
+  deepStrictEqual(bestShownSet([], "vardorvis", true), ["vardorvis"]);
+  deepStrictEqual(bestShownSet(["vardorvis"], "vardorvis", true), ["vardorvis"]);
+  deepStrictEqual(bestShownSet(["vardorvis"], "duke sucellus", true), ["duke sucellus", "vardorvis"]);
+  deepStrictEqual(bestShownSet(["duke sucellus", "vardorvis"], "vardorvis", false), ["duke sucellus"]);
+  deepStrictEqual(bestShownSet([], "vardorvis", false), []);
+  const full = Array.from({ length: BEST_SHOWN_MOST }, (_, i) => "boss " + i);
+  deepStrictEqual(bestShownSet(full, "one more", true), [409, BEST_SHOWN_MOST + " bosses at most with their best shown with the kept ones"]);
+  strictEqual((bestShownSet(full, "boss 3", false) as string[]).length, BEST_SHOWN_MOST - 1);
+  strictEqual((bestShownSet(full, "boss 3", true) as string[]).length, BEST_SHOWN_MOST); // (already on: no more)
 });
 
 for (const [name, f] of tests) {

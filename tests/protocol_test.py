@@ -868,6 +868,62 @@ class Talk(Base):
         drawn = (await next_of(desk, "note"))["text"].split("\n")
         self.assertEqual((len(drawn), drawn[0], len(drawn[1]), drawn[-1]), (32, "\u2800\u28c0\u28e4", 80, "row 29"))
 
+    async def test_a_note_signed_with_a_pages_key_is_proven_and_anyone_can_still_sign(self):
+        # (11/22/2026, Jace: "allow for inputting your key in the register just like you can in the aether… with a way
+        # of showing it's actually you rather than someone impersonating you, but still allow for anyone to type there";
+        # docs/protocol.md "The register": {"note", "as", "key"}, the key checked by that page's own channel)
+        tx, desk, a, b = await self.setup_room()
+        other = "t" + secrets.token_hex(5)
+        status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + other)
+        self.assertEqual(status, 200)
+        other_key = got["key"]
+        written = other[:3].upper() + other[3:]
+        await a.send(json.dumps({"note": "it's me", "as": written, "key": other_key}))
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], n["text"], n.get("proven"), n.get("page")), (written, "it's me", True, other))
+        await a.send(json.dumps({"note": "and plainly"}))                 # (the same socket, as anyone: unproven)
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], "proven" in n, "page" in n), ("moss", False, False))
+        await b.send(json.dumps({"hello": {"name": written}}))           # (anyone may still write a page's name)
+        await b.send(json.dumps({"note": "me too"}))
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], "proven" in n), (written, False))
+        # (a wrong key, a short one and a name that's no page's: the note goes nowhere, and only its socket hears why)
+        await b.send(json.dumps({"note": "trust me", "as": other, "key": "wrong-key-" + secrets.token_hex(3)}))
+        self.assertEqual((await next_of(b, "note_refused"))["code"], 4003)
+        await b.send(json.dumps({"note": "trust me", "as": other, "key": "short"}))
+        self.assertEqual((await next_of(b, "note_refused"))["code"], 4001)
+        c = await self.watch()
+        await c.send(json.dumps({"hello": {"name": "ivy", "device": "device-cccc"}}))
+        await c.send(json.dumps({"note": "nobody's", "as": "nobody" + secrets.token_hex(3), "key": other_key}))
+        self.assertEqual((await next_of(c, "note_refused"))["code"], 4003)
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "note", timeout=0.8)
+        # (the page's own key on its own page: proven too, though its name is the host's and a hello can't take it)
+        await c.send(json.dumps({"note": "my own page", "as": self.ch, "key": self.key}))
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], n.get("proven"), n.get("page")), (self.ch, True, self.ch))
+        # (taken back as any note is; a late comer gets the proven ones marked)
+        await desk.send(json.dumps({"hide_note": n["id"]}))
+        self.assertEqual(await next_of(a, "unnote"), n["id"])
+        late = await self.watch()
+        first = await next_of(late, "note")
+        self.assertEqual((first["text"], first.get("proven"), first.get("page")), ("it's me", True, other))
+        # (a ban holds on to the page signed as: from another device it signs here no more, proven; unproven it may)
+        await desk.send(json.dumps({"ban": first["who"]}))
+        await next_of(desk, "banned")
+        d = await self.watch()
+        await d.send(json.dumps({"hello": {"name": "rowan", "device": "device-dddd"}}))
+        await d.send(json.dumps({"note": "back again", "as": other, "key": other_key}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "note", timeout=0.8)
+        await d.send(json.dumps({"note": "only rowan"}))
+        self.assertEqual((await next_of(desk, "note"))["name"], "rowan")
+        # (and the banned device itself, as anyone)
+        await a.send(json.dumps({"note": "still here"}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "note", timeout=0.8)
+
     async def test_a_flood_is_cut_off_and_nothing_long_gets_through(self):
         tx, desk, a, b = await self.setup_room()
         for i in range(SAY_BURST + 4):
@@ -5069,7 +5125,22 @@ class Aether(Base):
         text = self.words()
         await self.say(s, text)
         line = await next_of(b, "aether")
-        self.assertEqual((line["text"], line["name"], line["from"]), (text, self.ch, "outstation"))
+        self.assertEqual((line["text"], line["name"], line["from"], line["page"]), (text, self.ch, "outstation", self.ch))
+
+    async def test_an_outstations_owner_from_a_page_speaks_under_its_name_with_its_page(self):
+        # (11/18/2026: a visitor bringing an outstation's key is in under the name as typed, as the outstation; 11/22/2026,
+        # Jace: the lime star "in the aether and register": its lines say which page, so Outside marks and links them)
+        written = self.ch[:3].upper() + self.ch[3:]
+        own = await self.visitor(name=written, extra="&key=" + urllib.parse.quote(self.key))
+        await next_of(own, "aether_so_far")
+        b = await self.visitor()
+        await next_of(b, "aether_so_far")
+        text = self.words()
+        await self.say(own, text)
+        line = await next_of(b, "aether")
+        self.assertEqual((line["text"], line["name"], line["from"], line["page"]), (text, written, "outstation", self.ch))
+        wrong = await self.visitor(name=written, extra="&key=wrong-key-" + secrets.token_hex(3))
+        self.assertEqual(await wrong.recv_close(), ("close", 4003))
 
     async def test_a_wrong_or_short_key_is_refused_as_a_desks_would_be(self):
         wrong = await self.station(key="wrong-key-" + secrets.token_hex(3))

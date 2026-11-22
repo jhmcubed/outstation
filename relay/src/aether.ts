@@ -36,12 +36,14 @@ const DEVICE = /^[\x21-\x7e]{8,64}$/; // a visitor's device id: 8 to 64 characte
 const OPEN = 1; // WebSocket.OPEN
 
 type From = "outstation" | "visitor";
-interface Line { id: number; name: string; text: string; from: From; at: number; who: string }
+// (page, 11/22/2026: an outstation's line, sent with its page's key, says which page: Outside marks its name with the ✼
+// and links it there, as it marks a note in the register signed with a page's key)
+interface Line { id: number; name: string; text: string; from: From; at: number; who: string; page?: string }
 interface Ban { who: string; name: string; at: number }
-interface Att { from: From; name: string; who: string; says: number[]; refused?: boolean }
+interface Att { from: From; name: string; who: string; says: number[]; refused?: boolean; page?: string }
 
-/** A line as everyone sees it: never who wrote it (a device or a channel's key), only the name. */
-const pub = (l: Line) => ({ id: l.id, name: l.name, text: l.text, from: l.from, at: l.at });
+/** A line as everyone sees it: never who wrote it (a device or a channel's key), only the name, and an outstation's page. */
+const pub = (l: Line) => ({ id: l.id, name: l.name, text: l.text, from: l.from, at: l.at, ...(l.page ? { page: l.page } : {}) });
 
 export class Aether extends DurableObject<Env> {
   lines: Line[] = [];
@@ -195,7 +197,7 @@ export class Aether extends DurableObject<Env> {
       this.keep(ws, { from, name, who, says: [], refused: true });
       this.close(ws, no[0], no[1]);
     } else {
-      this.keep(ws, { from, name, who, says: [] });
+      this.keep(ws, { from, name, who, says: [], ...(from === "outstation" ? { page: who.slice("channel:".length) } : {}) });
       this.here = null;
       this.send(ws, pyjson({ aether_so_far: this.lines.map(pub) }));
       this.hereChanged(ws);
@@ -230,7 +232,7 @@ export class Aether extends DurableObject<Env> {
       for (const [k, t] of this.said) if (!aetherRecent(t, now).length) this.said.delete(k);
     }
     this.nextId++;
-    const line: Line = { id: this.nextId, name: a.name, text, from: a.from, at: now, who: a.who };
+    const line: Line = { id: this.nextId, name: a.name, text, from: a.from, at: now, who: a.who, ...(a.page ? { page: a.page } : {}) };
     this.lines.push(line);
     if (this.lines.length > AETHER_KEPT) this.lines = this.lines.slice(-AETHER_KEPT);
     this.broadcast(pyjson({ aether: pub(line) }));
