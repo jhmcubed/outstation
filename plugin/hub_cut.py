@@ -82,7 +82,9 @@ PART_FILES = {
     "encounters": [J + "Encounters.java", J + "EncounterSnap.java", J + "EncounterFiles.java", J + "EncounterStrip.java",
                    J + "EncounterShelf.java", J + "EncounterMoment.java", J + "EncounterScene.java", J + "EncounterQueue.java",
                    T + "EncounterStripTest.java", T + "EncounterFilesTest.java", T + "EncountersTest.java",
-                   T + "EncounterMomentTest.java", T + "EncounterQueueTest.java", T + "RunsTest.java", "NOTICE"],
+                   T + "EncounterMomentTest.java", T + "EncounterQueueTest.java", T + "RunsTest.java", "NOTICE",
+                   # (the boss audit's table, its test and write-up, 11/22/2026)
+                   J + "EncounterBosses.java", T + "EncounterBossesTest.java", "docs/encounter-bosses.md"],
 }
 # never copied: what's built, and what only this repository needs
 SKIP = {"build", ".gradle", ".git", "hub_cut.py", "discord_areas.py", "__pycache__", "README.md"}

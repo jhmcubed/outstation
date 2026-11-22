@@ -175,6 +175,14 @@ import org.slf4j.LoggerFactory;
  * And the boss they fought dying ends it with no count line (Jace: "it looks like the recording is not stopping after i
  * kill the mole": another player's hit came first, so no kill credit and no line), once they're out of combat a few
  * ticks: "killed", its end line "credit": false.</li>
+ * <li><b>Every boss in one table</b> (11/22/2026, later; EncounterBosses, plugin/docs/encounter-bosses.md): each boss,
+ * raid and boss-type minigame the game has, from Discord's areas, the hiscores' bosses, the cache's names and RuneLite's
+ * and Dink's count lines, says how it starts (on entering; with the fight, in its open area; with its boss's fight
+ * wherever it is, for those Discord has no area for; by its own rule; never) and how it ends (one kill; the last of
+ * several; the last wave's line; its chest; a run's, a raid's or a delve's rules). The Inferno and the Fight Cave are one
+ * recording each, wave to Zuk's or Jad's line; Barrows and the Moons of Peril run to their chest; the Dagannoth Kings
+ * end with the last one fought; the Kalphite Queen's first form falling is a phase.
+ * EncounterBossesTest walks every row.</li>
  * <li><b>Never in the Wilderness, a PvP area or on a PvP or Deadman world</b> (the snapshot's rule, OutsidePlugin.held):
  * none starts there, and one running stops the tick it's found there, that tick's lines never written.</li>
  * <li><b>Round four</b> (11/21/2026; ghillie's claude/outstation.md, "Encounters, round four"): a delve of Doom of
@@ -281,7 +289,9 @@ final class Encounters
 	static final Set<String> LOOT_OPTIONS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList(
 		"Open", "Search", "Loot", "Harvest", "Claim", "Take", "Take-loot", "Collect", "Grab", "Plunder",
 		// (round four: the Royal Titans' third choice, their desiccated pages into the inventory, the wiki's "Take pages")
-		"Take pages")));
+		"Take pages",
+		// (11/22/2026: the Maggot King's corpse, "Maggot King Corpse": the wiki's "Open-stomach, Take-eggs")
+		"Open-stomach", "Take-eggs")));
 	/** a corpse's option that gives up its loot for a better chance at the pet (round four, 11/21/2026; the wiki):
 	 *  Araxxor's "Destroy" (a prompt after), the Royal Titans' "Sacrifice" */
 	static final Set<String> FORFEIT_OPTIONS = Collections.unmodifiableSet(new HashSet<>(java.util.Arrays.asList("Destroy", "Sacrifice")));
@@ -362,12 +372,22 @@ final class Encounters
 	static final int RUN_LEFT = 5;
 	/** the Hunllef killed: the most it waits for the chest (5 minutes) */
 	static final int RUN_CHEST_WAIT = 500;
+	/** a fight ended by its chest (Barrows' brothers, then their chest; the Moons of Peril twice this): ticks with no
+	 *  hitsplat on or from the player before it's given up, for the tunnels and the walks between (11/22/2026) */
+	static final int RUN_IDLE = 500;
 
 	/** the game's kill and completion count lines ("Your Vorkath kill count is: 418.", "Your completed Chambers of Xeric
 	 *  count is: 12."), as Counts reads them; the count may open with one of the game's colour macros, "@mes_hl_red@",
 	 *  which Text.removeTags leaves (11/21/2026, round six: RuneLite 1.13.7's chat commands and Dink allow it; DropTracker
 	 *  dates it to the game's 08/26/2026 update) */
 	static final Pattern KILL_LINE = Pattern.compile("^Your (?:completed )?(.+?) (?:(?:kill|chest|completion|harvest|success) )?count is: ?(?:@[A-Za-z0-9_]+@)?([\\d,]+)\\b.*$");
+	/** TzHaar-Ket-Rak's challenges' count line, which KILL_LINE's form doesn't take ("Your completion count for
+	 *  TzHaar-Ket-Rak's First Challenge is: 1.", RuneLite's ChatCommandsPluginTest; its KILLCOUNT_PATTERN's "completion
+	 *  count for "): its groups as KILL_LINE's (11/22/2026) */
+	static final Pattern CHALLENGE_LINE = Pattern.compile("^Your completion count for (.+?) is: ?(?:@[A-Za-z0-9_]+@)?([\\d,]+)\\b.*$");
+	/** the count lines that are no fight's: an agility course's laps, the Agility Arena's tickets, the herbiboar's
+	 *  harvests (KILL_LINE takes them; RuneLite's chat commands and Dink tell them by these words; 11/22/2026) */
+	static final Pattern NOT_A_KILL = Pattern.compile("^Your .+ (?:lap|Total Ticket|harvest) count is\\b.*$");
 	/** the raids' friends-chat lines kept: a completion or a time (everything else there can be about other players) */
 	static final Pattern COMPLETION = Pattern.compile("(?i)raid is complete|team size|duration|personal best|completion time|challenge complete|congratulations");
 
@@ -459,6 +479,9 @@ final class Encounters
 	 *  count line (no kill credit: the end line's "credit": false) */
 	private final Set<Integer> bossFought = new HashSet<>();
 	private int bossDeadAt = -1, bossDeadIndex = -1, lastFight = -1;
+	/** (11/22/2026) a boss's own place (no area of Discord's): the tick (the whole recording's) one of its NPCs was last
+	 *  in sight */
+	private int bossSeenAt;
 	private String bossDeadName;
 	private boolean noCredit;
 	private String label;
@@ -669,6 +692,7 @@ final class Encounters
 			bossDeadIndex = -1;
 			bossDeadName = null;
 			lastFight = -1;
+			bossSeenAt = 0;
 			noCredit = false;
 			shots.clear();
 			shotsTaken.clear();
@@ -970,9 +994,20 @@ final class Encounters
 	 *  skilling bosses Discord lists with the rest, where a recording would run as long as they skill. */
 	private Presence.Area bossArea()
 	{
-		Presence.Area a = here();
-		return a != null && (Presence.BOSS.equals(a.kind) || Presence.RAID.equals(a.kind)) && !SKILLING.contains(a.name)
-			&& !LOBBIES.contains(a.name) && !RAID_PARTS.containsKey(a.name) ? a : null;
+		return recordedArea(here());
+	}
+
+	/**
+	 * Whether an area of Discord's is one a recording starts at by itself (11/22/2026, the table, EncounterBosses): a boss's
+	 * or a raid's, and the minigames that are a boss fight (Barrows, the Inferno, the Fight Cave); not the skilling bosses,
+	 * a lobby, a raid's part, or a run's minigame (the Gauntlets and the Colosseum start by their own rule). The area, or
+	 * null.
+	 */
+	static Presence.Area recordedArea(Presence.Area a)
+	{
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && b.area != null && b.start != EncounterBosses.Start.NEVER && b.start != EncounterBosses.Start.OWN
+			&& !SKILLING.contains(a.name) && !LOBBIES.contains(a.name) && !RAID_PARTS.containsKey(a.name) ? a : null;
 	}
 
 	/** Whether where they are ({@code now}) is the area a recording started at: the same, one of the same name, or a part
@@ -1209,11 +1244,17 @@ final class Encounters
 		tick.add("ui", ui());
 
 		boolean watchedSeen = false;
+		// (a boss's own place: whether any of its NPCs is in sight, for its leaving; 11/22/2026)
+		EncounterBosses.Boss own = automatic && placeless(area) ? EncounterBosses.forArea(area) : null;
 		JsonArray npcs = new JsonArray();
 		for (NPC npc : wv.npcs())
 		{
 			npcs.add(EncounterSnap.actor(client, npc));
 			moves(npc);
+			if (own != null && own.isBoss(nameOf(npc)))
+			{
+				bossSeenAt = whole();
+			}
 			if (watchedIds.contains(npc.getId()))
 			{
 				watchedIndices.add(npc.getIndex());
@@ -1315,10 +1356,25 @@ final class Encounters
 				return;
 			}
 		}
+		else if (automatic && area != null && own != null)
+		{
+			// (a boss Discord has no area for, started by its fight: left once none of its NPCs has been in sight a while
+			// (the moons aren't between fights: not theirs); then as a boss's area below; 11/22/2026)
+			if (endAt < 0 && own.goneEnds(whole(), bossSeenAt))
+			{
+				stopAuto("left");
+				return;
+			}
+			if (bossEnds(own))
+			{
+				return;
+			}
+		}
 		else if (automatic && area != null)
 		{
 			Presence.Area now = here();
 			boolean raid = Presence.RAID.equals(area.kind);
+			EncounterBosses.Boss row = EncounterBosses.forArea(area);
 			// (a raid's own state counts as in it, wherever a dead raider's been put; round eight)
 			boolean in = sameArea(now, area) || raid && !raidOver && raidSays(area);
 			outside = in ? 0 : outside + 1;
@@ -1334,9 +1390,12 @@ final class Encounters
 			}
 			// (in an area of another name: left at once; where no area's named, after a few ticks, a raid's longer
 			// before it's done: a room the list misses, a map loading)
-			if (!in && (now != null || outside > (raid && !done ? LEFT_RAID : LEFT_BOSS)))
+			// (a kill or a death already due ends as itself: the Fight Cave's Jad, then out of the cave before the kill's
+			// few ticks were up, is a kill, not a leaving; 11/22/2026. The Inferno's and the Fight Cave's waves wait longer
+			// in no named area, as a raid does: the table's grace)
+			if (!in && (now != null || outside > (raid && !done ? LEFT_RAID : row != null ? row.grace : LEFT_BOSS)))
 			{
-				stopAuto(done ? "completed" : "left");
+				stopAuto(done ? "completed" : endAt >= 0 && endWhy != null ? endWhy : "left");
 				return;
 			}
 			if (raid && raidDone >= 0 && whole() >= raidDone + RAID_AFTER)
@@ -1349,22 +1408,8 @@ final class Encounters
 				stopAuto("the time limit");
 				return;
 			}
-			// (a boss's area: the boss they fought dead with no count line (no kill credit, 11/22/2026), and the player
-			// out of combat a few ticks: killed all the same, held for a drop as a count line's kill is)
-			if (!raid && endAt < 0 && bossDown(whole(), bossDeadAt, lastFight) && !otherBossUp())
+			if (!raid && bossEnds(row))
 			{
-				endAt = whole();
-				endWhy = "killed";
-				noCredit = true;
-				if (scene != null)
-				{
-					scene.kill(bossDeadAt, bossDeadName);
-				}
-			}
-			// (an open area, with no leaving: the fight given up, the boss never killed, ends it too; 11/22/2026)
-			if (endAt < 0 && openArea(area, instance()) && fightStopped(whole(), lastFight))
-			{
-				stopAuto("the fight stopped");
 				return;
 			}
 		}
@@ -1400,6 +1445,37 @@ final class Encounters
 		}
 	}
 
+	/**
+	 * A boss's area's (or its own place's) endings each tick, besides leaving it: the boss they fought dead with no count
+	 * line (no kill credit, 11/22/2026), and the player out of combat a few ticks: killed all the same, held for a drop
+	 * as a count line's kill is (only where the table lets a death end it: not a phase, a wave, a brother before the
+	 * chest); and where it started by the fight, the fight given up, the boss never killed ("the fight stopped",
+	 * 11/22/2026: an open area has no leaving). Whether it stopped.
+	 */
+	private boolean bossEnds(EncounterBosses.Boss row)
+	{
+		if (row == null)
+		{
+			return false;
+		}
+		if (endAt < 0 && !row.deaths.isEmpty() && bossDown(whole(), bossDeadAt, lastFight) && !otherBossUp(null))
+		{
+			endAt = whole();
+			endWhy = "killed";
+			noCredit = true;
+			if (scene != null)
+			{
+				scene.kill(bossDeadAt, bossDeadName);
+			}
+		}
+		if (endAt < 0 && row.idleEnds(instance(), whole(), lastFight))
+		{
+			stopAuto("the fight stopped");
+			return true;
+		}
+		return false;
+	}
+
 	/** Not recording: at a boss's or a raid's area, one starts (not again where one was stopped by hand, or just ended by
 	 *  its kill, till the next fight there). */
 	private void autoStartByArea()
@@ -1415,8 +1491,12 @@ final class Encounters
 		Presence.Area a = client.getGameState() == GameState.LOGGED_IN ? bossArea() : null;
 		if (a == null || lastArea == null || !a.name.equals(lastArea.name))
 		{
-			// (left, or somewhere new: what waited there is forgotten)
-			handStopped = null;
+			// (left, or somewhere new: what waited there is forgotten; a boss's own place stopped by hand, once none of its
+			// NPCs is in sight: it has no area to leave, 11/22/2026)
+			if (!placeless(handStopped) || !placeAround(handStopped))
+			{
+				handStopped = null;
+			}
 			afterKill = null;
 		}
 		lastArea = a;
@@ -1432,30 +1512,34 @@ final class Encounters
 	// non-instanced location) ... people spend hours here so probably not ideal", and "it looks like the recording is not
 	// stopping after i kill the mole": someone else had hit the Mole first, so his ironman got no kill credit and no
 	// count line, and nothing else ends a recording in a lair with no leaving)
+	//
+	// (11/22/2026, later: every boss, raid and boss-type minigame in one table, EncounterBosses, read for each decision
+	// below; plugin/docs/encounter-bosses.md. What it changed: the Inferno, the Fight Cave and Barrows record (Discord
+	// names them minigames, so nothing started there); the bosses Discord has no area for (Scurrius, the Hueycoatl,
+	// Amoxliatl, the Moons of Peril, the King Black Dragon, Brutus, the Mad Angel, the Maggot King, the shellbane gryphon,
+	// Obor, Bryophyta, the Mimic, the Deranged archaeologist, TzHaar-Ket-Rak's challenges) start with their fight,
+	// wherever it is; the Dagannoth Kings (a count line a king) end with the last one fought, and a corpse to loot (a
+	// Royal Titan's) is never a boss still up;
+	// a wave's or a moon's count line, or a brother's death, never ends a run whose end is its last boss or its chest; the
+	// Kalphite Queen's first form falling is a phase, not her death; a kill whose leaving came before its few ticks were
+	// up ends as the kill, not "left"; an agility lap's count line is no kill)
 
 	/** the NPCs that are an area's boss where Discord's name for the area isn't theirs (any other area's boss is the NPC
-	 *  of the area's own name); the wiki's names */
+	 *  of the area's own name): Discord's boss areas' rows in the table (EncounterBosses), the cache's names */
 	static final Map<String, Set<String>> BOSS_NPCS;
 
 	static
 	{
 		Map<String, Set<String>> m = new HashMap<>();
-		m.put("Dagannoth Kings", names("Dagannoth Rex", "Dagannoth Prime", "Dagannoth Supreme"));
-		m.put("Grotesque Guardians", names("Dusk", "Dawn"));
-		m.put("Nightmare of Ashihama", names("The Nightmare", "Phosani's Nightmare"));
-		m.put("The Royal Titans", names("Branda the Fire Queen", "Eldric the Ice King"));
-		m.put("Kraken", names("Kraken", "Enormous Tentacle"));
-		BOSS_NPCS = Collections.unmodifiableMap(m);
-	}
-
-	private static Set<String> names(String... n)
-	{
-		Set<String> s = new HashSet<>();
-		for (String x : n)
+		for (EncounterBosses.Boss b : EncounterBosses.ALL)
 		{
-			s.add(x.toLowerCase());
+			Presence.Area d = b.area == null ? null : EncounterBosses.discord(b.area);
+			if (d != null && Presence.BOSS.equals(d.kind) && !b.npcs.equals(Collections.singleton(EncounterBosses.norm(b.area))))
+			{
+				m.put(b.area, b.npcs);
+			}
 		}
-		return Collections.unmodifiableSet(s);
+		BOSS_NPCS = Collections.unmodifiableMap(m);
 	}
 
 	/** after the boss the player fought dies with no count line (no kill credit: another player's hit first), the ticks
@@ -1466,28 +1550,27 @@ final class Encounters
 	static final int OPEN_IDLE = 150;
 
 	/** An open boss area: a boss's (not a raid's) and not an instance (the Giant Mole's lair entered without its
-	 *  instance's option). There a recording starts with the fight with the boss, not on entering. */
+	 *  instance's option), or one whose boss's fight always starts it (Barrows, a boss's own place: the table's FIGHT).
+	 *  There a recording starts with the fight with the boss, not on entering. */
 	static boolean openArea(Presence.Area a, boolean instance)
 	{
-		return a != null && Presence.BOSS.equals(a.kind) && !instance;
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && b.startsByFight(instance);
 	}
 
-	/** Whether an area starts its recording the tick they're in it: a raid, and a boss's in an instance. */
+	/** Whether an area starts its recording the tick they're in it: a raid, a boss's in an instance, the Inferno and the
+	 *  Fight Cave. */
 	static boolean startsOnEntry(Presence.Area a, boolean instance)
 	{
-		return a != null && !openArea(a, instance);
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && b.startsOnEntry(instance);
 	}
 
-	/** Whether an NPC of this name is the area's boss (BOSS_NPCS, else the area's own name), any case. */
+	/** Whether an NPC of this name is the area's boss (the table's names, else the area's own name), any case. */
 	static boolean bossOf(Presence.Area a, String npc)
 	{
-		if (a == null || npc == null)
-		{
-			return false;
-		}
-		String n = npc.replace(' ', ' ').trim().toLowerCase();
-		Set<String> named = BOSS_NPCS.get(a.name);
-		return named != null ? named.contains(n) : n.equals(a.name.toLowerCase());
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && b.isBoss(npc);
 	}
 
 	/** Whether a fight (the player's hitsplat on it, its hitsplat on the player, the player attacking it) with an NPC of
@@ -1495,6 +1578,75 @@ final class Encounters
 	static boolean startsByFight(Presence.Area a, boolean instance, String npc)
 	{
 		return openArea(a, instance) && bossOf(a, npc);
+	}
+
+	/** A boss Discord has no area for, whose fight starts a recording wherever it is (11/22/2026: Scurrius, the Hueycoatl,
+	 *  the Moons of Peril, the King Black Dragon...): the place named for it that the recording is of, or null. Never in
+	 *  the Wilderness (mayStart). */
+	static Presence.Area placeOf(String npc)
+	{
+		EncounterBosses.Boss b = EncounterBosses.placeless(npc);
+		return b == null ? null : b.place;
+	}
+
+	/** Whether an area is a boss's own place (placeOf's), not one of Discord's. */
+	static boolean placeless(Presence.Area a)
+	{
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && b.place != null && b.place == a;
+	}
+
+	/** The name a count line counts ("Your Vorkath kill count is: 418." counts "Vorkath"; "Your Bryophyta chests opened
+	 *  count is: 5." counts "Bryophyta"; "Your completion count for TzHaar-Ket-Rak's First Challenge is: 1." counts the
+	 *  challenge), or null: not a count line, or one that's no fight's (a lap's, a ticket's, a harvest's). */
+	static String killName(String text)
+	{
+		if (text == null || NOT_A_KILL.matcher(text).matches())
+		{
+			return null;
+		}
+		Matcher m = KILL_LINE.matcher(text);
+		if (!m.matches())
+		{
+			m = CHALLENGE_LINE.matcher(text);
+			if (!m.matches())
+			{
+				return null;
+			}
+		}
+		return EncounterBosses.counted(m.group(1));
+	}
+
+	/** A count line in a recording started at {@code a} (null: by hand, or by a listed NPC): why it ends it ("killed",
+	 *  "completed" for the last wave's, "looted" for a chest's), or null: no count line, a wave's, a sub-boss's, a moon's
+	 *  before the chest, one of several bosses with another fought still up ({@code otherUp}), or a raid's, a run's or a
+	 *  delve's (their own rules'). */
+	static String killEnds(Presence.Area a, String text, boolean otherUp)
+	{
+		String counted = killName(text);
+		if (counted == null)
+		{
+			return null;
+		}
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b == null ? "killed" : b.killEnds(counted, otherUp);
+	}
+
+	/** Whether this NPC's death (its id and name), fought, ends a recording started at {@code a} with no count line: one of
+	 *  its bosses whose death is the end, not a phase (the Kalphite Queen's first form), and never where the line always
+	 *  comes or the end is a chest's (the waves, Barrows' brothers, the moons, Obor's and Bryophyta's chests). */
+	static boolean deathEnds(Presence.Area a, int id, String npc)
+	{
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && !Presence.RAID.equals(b.kind) && b.diesTo(id, npc);
+	}
+
+	/** Whether a recording started at {@code a} ends for the fight given up ("the fight stopped"): where it started by the
+	 *  fight, the row's idle ticks with no hitsplat on or from the player (OPEN_IDLE in an open boss area). */
+	static boolean idleEnds(Presence.Area a, boolean instance, int now, int lastFight)
+	{
+		EncounterBosses.Boss b = EncounterBosses.forArea(a);
+		return b != null && b.idleEnds(instance, now, lastFight);
 	}
 
 	/** Whether a recording whose boss died with no count line ({@code deadAt}, the whole recording's tick, -1 none) ends
@@ -1522,18 +1674,19 @@ final class Encounters
 		return a == null || a.getName() == null ? null : Text.removeTags(a.getName());
 	}
 
-	/** The area's boss fighting the player (interacting with them), or null. */
+	/** The area's boss fighting the player (interacting with them), or null; with no area, a boss whose own place starts
+	 *  by its fight (placeOf). */
 	private NPC bossOnMe(Presence.Area a)
 	{
 		Player me = client.getLocalPlayer();
 		WorldView wv = client.getTopLevelWorldView();
-		if (me == null || wv == null || a == null)
+		if (me == null || wv == null)
 		{
 			return null;
 		}
 		for (NPC npc : wv.npcs())
 		{
-			if (npc.getInteracting() == me && bossOf(a, nameOf(npc)))
+			if (npc.getInteracting() == me && (a != null ? bossOf(a, nameOf(npc)) : placeOf(nameOf(npc)) != null))
 			{
 				return npc;
 			}
@@ -1541,8 +1694,8 @@ final class Encounters
 		return null;
 	}
 
-	/** Not recording, in an open boss area: the fight with its boss ({@code npc}) starts one; each kill there its own
-	 *  (not again where one was stopped by hand, till they've left). */
+	/** Not recording, in an open boss area (or by a boss whose own place it is, by its name): the fight with its boss
+	 *  ({@code npc}) starts one; each kill there its own (not again where one was stopped by hand, till they've left). */
 	private void fightOpen(NPC npc)
 	{
 		if (npc == null || !mayStart())
@@ -1550,6 +1703,11 @@ final class Encounters
 			return;
 		}
 		Presence.Area a = bossArea();
+		if (a == null)
+		{
+			// (no recorded area of Discord's here: a boss whose own place it is, by its name; 11/22/2026)
+			a = placeOf(nameOf(npc));
+		}
 		if (a == null || a == handStopped || !startsByFight(a, instance(), nameOf(npc)))
 		{
 			return;
@@ -1558,12 +1716,13 @@ final class Encounters
 		start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
 		bossFought.add(npc.getIndex());
 		lastFight = whole();
+		bossSeenAt = whole();
 	}
 
-	/** A recording started by a boss's area: an NPC the player fought, the area's boss, is noted. */
+	/** A recording started by a boss's area (or its own place): an NPC the player fought, the area's boss, is noted. */
 	private void fought(NPC npc)
 	{
-		if (npc != null && automatic && area != null && Presence.BOSS.equals(area.kind) && bossOf(area, nameOf(npc)))
+		if (npc != null && automatic && area != null && !Presence.RAID.equals(area.kind) && bossOf(area, nameOf(npc)))
 		{
 			bossFought.add(npc.getIndex());
 		}
@@ -1573,7 +1732,7 @@ final class Encounters
 	private void bossDied(NPC npc)
 	{
 		if (bossDeadAt < 0 && endAt < 0 && automatic && area != null && bossFought.contains(npc.getIndex())
-			&& bossOf(area, nameOf(npc)))
+			&& deathEnds(area, npc.getId(), nameOf(npc)))
 		{
 			bossDeadAt = whole();
 			bossDeadIndex = npc.getIndex();
@@ -1582,18 +1741,62 @@ final class Encounters
 	}
 
 	/** Another of the area's bosses they fought still up beside the dead one (the Dagannoth Kings' brothers, Dusk after
-	 *  Dawn, a Royal Titan after the other): the fight goes on. */
-	private boolean otherBossUp()
+	 *  Dawn, a Royal Titan after the other): the fight goes on. {@code counted}: a count line's name, the one it counts
+	 *  (its kill) not counting as up (null: none). */
+	private boolean otherBossUp(String counted)
 	{
 		WorldView wv = client.getTopLevelWorldView();
-		if (wv == null)
+		EncounterBosses.Boss b = EncounterBosses.forArea(area);
+		if (wv == null || b == null)
 		{
 			return false;
 		}
 		for (NPC npc : wv.npcs())
 		{
-			if (npc.getIndex() != bossDeadIndex && bossFought.contains(npc.getIndex()) && !npc.isDead()
-				&& bossOf(area, nameOf(npc)))
+			String n = nameOf(npc);
+			if (npc.getIndex() != bossDeadIndex && bossFought.contains(npc.getIndex()) && !npc.isDead() && b.isDeath(n)
+				&& (counted == null || !EncounterBosses.norm(n).equals(EncounterBosses.norm(counted))) && !isCorpse(npc))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Whether an NPC is a corpse to loot (a loot option, no Attack: the Royal Titans' and Araxxor's, by its name still),
+	 *  not a boss up (11/22/2026; as corpseWaiting tells them). */
+	private static boolean isCorpse(NPC npc)
+	{
+		net.runelite.api.NPCComposition def = npc.getTransformedComposition();
+		if (def == null || def.getActions() == null)
+		{
+			return false;
+		}
+		boolean loot = false, attack = false;
+		for (String act : def.getActions())
+		{
+			if (act != null)
+			{
+				String a = Text.removeTags(act);
+				loot |= LOOT_OPTIONS.contains(a) || FORFEIT_OPTIONS.contains(a);
+				attack |= "Attack".equals(a);
+			}
+		}
+		return loot && !attack;
+	}
+
+	/** One of a boss's own place's NPCs (placeless's) in sight now. */
+	private boolean placeAround(Presence.Area place)
+	{
+		EncounterBosses.Boss b = EncounterBosses.forArea(place);
+		WorldView wv = client.getTopLevelWorldView();
+		if (b == null || wv == null)
+		{
+			return false;
+		}
+		for (NPC npc : wv.npcs())
+		{
+			if (b.isBoss(nameOf(npc)))
 			{
 				return true;
 			}
@@ -2661,8 +2864,8 @@ final class Encounters
 	{
 		String text = Text.removeTags(event.getMessage());
 		// (the kill: the game's count line ends an automatic recording a few ticks on)
-		Matcher kill = recording != null && event.getType() == ChatMessageType.GAMEMESSAGE ? KILL_LINE.matcher(text) : null;
-		if (kill != null && kill.matches())
+		String counted = recording != null && event.getType() == ChatMessageType.GAMEMESSAGE ? killName(text) : null;
+		if (counted != null)
 		{
 			Presence.Area raid = raidArea();
 			if (delve)
@@ -2674,30 +2877,53 @@ final class Encounters
 			{
 				// (a run: the Gauntlet's completion line ("Your Gauntlet completion count is: N.", as RuneLite's chat
 				// commands read it) and Sol Heredit's kill line end nothing: the chest or the claim does; round six)
-				runKilled(kill.group(1));
+				runKilled(counted);
 			}
 			else if (raid != null)
 			{
 				// (in a raid, nothing ends it here and nothing's its moment: the raid's own line is noted, a boss's inside
 				// it passed by; the treasure room's leaving ends it, the chest is its moment; round three)
-				if (raidCompletion(text, kill.group(1), raid.name) && raidDone < 0)
+				if (raidCompletion(text, counted, raid.name) && raidDone < 0)
 				{
 					raidDone = whole();
 				}
 			}
 			else
 			{
-				if (automatic && endAt < 0)
+				// (where it started decides, the table (11/22/2026): a wave's, a sub-boss's or a moon's line before the
+				// chest passes by; one of several bosses with another fought still up (a Dagannoth King's brothers) is
+				// noted and goes on, the last one's ends it; by hand, or for a listed NPC, any count line is the kill)
+				Presence.Area at = automatic ? area : null;
+				EncounterBosses.Boss row = EncounterBosses.forArea(at);
+				boolean several = row != null && row.end == EncounterBosses.End.LAST;
+				String why = killEnds(at, text, several && otherBossUp(counted));
+				if (why != null)
 				{
-					endAt = whole() + AFTER_KILL;
-					endWhy = "killed";
+					if (automatic && endAt < 0)
+					{
+						// (a chest's line: the most it waits for the chest's window, which pulls it to LOOT_AFTER)
+						endAt = whole() + ("looted".equals(why) ? DROP_WAIT : AFTER_KILL);
+						endWhy = why;
+					}
+					// (the count line came: the kill's with credit, whatever ended it; 11/22/2026)
+					noCredit = false;
+					// (the scene moment's kill, by hand or not: its still scene taken now; of several, the last one's)
+					if (scene != null)
+					{
+						if (several && scene.killed())
+						{
+							scene.lastKill(whole(), counted);
+						}
+						else
+						{
+							scene.kill(whole(), counted);
+						}
+					}
 				}
-				// (the count line came: the kill's with credit, whatever ended it; 11/22/2026)
-				noCredit = false;
-				// (the scene moment's kill, by hand or not: its still scene taken now)
-				if (scene != null)
+				else if (several && scene != null)
 				{
-					scene.kill(whole(), kill.group(1));
+					// (one of several down, another fought still up: the moment's kill for now, the last one's when it comes)
+					scene.kill(whole(), counted);
 				}
 			}
 		}
@@ -3347,7 +3573,8 @@ final class Encounters
 			String name = npc.getName() == null ? "" : Text.removeTags(npc.getName());
 			// (the killed one's name, or one fought: the Royal Titans' count line names neither titan, and each falls
 			// where it stood with its own name, Branda the Fire Queen's and Eldric the Ice King's; round four)
-			if (def == null || !(name.equalsIgnoreCase(killed) || scene.fought(name))
+			// (or its corpse by name: "Maggot King Corpse", 11/22/2026)
+			if (def == null || !(name.equalsIgnoreCase(killed) || name.equalsIgnoreCase(killed + " Corpse") || scene.fought(name))
 				|| npc.getWorldLocation().distanceTo(me.getWorldLocation()) > 15)
 			{
 				continue;

@@ -314,6 +314,16 @@ final class EncounterScene
 		}
 	}
 
+	/** The last of several bosses killed (11/22/2026: a Dagannoth King's brothers, fought together): the moment is its
+	 *  kill, not the first one's; the still scene taken again, and its drop looked for anew. */
+	void lastKill(int t, String npc)
+	{
+		killTick = t;
+		killNpc = npc;
+		dropTick = -1;
+		stillKill = takeStill();
+	}
+
 	boolean killed()
 	{
 		return killTick >= 0;
