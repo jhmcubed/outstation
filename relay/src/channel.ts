@@ -91,6 +91,10 @@ const CHAT_PAGE = 50;
 const NOTES_KEPT = 500, NOTES_SENT = 50, NOTES_PAGE = 50, NOTE_BURST = 3, NOTE_WINDOW = 60_000;
 // (a note signed as a page, 11/22/2026: the key given with it at most this long; the page's own say 8 to 400)
 const NOTE_KEY_MAX = 400;
+// (an unsigned note's name found no page's, 11/22/2026: not asked again for this long, for that socket and that name)
+const NOTE_FREE_MS = 5 * 60_000;
+// (the name a socket has with no name of its own, or with the page's own: never a page's, whatever's handed out)
+const NOBODY = "visitor";
 const SAY_MAX = 300, SAY_BURST = 20, SAY_WINDOW = 10_000;
 const NAME_MAX = 20;
 const TITLE_MAX = 100; // the broadcast's title (11/06/2026, Jace: "the option to title broadcast")
@@ -201,6 +205,7 @@ interface Att {
   // page, so its wrong keys count against this address as any socket's would; never sent, gone with the socket)
   ip?: string;
   signer?: { kh: string; page: string }; // (the page a note was last signed as, and its name's and key's hash: once a socket)
+  free?: { form: string; at: number }; // (the name its last unsigned note went under, found no page's then: NOTE_FREE_MS)
   lastPing?: number;
   host?: string; // a desk's name in the chat
   talk?: boolean; // a desk that said &talk=1: the Outside plugin's chat in the game (11/16/2026)
@@ -1715,19 +1720,28 @@ export class Channel extends DurableObject<Env> {
    *  its next notes as that page aren't checked again. Kept marked proven, under the name as written. Wrong, or not a
    *  page's name: the note goes nowhere and only that socket hears {"note_refused": {"code", "why"}}, the codes the
    *  aether's (4001, 4003, 4029; 1013 to try again). A ban holds on to the page it signed as, too (fromViewer's ban). */
-  async noteAs(ws: WebSocket, text: string, as: unknown, key: unknown): Promise<void> {
+  async noteAs(ws: WebSocket, text: string, as: unknown, key: unknown, tend?: unknown): Promise<void> {
     const name = oneLine(as, NAME_MAX), form = channelForm(name), k = typeof key === "string" ? key : "";
     let no: [number, string] | null = null, page = "";
     if (!name || !form) no = [4002, "a page's name, to sign as it"];
+    else if (typeof tend === "string" && !k) {
+      // (its owner on their own page, opened from the plugin's Edit my page: the tending token it handed in with the key
+      // (POST /tend) stands for the key, here and only for this page's own name; 11/22/2026)
+      let mine = false;
+      try { mine = (await this.pageOf(form)) === this.name; } catch { no = [1013, "the relay couldn't check the name: try again"]; }
+      if (!no && !(mine && (await this.tendUntil(tend)))) no = [4003, "this link to tend the chat has run out: open it again from the plugin"];
+      if (!no) page = this.name;
+    }
     else if (k.length < 8 || k.length > NOTE_KEY_MAX) no = [4001, "a transmit key needs at least 8 characters"];
-    const kh = no ? "" : await this.hash(form + "\n" + k);
+    const kh = no || page ? "" : await this.hash(form + "\n" + k);
     let a = this.att(ws);
-    if (!no && a.signer && a.signer.kh === kh) page = a.signer.page;
-    else if (!no) [no, page] = await this.signer(form, k, a.ip || "");
+    if (no || page) { /* refused, or the owner's token */ }
+    else if (a.signer && a.signer.kh === kh) page = a.signer.page;
+    else [no, page] = await this.signer(form, k, a.ip || "");
     if (ws.readyState !== OPEN) return;
     a = this.att(ws);
     if (no) { this.send(ws, pyjson({ note_refused: { code: no[0], why: no[1] } })); return; }
-    if (!a.signer || a.signer.kh !== kh) { a.signer = { kh, page }; this.keep(ws, a); }
+    if (kh && (!a.signer || a.signer.kh !== kh)) { a.signer = { kh, page }; this.keep(ws, a); }
     // (banned while the key was being checked, or the page itself banned here)
     if (this.isBlocked(a) || this.meta.blocked.includes("c:" + page)) return;
     this.note(name, text, a.who || 0, a.device || "", page);
@@ -1738,8 +1752,7 @@ export class Channel extends DurableObject<Env> {
   async signer(form: string, key: string, ip: string): Promise<[[number, string] | null, string]> {
     let page: string | null = null;
     try {
-      const t = (await (await this.dir().fetch("https://dir/taken?name=" + encodeURIComponent(form))).json()) as { taken: boolean; channel?: string | null };
-      page = t.taken && t.channel ? t.channel : null;
+      page = await this.pageOf(form);
     } catch {
       return [[1013, "the relay couldn't check the key: try again"], ""];
     }
@@ -1752,6 +1765,41 @@ export class Channel extends DurableObject<Env> {
     } catch {
       return [[1013, "the relay couldn't check the key: try again"], ""];
     }
+  }
+
+  /** The page a name is, in a channel's form (case and spaces aside, and an old flat channel's too): the Directory's
+   *  /taken, as the aether asks it; null for none. Throws when the Directory can't be asked. */
+  async pageOf(form: string): Promise<string | null> {
+    if (!form) return null;
+    const t = (await (await this.dir().fetch("https://dir/taken?name=" + encodeURIComponent(form))).json()) as { taken: boolean; channel?: string | null };
+    return t.taken && t.channel ? t.channel : null;
+  }
+
+  /** An unsigned note (11/22/2026, Jace: "make the register work like the aether"; docs/protocol.md "The register"):
+   *  under a page's name, refused as the aether refuses that name to a visitor, 4009 "that name belongs to an
+   *  outstation", only to that socket ({"note_refused"}), nothing kept; with the page's key it goes signed (noteAs).
+   *  Any other name is anyone's, as before. The Directory's asked once a note (counted towards NOTE_BURST, as a signed
+   *  note's check is), and a name found no page's isn't asked again for that socket for NOTE_FREE_MS. */
+  async noteOpen(ws: WebSocket, text: string, name: string): Promise<void> {
+    const form = channelForm(name);
+    let a = this.att(ws);
+    if (form && !(a.free && a.free.form === form && Date.now() - a.free.at < NOTE_FREE_MS)) {
+      let page: string | null;
+      try {
+        page = await this.pageOf(form);
+      } catch {
+        this.send(ws, pyjson({ note_refused: { code: 1013, why: "the relay couldn't check the name: try again" } }));
+        return;
+      }
+      if (ws.readyState !== OPEN) return;
+      if (page) { this.send(ws, pyjson({ note_refused: { code: 4009, why: "that name belongs to an outstation" } })); return; }
+      a = this.att(ws);
+      a.free = { form, at: Date.now() };
+      this.keep(ws, a);
+    }
+    a = this.att(ws);
+    if (this.isBlocked(a)) return; // (banned while the name was being looked up)
+    this.note(name, text, a.who || 0, a.device || "");
   }
 
   unnote(id: number) {
@@ -1812,8 +1860,12 @@ export class Channel extends DurableObject<Env> {
       this.keep(ws, a);
       // (signed as a page, with its key: proven, 11/22/2026. Counted above as any note is, so a socket asks for a key's
       // check NOTE_BURST times a NOTE_WINDOW at most, right or wrong)
-      if ("as" in m || "key" in m) return this.noteAs(ws, text, m.as, m.key);
-      this.note(a.name || "visitor", text, a.who || 0, a.device || "");
+      if ("as" in m || "key" in m || "tend" in m) return this.noteAs(ws, text, m.as, m.key, m.tend);
+      // (unsigned, under a page's name: refused, as the aether refuses it, 11/22/2026, Jace: "make the register work like
+      // the aether"; noteOpen)
+      const name = a.name || NOBODY;
+      if (name !== NOBODY) return this.noteOpen(ws, text, name);
+      this.note(name, text, a.who || 0, a.device || "");
       return;
     }
     if ("say" in m) {

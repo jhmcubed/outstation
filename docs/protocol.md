@@ -265,8 +265,20 @@ from the chat (the chat is for while the outstation transmits; the page shows it
   (or over 400), 4002 no name, 4003 the wrong key or no page by that name, 4029 too many wrong keys, 1013 the relay
   couldn't check just then (try again). It counts towards the three a minute either way, so a socket asks for at most
   three checks a minute; once a key's right, that socket's later notes as the same page with the same key aren't checked
-  again. A note without `as` and `key` is never proven, whatever its name (anyone may still sign any name). The key is
-  never kept or sent on: only its hash, with the name, in the socket's own attachment, gone with it.
+  again. The key is never kept or sent on: only its hash, with the name, in the socket's own attachment, gone with it.
+- **Its owner, from Edit my page** (11/22/2026): on the page's own register, `{"note", "as": "<the page's name>",
+  "tend": "<the tending token>"}` (below, "Tending the page's chat from the page") stands for the key: proven as above,
+  under that page. A token not handed in or run out, or another page's name, is 4003 "this link to tend the chat has run
+  out: open it again from the plugin".
+- **A page's name, unsigned** (11/22/2026, Jace: "make the register work like the aether"): a note without `as` under
+  a `hello` name that's a page's, matched as the aether matches a visitor's name (case and spaces aside, an old flat
+  channel's too: the Directory's `/taken`), is refused as the aether refuses it: only that socket hears
+  `{"note_refused": {"code": 4009, "why": "that name belongs to an outstation"}}` (1013 when the name couldn't be
+  checked), and nothing's kept. Signed with its key, it goes as above. Any other name is anyone's, unsigned, as before;
+  so is `"visitor"`, the name a socket has with none given, or with the page's own (a `hello` can't take the host's
+  name, so an owner who doesn't sign is "visitor" there, as before). The lookup counts towards the three a minute, and a
+  name found no page's isn't looked up again for that socket for 5 minutes. Notes kept from before (a page's name,
+  unsigned) stay as they were.
 - **Kept:** the last 500 (`NOTES_KEPT`), with the device each came from (never sent: it's what a ban holds on to after the
   visitor's socket has gone). Someone just come gets the last 50 (`NOTES_SENT`), after the chat so far; a tending socket
   gets them all. The chat keeps its own last 50 lines, as before.

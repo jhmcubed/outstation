@@ -884,10 +884,6 @@ class Talk(Base):
         await a.send(json.dumps({"note": "and plainly"}))                 # (the same socket, as anyone: unproven)
         n = await next_of(desk, "note")
         self.assertEqual((n["name"], "proven" in n, "page" in n), ("moss", False, False))
-        await b.send(json.dumps({"hello": {"name": written}}))           # (anyone may still write a page's name)
-        await b.send(json.dumps({"note": "me too"}))
-        n = await next_of(desk, "note")
-        self.assertEqual((n["name"], "proven" in n), (written, False))
         # (a wrong key, a short one and a name that's no page's: the note goes nowhere, and only its socket hears why)
         await b.send(json.dumps({"note": "trust me", "as": other, "key": "wrong-key-" + secrets.token_hex(3)}))
         self.assertEqual((await next_of(b, "note_refused"))["code"], 4003)
@@ -921,6 +917,51 @@ class Talk(Base):
         self.assertEqual((await next_of(desk, "note"))["name"], "rowan")
         # (and the banned device itself, as anyone)
         await a.send(json.dumps({"note": "still here"}))
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "note", timeout=0.8)
+
+    async def test_a_pages_name_signs_only_with_its_key_as_in_the_aether(self):
+        # (11/22/2026, Jace: "make the register work like the aether": a note under a page's name, unsigned, is refused
+        # as the aether refuses a visitor that name, 4009, case and spaces aside; signed, it's proven; any other name is
+        # anyone's; the page's owner on their own page signs with its key or with Edit my page's tending token)
+        tx, desk, a, b = await self.setup_room()
+        other = "t" + secrets.token_hex(5)
+        status, got = await asyncio.to_thread(admin, "POST", "/admin/channels/" + other)
+        other_key = got["key"]
+        written = other[:3].upper() + " " + other[3:]                  # (its case and a space: the same page's name)
+        await b.send(json.dumps({"hello": {"name": written}}))
+        await b.send(json.dumps({"note": "me too"}))
+        self.assertEqual(await next_of(b, "note_refused"), {"code": 4009, "why": "that name belongs to an outstation"})
+        with self.assertRaises(asyncio.TimeoutError):
+            await next_of(desk, "note", timeout=0.8)
+        await b.send(json.dumps({"note": "me, signed", "as": written, "key": other_key}))
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], n.get("proven"), n.get("page")), (written, True, other))
+        await a.send(json.dumps({"note": "a name nobody has"}))         # (moss: anyone's, unsigned, as before)
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], "proven" in n), ("moss", False))
+        # (the owner on their own page: their name taken by no hello there (it's the host's), so unsigned it's "visitor",
+        # as before; signed with the key, or with the tending token Edit my page hands in, it's theirs, proven)
+        own = await self.watch()
+        await own.send(json.dumps({"hello": {"name": self.ch, "device": "device-own-1"}}))
+        await own.send(json.dumps({"note": "unsigned on my page"}))
+        self.assertEqual((await next_of(desk, "note"))["name"], "visitor")
+        await own.send(json.dumps({"note": "with my key", "as": self.ch, "key": self.key}))
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], n.get("proven"), n.get("page")), (self.ch, True, self.ch))
+        token = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        st, _ = http("POST", "/tend/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), {"token": token})
+        self.assertEqual(st, 200)
+        tender = await self.watch()
+        await tender.send(json.dumps({"hello": {"name": self.ch, "device": "device-own-2"}}))
+        await tender.send(json.dumps({"note": "from edit my page", "as": self.ch, "tend": token}))
+        n = await next_of(desk, "note")
+        self.assertEqual((n["name"], n.get("proven"), n.get("page")), (self.ch, True, self.ch))
+        # (a token that isn't one, or another page's name with this page's token: refused, nothing posted)
+        await tender.send(json.dumps({"note": "x", "as": self.ch, "tend": "A" * 43}))
+        self.assertEqual((await next_of(tender, "note_refused"))["code"], 4003)
+        await tender.send(json.dumps({"note": "y", "as": other, "tend": token}))
+        self.assertEqual((await next_of(tender, "note_refused"))["code"], 4003)
         with self.assertRaises(asyncio.TimeoutError):
             await next_of(desk, "note", timeout=0.8)
 
