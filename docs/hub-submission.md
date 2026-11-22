@@ -566,3 +566,13 @@ lost, "why wait for update 7 when you can just drop it now"): the goals reordere
 its handle (`Goal.Kept.move`, a lime line where it'll go; the page lists the rest in that order under the one shown);
 and `Delves.java` and `delve_lost` taken out (the page counts every level: each "already rolled for the loot", a unique
 claimed before going deeper). The cut's `gradle test`, `hub_check.py` and `start_check.py` passed again after both.
+
+### Update 6 to the Hub (11/22/2026)
+
+Jace's test of e6da89f: it starts and its tabs work; the key kept and copied; more than one goal, the model's choice and
+"No 3D model"; goals reordered by dragging ("goal re-ordering works"); encounters kept for good, featured and taken
+down (a raid with a death in this exact build not tried: his call to send it as it is); Edit my page. The delve's
+levels are SaluteCFlagg's to try once it's out (the page counts every level now). The fork's branch
+`outside-update-6` (jhmcubed/plugin-hub 320de11, from the Hub's master): `plugins/outside` commit= e6da89f9ca69, the
+warning as the reviewer last wrote it; Jace opens the pull request. After it merges: the page's `ON_THE_HUB.goals` on
+and the revision log's entry for the plugin.
