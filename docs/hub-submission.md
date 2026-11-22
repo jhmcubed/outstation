@@ -573,6 +573,8 @@ Jace's test of e6da89f: it starts and its tabs work; the key kept and copied; mo
 "No 3D model"; goals reordered by dragging ("goal re-ordering works"); encounters kept for good, featured and taken
 down (a raid with a death in this exact build not tried: his call to send it as it is); Edit my page. The delve's
 levels are SaluteCFlagg's to try once it's out (the page counts every level now). The fork's branch
-`outside-update-6` (jhmcubed/plugin-hub 320de11, from the Hub's master): `plugins/outside` commit= e6da89f9ca69, the
-warning as the reviewer last wrote it; Jace opens the pull request. After it merges: the page's `ON_THE_HUB.goals` on
+`outside-update-6` (jhmcubed/plugin-hub 320de11, from the Hub's master): `plugins/outside` commit= db341e520811 (e6da89f with the description and tags naming the encounters), the
+warning as the reviewer last wrote it; Jace opens the pull request. His client logs from the test (11/21 and 11/22, `-ea`):
+nothing failing in wiki.outside and no client-thread assertion; the only uncaught exceptions are the loot tracker's, the
+agility plugin's and Dude Where's My Stuff's. After it merges: the page's `ON_THE_HUB.goals` on
 and the revision log's entry for the plugin.
