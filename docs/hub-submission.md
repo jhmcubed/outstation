@@ -530,7 +530,7 @@ arrange.js, hero.js and theme.js for the first time; then this update.
 
 ### Update 6: what to try in the game (11/22/2026)
 
-The cut: jhmcubed/outside-plugin at 9e24eaf (`hub_cut.py --check` matches). Its `gradle test`, `hub_check.py` and
+The cut: jhmcubed/outside-plugin at e6da89f (`hub_cut.py --check` matches; it was 9e24eaf before goal reordering and the delve levels lost came out, 11/22/2026). Its `gradle test`, `hub_check.py` and
 `start_check.py` passed on 11/22/2026 ("Plugin OutsidePlugin is now running", nothing of its own failing after). Jace's
 part, `py run.py client` in outside-plugin at that commit (RuneLite with `-ea`), logged in, `.runelite\logs\client.log`
 open: nothing naming `wiki.outside` failing, and no "must be called on client thread", all the way through.
