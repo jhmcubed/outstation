@@ -578,3 +578,9 @@ warning as the reviewer last wrote it; Jace opens the pull request. His client l
 nothing failing in wiki.outside and no client-thread assertion; the only uncaught exceptions are the loot tracker's, the
 agility plugin's and Dude Where's My Stuff's. After it merges: the page's `ON_THE_HUB.goals` on
 and the revision log's entry for the plugin.
+
+The Mole (11/22/2026, Jace's test of daf45c6): in the lair, which isn't an instance, a recording began on entering, and
+his first kill (someone else hit first: no kill credit, no count line) never ended it; the second, with credit, did. Fixed
+in outside-plugin 50837e2 (outstation 61b0078): in a boss area that isn't an instance a recording starts with the fight
+(a hit either way, or the attack on its boss), the boss fought dying ends it with or without the count line, and 90 s
+with no hits ends a fight given up. Its checks pass; the fork stays at daf45c6 until he's tried 50837e2 in the game.
