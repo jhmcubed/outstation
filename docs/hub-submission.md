@@ -527,3 +527,36 @@ arrange.js, hero.js and theme.js for the first time; then this update.
 8. **The client closing mid-recording:** start one, close RuneLite's window: it closes as before (a second or so), and the next start lists that recording, ended "client closed".
 9. **Edit my page** (once the relay and outside.wiki have it): in the side tab, press **Edit my page** beside Open my page: the line under it says it's opened, and your browser opens your page with **arrange this file** under your name and a box for your theme song in the right margin (or the ✼ tab at the bottom right in a narrow window). Move a section (drag its bar, or its arrows), hide one with its eye, pull a panel at the top wider, press **done**: it says it's kept. Paste a YouTube, SoundCloud or Spotify link in the theme's box and press **set**. Then open your page in a private window (or another browser): it's arranged as you left it, the hidden section gone, your song in the margin to press, and no arrange button or link box. Press **as it was** in the first window: everything goes back for everyone. Twelve hours later the link stops working (the page says so); Edit my page again makes a new one. (Since round nine, 11/21/2026, Edit my page opens the page with the register's owner link, the same as the register's own button, now also called Edit my page: the encounters' moments and the register work from it too.)
 10. **A raid, whole** (round eight): enter the Fractured Archive: a recording starts in the Archive Guardian's room (the lime line, nothing pressed). Stay at the Nexus between bosses as long as you like (the shop): it goes on. If you die, it goes on through the spectating and the next rooms. It ends as you leave the chest room ("completed"), or a few seconds after the raid's failed ("failed"). On your page it's one encounter, its moment the chest's opening, else your last fall in the arena you fell in, with no other place in it.
+
+### Update 6: what to try in the game (11/22/2026)
+
+The cut: jhmcubed/outside-plugin at 9e24eaf (`hub_cut.py --check` matches). Its `gradle test`, `hub_check.py` and
+`start_check.py` passed on 11/22/2026 ("Plugin OutsidePlugin is now running", nothing of its own failing after). Jace's
+part, `py run.py client` in outside-plugin at that commit (RuneLite with `-ea`), logged in, `.runelite\logs\client.log`
+open: nothing naming `wiki.outside` failing, and no "must be called on client thread", all the way through.
+
+1. **It starts:** the side tab opens with its tabs; nothing in the log at login.
+2. **The key kept:** the Page tab shows "Your page's key"; Copy my station key copies it.
+3. **More than one goal:** Add a goal item, pick one; add a second; change which is shown; ✕ one. outside.wiki/sburb
+   follows within seconds (the shown one turning, the rest listed). "No 3D model": the page shows its picture only.
+4. **Encounters:** Record my encounters on; kill a boss: it ends on the kill, is in the Encounters tab, goes up by
+   itself, and is on the page with its moment within about a minute. In its row: keep for good, feature, take down
+   (the page follows). Record now and Stop by hand. If it comes easily, a raid or a delve: one encounter start to finish,
+   a death not splitting it. A chest's loot window in the moment as drawn.
+5. **Edit my page:** opens the page as its owner: arrange, the theme, even the columns, right-click on encounters.
+6. **The delve levels a death lost** (only if he's doing Doom): a death mid-delve, the board's count beside the boss
+   the levels done.
+
+Then: the warning with recorded fights (above) on the fork's file, the commit= there, and once merged the page's
+`ON_THE_HUB.goals` on and the revision log's entry for the plugin.
+
+## Update 7 (planned, 11/22/2026)
+
+Jace: "plan it for update 7". The collection log read by Outside itself, for players who don't use RuneProfile
+(SaluteCFlagg's page: "RuneProfile has no record of SaluteCFlagg ... the collection log's slots, drop rates and which
+pets are had stay dark"). The game gives a plugin the log only while it's open (as RuneProfile, WikiSync and
+TempleOSRS each find), so: a switch, Send my collection log, off to begin with; opening the log sends the slots had and
+their counts (checked first in the local world: whether one open is enough, without every page); new slots from the
+game's "New item added to your collection log" line; the side tab saying "open your collection log once" when the
+count the plugin already sends has passed what was synced. The relay keeps it; the page uses it where RuneProfile has
+nothing, or whichever is newer.
