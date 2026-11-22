@@ -39,9 +39,9 @@ opening it). Under them, two tabs:
 **arrange this file** (under your name) lets you drag your page's sections into the order you want, hide the ones you'd
 rather visitors didn't see, and move and widen the panels at the top; **done** keeps it for everyone who opens your page,
 **never mind** leaves it as it was, **as it was** puts everything back. In the theme box in the page's right margin (a
-tab at the bottom right on a phone), paste a song's own link on YouTube, SoundCloud or Spotify and press **set**:
-visitors see its name and hear it in that site's own player when they press it (nothing is asked of that site until
-then; Spotify plays the whole song only to visitors signed in to Spotify, 30 seconds to anyone else). Visitors get no
+tab at the bottom right on a phone), paste a SoundCloud song's (or set's) own link, say where it starts if you like,
+and press **set**: visitors see its name and who made it, and hear it in your page's own player when they press play
+(nothing is asked of SoundCloud until then, and the song is credited to its maker and links to its SoundCloud page). Visitors get no
 controls: only you, from this button. The link works for 2 hours, only in that browser, and can do nothing else. The
 plugin sends nothing from the game for it.
 
