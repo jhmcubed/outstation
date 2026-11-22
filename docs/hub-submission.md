@@ -579,8 +579,8 @@ their characters together as a package"; done without Outside.wiki accounts). Tr
   characters are one person's, only when public). The warning stays as the reviewer wrote it.
 - **Checks:** relay tests for every route (codes expire, are single-use, can't be guessed fast, can't link a main as an
   alt), the local world with two characters on one machine (two clients), the page at both widths.
-- **Jace's calls before building:** public or private to begin with (Claude: private); how the main's page shows the
-  others (a switcher row under the name, Claude's pick, or a section); whether an alt's page lists its siblings.
+- **Jace's calls (11/22/2026):** private to begin with; a switcher row under the name. Whether an alt's page lists its
+  siblings wasn't answered: Claude's default, only while the link is public, the same row as the main's.
 
 ## Update 7 (planned, 11/22/2026)
 
