@@ -14,8 +14,9 @@ import java.util.Set;
  * hands a plugin the log's slots only while the log's open, one script call a slot had (TRANSMIT: the item and how
  * many), and only for the page shown, unless its search is opened, which has the game send every slot had: as
  * RuneProfile's plugin (CollectionLogWidgetSubscriber), WikiSync (WikiSyncPlugin, SyncButtonManager) and TempleOSRS
- * (CollectionLogManager, CollectionLogAutoSyncManager) read it. They press the search themselves (Client.menuAction);
- * Outside leaves it to the player. The log's own pages come from the game's cache, as
+ * (CollectionLogManager, CollectionLogAutoSyncManager) read it. Each presses the search from a button of its own in
+ * the log's header (Client.menuAction on SEARCH_TOGGLE, the one call of it the Hub allows), and so does Outside's
+ * (ClogButton), only when the player presses it. The log's own pages come from the game's cache, as
  * WikiSync and TempleOSRS read them (the tabs' enum, each page's name, its items' enum, and the enum of items replaced).
  * Kept apart from RuneLite so it's tested.
  */
@@ -25,6 +26,8 @@ final class Clog
 	static final int TRANSMIT = 4100;
 	/** run as the log opens */
 	static final int SETUP = 7797;
+	/** the log's own start, run again after its search is pressed (WikiSync's button does the same) */
+	static final int INIT = 2240;
 	/** the log's tabs (each a struct), each tab's pages (TAB_PAGES: an enum of structs), each page's name and items */
 	static final int TABS = 2102, TAB_PAGES = 683, PAGE_NAME = 689, PAGE_ITEMS = 690, REPLACED = 3721;
 	static final String[] TAB_NAMES = {"Bosses", "Raids", "Clues", "Minigames", "Other"};
@@ -217,6 +220,68 @@ final class Clog
 	static boolean behind(int count, int synced)
 	{
 		return count > 0 && count > synced;
+	}
+
+	/**
+	 * What waits to go up, and when it may (11/22/2026, round two; Jace: "send it the moment it's read", so a player
+	 * who pressed Outside sees their log on their page): a whole read at once, but a minute apart at most (each a
+	 * press); the chat's slots three minutes apart at most, merged meanwhile, so a raid's chest or a run of chompy hats
+	 * goes as one and the relay's 24 keeps an hour (every kind together) are never used up by the log; nothing from
+	 * anywhere dangerous; one going at a time, and one that didn't reach the relay held again.
+	 */
+	static final class Outbox
+	{
+		static final long WHOLE_GAP = 60_000, ADD_GAP = 180_000, LOST = 60_000;
+		private JsonObject waiting;
+		private long last = -1, going = -1;
+
+		synchronized void hold(JsonObject body)
+		{
+			waiting = merge(waiting, body);
+		}
+
+		synchronized boolean waiting()
+		{
+			return waiting != null;
+		}
+
+		/** Whether a whole read waits (a press of Outside), not only the chat's slots. */
+		synchronized boolean whole()
+		{
+			return waiting != null && waiting.has("had");
+		}
+
+		/** What goes now, or null: nothing waiting, anywhere dangerous, one still going, or too soon after the last. */
+		synchronized JsonObject due(long now, boolean danger)
+		{
+			if (going >= 0 && now - going > LOST)
+			{
+				going = -1;   // (no answer came: let the next go)
+			}
+			if (waiting == null || danger || going >= 0 || (last >= 0 && now - last < (waiting.has("had") ? WHOLE_GAP : ADD_GAP)))
+			{
+				return null;
+			}
+			JsonObject out = waiting;
+			waiting = null;
+			last = going = now;
+			return out;
+		}
+
+		/** The relay's answer for what went: taken, or to go again (what came since merged after it). */
+		synchronized void done(JsonObject body, boolean taken)
+		{
+			going = -1;
+			if (!taken)
+			{
+				waiting = waiting == null ? body : merge(body, waiting);
+			}
+		}
+
+		synchronized void clear()
+		{
+			waiting = null;
+		}
 	}
 
 	private static JsonArray pairs(Map<Integer, Integer> had)

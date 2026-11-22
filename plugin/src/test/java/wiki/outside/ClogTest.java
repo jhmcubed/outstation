@@ -181,4 +181,46 @@ public class ClogTest
 		assertFalse(Clog.behind(41, 41));
 		assertFalse("the game's count not known", Clog.behind(0, -1));
 	}
+
+	@Test
+	public void sentAsReadButNeverTooOften()
+	{
+		Clog.Outbox o = new Clog.Outbox();
+		assertNull(o.due(0, false));
+		Map<Integer, Integer> had = new LinkedHashMap<>();
+		had.put(22106, 1);
+		JsonObject whole = Clog.body(had, 1, 9, Clog.layout(cache()), 1L);
+		o.hold(whole);
+		assertTrue(o.whole());
+		assertNull("not from anywhere dangerous", o.due(1_000, true));
+		assertEquals("the first at once", whole, o.due(2_000, false));
+		o.hold(Clog.added(20997));
+		assertNull("one still going", o.due(3_000, false));
+		o.done(whole, true);
+		assertNull("the chat's slots three minutes apart", o.due(60_000, false));
+		o.hold(Clog.added(11286));
+		JsonObject adds = o.due(2_000 + Clog.Outbox.ADD_GAP, false);
+		assertEquals("merged meanwhile", "[[20997,1],[11286,1]]", adds.get("add").toString());
+		long t = 2_000 + Clog.Outbox.ADD_GAP;
+		o.done(adds, false);   // (it didn't reach the relay: held again)
+		o.hold(whole);
+		assertTrue("a press goes a minute after the last", o.due(t + 30_000, false) == null);
+		JsonObject again = o.due(t + Clog.Outbox.WHOLE_GAP, false);
+		assertEquals("a newer whole read stands for the slots that didn't go", "[[22106,1]]", again.get("had").toString());
+		o.hold(Clog.added(20997));
+		o.done(again, false);   // (the whole read didn't go: the slot after it merged into it)
+		assertEquals("[[22106,1],[20997,1]]", o.due(t + 2 * Clog.Outbox.WHOLE_GAP, false).get("had").toString());
+		assertFalse(o.waiting());
+		o.hold(Clog.added(1));
+		o.clear();
+		assertFalse(o.waiting());
+	}
+
+	@Test
+	public void theButtonLeftOfTheOthers()
+	{
+		assertEquals("alone: beside the close button", 33, ClogButton.place(new int[0][]));
+		assertEquals("left of WikiSync's", 109, ClogButton.place(new int[][]{{33, 71}}));
+		assertEquals("left of TempleOSRS's beside WikiSync's", 174, ClogButton.place(new int[][]{{33, 71}, {109, 60}, {101, 60}}));
+	}
 }

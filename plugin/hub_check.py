@@ -2,7 +2,8 @@
 Hub's review"). From RuneLite's own pages, read 11/07/2026: the plugin-hub README and the wiki's "Rejected or Rolled
 Back Features" (forbidden language features, functions and patterns; sensitive and restricted APIs).
 
-    py plugin/hub_check.py      every rule, and whether the main source keeps it (tests are left out: never shipped)
+    py plugin/hub_check.py               every rule, and whether the main source keeps it (tests are left out: never shipped)
+    py plugin/hub_check.py <folder>      the same for another checkout (the Hub's cut: hub_cut.py <folder> first)
 """
 
 import glob
@@ -12,6 +13,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# the one Client.menuAction call the Hub allows, its arguments exactly as the wiki writes them (FORBIDDEN, SENSITIVE)
+MENU_SEARCH = re.escape('-1, InterfaceID.Collection.SEARCH_TOGGLE, MenuAction.CC_OP, 1, -1, "Search", null')
+
 # (what's forbidden, the pattern that finds it in the source)
 FORBIDDEN = [
     ("Java reflection", r"java\.lang\.reflect|\.getDeclared(Field|Method|Constructor)|Class\.forName|\.setAccessible\("),
@@ -20,7 +24,11 @@ FORBIDDEN = [
     ("downloading code at runtime", r"URLClassLoader|defineClass|ScriptEngine"),
     ("Desktop.open / Desktop.browse / LinkBrowser.open", r"Desktop\.(open|browse)|LinkBrowser\.open"),
     ("Thread.interrupt / Thread.sleep", r"Thread\.(sleep|interrupt)|\.interrupt\(\)"),
-    ("Client.menuAction", r"\.menuAction\("),
+    # (the wiki's "Rejected or Rolled Back Features" forbids Client.menuAction "Except for the 1 exception", which its
+    # "Sensitive APIs" names: "There is currently only 1 acceptable use case for this function - fetching collection log
+    # data: client.menuAction(-1, InterfaceID.Collection.SEARCH_TOGGLE, MenuAction.CC_OP, 1, -1, "Search", null)".
+    # Every other call is forbidden; that one, exactly as written there, is under SENSITIVE; 11/22/2026, update 7)
+    ("Client.menuAction (but the collection log's Search, below)", r"\.menuAction\((?!" + MENU_SEARCH + r"\))"),
     ("java.io file APIs", r"java\.io\.(File|FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)\b|new\s+File\("),
     ("java.awt.KeyboardFocusManager", r"KeyboardFocusManager"),
     ("a network client other than OkHttp", r"HttpURLConnection|java\.net\.http|new\s+Socket\(|java\.net\.URL\b"),
@@ -33,6 +41,7 @@ FORBIDDEN = [
 SENSITIVE = [
     ("network IO (the relay, through RuneLite's own OkHttp)", r"newWebSocket|\.newCall\("),
     ("Client.runScript", r"\.runScript\("),
+    ("Client.menuAction, its one acceptable use: fetching collection log data (the log's Search)", r"\.menuAction\(" + MENU_SEARCH + r"\)"),
 ]
 RESTRICTED = [
     ("Client.hopToWorld", r"\.hopToWorld\("),
@@ -42,6 +51,9 @@ RESTRICTED = [
 
 
 def main():
+    global HERE
+    if len(sys.argv) > 1:
+        HERE = os.path.abspath(sys.argv[1])   # (another checkout: the Hub's cut, say)
     main_src = glob.glob(os.path.join(HERE, "src", "main", "**", "*"), recursive=True)
     files = [p for p in main_src if os.path.isfile(p)]
     java = [p for p in files if p.endswith(".java")]

@@ -225,7 +225,7 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
                     "https://soundcloud.com/someone", "https://open.spotify.com/artist/4uLU6hMCjMI75M1A2tKUQC", "ftp://youtu.be/dQw4w9WgXcQ", "x".repeat(500), 42]) {
     strictEqual(themeLink(no), null, String(no));
   }
-  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by, start and tracks only");
+  deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "them", extra: 1 } }), "theme: link, title, by, start, tracks, more and order only");
   deepStrictEqual(layoutShape({ theme: { link: "https://soundcloud.com/someone/a-song", title: "a\nsong  ", by: "x".repeat(99), start: 90 } }),
                   { theme: { kind: "soundcloud", id: "https://soundcloud.com/someone/a-song", link: "https://soundcloud.com/someone/a-song", title: "a song", by: "x".repeat(60), start: 90 } });
   strictEqual(typeof layoutShape({ theme: { link: "https://evil.example/x" } }), "string");
@@ -241,6 +241,51 @@ test("a layout: the theme a song's own address on soundcloud, youtube or spotify
   strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: Array.from({ length: 51 }, () => ({ title: "x" })) } }), "string");
   strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "x", art: "y" }] } }), "string");
   strictEqual(typeof layoutShape({ theme: { link: "https://soundcloud.com/someone/sets/a-set", tracks: [{ title: "x", dur: -5 }] } }), "string");
+});
+
+// (a list of songs, 11/22/2026: the first in the theme's own fields, up to nine more, each read as the first is; in order
+// or shuffled; a start and a set's tracks for a song alone)
+test("a layout: the theme a list of up to ten soundcloud songs and sets, in order or shuffled", () => {
+  const sc = (who: string, what: string) => "https://soundcloud.com/" + who + "/" + what;
+  const plainOf = (link: string) => ({ kind: "soundcloud", id: link, link });
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one"), title: "one", by: "a", more: [{ link: sc("b", "two") + "/", title: "two\n", by: "b" }, { link: sc("c", "sets/three") }], order: "shuffle" } }),
+                  { theme: { ...plainOf(sc("a", "one")), title: "one", by: "a", more: [{ ...plainOf(sc("b", "two")), title: "two", by: "b" }, plainOf(sc("c", "sets/three"))], order: "shuffle" } });
+  // ("in order" is the default, so it isn't kept; an empty "more" is a song alone; an order without a list is let go)
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two") }], order: "in order" } }),
+                  { theme: { ...plainOf(sc("a", "one")), more: [plainOf(sc("b", "two"))] } });
+  deepStrictEqual(layoutShape({ theme: { link: sc("a", "one"), start: 30, more: [], order: "shuffle" } }), { theme: { ...plainOf(sc("a", "one")), start: 30 } });
+  // (ten at most: the first and nine more)
+  const nine = Array.from({ length: 9 }, (_, i) => ({ link: sc("x", "s" + i) }));
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: nine } }), "object");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [...nine, { link: sc("x", "s9") }] } }), "string");
+  // (every link read exactly as the first: no youtube, spotify, short links, a person's page or anything else)
+  for (const bad of ["https://youtu.be/dQw4w9WgXcQ", "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC", "https://on.soundcloud.com/abc",
+                     "https://soundcloud.com/someone", "https://evil.example/a/b", "javascript:alert(1)", "x".repeat(500), 5, null]) {
+    strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [{ link: bad }] } }), "string", String(bad));
+  }
+  // (each song once, the first among them; nothing but link, title and by in each; words for words)
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("a", "one") + "/" }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two") }, { link: sc("b", "two") }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two"), start: 5 }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two"), title: 5 }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [sc("b", "two")] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: { link: sc("b", "two") } } }), "string");
+  // (names bounded as the first's are)
+  deepStrictEqual((layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two"), title: "t".repeat(200), by: "b".repeat(99) }] } }) as { theme: { more: { title: string; by: string }[] } }).theme.more[0],
+                  { ...plainOf(sc("b", "two")), title: "t".repeat(120), by: "b".repeat(60) });
+  // (the order: shuffle or in order, nothing else)
+  for (const bad of ["random", true, 1, ""]) strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), more: [{ link: sc("b", "two") }], order: bad } }), "string", String(bad));
+  // (a start and a set's tracklist are a song alone's)
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "one"), start: 30, more: [{ link: sc("b", "two") }] } }), "string");
+  strictEqual(typeof layoutShape({ theme: { link: sc("a", "sets/one"), tracks: [{ title: "x" }], more: [{ link: sc("b", "two") }] } }), "string");
+  // (a theme kept before the list still reads as it did)
+  deepStrictEqual(layoutShape({ theme: { link: sc("onaradubs", "pogo"), title: "ONARA - POGO", by: "ONARA" } }),
+                  { theme: { ...plainOf(sc("onaradubs", "pogo")), title: "ONARA - POGO", by: "ONARA" } });
+  // (the largest list, every name at its longest, fits a layout's POST)
+  const big = { theme: { link: sc("a".repeat(100), "b".repeat(200)), title: "✼".repeat(120), by: "✼".repeat(60), order: "shuffle",
+    more: Array.from({ length: 9 }, (_, i) => ({ link: sc("a".repeat(100), "sets/" + "c".repeat(190) + i), title: "✼".repeat(120), by: "✼".repeat(60) })) } };
+  strictEqual(typeof layoutShape(big), "object");
+  strictEqual(JSON.stringify(big).length <= 16 * 1024, true, String(JSON.stringify(big).length));   // (LAYOUT_MOST, the POST's most)
 });
 
 test("a layout: only its three parts, any taken away with null", () => {

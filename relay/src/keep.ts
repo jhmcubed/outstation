@@ -355,8 +355,11 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
 //              "wide.0": [ids]}, "off": [ids kept from visitors]}
 //   "hero":    the top of the file's panels on twelve columns (hero.js): {"p": {key: {"x", "w"}}, "o": [keys, in the
 //              order they're packed], "off": [keys kept from visitors]}
-//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?} (SoundCloud only, round nine); the link read as theme.js reads it, a SoundCloud,
-//              YouTube or Spotify song's own address and nothing else, and kept in its plain form
+//   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?} (SoundCloud
+//              only, round nine); each link read as theme.js reads it, a SoundCloud song's or set's own address and nothing
+//              else, and kept in its plain form. A list (11/22/2026): the first song in the theme's own fields, up to nine
+//              more in "more" ({"link", "title"?, "by"?} each), "order" "shuffle" or not; a start and a set's tracks only
+//              for a song alone
 // Only the sections and panels the page has today: a new one is added to these lists (at the end) as the page gains it.
 export const ARRANGE_READING = ["sec-skills", "sec-deeds", "sec-mega", "sec-pets", "sec-next", "sec-easy-ca", "sec-gains", "sec-movements",
   "sec-kills", "sec-rates", "sec-field", "sec-delve"];
@@ -369,6 +372,9 @@ export const HERO_FIXED = ["who", "screen", "stage"];
 export const HERO_COLS = 12, LAYOUT_MOST = 16 * 1024;
 // (a set's tracks kept with the theme, 50 at most: round nine; the layout's most raised from 8 KB for them)
 export const THEME_TRACKS = 50;
+// (a list of songs, 11/22/2026, Jace: "custom playlists straight from the media player by pasting individual song links":
+// ten at most, the first in the theme's own fields and the rest in "more")
+export const THEME_LIST = 10;
 // (written by the page as its owner arranges it, after "done" and as a song's set: its own count, apart from the plugin's
 // uploads, so arranging never uses up what "Update my page" needs)
 export const LAYOUT_AN_HOUR = 60;
@@ -475,7 +481,7 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
       // youtube songs can be found on there anyway", the page's own player driving SoundCloud's; and where it starts,
       // whole seconds, the page's "starts at")
       if (!isObj(t)) return "theme: {link, title?, by?, start?}";
-      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start" && k !== "tracks") return "theme: link, title, by, start and tracks only";
+      for (const k of Object.keys(t)) if (k !== "link" && k !== "title" && k !== "by" && k !== "start" && k !== "tracks" && k !== "more" && k !== "order") return "theme: link, title, by, start, tracks, more and order only";
       const read = themeLink(t.link);
       if (!read || read.kind !== "soundcloud") return "theme's link: a song's or a set's own address on soundcloud";
       if (t.title !== undefined && typeof t.title !== "string") return "theme's title: words";
@@ -498,8 +504,32 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
           tracks.push({ title: tt, ...(tb ? { by: tb } : {}), ...(x.dur ? { dur: x.dur as number } : {}) });
         }
       }
+      // (a list, 11/22/2026: the songs after the first, each read exactly as the first is, each once; in order or
+      // shuffled for each visitor. A start and a set's tracklist stay a song alone's)
+      let more: Record<string, unknown>[] | null = null;
+      if (t.more !== undefined) {
+        if (!Array.isArray(t.more) || t.more.length > THEME_LIST - 1) return `theme's more: a list, ${THEME_LIST - 1} at most after the first`;
+        more = [];
+        const seen = new Set<string>([String(read.id)]);
+        for (const x of t.more) {
+          if (!isObj(x)) return "theme's more: {link, title?, by?} each";
+          for (const k of Object.keys(x)) if (k !== "link" && k !== "title" && k !== "by") return "theme's more: link, title and by only";
+          const r = themeLink(x.link);
+          if (!r || r.kind !== "soundcloud") return "theme's more: each a song's or a set's own address on soundcloud";
+          if (seen.has(String(r.id))) return "theme's more: each song once";
+          seen.add(String(r.id));
+          if ((x.title !== undefined && typeof x.title !== "string") || (x.by !== undefined && typeof x.by !== "string")) return "theme's more: words";
+          const mt = plain(x.title, 120), mb = plain(x.by, 60);
+          more.push({ ...r, ...(mt ? { title: mt } : {}), ...(mb ? { by: mb } : {}) });
+        }
+      }
+      if (t.order !== undefined && t.order !== "shuffle" && t.order !== "in order") return "theme's order: \"shuffle\" or \"in order\"";
+      const list = !!(more && more.length);
+      if (list && t.start) return "theme's start: for a song alone, not a list";
+      if (list && tracks && tracks.length) return "theme's tracks: for a set alone, not a list";
       const title = plain(t.title, 120), by = plain(t.by, 60), start = (t.start as number) || 0;
-      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}), ...(tracks && tracks.length ? { tracks } : {}) };
+      out.theme = { ...read, ...(title ? { title } : {}), ...(by ? { by } : {}), ...(start ? { start } : {}), ...(tracks && tracks.length ? { tracks } : {}),
+        ...(list ? { more } : {}), ...(list && t.order === "shuffle" ? { order: "shuffle" } : {}) };
     }
   }
   return out;

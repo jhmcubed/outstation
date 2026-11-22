@@ -48,6 +48,7 @@ import net.runelite.api.Item;
 import net.runelite.api.GameObject;
 // hub:end globe
 import net.runelite.api.ItemContainer;
+import net.runelite.api.MenuAction;
 // hub:cut globe,year,model
 import net.runelite.api.NPC;
 // hub:end globe,year,model
@@ -582,6 +583,19 @@ public class OutsidePlugin extends Plugin
 			}
 		}
 		// hub:end goal
+		// hub:cut pbs
+		// (the personal bests: off, they come off the page; on, they go with the next update)
+		if (e.getKey().equals("pbs"))
+		{
+			pbsSent = null;
+			if (!config.pbs())
+			{
+				JsonObject none = new JsonObject();
+				none.add("pbs", JsonNull.INSTANCE);
+				post(none, null);
+			}
+		}
+		// hub:end pbs
 		// hub:cut clog
 		// (the collection log: off, it's taken down; on, it goes once they open the log)
 		if (e.getKey().equals("clog"))
@@ -589,9 +603,23 @@ public class OutsidePlugin extends Plugin
 			if (!config.clog())
 			{
 				configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, CLOG_SYNCED);
+				configManager.unsetRSProfileConfiguration(OutsideConfig.GROUP, CLOG_AT);
+				clogOut.clear();
 				keep("clog", null);
 			}
-			clientThread.invokeLater(this::clogLine);
+			clientThread.invokeLater(() ->
+			{
+				// (the button on the log if it's open: shown with the switch, hidden without)
+				if (config.clog() && clogOn())
+				{
+					ClogButton.add(client, this::clogPress);
+				}
+				else
+				{
+					ClogButton.hide(client);
+				}
+				clogLine();
+			});
 		}
 		// hub:end clog
 		// hub:cut encounters
@@ -762,9 +790,6 @@ public class OutsidePlugin extends Plugin
 			characterChanged();
 		}
 		ticks++;
-		// hub:cut clog
-		clogTick();
-		// hub:end clog
 		// hub:cut bank
 		// (the bank: sent three ticks after it last changed, so a whole deposit goes once)
 		if (bankChanged >= 0 && ticks - bankChanged >= 3)
@@ -807,6 +832,10 @@ public class OutsidePlugin extends Plugin
 		boolean pvpArea = pvpArea(x, y, region, client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1);
 		// (the snapshot and what they're doing, 11/16/2026: never from anywhere dangerous, whatever else is switched on)
 		snapTick(held(pvpWorld(), wild, pvpArea), at, me);
+		// hub:cut clog
+		// (the collection log, sent as it's read, held anywhere the snapshot is: where it waits, said plainly)
+		clogTick(pvpWorld() ? "you've left this world" : wild ? "you've left the Wilderness" : pvpArea ? "you've left the PvP area" : null);
+		// hub:end clog
 		// hub:cut globe,year,model
 		boolean safe = globeSafe(riskyWorld, wild, pvpArea);
 		long ms = System.currentTimeMillis();
@@ -977,6 +1006,12 @@ public class OutsidePlugin extends Plugin
 			if (ok)
 			{
 				snapAt = System.currentTimeMillis();
+				// hub:cut pbs
+				if (body.has("pbs"))
+				{
+					pbsSent = body.get("pbs").toString();
+				}
+				// hub:end pbs
 				// (the slots named with it: gone with it, so the next update names only newer ones)
 				synchronized (clogNew)
 				{
@@ -1013,6 +1048,14 @@ public class OutsidePlugin extends Plugin
 			items.add(String.valueOf(id), np);
 		}
 		body.add("items", items);
+		// hub:cut pbs
+		// (the personal bests RuneLite keeps, only when they've changed since the last update took them: Pbs)
+		JsonObject pbs = pbsNow();
+		if (pbs != null && !pbs.toString().equals(pbsSent))
+		{
+			body.add("pbs", pbs);
+		}
+		// hub:end pbs
 		body.addProperty("off", false);
 		body.addProperty("paused", false);
 		if (config.presence())
@@ -1069,20 +1112,42 @@ public class OutsidePlugin extends Plugin
 		return o;
 	}
 
+	// hub:cut pbs
+	/** the personal bests as the last update took them (their JSON), null: none sent this session */
+	private String pbsSent;
+
+	/** The personal bests RuneLite keeps for this account (Pbs), or null: switched off, none kept, or RuneLite's Chat
+	 *  Commands plugin off (as Dink reads them). */
+	private JsonObject pbsNow()
+	{
+		String profile = configManager.getRSProfileKey();
+		if (!config.pbs() || profile == null || "false".equals(configManager.getConfiguration(Pbs.RUNELITE, Pbs.CHAT_COMMANDS)))
+		{
+			return null;
+		}
+		return Pbs.read(configManager.getRSProfileConfigurationKeys(Pbs.GROUP, profile, ""),
+			k -> configManager.getRSProfileConfiguration(Pbs.GROUP, k, Double.class));
+	}
+	// hub:end pbs
+
 	// hub:cut clog
 	/* The collection log read by Outside itself (update 7, 11/22/2026; Clog), with "Send my collection log" on: the
-	   slots the open log hands over (every slot had once its search is pressed, else the page shown), held for the next
-	   update as the bank is, and so are the slots the chat names after. The plugin never presses the search itself
-	   (RuneProfile's, WikiSync's and TempleOSRS's plugins do, by Client.menuAction, which hub_check.py forbids): opened
-	   while the page is behind, the chat asks the player to, once a session. */
+	   slots the open log hands over (every slot had once its search is pressed, else the page shown) and the slots the
+	   chat names after, sent as they're read (round two, Jace: "send it the moment it's read"; Clog.Outbox says how
+	   often), never from anywhere dangerous. The search is pressed by the Outside button in the log's header
+	   (ClogButton), as WikiSync's and TempleOSRS's buttons press it, and only when the player presses ours; opened while
+	   the page is behind, the chat points at the button, once a session. */
 	private final Clog clog = new Clog();
+	private final Clog.Outbox clogOut = new Clog.Outbox();
+	/** where the log waits to go up from ("you've left the Wilderness"), null: nowhere dangerous */
+	private String clogWait;
 	/** the log's tabs and pages, and each name's item, from the cache once a session (the client's thread) */
 	private JsonObject clogLayout;
 	private Map<String, Integer> clogNames;
 	/** whether the chat's asked for the search this session */
 	private boolean clogAsked;
-	/** how many slots the page has, kept on this RuneLite's profile for the account */
-	static final String CLOG_SYNCED = "clogSynced";
+	/** how many slots the page has, and when it last took any, kept on this RuneLite's profile for the account */
+	static final String CLOG_SYNCED = "clogSynced", CLOG_AT = "clogAt";
 
 	/** Whether the log's read now (the client's thread): switched on, a page to send to, the account's own log on a
 	 *  standard world (not another's from a house's adventure log, not a seasonal world's). */
@@ -1105,11 +1170,29 @@ public class OutsidePlugin extends Plugin
 			clog.forget();   // (another's log, from a house's adventure log: nothing of it kept, as RuneProfile's plugin does)
 			return;
 		}
-		if (!clogAsked && clogOn() && Clog.behind(client.getVarpValue(VarPlayerID.COLLECTION_COUNT), clogSynced()))
+		if (!clogOn())
+		{
+			return;
+		}
+		// (after the log's own scripts and the other plugins' buttons: ours left of theirs)
+		clientThread.invokeLater(() -> ClogButton.add(client, this::clogPress));
+		if (!clogAsked && Clog.behind(client.getVarpValue(VarPlayerID.COLLECTION_COUNT), clogSynced()))
 		{
 			clogAsked = true;
-			say("press the collection log's Search (top left) once: the game then hands over your whole log for your Outside page");
+			say("press Outside at the top of your collection log to put it on your page");
 		}
+	}
+
+	/** The Outside button pressed (the client's thread): the log's search, as WikiSync's button presses it, call for
+	 *  call; the game then hands over every slot had. The one Client.menuAction the Hub allows (hub_check.py). */
+	private void clogPress()
+	{
+		if (!clogOn())
+		{
+			return;
+		}
+		client.menuAction(-1, InterfaceID.Collection.SEARCH_TOGGLE, MenuAction.CC_OP, 1, -1, "Search", null);
+		client.runScript(Clog.INIT);
 	}
 
 	@Subscribe
@@ -1136,26 +1219,43 @@ public class OutsidePlugin extends Plugin
 		}
 	}
 
-	/** Each tick (the client's thread): a read finished, held for the next update. */
-	private void clogTick()
+	/** Each tick (the client's thread): a read finished, and what waits sent when it may. `wait`: where it waits to
+	 *  leave ("you've left the Wilderness"), null nowhere dangerous. */
+	private void clogTick(String wait)
 	{
+		long now = System.currentTimeMillis();
 		Map<Integer, Integer> had = clog.due(client.getTickCount());
-		if (had == null || !clogOn())
+		boolean took = had != null && clogOn();
+		if (took)
 		{
-			return;
+			int count = client.getVarpValue(VarPlayerID.COLLECTION_COUNT), max = client.getVarpValue(VarPlayerID.COLLECTION_COUNT_MAX);
+			JsonObject body = Clog.body(had, count, max, clogLayout(), now);
+			clogOut.hold(body);
+			if (wait != null && body.has("had"))
+			{
+				say("your collection log goes up once " + wait);
+			}
 		}
-		int count = client.getVarpValue(VarPlayerID.COLLECTION_COUNT), max = client.getVarpValue(VarPlayerID.COLLECTION_COUNT_MAX);
-		keep("clog", Clog.body(had, count, max, clogLayout(), System.currentTimeMillis()));
-		clogLine();
+		if (!java.util.Objects.equals(wait, clogWait) || took)
+		{
+			clogWait = wait;
+			clogLine();
+		}
+		JsonObject due = clogOut.waiting() && clogOn() ? clogOut.due(now, wait != null) : null;
+		if (due != null)
+		{
+			sendKeep("clog", due);
+		}
 	}
 
-	/** A slot the game's chat names, held for the next update (the client's thread). */
+	/** A slot the game's chat names, sent with the next of the log's uploads (the client's thread). */
 	private void clogChat(String name)
 	{
 		Integer id = name == null || !clogOn() || clogLayout() == null ? null : clogNames.get(name);
 		if (id != null)
 		{
-			keep("clog", Clog.added(id));
+			clogOut.hold(Clog.added(id));
+			clogLine();
 		}
 	}
 
@@ -1212,22 +1312,34 @@ public class OutsidePlugin extends Plugin
 		return clogLayout;
 	}
 
-	/** The side tab's line (the client's thread): held for the next update, or the game's count past what the page has. */
+	/** The side tab's line (the client's thread): waiting to go up, the game's count past what the page has, or what the
+	 *  page has and when it took it. */
 	private void clogLine()
 	{
 		if (panel == null)
 		{
 			return;
 		}
-		boolean held;
-		synchronized (keepHeld)
+		int count = client.getVarpValue(VarPlayerID.COLLECTION_COUNT), synced = clogSynced(), behind = count - synced;
+		Long at = configManager.getRSProfileConfiguration(OutsideConfig.GROUP, CLOG_AT, Long.class);
+		if (!config.clog())
 		{
-			held = keepHeld.containsKey("clog");
+			panel.clogLine(null, 0);
 		}
-		int count = client.getVarpValue(VarPlayerID.COLLECTION_COUNT), synced = clogSynced();
-		panel.clogLine(!config.clog() ? null : held ? "your collection log goes up with your next update"
-			: !Clog.behind(count, synced) ? null : (synced < 0 ? "open your collection log once and press its search, to put it on your page"
-			: "open your collection log once and press its search: " + (count - synced) + (count - synced == 1 ? " new slot isn't" : " new slots aren't") + " on your page yet"));
+		else if (clogOut.waiting())
+		{
+			panel.clogLine(clogWait != null ? "your collection log goes up once " + clogWait
+				: clogOut.whole() ? "your collection log goes up in a moment" : "your new collection log slots go up within three minutes", 0);
+		}
+		else if (Clog.behind(count, synced))
+		{
+			panel.clogLine(synced < 0 ? "open your collection log and press Outside at its top to put it on your page"
+				: "press Outside at the top of your collection log: " + behind + (behind == 1 ? " new slot isn't" : " new slots aren't") + " on your page yet", 0);
+		}
+		else
+		{
+			panel.clogLine(synced < 0 ? null : "your collection log is on your page: " + synced + (synced == 1 ? " slot" : " slots"), at == null ? 0 : at);
+		}
 	}
 
 	private int clogSynced()
@@ -1236,10 +1348,22 @@ public class OutsidePlugin extends Plugin
 		return n == null ? -1 : n;
 	}
 
-	/** The log's gone up (any thread): how many slots the page has now. */
-	private void clogSent(JsonObject body)
+	/** The relay's answer for the log (any thread): taken, how many slots the page has now and when, said in the chat for
+	 *  a whole read; or to go again (no answer, too many at once, the relay's own trouble). */
+	private void clogSent(JsonObject body, int code)
 	{
-		configManager.setRSProfileConfiguration(OutsideConfig.GROUP, CLOG_SYNCED, Clog.synced(body, clogSynced()));
+		boolean again = code < 0 || code == 429 || code >= 500;
+		clogOut.done(body, code == 200 || !again);
+		if (code == 200)
+		{
+			int n = Clog.synced(body, clogSynced());
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, CLOG_SYNCED, n);
+			configManager.setRSProfileConfiguration(OutsideConfig.GROUP, CLOG_AT, System.currentTimeMillis());
+			if (body.has("had"))
+			{
+				say("your collection log is on your page: " + n + (n == 1 ? " slot" : " slots"));
+			}
+		}
 		clientThread.invokeLater(this::clogLine);
 	}
 	// hub:end clog
@@ -3445,6 +3569,9 @@ public class OutsidePlugin extends Plugin
 	private void characterChanged()
 	{
 		progressAt = -1;
+		// hub:cut pbs
+		pbsSent = null;   // (another account's bests go whole with its first update)
+		// hub:end pbs
 		questsSeen = null;
 		slayerKey = null;
 		slayerSeen = null;
@@ -4575,7 +4702,7 @@ public class OutsidePlugin extends Plugin
 	/** Whether this keep waits for the next update (the Hub's version): the bank's or the deathbank's, not a take-down. */
 	private boolean holdKeep(String what, JsonObject body)
 	{
-		if (body == null || !("bank".equals(what) || "deathbank".equals(what) || "clog".equals(what)))
+		if (body == null || !("bank".equals(what) || "deathbank".equals(what)))
 		{
 			synchronized (keepHeld)
 			{
@@ -4586,18 +4713,11 @@ public class OutsidePlugin extends Plugin
 		boolean first;
 		synchronized (keepHeld)
 		{
-			JsonObject was = keepHeld.get(what);
-			// hub:cut clog
-			if ("clog".equals(what))
-			{
-				body = Clog.merge(was, body);   // (a read and the chat's slots after it, one body)
-			}
-			// hub:end clog
 			first = keepHeld.put(what, body) == null;
 		}
 		if (first)
 		{
-			sayAbout(what, "your " + keptWord(what) + " goes up with your next update (Update my page, or the hourly one)");
+			sayAbout(what, "your " + what + " goes up with your next update (Update my page, or the hourly one)");
 		}
 		return true;
 	}
@@ -4628,8 +4748,7 @@ public class OutsidePlugin extends Plugin
 
 	private void keep(String what, String name, JsonObject body)
 	{
-		// (the collection log is held in the whole plugin too: it goes only with an update, never from anywhere dangerous)
-		if (name == null && (HOLD_KEEPS || "clog".equals(what)) && holdKeep(what, body))
+		if (name == null && HOLD_KEEPS && holdKeep(what, body))
 		{
 			return;
 		}
@@ -4660,6 +4779,12 @@ public class OutsidePlugin extends Plugin
 			public void onFailure(Call call, IOException ex)
 			{
 				log.debug("outside: keep {} failed", what, ex);
+				// hub:cut clog
+				if ("clog".equals(what) && body != null)
+				{
+					clogSent(body, -1);   // (no answer: it goes again)
+				}
+				// hub:end clog
 			}
 
 			@Override
@@ -4685,18 +4810,22 @@ public class OutsidePlugin extends Plugin
 				}
 				if (body != null && code == 200)
 				{
-					if (!"encounter".equals(what))
+					if (!"encounter".equals(what) && !"clog".equals(what))
 					{
-						sayAbout(what, "model".equals(what) ? "your still is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + keptWord(what) + " is on your page");
+						sayAbout(what, "model".equals(what) ? "your still is on your page" : "motion".equals(what) ? "the motion \"" + name + "\" is on your page" : "your " + what + " is on your page");
 					}
-					// hub:cut clog
-					if ("clog".equals(what))
-					{
-						clogSent(body);
-					}
-					// hub:end clog
 				}
-				else if (body != null && code != 200)
+				// hub:cut clog
+				if ("clog".equals(what) && body != null)
+				{
+					clogSent(body, code);   // (said there; one refused for too many, or by the relay's own trouble, goes again)
+					if (code == 429 || code >= 500)
+					{
+						return;
+					}
+				}
+				// hub:end clog
+				if (body != null && code != 200)
 				{
 					sayAbout(what, "your " + keptWord(what) + " didn't go up (the relay said " + code + why + ")");
 				}

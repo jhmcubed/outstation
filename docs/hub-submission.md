@@ -625,6 +625,12 @@ think it broken), not held for the next update: a whole read at once (a minute a
 minutes apart at most, merged (`Clog.Outbox`); held anywhere dangerous and sent on leaving, said in the chat. The chat says
 "your collection log is on your page: N slots"; the side tab's line says what the page has and when.
 
+And the personal bests (11/22/2026, Jace: "yes, add it to update 7"), part `pbs` (`Pbs.java`): "Send my personal bests",
+on, the bests RuneLite's Chat Commands plugin keeps (`personalbest` on the RuneLite profile, read as Dink's
+`KillCountService.getPb` reads them, none while that plugin's off) as the snapshot's `pbs` when they've changed; the
+relay's `gameFields` keeps them; the page's best column shows them as the game's best. The Hub's `warning=` stays as the
+reviewer wrote it ("covering you for current and future uses": "The first update, merged"): update 7 changes only `commit=`.
+
 ### Update 6 to the Hub (11/22/2026)
 
 Jace's test of e6da89f: it starts and its tabs work; the key kept and copied; more than one goal, the model's choice and

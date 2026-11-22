@@ -39,6 +39,8 @@ export const CLOG_MOST = 5000, CLOG_NEW_MOST = 8;
 // (11/16/2026: kill counts by boss, at most COUNTS_MOST, and clue counts by tier, each at most COUNT_TOP)
 export const COUNTS_MOST = 250, COUNT_TOP = 10_000_000;
 export const CLUE_TIERS = ["beginner", "easy", "medium", "hard", "elite", "master"];
+// (update 7, 11/22/2026: the personal bests RuneLite's Chat Commands plugin keeps, at most PBS_MOST, each under a day)
+export const PBS_MOST = 400, PB_TOP = 86_400;
 const names = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.length <= NAMES_MOST && v.every((x) => typeof x === "string") ? v.map((x) => oneLine(x, 80)) : undefined;
 
@@ -190,6 +192,18 @@ export function gameFields(g: unknown): Fields {
       if (CLUE_TIERS.includes(k) && n !== undefined) clues[k] = n;
     }
     out.counts = { kills, clues };
+  }
+  // (update 7, 11/22/2026: the personal bests RuneLite keeps, {its key: seconds}: the boss's name lower-cased, a raid's by
+  // team size ("chambers of xeric 3 players"); each a number of seconds over 0 and under a day, to the hundredth; never a
+  // Wilderness boss's; sent only when they've changed, so kept till the next; null, switched off)
+  if (g.pbs === null) out.pbs = null;
+  else if (isObj(g.pbs)) {
+    const pbs: Record<string, number> = {};
+    for (const [k, v] of Object.entries(g.pbs).slice(0, PBS_MOST)) {
+      const name = oneLine(k, 80).toLowerCase();
+      if (name && typeof v === "number" && Number.isFinite(v) && v > 0 && v < PB_TOP && !wildernessBoss(name)) pbs[name] = Math.round(v * 100) / 100;
+    }
+    out.pbs = pbs;
   }
   // (11/15/2026, the live view: the animation they're doing now, its id or -1, with the gear it's in; null, none)
   if (g.anim === null) out.anim = null;

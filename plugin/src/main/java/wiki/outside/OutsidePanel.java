@@ -236,8 +236,10 @@ public class OutsidePanel extends PluginPanel
 	private final JLabel dinkStatus = small(" ");
 	private final JLabel notesLine = small(" ");
 	// hub:cut clog
-	/** under Update my page: "open your collection log once" (update 7) */
+	/** under Update my page: the collection log's line (update 7), and when the page last took it (0: no time said) */
 	private final JLabel clogLine = small(" ");
+	private String clogWords;
+	private long clogAt;
 	// hub:end clog
 	private volatile long updateWaits;
 	private final javax.swing.Timer updateClock = new javax.swing.Timer(250, e -> updateCount());
@@ -694,6 +696,9 @@ public class OutsidePanel extends PluginPanel
 	private void showSnap()
 	{
 		infoUpdated.setText(snapAt <= 0 ? "not this session" : snapWords(snapAt).replaceFirst("^updated ", ""));
+		// hub:cut clog
+		showClog();   // (its "just now" kept true as the clock runs)
+		// hub:end clog
 	}
 
 	/** Whose page it is (their channel), or that there's no key yet. */
@@ -807,15 +812,23 @@ public class OutsidePanel extends PluginPanel
 	}
 
 	// hub:cut clog
-	/** The collection log's line under Update my page (null: hidden). */
-	public void clogLine(String words)
+	/** The collection log's line under Update my page (null: hidden), with how long ago `at` was (0: none). */
+	public void clogLine(String words, long at)
 	{
 		SwingUtilities.invokeLater(() ->
 		{
-			clogLine.setText(words == null ? " " : "<html><div style='width:155px'>" + esc(words) + "</div></html>");
-			clogLine.setVisible(words != null);
-			revalidate();
+			clogWords = words;
+			clogAt = at;
+			showClog();
 		});
+	}
+
+	private void showClog()
+	{
+		String w = clogWords == null ? null : clogAt > 0 ? clogWords + ", " + snapWords(clogAt).replaceFirst("^updated ", "") : clogWords;
+		clogLine.setText(w == null ? " " : "<html><div style='width:155px'>" + esc(w) + "</div></html>");
+		clogLine.setVisible(w != null);
+		revalidate();
 	}
 	// hub:end clog
 
