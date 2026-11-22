@@ -322,6 +322,13 @@ the page, read by every visitor, and written only by the page's owner:
     columns (each place within them), the order they're packed and those kept from visitors. Only its panels
     (`HERO_PANELS`: who, screen, stage, kit, form, goal, where, encounter, clips, bank), each once; the subject, the
     outstation and the encounters' stage never kept from visitors.
+    `"panel"?: {key: {...}}` (11/22/2026): what's a panel's own beyond its place (`HERO_OWN`), written only where one
+    has something: the encounters' stage's `{"fold": [parts]}`, the parts that start folded for visitors
+    (`HERO_FOLDS`: `"featured"`, the featured stage; `"tiles"`, the thumbnails under its bar), each once, a visitor
+    still opening or folding each for their visit; the globe's (`"where"`) `{"h": px}`, its size in whole px
+    (`HERO_TALL`, 120 to 960; the page keeps it to 140 to 720 and never wider than its panel, a phone its default).
+    The stage's place is its `p.stage` as any panel's is: on the page it stays in its row, `"x"` 4 or more (dragged
+    right, never left of where it starts) and `"w"` 2 or more, to the grid's edge.
   - `"theme"`: `{"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?, "repeat"?}`: the link a song's or a set's own address on SoundCloud
     (soundcloud.com/<who>/<song> or /sets/<set>; SoundCloud only since 11/21/2026, round nine: a YouTube or Spotify
     link is refused, and one kept before is no longer shown), read as the page's theme.js reads it and kept in its

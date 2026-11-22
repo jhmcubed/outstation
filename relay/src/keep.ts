@@ -354,7 +354,8 @@ function modelShape(d: Record<string, unknown>, top: boolean, part = false): unk
 //   "arrange": the readings' sections (the page's arrange.js): {"boxes": {"reading.0": [ids], "reading.1": [ids],
 //              "wide.0": [ids]}, "off": [ids kept from visitors]}
 //   "hero":    the top of the file's panels on twelve columns (hero.js): {"p": {key: {"x", "w"}}, "o": [keys, in the
-//              order they're packed], "off": [keys kept from visitors]}
+//              order they're packed], "off": [keys kept from visitors], "panel"?: {key: what's its own beyond its
+//              place: HERO_OWN}}
 //   "theme":   the subject's theme (theme.js): {"link", "title"?, "by"?, "start"?, "tracks"?, "more"?, "order"?, "repeat"?} (SoundCloud
 //              only, round nine); each link read as theme.js reads it, a SoundCloud song's or set's own address and nothing
 //              else, and kept in its plain form. A list (11/22/2026): the first song in the theme's own fields, up to nine
@@ -370,6 +371,15 @@ export const ARRANGE_WIDE = ["sec-year", "sec-heat", "sec-case"];
 export const HERO_PANELS = ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank", "reports", "talk"];
 // (the subject's box, the outstation and the encounters' stage stay where every file has them, always shown)
 export const HERO_FIXED = ["who", "screen", "stage"];
+// (what's a panel's own beyond its place, 11/22/2026, kept as the hero's "panel": the encounters' stage's parts that
+// start folded for visitors (Jace: "allow for it to be expanded or collapsed by default when a visitor views the page",
+// and "allow for separating the default expanded/collapsed state between the main 'featured' encounter viewer and the
+// smaller thumbnail encounters": "featured", the stage, and "tiles", the rows under its bar), and the globe's size
+// (Jace: "allow for vertical scaling of the where the subject stands section": "h", whole px, HERO_TALL). Added to as
+// the page gains more)
+export const HERO_FOLDS = ["featured", "tiles"];
+export const HERO_TALL = [120, 960];
+export const HERO_OWN: Record<string, string[]> = { stage: ["fold"], where: ["h"] };
 export const HERO_COLS = 12, LAYOUT_MOST = 16 * 1024;
 // (a set's tracks kept with the theme, 50 at most: round nine; the layout's most raised from 8 KB for them)
 export const THEME_TRACKS = 50;
@@ -450,7 +460,7 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
     if (h === null) out.hero = null;
     else {
       if (!isObj(h) || !isObj(h.p) || !Array.isArray(h.o) || !Array.isArray(h.off)) return "hero: {p, o, off}";
-      for (const k of Object.keys(h)) if (k !== "p" && k !== "o" && k !== "off") return "hero: p, o and off only";
+      for (const k of Object.keys(h)) if (k !== "p" && k !== "o" && k !== "off" && k !== "panel") return "hero: p, o, off and panel only";
       const p: Record<string, { x: number; w: number }> = {};
       for (const [k, s] of Object.entries(h.p)) {
         if (!HERO_PANELS.includes(k)) return "hero's p: a panel the page doesn't have";
@@ -471,7 +481,35 @@ export function layoutShape(d: unknown): Record<string, unknown> | string {
         if (HERO_FIXED.includes(k)) return "hero's off: the subject, the outstation and the encounters are always shown";
         if (!off.includes(k)) off.push(k);
       }
-      out.hero = { p, o, off };
+      // (kept only where a panel has something of its own, so a layout without is the shape it always was)
+      const panel: Record<string, Record<string, unknown>> = {};
+      if (h.panel !== undefined) {
+        if (!isObj(h.panel)) return "hero's panel: {key: its own}";
+        for (const [k, v] of Object.entries(h.panel)) {
+          const can = HERO_OWN[k];
+          if (!can) return "hero's panel: " + Object.keys(HERO_OWN).join(" or ") + " only";
+          if (!isObj(v)) return "hero's panel " + k + ": {" + can.join(", ") + "}";
+          const keep: Record<string, unknown> = {};
+          for (const [n, x] of Object.entries(v)) {
+            if (!can.includes(n)) return "hero's panel " + k + ": " + can.join(" and ") + " only";
+            if (n === "fold") {
+              if (!Array.isArray(x) || x.length > HERO_FOLDS.length) return "hero's panel " + k + "'s fold: its parts that fold";
+              const f: string[] = [];
+              for (const q of x) {
+                if (typeof q !== "string" || !HERO_FOLDS.includes(q)) return "hero's panel " + k + "'s fold: " + HERO_FOLDS.join(" or ");
+                if (!f.includes(q)) f.push(q);
+              }
+              if (f.length) keep.fold = f;
+            }
+            if (n === "h") {
+              if (!Number.isInteger(x) || (x as number) < HERO_TALL[0] || (x as number) > HERO_TALL[1]) return "hero's panel " + k + "'s h: whole px, " + HERO_TALL[0] + " to " + HERO_TALL[1];
+              keep.h = x;
+            }
+          }
+          if (Object.keys(keep).length) panel[k] = keep;
+        }
+      }
+      out.hero = Object.keys(panel).length ? { p, o, off, panel } : { p, o, off };
     }
   }
   if (d.theme !== undefined) {

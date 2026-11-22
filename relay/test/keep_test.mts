@@ -3,7 +3,7 @@
 //
 //   node test/keep_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { clogMerge, keepShape, layoutShape, themeLink, BANK_SLOTS, CLOG_SLOTS, CLOG_PAGE_ITEMS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME, ARRANGE_READING, HERO_PANELS } from "../src/keep.ts";
+import { clogMerge, keepShape, layoutShape, themeLink, BANK_SLOTS, CLOG_SLOTS, CLOG_PAGE_ITEMS, DEATHBANK_SLOTS, GOALS_MORE, MOTION_NAME, ARRANGE_READING, HERO_PANELS, HERO_FOLDS, HERO_OWN, HERO_TALL } from "../src/keep.ts";
 import { emoteKind, EMOTE_NAME } from "../src/emotes.ts";
 
 let passed = 0;
@@ -211,6 +211,34 @@ test("a layout: the top of the file's panels on twelve columns, the three that s
   deepStrictEqual(HERO_PANELS.slice(0, 10), ["who", "screen", "stage", "kit", "form", "goal", "where", "encounter", "clips", "bank"]);   // (never reordered: added at the end)
   strictEqual(typeof layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), "object");    // (anything else in a place is left out)
   deepStrictEqual(layoutShape({ hero: { ...h, p: { kit: { x: 0, w: 4, z: 1 } } } }), { hero: { ...h, p: { kit: { x: 0, w: 4 } } } });
+});
+
+test("a layout: a panel's own beyond its place (the stage's folds, the globe's size), and the stage's place", () => {
+  const h = { p: { stage: { x: 6, w: 6 } }, o: ["who", "stage", "screen"], off: [] };
+  // (11/22/2026: the stage dragged right in its row and widened to the grid's edge, or two columns: its place as any's)
+  deepStrictEqual(layoutShape({ hero: h }), { hero: h });
+  deepStrictEqual(layoutShape({ hero: { ...h, p: { stage: { x: 4, w: 2 } } } }), { hero: { ...h, p: { stage: { x: 4, w: 2 } } } });
+  // (the featured stage and the tiles each folded or not, each once; the globe's size in whole px)
+  deepStrictEqual(HERO_FOLDS, ["featured", "tiles"]);
+  deepStrictEqual(Object.keys(HERO_OWN), ["stage", "where"]);
+  const both = { stage: { fold: ["featured", "tiles"] }, where: { h: 420 } };
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: both } }), { hero: { ...h, panel: both } });
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: { stage: { fold: ["tiles", "tiles"] } } } }), { hero: { ...h, panel: { stage: { fold: ["tiles"] } } } });
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: { stage: { fold: [] } } } }), { hero: h });             // (nothing of its own: the shape it always was)
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: {} } }), { hero: h });
+  deepStrictEqual(layoutShape({ hero: { ...h, panel: { where: { h: HERO_TALL[0] } } } }), { hero: { ...h, panel: { where: { h: HERO_TALL[0] } } } });
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { h: HERO_TALL[1] + 1 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { h: 300.5 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { h: "300" } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { where: { fold: ["tiles"] } } } }), "string");     // (only the stage folds)
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { h: 300 } } } }), "string");            // (only the globe's sized)
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { kit: { h: 300 } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { fold: ["stage"] } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { fold: "tiles" } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: { fold: ["tiles", "featured", "tiles"] } } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: { stage: [] } } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, panel: [] } }), "string");
+  strictEqual(typeof layoutShape({ hero: { ...h, fold: ["tiles"] } }), "string");
 });
 
 test("a layout: the theme a song's own address on soundcloud, youtube or spotify, kept in its plain form", () => {
