@@ -244,6 +244,9 @@ Jace (11/21/2026): "include it in update 6 along with our other changes". Encoun
 warning=This plugin submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it), your account hash and your IP address to a 3rd-party server when you press Update my page, and hourly; and each boss fight it records as it ends (with a moment of its scene), other players' names taken out, unless you switch that off. Your Outside page shows them publicly.
 ```
 
+(Not used, and never to be: the reviewer's warning from the first update stays for good, "covering you for current and
+future uses" ("The first update, merged", above); an update changes only `commit=`.)
+
 The order: nothing on the relay or the page changes for it (the routes are the relay's own since 11/20/2026); the relay's `FIGHTS` switch stays Jace's call, and until it's on the tab says encounters aren't taken yet and keeps them on the computer.
 
 ### Encounters, round two: each one up by itself, kept for good, featured, its scene moment (11/21/2026)
