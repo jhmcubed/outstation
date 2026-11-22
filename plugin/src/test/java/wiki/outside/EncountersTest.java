@@ -184,4 +184,95 @@ public class EncountersTest
 		assertEquals(null, Encounters.markKind("CANCEL"));
 		assertEquals(null, Encounters.markKind(null));
 	}
+
+	/** 11/22/2026 (Jace at the Giant Mole, update 6's build: "recording started when i entered moles lair (non-instanced
+	 *  location with option of instance, i entered non-instanced location) ... people spend hours here so probably not
+	 *  ideal"): an open boss area starts with the fight with its boss; an instance and a raid on entering, as before. */
+	@Test
+	public void anOpenBossAreaStartsWithItsBossFight()
+	{
+		Presence.Area mole = Presence.area(6993, 0);
+		assertEquals("Giant Mole", mole.name);
+		// (the lair itself: nothing on entering; the Mole fought, by any case of its name; not a baby mole)
+		assertTrue(Encounters.openArea(mole, false));
+		assertFalse(Encounters.startsOnEntry(mole, false));
+		assertTrue(Encounters.startsByFight(mole, false, "Giant Mole"));
+		assertTrue(Encounters.startsByFight(mole, false, "giant mole"));
+		assertTrue(Encounters.startsByFight(mole, false, "Giant\u00A0Mole"));
+		assertFalse(Encounters.startsByFight(mole, false, "Baby Mole"));
+		assertFalse(Encounters.startsByFight(mole, false, null));
+		// (its instance: on entering, as before, and a fight there starts nothing more)
+		assertFalse(Encounters.openArea(mole, true));
+		assertTrue(Encounters.startsOnEntry(mole, true));
+		assertFalse(Encounters.startsByFight(mole, true, "Giant Mole"));
+		// (a raid: on entering, never by a fight)
+		Presence.Area cox = null;
+		for (Presence.Area a : Presence.AREAS)
+		{
+			if ("Chambers of Xeric".equals(a.name))
+			{
+				cox = a;
+			}
+		}
+		assertEquals(Presence.RAID, cox.kind);
+		assertFalse(Encounters.openArea(cox, false));
+		assertTrue(Encounters.startsOnEntry(cox, false));
+		assertTrue(Encounters.startsOnEntry(cox, true));
+		assertFalse(Encounters.startsByFight(cox, false, "Great Olm"));
+		assertFalse(Encounters.startsOnEntry(null, false));
+		assertFalse(Encounters.startsByFight(null, false, "Giant Mole"));
+		// (areas whose boss has another name: each king, not the area's name)
+		Presence.Area dks = Presence.area(11588, 0);
+		assertEquals("Dagannoth Kings", dks.name);
+		assertTrue(Encounters.startsByFight(dks, false, "Dagannoth Rex"));
+		assertTrue(Encounters.startsByFight(dks, false, "Dagannoth Supreme"));
+		assertFalse(Encounters.startsByFight(dks, false, "Dagannoth Kings"));
+		assertFalse(Encounters.startsByFight(dks, false, "Dagannoth"));
+		// (and every name in BOSS_NPCS is one of Discord's boss areas)
+		for (String named : Encounters.BOSS_NPCS.keySet())
+		{
+			boolean found = false;
+			for (Presence.Area a : Presence.AREAS)
+			{
+				found |= a.name.equals(named) && Presence.BOSS.equals(a.kind);
+			}
+			assertTrue(named, found);
+		}
+	}
+
+	/** 11/22/2026 (Jace: "it looks like the recording is not stopping after i kill the mole"; another player's hit came
+	 *  first, so no kill credit and no count line): the boss they fought dead ends it once they're out of combat a few
+	 *  ticks; and in an open area, a fight given up. */
+	@Test
+	public void theBossDeadWithNoCountLineEndsIt()
+	{
+		// (no death: never)
+		assertFalse(Encounters.bossDown(1000, -1, 0));
+		// (dead at 100, their last hit the killing one: BOSS_DOWN after, and QUIET after the last hit)
+		assertFalse(Encounters.bossDown(100, 100, 100));
+		assertFalse(Encounters.bossDown(100 + Encounters.QUIET - 1, 100, 100));
+		assertTrue(Encounters.bossDown(100 + Math.max(Encounters.BOSS_DOWN, Encounters.QUIET), 100, 100));
+		// (still fighting after it: another boss, a king's brother, hitting them)
+		assertFalse(Encounters.bossDown(130, 100, 125));
+		assertTrue(Encounters.bossDown(125 + Encounters.QUIET, 100, 125));
+		// (a short wait: under ten seconds)
+		assertTrue(Math.max(Encounters.BOSS_DOWN, Encounters.QUIET) + Encounters.DROP_WAIT <= 20);
+
+		// (Jace's first kill walked through: the Mole fought from tick 0, hit every 4 ticks, dead at 60 with no line)
+		int dead = 60, endedAt = -1;
+		for (int t = 0; t < 200 && endedAt < 0; t++)
+		{
+			int last = Math.min(t - t % 4, dead);
+			if (Encounters.bossDown(t, t >= dead ? dead : -1, last))
+			{
+				endedAt = t;
+			}
+		}
+		assertEquals(dead + Encounters.QUIET, endedAt);
+
+		// (a fight given up in an open area: the Mole dug in and chased 40 s isn't; 90 s with no hitsplat is)
+		assertFalse(Encounters.fightStopped(67, 0));
+		assertFalse(Encounters.fightStopped(Encounters.OPEN_IDLE - 1, 0));
+		assertTrue(Encounters.fightStopped(Encounters.OPEN_IDLE, 0));
+	}
 }

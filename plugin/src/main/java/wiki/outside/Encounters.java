@@ -168,6 +168,13 @@ import org.slf4j.LoggerFactory;
  * kill (the game's kill or completion count line), the player's death (not in a raid, which goes on), or leaving (the
  * area, or no listed NPC, or one that turned from one, for 50 ticks). By hand from the side tab: started and stopped
  * there only.</li>
+ * <li><b>An open boss area</b> (11/22/2026; Jace at the Giant Mole: "recording started when i entered moles lair ...
+ * people spend hours here so probably not ideal"): a boss's area that isn't an instance starts nothing on entering; the
+ * fight with its boss does (their hitsplat on it, its on them, their attacking it; BOSS_NPCS where Discord's name isn't
+ * the boss's), each kill its own recording; with no leaving there, 90 s with no hitsplat on or from them ends it too.
+ * And the boss they fought dying ends it with no count line (Jace: "it looks like the recording is not stopping after i
+ * kill the mole": another player's hit came first, so no kill credit and no line), once they're out of combat a few
+ * ticks: "killed", its end line "credit": false.</li>
  * <li><b>Never in the Wilderness, a PvP area or on a PvP or Deadman world</b> (the snapshot's rule, OutsidePlugin.held):
  * none starts there, and one running stops the tick it's found there, that tick's lines never written.</li>
  * <li><b>Round four</b> (11/21/2026; ghillie's claude/outstation.md, "Encounters, round four"): a delve of Doom of
@@ -447,6 +454,13 @@ final class Encounters
 	/** the tick the recording ends on (the kill, a death), and why; -1 none due */
 	private int endAt = -1;
 	private String endWhy;
+	/** (11/22/2026) the area's boss NPCs the player fought (their indices), the tick (the whole recording's) one of them
+	 *  died with no count line yet and its name, the last hitsplat on or from the player, and a kill ended without the
+	 *  count line (no kill credit: the end line's "credit": false) */
+	private final Set<Integer> bossFought = new HashSet<>();
+	private int bossDeadAt = -1, bossDeadIndex = -1, lastFight = -1;
+	private String bossDeadName;
+	private boolean noCredit;
 	private String label;
 	private int part;
 	// (between recordings: the area last stood in; one stopped by hand there, or ended by its kill, waits)
@@ -650,6 +664,12 @@ final class Encounters
 			destroyTick = -1;
 			runKill = -1;
 			runOut = 0;
+			bossFought.clear();
+			bossDeadAt = -1;
+			bossDeadIndex = -1;
+			bossDeadName = null;
+			lastFight = -1;
+			noCredit = false;
 			shots.clear();
 			shotsTaken.clear();
 			shown.clear();
@@ -839,6 +859,11 @@ final class Encounters
 		}
 		JsonObject end = emit("end");
 		end.addProperty("reason", reason);
+		if (noCredit && "killed".equals(reason))
+		{
+			// (the boss died with no count line: another player's kill credit; 11/22/2026)
+			end.addProperty("credit", false);
+		}
 		end.addProperty("ticks", stopped.ticks());
 		end.addProperty("endedMs", System.currentTimeMillis());
 		// (its scene moment's makings: nothing from anywhere dangerous; the rest built on the plugin's moment thread)
@@ -1324,6 +1349,24 @@ final class Encounters
 				stopAuto("the time limit");
 				return;
 			}
+			// (a boss's area: the boss they fought dead with no count line (no kill credit, 11/22/2026), and the player
+			// out of combat a few ticks: killed all the same, held for a drop as a count line's kill is)
+			if (!raid && endAt < 0 && bossDown(whole(), bossDeadAt, lastFight) && !otherBossUp())
+			{
+				endAt = whole();
+				endWhy = "killed";
+				noCredit = true;
+				if (scene != null)
+				{
+					scene.kill(bossDeadAt, bossDeadName);
+				}
+			}
+			// (an open area, with no leaving: the fight given up, the boss never killed, ends it too; 11/22/2026)
+			if (endAt < 0 && openArea(area, instance()) && fightStopped(whole(), lastFight))
+			{
+				stopAuto("the fight stopped");
+				return;
+			}
 		}
 		else if (automatic)
 		{
@@ -1377,17 +1420,192 @@ final class Encounters
 			afterKill = null;
 		}
 		lastArea = a;
-		if (a == null || !mayStart() || a == handStopped || a == afterKill)
+		if (a == null || !mayStart() || a == handStopped || a == afterKill || !startsOnEntry(a, instance()))
 		{
 			return;
 		}
 		start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
 	}
 
-	/** After a kill in the area: the next fight (a hitsplat on them, or on an NPC from them) starts the next one. */
+	// ---- an open boss area, and the boss's own death (11/22/2026; Jace at the Giant Mole on update 6's build:
+	// "recording started when i entered moles lair (non-instanced location with option of instance, i entered
+	// non-instanced location) ... people spend hours here so probably not ideal", and "it looks like the recording is not
+	// stopping after i kill the mole": someone else had hit the Mole first, so his ironman got no kill credit and no
+	// count line, and nothing else ends a recording in a lair with no leaving)
+
+	/** the NPCs that are an area's boss where Discord's name for the area isn't theirs (any other area's boss is the NPC
+	 *  of the area's own name); the wiki's names */
+	static final Map<String, Set<String>> BOSS_NPCS;
+
+	static
+	{
+		Map<String, Set<String>> m = new HashMap<>();
+		m.put("Dagannoth Kings", names("Dagannoth Rex", "Dagannoth Prime", "Dagannoth Supreme"));
+		m.put("Grotesque Guardians", names("Dusk", "Dawn"));
+		m.put("Nightmare of Ashihama", names("The Nightmare", "Phosani's Nightmare"));
+		m.put("The Royal Titans", names("Branda the Fire Queen", "Eldric the Ice King"));
+		m.put("Kraken", names("Kraken", "Enormous Tentacle"));
+		BOSS_NPCS = Collections.unmodifiableMap(m);
+	}
+
+	private static Set<String> names(String... n)
+	{
+		Set<String> s = new HashSet<>();
+		for (String x : n)
+		{
+			s.add(x.toLowerCase());
+		}
+		return Collections.unmodifiableSet(s);
+	}
+
+	/** after the boss the player fought dies with no count line (no kill credit: another player's hit first), the ticks
+	 *  before the recording ends, and the ticks with no hitsplat on or from the player (out of combat) it also needs */
+	static final int BOSS_DOWN = 5, QUIET = 8;
+	/** in an open boss area, ticks with no hitsplat on or from the player before the fight counts as given up ("the
+	 *  fight stopped"): the Mole dug in and chased takes 40 s or so (ActivityTest), and they may stay for hours */
+	static final int OPEN_IDLE = 150;
+
+	/** An open boss area: a boss's (not a raid's) and not an instance (the Giant Mole's lair entered without its
+	 *  instance's option). There a recording starts with the fight with the boss, not on entering. */
+	static boolean openArea(Presence.Area a, boolean instance)
+	{
+		return a != null && Presence.BOSS.equals(a.kind) && !instance;
+	}
+
+	/** Whether an area starts its recording the tick they're in it: a raid, and a boss's in an instance. */
+	static boolean startsOnEntry(Presence.Area a, boolean instance)
+	{
+		return a != null && !openArea(a, instance);
+	}
+
+	/** Whether an NPC of this name is the area's boss (BOSS_NPCS, else the area's own name), any case. */
+	static boolean bossOf(Presence.Area a, String npc)
+	{
+		if (a == null || npc == null)
+		{
+			return false;
+		}
+		String n = npc.replace(' ', ' ').trim().toLowerCase();
+		Set<String> named = BOSS_NPCS.get(a.name);
+		return named != null ? named.contains(n) : n.equals(a.name.toLowerCase());
+	}
+
+	/** Whether a fight (the player's hitsplat on it, its hitsplat on the player, the player attacking it) with an NPC of
+	 *  this name starts a recording: an open boss area's boss. */
+	static boolean startsByFight(Presence.Area a, boolean instance, String npc)
+	{
+		return openArea(a, instance) && bossOf(a, npc);
+	}
+
+	/** Whether a recording whose boss died with no count line ({@code deadAt}, the whole recording's tick, -1 none) ends
+	 *  now: BOSS_DOWN ticks after the death and QUIET after the last hitsplat on or from the player ({@code lastFight}). */
+	static boolean bossDown(int now, int deadAt, int lastFight)
+	{
+		return deadAt >= 0 && now >= deadAt + BOSS_DOWN && now >= lastFight + QUIET;
+	}
+
+	/** Whether a recording in an open boss area ends for the fight given up: OPEN_IDLE ticks with no hitsplat on or from
+	 *  the player ({@code lastFight}, the whole recording's tick). */
+	static boolean fightStopped(int now, int lastFight)
+	{
+		return now >= lastFight + OPEN_IDLE;
+	}
+
+	private boolean instance()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		return wv != null && wv.isInstance();
+	}
+
+	private static String nameOf(Actor a)
+	{
+		return a == null || a.getName() == null ? null : Text.removeTags(a.getName());
+	}
+
+	/** The area's boss fighting the player (interacting with them), or null. */
+	private NPC bossOnMe(Presence.Area a)
+	{
+		Player me = client.getLocalPlayer();
+		WorldView wv = client.getTopLevelWorldView();
+		if (me == null || wv == null || a == null)
+		{
+			return null;
+		}
+		for (NPC npc : wv.npcs())
+		{
+			if (npc.getInteracting() == me && bossOf(a, nameOf(npc)))
+			{
+				return npc;
+			}
+		}
+		return null;
+	}
+
+	/** Not recording, in an open boss area: the fight with its boss ({@code npc}) starts one; each kill there its own
+	 *  (not again where one was stopped by hand, till they've left). */
+	private void fightOpen(NPC npc)
+	{
+		if (npc == null || !mayStart())
+		{
+			return;
+		}
+		Presence.Area a = bossArea();
+		if (a == null || a == handStopped || !startsByFight(a, instance(), nameOf(npc)))
+		{
+			return;
+		}
+		afterKill = null;
+		start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
+		bossFought.add(npc.getIndex());
+		lastFight = whole();
+	}
+
+	/** A recording started by a boss's area: an NPC the player fought, the area's boss, is noted. */
+	private void fought(NPC npc)
+	{
+		if (npc != null && automatic && area != null && Presence.BOSS.equals(area.kind) && bossOf(area, nameOf(npc)))
+		{
+			bossFought.add(npc.getIndex());
+		}
+	}
+
+	/** The boss the player fought has died (its death, or gone dead): noted for the ending with no count line. */
+	private void bossDied(NPC npc)
+	{
+		if (bossDeadAt < 0 && endAt < 0 && automatic && area != null && bossFought.contains(npc.getIndex())
+			&& bossOf(area, nameOf(npc)))
+		{
+			bossDeadAt = whole();
+			bossDeadIndex = npc.getIndex();
+			bossDeadName = nameOf(npc);
+		}
+	}
+
+	/** Another of the area's bosses they fought still up beside the dead one (the Dagannoth Kings' brothers, Dusk after
+	 *  Dawn, a Royal Titan after the other): the fight goes on. */
+	private boolean otherBossUp()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		if (wv == null)
+		{
+			return false;
+		}
+		for (NPC npc : wv.npcs())
+		{
+			if (npc.getIndex() != bossDeadIndex && bossFought.contains(npc.getIndex()) && !npc.isDead()
+				&& bossOf(area, nameOf(npc)))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** After a kill in the area: the next fight (a hitsplat on them, or on an NPC from them) starts the next one (not in
+	 *  an open area, where only the boss's own fight does: fightOpen). */
 	private void fightAgain()
 	{
-		if (afterKill != null && recording == null && mayStart() && bossArea() == afterKill)
+		if (afterKill != null && recording == null && mayStart() && bossArea() == afterKill && !openArea(afterKill, instance()))
 		{
 			Presence.Area a = afterKill;
 			afterKill = null;
@@ -2095,6 +2313,11 @@ final class Encounters
 		line.addProperty("dead", npc.isDead());
 		EncounterSnap.actorTile(line, npc);
 		corpseGone(npc);
+		// (gone dead: its death, if ActorDeath missed it; one dug in or out of sight isn't: 11/22/2026)
+		if (npc.isDead())
+		{
+			bossDied(npc);
+		}
 	}
 
 	/** The corpse Destroy was chosen on went (or turned into something else) within DESTROY_WAIT ticks, unlooted: it
@@ -2292,9 +2515,22 @@ final class Encounters
 	public void onHitsplatApplied(HitsplatApplied event)
 	{
 		Actor actor = event.getActor();
-		if (recording == null && actor != null && (actor == client.getLocalPlayer() || actor instanceof NPC && event.getHitsplat().isMine()))
+		boolean me = actor != null && actor == client.getLocalPlayer();
+		boolean mine = actor instanceof NPC && event.getHitsplat().isMine();
+		if (recording == null && (me || mine))
 		{
-			fightAgain();
+			// (an open boss area: its boss hit by them, or hitting them, starts one; 11/22/2026)
+			fightOpen(mine ? (NPC) actor : bossOnMe(bossArea()));
+			if (recording == null)
+			{
+				fightAgain();
+			}
+		}
+		else if (recording != null && (me || mine))
+		{
+			// (the fight's boss and the last hitsplat, for the ending with no count line; 11/22/2026)
+			lastFight = whole();
+			fought(mine ? (NPC) actor : automatic && area != null ? bossOnMe(area) : null);
 		}
 		if (!wanted(actor))
 		{
@@ -2456,6 +2692,8 @@ final class Encounters
 					endAt = whole() + AFTER_KILL;
 					endWhy = "killed";
 				}
+				// (the count line came: the kill's with credit, whatever ended it; 11/22/2026)
+				noCredit = false;
 				// (the scene moment's kill, by hand or not: its still scene taken now)
 				if (scene != null)
 				{
@@ -3896,6 +4134,18 @@ final class Encounters
 	@Subscribe
 	public void onInteractingChanged(InteractingChanged event)
 	{
+		// (the player attacking an open boss area's boss starts one; a recording's boss fought noted: 11/22/2026)
+		if (event.getSource() != null && event.getSource() == client.getLocalPlayer() && event.getTarget() instanceof NPC)
+		{
+			if (recording == null)
+			{
+				fightOpen((NPC) event.getTarget());
+			}
+			else
+			{
+				fought((NPC) event.getTarget());
+			}
+		}
 		if (!wanted(event.getSource()))
 		{
 			return;
@@ -3914,6 +4164,11 @@ final class Encounters
 			return;
 		}
 		emit("death").add("who", EncounterSnap.ref(client, actor));
+		// (the boss they fought dead, count line or not: 11/22/2026)
+		if (actor instanceof NPC)
+		{
+			bossDied((NPC) actor);
+		}
 		// (the Hunllef falling is a Gauntlet's kill, its count line or not; round six)
 		if (run != null && run.gauntlet && actor instanceof NPC && actor.getName() != null
 			&& Text.removeTags(actor.getName()).endsWith("Hunllef"))
