@@ -927,7 +927,10 @@ final class EncounterScene
 		noteBase(wv);
 		Scene scene = wv.getScene();
 		Tile[][][] tiles = scene.getTiles();
-		int[][][] heights = scene.getTileHeights();
+		// (the world view's heights, the plain scene's size as the tiles are: the Scene's own are the extended scene's, 40
+		// tiles further each way, so every painted tile took the height of the one 40 west and south of it, a ground
+		// floating under the real one in any moment off flat ground; 11/22/2026, ur_neat's Chambers of Xeric)
+		int[][][] heights = wv.getTileHeights();
 		int plane = wv.getPlane();
 		LocalPoint mine = me.getLocalLocation();
 		int cx = mine.getSceneX(), cy = mine.getSceneY(), r = EncounterMoment.REACH + 2;
