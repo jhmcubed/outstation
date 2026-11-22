@@ -606,3 +606,11 @@ on the computer for Put on my page. Checks on 8b4e3f7: gradle test (both), hub_c
 world's twelve stages pass (ghillie's tools/local-world/stagecheck.py, the Mole's instance and Vorkath left before and
 after a fight new), and with uploads on the plugin queued exactly the kill and the fought-then-left one. The fork stays at
 daf45c6 until Jace has tried 8b4e3f7 in the game with `-ea`.
+
+Jace's test of 8b4e3f7 (11/22/2026, `-ea`, his client logs): the public lair's quiet fight stayed on his computer, its kill
+went up, the Mole's instance started on entering, an instance entered and left with no fight stayed, its kill went up
+(the relay's list: exactly the two kills). Nothing failing in wiki.outside, no assertion; the only uncaught exceptions
+the loot tracker's and Dude Where's My Stuff's. Then the Hub README's theme song made SoundCloud only (it still said
+YouTube, SoundCloud or Spotify; they went 11/21): outside-plugin 6bed558, its only difference from 8b4e3f7 the README;
+hub_cut --check, hub_check, gradle test and start_check passed on it. The fork's `outside-update-6`: commit=
+6bed5584623c (jhmcubed/plugin-hub 5332153). Jace opens the pull request.
