@@ -448,10 +448,12 @@ public class OutsidePanel extends PluginPanel
 		pageTab.add(Box.createVerticalStrut(12));
 		// (11/18/2026, Jace: "a button to the plugin that opens up their page and embeds the key into it so they dont have
 		// to manually paste it": the aether takes an outstation's own name with its key, asked for on the page otherwise)
-		pageTab.add(left(heading("The aether")));
-		pageTab.add(left(small("<html><div style='width:155px'>Outside.wiki's chat across every page. Your name is"
-			+ " yours there: this opens your page in your browser with your key, kept in that browser, so the aether"
-			+ " lets you in under your own name.</div></html>")));
+		// (11/22/2026: the same key signs notes in any page's register, with the lime star)
+		pageTab.add(left(heading("The aether and registers")));
+		pageTab.add(left(small("<html><div style='width:155px'>Outside.wiki's chat across every page, and every page's"
+			+ " register. Your name is yours there: this opens your page in your browser with your key, kept in that"
+			+ " browser, so the aether lets you in under your own name and your notes in any register carry your lime"
+			+ " star.</div></html>")));
 		pageTab.add(Box.createVerticalStrut(6));
 		pageTab.add(wide(button("Talk in the aether as me", hooks::aetherAsMe)));
 		pageTab.add(Box.createVerticalStrut(12));
