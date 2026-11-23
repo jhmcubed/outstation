@@ -85,6 +85,23 @@ final class EncounterScene
 	static final int CYCLES = 2;
 	/** the buffer's size at most: past it the oldest frames go, or after the kill, no more are kept */
 	static final long BUFFER_MOST = 96L * 1024 * 1024;
+
+	/** (11/23/2026) the buffer's size at most in this client: BUFFER_MOST, or an eighth of the most the client's Java may
+	 *  use if that's less, so a client given little memory keeps fewer frames rather than run short building a moment */
+	static long bufferMost()
+	{
+		return Math.max(16L << 20, Math.min(BUFFER_MOST, heapMost() / 8));
+	}
+
+	private final long bufferMost = bufferMost();
+
+	/** the most the client's Java may use (its -Xmx), read through java.lang.management (not Runtime: the Hub's checks
+	 *  keep that for starting programs); 768 MB where it isn't said */
+	static long heapMost()
+	{
+		long m = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax();
+		return m > 0 ? m : 768L << 20;
+	}
 	/** tiles round the player a moving thing is kept within (the moment's reach, and a tile for its size) */
 	static final int NEAR = EncounterMoment.REACH + 2;
 
@@ -240,6 +257,10 @@ final class EncounterScene
 		int plane;
 		long clientNanos, stillNanos, bufferBytes;
 		int framesTaken;
+		/** (11/23/2026, for the log and the tests) about what the tracks would have held at 2 cycles a frame, what they
+		 *  held as built, and how many times further apart the frames were taken for it (1: as ever) */
+		long trackBytes, trackBytesBuilt;
+		int spacing = 1, trackMost = EncounterMoment.TRACK_MOST;
 	}
 
 	private final Client client;
@@ -558,10 +579,10 @@ final class EncounterScene
 				}
 			}
 		}
-		if (bytes > BUFFER_MOST)
+		if (bytes > bufferMost)
 		{
 			java.util.Iterator<Frame> it = frames.iterator();
-			while (it.hasNext() && bytes > BUFFER_MOST && frames.size() > 1)
+			while (it.hasNext() && bytes > bufferMost && frames.size() > 1)
 			{
 				Frame f = it.next();
 				if (!anchored(f.tick))
@@ -570,7 +591,7 @@ final class EncounterScene
 					it.remove();
 				}
 			}
-			if (bytes > BUFFER_MOST)
+			if (bytes > bufferMost)
 			{
 				// (the anchors' own stretches fill it: the newest stop coming instead)
 				full = true;
@@ -617,7 +638,7 @@ final class EncounterScene
 				it.remove();
 			}
 		}
-		if (bytes <= BUFFER_MOST)
+		if (bytes <= bufferMost)
 		{
 			full = false;
 		}
@@ -1448,64 +1469,151 @@ final class EncounterScene
 
 	/** The moment's file, made from what was taken (the moment thread). meta's fight, foes, label and at are the
 	 *  recorder's; the rest is worked out here. Returns the gzipped file, at most EncounterMoment.MOST. */
+	/**
+	 * (11/23/2026, SaluteCFlagg's Doom of Mokhaiotl delves: eight of ten went up with "it couldn't be made: Java heap
+	 * space") The most the moving models' tracks may hold while a moment's built, in bytes: a third of what the client's
+	 * Java has free (its most less what it holds now, garbage and all, so never more than is really there), as the
+	 * moment's file is then written from them (about as much again) before it's packed; 256 MB at most, 16 MB at least.
+	 * A moment's tracks had been made whole, every model at 25 frames a second, and only then made smaller (fit): a
+	 * delve's models over a stretch came to hundreds of MB beside the frames kept, and with the game's own share of the
+	 * client's memory there wasn't that. Past the budget, the frames are taken further apart before the tracks are made,
+	 * then each model's dots made fewer (fit's own two steps, "thin" and "sparse", taken first), so it never holds more;
+	 * a moment that fits in what's free is made exactly as before (the tracks compress some fifty times over, so most
+	 * that were too big to hold were never too big for the file).
+	 */
+	static long trackBudget()
+	{
+		java.lang.management.MemoryUsage heap = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+		long most = heap.getMax() > 0 ? heap.getMax() : heapMost();
+		return Math.max(16L << 20, Math.min(TRACK_BUDGET, (most - heap.getUsed()) / 3));
+	}
+
+	/** the most a moment's tracks hold while it's built, however much is free (trackBudget) */
+	static final long TRACK_BUDGET = 256L << 20;
+	/** the furthest apart a moment's frames are taken for its tracks' sake: 8 times (a frame every 16 cycles, 3 a second) */
+	static final int SPACING_MOST = 8;
+
+	/** The frames a moment's stretch is made of, at {@code cyc} cycles apart: each the newest taken at or before its
+	 *  cycle; and each shape's runs of frames it's in, unbroken (one gone and back is a new run): {shape, first frame,
+	 *  poses}, in order. */
+	static final class Spaced
+	{
+		final int cyc, count;
+		final Frame[] at;
+		final List<Object[]> runs = new ArrayList<>();
+
+		Spaced(List<Frame> fr, int c0, int c1, int cyc)
+		{
+			this.cyc = cyc;
+			count = Math.max(1, Math.min(600 / (cyc / CYCLES), (c1 - c0) / cyc + 1));
+			at = new Frame[count];
+			for (int k = 0, q = 0; k < count; k++)
+			{
+				int want = c0 + k * cyc;
+				while (q + 1 < fr.size() && fr.get(q + 1).cycle <= want)
+				{
+					q++;
+				}
+				at[k] = fr.get(q);
+			}
+			Map<Shape, int[]> open = new IdentityHashMap<>();
+			Map<Shape, List<EncounterMoment.Pose>> poses = new IdentityHashMap<>();
+			for (int k = 0; k < count; k++)
+			{
+				Map<Shape, Sample> here = new IdentityHashMap<>();
+				for (Sample s : at[k].samples)
+				{
+					here.putIfAbsent(s.shape, s);
+				}
+				for (Map.Entry<Shape, Sample> en : here.entrySet())
+				{
+					Shape s = en.getKey();
+					if (!open.containsKey(s))
+					{
+						open.put(s, new int[]{k});
+						poses.put(s, new ArrayList<>());
+					}
+					poses.get(s).add(pose(en.getValue()));
+				}
+				for (Shape s : new ArrayList<>(open.keySet()))
+				{
+					if (!here.containsKey(s))
+					{
+						runs.add(new Object[]{s, open.remove(s)[0], poses.remove(s)});
+					}
+				}
+			}
+			for (Shape s : open.keySet())
+			{
+				runs.add(new Object[]{s, open.get(s)[0], poses.get(s)});
+			}
+			runs.sort((p, q) -> Integer.compare((Integer) p[1], (Integer) q[1]));
+		}
+
+		/** about what its tracks would hold (bytes): each run's dots (Builder.dotsAbout) times its frames, 6 bytes a dot
+		 *  a frame and a bit of each for whether it shows */
+		@SuppressWarnings("unchecked")
+		long trackBytes(EncounterMoment.Builder b)
+		{
+			long sum = 0;
+			for (Object[] r : runs)
+			{
+				Shape s = (Shape) r[0];
+				List<EncounterMoment.Pose> ps = (List<EncounterMoment.Pose>) r[2];
+				long n = b.dotsAbout(s.mesh, s.kind, ps);
+				sum += n * ps.size() * 6 + ((n + 7) >> 3) * ps.size();
+			}
+			return sum;
+		}
+	}
+
 	static byte[] build(Taken t, Map<String, Object> base, int seed) throws java.io.IOException
+	{
+		return build(t, base, seed, trackBudget());
+	}
+
+	/** The moment, its tracks holding about {@code budget} bytes at most while it's built (trackBudget). */
+	static byte[] build(Taken t, Map<String, Object> base, int seed, long budget) throws java.io.IOException
 	{
 		List<Frame> fr = t.frames;
 		// the frames on the moment's clock: frame k at cycle c0 + 2k, each the newest taken at or before it
 		int c0 = cycleAt(t.clock, t.from, fr), c1 = cycleAt(t.clock, t.to + 1, fr) - 1;
 		c0 = Math.max(c0, fr.get(0).cycle);
 		c1 = Math.min(Math.max(c1, c0), fr.get(fr.size() - 1).cycle);
-		int count = Math.max(1, Math.min(600, (c1 - c0) / CYCLES + 1));
-		Frame[] at = new Frame[count];
-		for (int k = 0, q = 0; k < count; k++)
-		{
-			int want = c0 + k * CYCLES;
-			while (q + 1 < fr.size() && fr.get(q + 1).cycle <= want)
-			{
-				q++;
-			}
-			at[k] = fr.get(q);
-		}
-		int ka = frameOf(cycleAt(t.clock, t.anchor, fr), c0, count);
-		Frame anchor = at[ka];
+		Spaced sp = new Spaced(fr, c0, c1, CYCLES);
+		int ka = frameOf(cycleAt(t.clock, t.anchor, fr), c0, sp.count, sp.cyc);
+		Frame anchor = sp.at[ka];
 		// the origin: the camera's followed point at the anchor, on the ground under it
 		double ox = anchor.fx, oz = -anchor.fy, oy = -anchor.ground;
 		EncounterMoment.Builder b = new EncounterMoment.Builder(ox, oy, oz, id -> t.textures.get(id), seed);
 		b.still(t.still, EncounterMoment.POINTS);
-		// the tracks: each shape's run of frames it's in, unbroken (one gone and back is a new run)
-		Map<Shape, int[]> open = new IdentityHashMap<>();
-		Map<Shape, List<EncounterMoment.Pose>> poses = new IdentityHashMap<>();
-		List<Object[]> runs = new ArrayList<>();
-		for (int k = 0; k < count; k++)
+		// (11/23/2026) the tracks no bigger than the budget: the frames taken further apart till they fit (trackBudget)
+		long held = sp.trackBytes(b);
+		t.trackBytes = held;
+		while (held > budget && sp.cyc < CYCLES * SPACING_MOST && sp.count > 1)
 		{
-			Map<Shape, Sample> here = new IdentityHashMap<>();
-			for (Sample s : at[k].samples)
+			sp = new Spaced(fr, c0, c1, sp.cyc * 2);
+			held = sp.trackBytes(b);
+		}
+		// (and past the farthest apart, each model's dots fewer, in proportion, as fit's "sparse": 200 a model at the least)
+		if (held > budget)
+		{
+			for (int k = 0; k < 6 && held > budget && b.trackMost > 200; k++)
 			{
-				here.putIfAbsent(s.shape, s);
-			}
-			for (Map.Entry<Shape, Sample> en : here.entrySet())
-			{
-				Shape s = en.getKey();
-				if (!open.containsKey(s))
-				{
-					open.put(s, new int[]{k});
-					poses.put(s, new ArrayList<>());
-				}
-				poses.get(s).add(pose(en.getValue()));
-			}
-			for (Shape s : new ArrayList<>(open.keySet()))
-			{
-				if (!here.containsKey(s))
-				{
-					runs.add(new Object[]{s, open.remove(s)[0], poses.remove(s)});
-				}
+				b.trackMost = (int) Math.max(200, Math.floor(b.trackMost * (double) budget / held * 0.95));
+				held = sp.trackBytes(b);
 			}
 		}
-		for (Shape s : open.keySet())
+		t.trackBytesBuilt = held;
+		t.trackMost = b.trackMost;
+		t.spacing = sp.cyc / CYCLES;
+		if (sp.cyc != CYCLES)
 		{
-			runs.add(new Object[]{s, open.get(s)[0], poses.get(s)});
+			ka = frameOf(cycleAt(t.clock, t.anchor, fr), c0, sp.count, sp.cyc);
 		}
-		runs.sort((p, q) -> Integer.compare((Integer) p[1], (Integer) q[1]));
+		final int count = sp.count, cyc = sp.cyc;
+		final Frame[] at = sp.at;
+		List<Object[]> runs = sp.runs;
 		for (Object[] r : runs)
 		{
 			Shape s = (Shape) r[0];
@@ -1514,8 +1622,8 @@ final class EncounterScene
 			EncounterMoment.Mesh m = s.mesh;
 			if (m.tex != null && m.uv == null && !ps.isEmpty())
 			{
-				EncounterMoment.Pose p0 = ps.get(0);
-				m.uv = EncounterMoment.uvs(p0.x, p0.y, p0.z, m.fa, m.fb, m.fc, m.tex, s.texFaces, s.tp, s.tm, s.tn);
+				float[][] p0 = ps.get(0).floats();
+				m.uv = EncounterMoment.uvs(p0[0], p0[1], p0[2], m.fa, m.fb, m.fc, m.tex, s.texFaces, s.tp, s.tm, s.tn);
 			}
 			b.track(m, s.kind, (Integer) r[1], ps);
 		}
@@ -1613,7 +1721,7 @@ final class EncounterScene
 		meta.put("frame", (double) ka);
 		Map<String, Object> frames = new LinkedHashMap<>();
 		frames.put("count", (double) count);
-		frames.put("cycles", (double) CYCLES);
+		frames.put("cycles", (double) cyc);
 		frames.put("tick0", Math.round(tickAt(t.clock, c0) * 1000) / 1000.0);
 		frames.put("cycle0", (double) c0);
 		meta.put("frames", frames);
@@ -1626,7 +1734,7 @@ final class EncounterScene
 		{
 			Map<String, Object> kill = new LinkedHashMap<>();
 			kill.put("tick", (double) t.killTick);
-			kill.put("frame", (double) frameOf(cycleAt(t.clock, t.killTick, fr), c0, count));
+			kill.put("frame", (double) frameOf(cycleAt(t.clock, t.killTick, fr), c0, count, cyc));
 			kill.put("npc", t.npc);
 			meta.put("kill", kill);
 		}
@@ -1638,7 +1746,7 @@ final class EncounterScene
 		{
 			Map<String, Object> fall = new LinkedHashMap<>();
 			fall.put("tick", (double) t.fallTick);
-			fall.put("frame", (double) frameOf(cycleAt(t.clock, t.fallTick, fr), c0, count));
+			fall.put("frame", (double) frameOf(cycleAt(t.clock, t.fallTick, fr), c0, count, cyc));
 			fall.put("npc", t.npc);
 			meta.put("fall", fall);
 		}
@@ -1650,7 +1758,7 @@ final class EncounterScene
 		{
 			Map<String, Object> drop = new LinkedHashMap<>();
 			drop.put("tick", (double) t.dropTick);
-			drop.put("frame", (double) frameOf(cycleAt(t.clock, t.dropTick, fr), c0, count));
+			drop.put("frame", (double) frameOf(cycleAt(t.clock, t.dropTick, fr), c0, count, cyc));
 			meta.put("drop", drop);
 		}
 		else
@@ -1662,7 +1770,7 @@ final class EncounterScene
 		byte[] picture = null;
 		if (t.lootTick >= 0 && w != null)
 		{
-			int lf = frameOf(cycleAt(t.clock, t.lootTick, fr), c0, count);
+			int lf = frameOf(cycleAt(t.clock, t.lootTick, fr), c0, count, cyc);
 			Map<String, Object> chest = new LinkedHashMap<>();
 			chest.put("tick", (double) t.lootTick);
 			chest.put("frame", (double) lf);
@@ -1677,7 +1785,7 @@ final class EncounterScene
 		// (a corpse destroyed has no window: nothing came; round four)
 		if (t.lootTick >= 0 && w != null && !"destroyed".equals(w.kind))
 		{
-			int lf = frameOf(cycleAt(t.clock, t.lootTick, fr), c0, count);
+			int lf = frameOf(cycleAt(t.clock, t.lootTick, fr), c0, count, cyc);
 			Map<String, Object> win = new LinkedHashMap<>();
 			win.put("kind", w.kind);
 			win.put("source", w.source);
@@ -1719,9 +1827,9 @@ final class EncounterScene
 		{
 			Map<String, Object> pet = new LinkedHashMap<>();
 			pet.put("tick", (double) t.petTick);
-			pet.put("frame", (double) frameOf(cycleAt(t.clock, t.petTick, fr), c0, count));
+			pet.put("frame", (double) frameOf(cycleAt(t.clock, t.petTick, fr), c0, count, cyc));
 			pet.put("seen", t.petSeenTick >= 0 ? (Object) (double) t.petSeenTick : null);
-			pet.put("seenFrame", t.petSeenTick >= 0 ? (Object) (double) frameOf(cycleAt(t.clock, t.petSeenTick, fr), c0, count) : null);
+			pet.put("seenFrame", t.petSeenTick >= 0 ? (Object) (double) frameOf(cycleAt(t.clock, t.petSeenTick, fr), c0, count, cyc) : null);
 			pet.put("kind", t.petKind);
 			pet.put("name", t.petName);
 			pet.put("npc", t.petNpc >= 0 ? (Object) (double) t.petNpc : null);
@@ -1772,17 +1880,10 @@ final class EncounterScene
 		return EncounterMoment.fit(m, EncounterMoment.MOST, null);
 	}
 
+	// (11/23/2026: the frame's own corners, not a float copy of them: Pose reads them where they are)
 	private static EncounterMoment.Pose pose(Sample s)
 	{
-		int n = s.xyz.length / 3;
-		float[] x = new float[n], y = new float[n], z = new float[n];
-		for (int v = 0; v < n; v++)
-		{
-			x[v] = s.xyz[v * 3];
-			y[v] = s.xyz[v * 3 + 1];
-			z[v] = s.xyz[v * 3 + 2];
-		}
-		return new EncounterMoment.Pose(x, y, z, s.alpha);
+		return new EncounterMoment.Pose(s.xyz, s.alpha);
 	}
 
 	/** The cycle a tick of the recording began on (from the ticks seen; else the first frame of that tick). */
@@ -1837,7 +1938,13 @@ final class EncounterScene
 
 	static int frameOf(int cycle, int c0, int count)
 	{
-		return Math.max(0, Math.min(count - 1, Math.round((cycle - c0) / (float) CYCLES)));
+		return frameOf(cycle, c0, count, CYCLES);
+	}
+
+	/** (11/23/2026) the same, its frames {@code cyc} cycles apart */
+	static int frameOf(int cycle, int c0, int count, int cyc)
+	{
+		return Math.max(0, Math.min(count - 1, Math.round((cycle - c0) / (float) cyc)));
 	}
 
 	/** The Ground Items plugin's colour for a value (its defaults' tiers). */

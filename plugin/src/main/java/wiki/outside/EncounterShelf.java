@@ -868,10 +868,10 @@ final class EncounterShelf
 							{
 								target.write(bytes, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
 									java.nio.file.StandardOpenOption.WRITE);
-								log.info("outside: {}'s moment: {} KB, built in {} ms; the client thread's share {} ms over {} frames taken ({} us a frame), the still scene {} ms, the buffer {} KB, {} frames kept",
+								log.info("outside: {}'s moment: {} KB, built in {} ms; the client thread's share {} ms over {} frames taken ({} us a frame), the still scene {} ms, the buffer {} KB, {} frames kept; the tracks about {} KB, built at {} KB (frames {}x apart, {} dots a model at most)",
 									file, bytes.length / 1024, ms, taken.clientNanos / 1_000_000, taken.framesTaken,
 									taken.framesTaken == 0 ? 0 : taken.clientNanos / 1000 / taken.framesTaken, taken.stillNanos / 1_000_000,
-									taken.bufferBytes / 1024, taken.frames.size());
+									taken.bufferBytes / 1024, taken.frames.size(), taken.trackBytes / 1024, taken.trackBytesBuilt / 1024, taken.spacing, taken.trackMost);
 							}
 							finally
 							{

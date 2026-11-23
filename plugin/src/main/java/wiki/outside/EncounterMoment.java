@@ -847,7 +847,12 @@ final class EncounterMoment
 	/** A moving model in one frame: where its corners are (the moment's axes, game units) and how see-through each face. */
 	static final class Pose
 	{
+		/** its corners as floats, or (the scene's own frames, 11/23/2026) null and {@link #xyz} instead */
 		final float[] x, y, z;
+		/** (11/23/2026, the moment's memory) its corners as the frame keeps them, whole units, x y z each: read where they
+		 *  are rather than copied into floats, which had doubled the frames kept while a moment was built. The same
+		 *  whole numbers either way, so the same dots */
+		final short[] xyz;
 		final byte[] alpha;
 
 		Pose(float[] x, float[] y, float[] z, byte[] alpha)
@@ -855,7 +860,55 @@ final class EncounterMoment
 			this.x = x;
 			this.y = y;
 			this.z = z;
+			this.xyz = null;
 			this.alpha = alpha;
+		}
+
+		Pose(short[] xyz, byte[] alpha)
+		{
+			this.x = null;
+			this.y = null;
+			this.z = null;
+			this.xyz = xyz;
+			this.alpha = alpha;
+		}
+
+		int n()
+		{
+			return xyz != null ? xyz.length / 3 : x.length;
+		}
+
+		float x(int v)
+		{
+			return xyz != null ? xyz[v * 3] : x[v];
+		}
+
+		float y(int v)
+		{
+			return xyz != null ? xyz[v * 3 + 1] : y[v];
+		}
+
+		float z(int v)
+		{
+			return xyz != null ? xyz[v * 3 + 2] : z[v];
+		}
+
+		/** its corners as floats (the first pose of a track: its area and texture places) */
+		float[][] floats()
+		{
+			if (xyz == null)
+			{
+				return new float[][]{x, y, z};
+			}
+			int n = n();
+			float[] fx = new float[n], fy = new float[n], fz = new float[n];
+			for (int v = 0; v < n; v++)
+			{
+				fx[v] = xyz[v * 3];
+				fy[v] = xyz[v * 3 + 1];
+				fz[v] = xyz[v * 3 + 2];
+			}
+			return new float[][]{fx, fy, fz};
 		}
 	}
 
@@ -870,6 +923,10 @@ final class EncounterMoment
 		final Textures tex;
 		final Rng rand;
 		double density;
+		/** (11/23/2026) a moving model's dots at most in this moment: TRACK_MOST, or fewer where the frames taken as far
+		 *  apart as they go still hold more than the budget (EncounterScene.build): a sparser model, its dots drawn larger,
+		 *  as fit's "sparse" makes one */
+		int trackMost = TRACK_MOST;
 		short[] pos;
 		byte[] col;
 		int count, texMiss, covered;
@@ -1096,6 +1153,45 @@ final class EncounterMoment
 		}
 
 		/**
+		 * (11/23/2026, the moment's memory) About how many dots {@link #track} would give this model's run, without
+		 * placing them (no chances drawn, so the moment's own dots are as before): its faces' area where it first comes
+		 * within reach, as track's, thinned to {@link #TRACK_MOST} as track thins it. 0 for one never within reach.
+		 */
+		int dotsAbout(Mesh m, int kind, List<Pose> poses)
+		{
+			int cls = KIND_CLASS[kind];
+			for (Pose p : poses)
+			{
+				boolean in = false;
+				for (int v = 0, pn = p.n(); v < pn && !in; v++)
+				{
+					in = radial(p.x(v), p.z(v)) > 0;
+				}
+				if (!in)
+				{
+					continue;
+				}
+				float[][] fp = p.floats();
+				byte[] alpha = p.alpha != null ? p.alpha : m.alpha;
+				double area = 0;
+				for (int f = 0; f < m.faces(); f++)
+				{
+					// (as Mesh.alpha, with this pose's see-through-ness: the faces track samples)
+					int t = alpha == null ? 0 : alpha[f] & 0xff;
+					double a = m.c3[f] == -2 || t >= 254 ? 0 : 1 - t / 255.0;
+					if (a >= 0.02)
+					{
+						area += area(m, f, fp[0], fp[1], fp[2]);
+					}
+				}
+				double want = area * WEIGHT[cls] * density;
+				int thinBy = (int) Math.min(255, Math.max(0, Math.ceil(want / trackMost) - 1));
+				return (int) Math.min(65535, Math.ceil(want / (1 + thinBy)));
+			}
+			return 0;
+		}
+
+		/**
 		 * A moving model's run of frames, from frame {@code from}: its dots placed on its faces at the first frame, then
 		 * followed (moment.js's newTrack and its frames). Its faces, colours and textures are {@code m}'s (its corners
 		 * there unused); each pose its corners in one frame. A model wholly past the edge in its first frames starts where
@@ -1110,9 +1206,9 @@ final class EncounterMoment
 			{
 				Pose p = poses.get(start);
 				boolean in = false;
-				for (int v = 0; v < p.x.length && !in; v++)
+				for (int v = 0, pn = p.n(); v < pn && !in; v++)
 				{
-					in = radial(p.x[v], p.z[v]) > 0;
+					in = radial(p.x(v), p.z(v)) > 0;
 				}
 				if (in)
 				{
@@ -1124,6 +1220,7 @@ final class EncounterMoment
 				return null;
 			}
 			Pose first = poses.get(start);
+			float[][] fp = first.floats();
 			Mesh at = new Mesh();
 			at.fa = m.fa;
 			at.fb = m.fb;
@@ -1139,10 +1236,10 @@ final class EncounterMoment
 			{
 				if (at.alpha(f) >= 0.02)
 				{
-					area += area(m, f, first.x, first.y, first.z);
+					area += area(m, f, fp[0], fp[1], fp[2]);
 				}
 			}
-			int thinBy = (int) Math.min(255, Math.max(0, Math.ceil(area * WEIGHT[cls] * density / TRACK_MOST) - 1));
+			int thinBy = (int) Math.min(255, Math.max(0, Math.ceil(area * WEIGHT[cls] * density / trackMost) - 1));
 			double dens = density / (1 + thinBy);
 			IntList fs = new IntList();
 			List<double[]> uvs = new ArrayList<>();
@@ -1153,7 +1250,7 @@ final class EncounterMoment
 				{
 					continue;
 				}
-				double want = area(m, f, first.x, first.y, first.z) * WEIGHT[cls] * dens;
+				double want = area(m, f, fp[0], fp[1], fp[2]) * WEIGHT[cls] * dens;
 				int n = (int) Math.floor(want);
 				if (rand.next() < want - n)
 				{
@@ -1211,8 +1308,8 @@ final class EncounterMoment
 					double[] d = uvs.get(i);
 					double u = d[0], v = d[1], a0 = 1 - u - v;
 					int i0 = m.fa[f], i1 = m.fb[f], i2 = m.fc[f];
-					double x = a0 * p.x[i0] + u * p.x[i1] + v * p.x[i2], y = a0 * p.y[i0] + u * p.y[i1] + v * p.y[i2],
-						z = a0 * p.z[i0] + u * p.z[i1] + v * p.z[i2];
+					double x = a0 * p.x(i0) + u * p.x(i1) + v * p.x(i2), y = a0 * p.y(i0) + u * p.y(i1) + v * p.y(i2),
+						z = a0 * p.z(i0) + u * p.z(i1) + v * p.z(i2);
 					int o = (j * n + i) * 3;
 					tr.pos[o] = unit(x - ox);
 					tr.pos[o + 1] = unit(y - oy);

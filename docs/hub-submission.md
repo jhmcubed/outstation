@@ -660,6 +660,52 @@ on, the bests RuneLite's Chat Commands plugin keeps (`personalbest` on the RuneL
 relay's `gameFields` keeps them; the page's best column shows them as the game's best. The Hub's `warning=` stays as the
 reviewer wrote it ("covering you for current and future uses": "The first update, merged"): update 7 changes only `commit=`.
 
+### A fix: the moment's memory (11/23/2026; with the Mole's fix, before update 7)
+
+Jace: "figure out why only one of salutecflagg's doom encounters has a thumbnail", then "yes build the fix".
+SaluteCFlagg's ten Doom of Mokhaiotl delves on the relay: two with moments, eight with `moment_missing` "it couldn't
+be made: Java heap space" (twice "failed reallocation of scalar replaced objects"). The plugin's moment thread ran the
+client's Java out of memory: the stretch's frames (up to 96 MB kept), every frame's corners copied again into floats
+(twice as big), then every moving model's track made whole at 25 frames a second before `fit` made the file smaller; a
+delve's dozens of models over 34 ticks came to hundreds of MB, and the game keeps its own share of the client's memory.
+An `OutOfMemoryError` on the plugin's thread can starve the client's own thread too, so this is a fix, on its own.
+
+What changed (`EncounterMoment.java`, `EncounterScene.java`, `EncounterShelf.java`'s log line):
+- `Pose` reads a frame's corners where the frame keeps them (whole units in shorts) instead of a float copy: the same
+  numbers, so the same dots.
+- Before the tracks are made, `Builder.dotsAbout` works out each run's dots without drawing any chances, and the build
+  holds its tracks to `trackBudget()`: a third of what the client's Java has free (its most less what's in use, garbage
+  and all), 256 MB at most, 16 MB at least. Over it, the frames are taken further apart (`Spaced`, 2, 4, 8 times: fit's
+  own "thin" taken first), then each model's dots fewer in proportion (`Builder.trackMost`: fit's "sparse"). A moment
+  that fits in what's free is built as before.
+- The frame buffer's cap is `bufferMost()`: 96 MB, or an eighth of the client's most if that's less.
+- Memory read through `java.lang.management` (`hub_check.py` keeps `Runtime` for starting programs).
+- The log's moment line says what the tracks would have held, what they held, how far apart the frames were and the
+  dots a model.
+
+Checked: `EncounterMemoryTest` (a scene of 60 large moving models over a whole stretch built within a 32 MB budget, its
+frames taken further apart and its models sparser, a moment all the same; a light scene built at 2 cycles a frame as
+ever; the budget and the buffer's cap inside their bounds); gradle test (202); hub_check. A delve-sized scene built in a
+768 MB Java (ghillie's claude/outstation.md, "The moment's memory"): before, "Java heap space" with 20 models and a
+12 MB buffer, or 30 and 300 MB held elsewhere; after, made each time (1-4 s). With room to spare a moment's the same as
+the old build's (still dots, colours, frames and tracks; only `made` differs) when built the same way: the order of
+models arriving on the same frame follows Java's identity hashes (an IdentityHashMap, as before), so two builds of one
+scene can order them, and their random dots, differently; that was so before this fix too.
+
+Cut into outside-plugin on `claude/exciting-lovelace-q14wvd` on top of 50837e2 (the Mole's fix, itself on the Hub's
+daf45c6), so the two fixes go together, without update 7. Before the fork: start_check.py on that commit, then Jace's
+test in the game (below), then commit= on the fork.
+
+**Jace's test** (`py run.py client` in outside-plugin at the fix's commit, `-ea`):
+1. A Doom of Mokhaiotl delve (or any long fight with lots going on: a raid room, Zulrah) with Record my encounters on.
+   When it ends, the side tab's row for it shows a moment (no "couldn't be made"), and the client log has
+   `outside: ...'s moment: N KB, built in ... ms; ... the tracks about X KB, built at Y KB (frames Zx apart, D dots a
+   model at most)`, and no `OutOfMemoryError` or "Java heap space" anywhere.
+2. The client stays smooth while the moment's built (a second or a few after the fight ends): no freeze, no stutter
+   worse than before.
+3. Put it on your page: its tile turns as a moment on your profile.
+4. A short fight (the Mole, a GWD boss): its moment as before (frames 1x apart, 6000 dots a model at most in the log).
+
 ### Update 6 to the Hub (11/22/2026)
 
 Jace's test of e6da89f: it starts and its tabs work; the key kept and copied; more than one goal, the model's choice and
