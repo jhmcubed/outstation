@@ -539,7 +539,7 @@ public interface OutsideConfig extends Config
 	@ConfigItem(
 		keyName = "clog",
 		name = "Send my collection log",
-		description = "Off to begin with. On: open your collection log and press Outside in its top row, and the slots you"
+		description = "On to begin with: open your collection log and press Outside in its top row, and the slots you"
 			+ " have and how many of each go to your Outside page straight away; each slot the game's chat says you've"
 			+ " added goes within three minutes. Your page uses it where RuneProfile has nothing, or where it's newer."
 			+ " Never from the Wilderness, a PvP area or a PvP world (it goes once you've left). Off takes it off your page",
@@ -552,7 +552,10 @@ public interface OutsideConfig extends Config
 	)
 	default boolean clog()
 	{
-		return false;
+		// (on to begin with since 11/23/2026, Jace: "so whenever someone opens their collection log they just see the
+		// button there rather than needing to enable it"; nothing goes until it's pressed but the chat's new slots, as
+		// the count already does)
+		return true;
 	}
 	// hub:end clog
 
