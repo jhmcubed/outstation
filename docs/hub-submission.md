@@ -823,6 +823,11 @@ ordinary fight's tracks are far under 32 MB (his Mole kill 12.8 MB), so they're 
   with Record my encounters on; its moment made (no "couldn't be made"), the log's moment line saying `built at` and
   no java.lang.management anywhere; nothing from wiki.outside failing. Then the fork's `outside-memory-fix` names
   f39ae7f0a798f8a616f6a9e464bfdbe1462442f8 and #21195 is answered.
+- **Jace's test of f39ae7f passed** (11/23/2026, `-ea`, his client log; the build told apart from update 8's by its listeners,
+  none of the collection log's): the Giant Mole, its moment made (1,715 KB in 436 ms; the tracks 15 MB, under the 32 MB
+  budget, nothing thinned); nothing from wiki.outside failing, no assertion, no heap error. The fork's
+  `outside-memory-fix` names f39ae7f0a798f8a616f6a9e464bfdbe1462442f8 (jhmcubed/plugin-hub 41b03da), so #21195 has it.
+  (His first try ran update 8: Try the plugin.bat, double-clicked, took the newest branch; it asks which since.)
 - Update 7 with it: outside-plugin 2efd2241b8953f3f4767ef7ad11207ff6e385134 (8f812ad and f39ae7f merged): gradle test 146, hub_check, start_check.
 - Update 8 with it: outside-plugin c5ac0ad (with the README's replay GIF at Jace's angle): gradle test 151, hub_check,
   start_check, hub_cut --check matches.
