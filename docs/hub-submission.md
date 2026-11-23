@@ -660,7 +660,7 @@ on, the bests RuneLite's Chat Commands plugin keeps (`personalbest` on the RuneL
 relay's `gameFields` keeps them; the page's best column shows them as the game's best. The Hub's `warning=` stays as the
 reviewer wrote it ("covering you for current and future uses": "The first update, merged"): update 7 changes only `commit=`.
 
-### A fix: the moment's memory (11/23/2026; with the Mole's fix, before update 7)
+### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
 Jace: "figure out why only one of salutecflagg's doom encounters has a thumbnail", then "yes build the fix".
 SaluteCFlagg's ten Doom of Mokhaiotl delves on the relay: two with moments, eight with `moment_missing` "it couldn't
@@ -692,11 +692,14 @@ the old build's (still dots, colours, frames and tracks; only `made` differs) wh
 models arriving on the same frame follows Java's identity hashes (an IdentityHashMap, as before), so two builds of one
 scene can order them, and their random dots, differently; that was so before this fix too.
 
-Cut into outside-plugin on `claude/exciting-lovelace-q14wvd` on top of 50837e2 (the Mole's fix, itself on the Hub's
-daf45c6), so the two fixes go together, without update 7. Before the fork: start_check.py on that commit, then Jace's
-test in the game (below), then commit= on the fork.
+Cut into outside-plugin on `claude/exciting-lovelace-q14wvd`: 8b6d50c, the Hub's own 6bed558 (update 6 as merged,
+runelite/plugin-hub's `plugins/outside` read 11/23/2026; the Mole's fix 50837e2, the boss audit and "only a fight with a
+result goes to the page by itself" are in it) with only this fix on top, without update 7. (It was first cut on
+50837e2, from this file's note that the fork stayed at daf45c6 until the Mole's fix was tried: that was out of date,
+the Hub had 6bed558.) Checked on 8b6d50c: gradle test (134), hub_check, start_check. Before the fork: Jace's test in the
+game (below), then commit= on the fork.
 
-**Jace's test** (`py run.py client` in outside-plugin at the fix's commit, `-ea`):
+**Jace's test** (`Try the plugin.bat 8b6d50c`: `py run.py client` in outside-plugin at the fix's commit, `-ea`):
 1. A Doom of Mokhaiotl delve (or any long fight with lots going on: a raid room, Zulrah) with Record my encounters on.
    When it ends, the side tab's row for it shows a moment (no "couldn't be made"), and the client log has
    `outside: ...'s moment: N KB, built in ... ms; ... the tracks about X KB, built at Y KB (frames Zx apart, D dots a
@@ -704,7 +707,7 @@ test in the game (below), then commit= on the fork.
 2. The client stays smooth while the moment's built (a second or a few after the fight ends): no freeze, no stutter
    worse than before.
 3. Put it on your page: its tile turns as a moment on your profile.
-4. A short fight (the Mole, a GWD boss): its moment as before (frames 1x apart, 6000 dots a model at most in the log).
+4. A short fight (a GWD boss, Vorkath): its moment as before (frames 1x apart, 6000 dots a model at most in the log).
 
 ### Update 6 to the Hub (11/22/2026)
 
@@ -722,7 +725,7 @@ The Mole (11/22/2026, Jace's test of daf45c6): in the lair, which isn't an insta
 his first kill (someone else hit first: no kill credit, no count line) never ended it; the second, with credit, did. Fixed
 in outside-plugin 50837e2 (outstation 61b0078): in a boss area that isn't an instance a recording starts with the fight
 (a hit either way, or the attack on its boss), the boss fought dying ends it with or without the count line, and 90 s
-with no hits ends a fight given up. Its checks pass; the fork stays at daf45c6 until he's tried 50837e2 in the game.
+with no hits ends a fight given up. Its checks pass; the fork stays at daf45c6 until he's tried 50837e2 in the game. (11/23/2026: it went to the Hub after all: `plugins/outside` is at 6bed558, which holds it.)
 
 The boss audit (outstation ab804a7, outside-plugin c89762c) and then the upload rule (11/22/2026, Jace: "upload by
 itself only when the fight had a result"; leaving "when the boss is alive" is "a failure"): `Encounters.sendsByItself`,
