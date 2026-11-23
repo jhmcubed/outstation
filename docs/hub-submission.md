@@ -674,7 +674,7 @@ sensitive); start_check passed on cf6c339 itself. The relay that keeps `clog` an
 19:14 UTC, a9f07d6). Goes to the fork once #21195 merges and Jace has tried it.
 
 **Jace's test** (`Try the plugin.bat cf6c339`, `-ea`):
-1. The side tab: Send my collection log (off) and Send my personal bests (on) are there; the Page tab says "The aether
+1. The side tab: Send my collection log and Send my personal bests (both on to begin with) are there; the Page tab says "The aether
    and registers".
 2. Personal bests: RuneLite's Chat Commands plugin on; Update my page. On the page, the kills' best column shows his
    bests as the game's.
@@ -692,6 +692,12 @@ the log drew as its search closed (its slots read again, sent a minute on, the s
 press's read (outstation 535a3cc's change, cut as outside-plugin b562a88: gradle test 146, hub_check, start_check). The
 personal bests: none reached the relay (outside.wiki/sburb's /game has no `pbs`); asked whether Update my page was
 pressed with Chat Commands on.
+Then: the bests showed after Update my page. Jace: "is it possible to have send my collection log enabled by default
+like the rest of the options so whenever someone opens their collection log they just see the button there": on to
+begin with (outstation's OutsideConfig, the README, protocol.md), cut as outside-plugin 8f812ad (gradle test 146,
+hub_check, start_check). It had been off only as the plan's choice for a new kind of data (the bank's and the model's
+are off), not a rule of the Hub's; nothing goes until Outside's pressed but the chat's new slots, as the count already
+sends their names. The build for the Hub: 8f812ad.
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
