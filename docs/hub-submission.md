@@ -575,6 +575,12 @@ update 8". Built from the plan under **Trips** in "Update 7 (planned, 11/22/2026
   (`/<name>/fight/<id>?trip=1`: each recording fetched and joined as the plugin joins a long recording's parts, a pink
   mark on the replay's line at each kill). A kill kept for good or featured stays its own tile too. Not yet on
   outside.wiki (it syncs with the ship).
+- **The listing** (11/23/2026, Jace asking how more people would find the plugin): the description names what only
+  Outside does ("Your own page at Outside.wiki: your character in 3D, your goal item and how dry you are, your boss
+  fights recorded and replayed, your collection log, gear, stats, quests and diaries"), and the tags the words players
+  search (3d, model, goal, dry, drop, pet, collection, clog, pb, trips, bank...; `discord` taken out: it read as a
+  Discord bot). In `runelite-plugin.properties`, so it goes with update 8. The Hub's page said 8 active installs that
+  day (runelite.net/plugin-hub/show/outside): the baseline to read it against.
 - **Not in it** (from the plan): what dropped on the tile (the list carries no loot yet), an open area's kills in a row.
 
 Checked: gradle test (whole 207, the cut 151: `TripsTest`), hub_check both, hub_cut --check, start_check on the cut
