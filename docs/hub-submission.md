@@ -553,10 +553,12 @@ open: nothing naming `wiki.outside` failing, and no "must be called on client th
 Then: the warning with recorded fights (above) on the fork's file, the commit= there, and once merged the page's
 `ON_THE_HUB.goals` on and the revision log's entry for the plugin.
 
-## Update 8 (planned, 11/22/2026): alts under one page
+## Update 9 (planned 11/22/2026 as update 8; moved to 9 on 11/23/2026): alts under one page
+
+**The order since 11/23/2026** (Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships"): update 8 is **trips** (planned in "Update 7 (planned, 11/22/2026)" below, under **Trips**), update 9 is these alts.
 
 Jace: "plan the alts linking for update 8" (after "people like might being able to have one profile that ties all of
-their characters together as a package"; done without Outside.wiki accounts). Trips move to update 9.
+their characters together as a package"; done without Outside.wiki accounts). Trips moved to update 9 that day, and back to 8 on 11/23/2026 (above).
 
 - **Each character keeps its own key and page.** Updates never collide; nothing about how a character sends changes.
 - **Linking by a one-time code, never the main's key.** The main's key is the whole page's control, so it never leaves
