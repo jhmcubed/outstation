@@ -685,6 +685,14 @@ sensitive); start_check passed on cf6c339 itself. The relay that keeps `clog` an
 5. Any fight off flat ground (a raid room, a slope): its moment's ground sits under the models, not floating.
 6. The client log: nothing from wiki.outside failing, no assertion.
 
+Jace's test of cf6c339 (11/23/2026), so far: the collection log, Send my collection log on, Outside pressed: "your
+collection log is on your page: 649 slots", and the page has it whole (outside.wiki/sburb's keep: 5 tabs, 125 pages,
+649 slots, the game's count 648, its most 1,734). The line came twice, a minute apart: the press's read, then the page
+the log drew as its search closed (its slots read again, sent a minute on, the same line said). Now said only for a
+press's read (outstation 535a3cc's change, cut as outside-plugin b562a88: gradle test 146, hub_check, start_check). The
+personal bests: none reached the relay (outside.wiki/sburb's /game has no `pbs`); asked whether Update my page was
+pressed with Chat Commands on.
+
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
 Jace: "figure out why only one of salutecflagg's doom encounters has a thumbnail", then "yes build the fix".
