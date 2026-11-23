@@ -553,6 +553,47 @@ open: nothing naming `wiki.outside` failing, and no "must be called on client th
 Then: the warning with recorded fights (above) on the fork's file, the commit= there, and once merged the page's
 `ON_THE_HUB.goals` on and the revision log's entry for the plugin.
 
+## Update 8: trips (built 11/23/2026, not sent; after update 7)
+
+Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships", then "start building trips for
+update 8". Built from the plan under **Trips** in "Update 7 (planned, 11/22/2026)" below.
+
+- **The plugin** (`Encounters`): in a boss's area in an instance (`tripPlace`: Presence's kind boss, not a raid, a
+  minigame, a delve or a run), a recording that ends with a kill (killed or looted) while they stay there is followed at
+  once by the next (`stopAuto`, `tripGoesOn`), not waiting for the next fight; the respawn's wait and the re-gearing are
+  in it. Each carries `"trip"` (12 characters of base64url, random: `newTripId`) and `"tripNo"` in its header; the one
+  the trip ends with gets `"tripEnd"` (its reason) in its end line. A part past the length limit keeps its trip and
+  number. The walk out after two kills or more (`tripTail`) goes up as the trip's end; after one kill it stays on the
+  computer and the kill shows alone. Nothing new is sent from the game: the header's fields ride in the recording that
+  already goes up, and its meta (`EncounterStrip.meta`) carries `"trip": {"id", "no", "end"?}`.
+- **The relay** (`relay/src/fights.ts`, `readTrip`): keeps a fight's trip as its upload says it (the id 8 to 22 of
+  `A-Za-z0-9_-`, no 1 to 999, end 40 characters at most; anything else refuses the upload). **It has to be deployed
+  before update 8 goes to the Hub**, or the trips are dropped from the meta (the files keep them).
+- **The page** (ghillie's `fights.js`, `fight.js`, `replay/replay.js`, `profile.css`): a trip of two or more is one
+  tile in the place of its newest (its kills, the whole time, how it ended: left, fell, or "going on" within 3 hours;
+  the trip and each kill alone by number), opened in place or on its own page as the whole trip
+  (`/<name>/fight/<id>?trip=1`: each recording fetched and joined as the plugin joins a long recording's parts, a pink
+  mark on the replay's line at each kill). A kill kept for good or featured stays its own tile too. Not yet on
+  outside.wiki (it syncs with the ship).
+- **Not in it** (from the plan): what dropped on the tile (the list carries no loot yet), an open area's kills in a row.
+
+Checked: gradle test (whole 207, the cut 151: `TripsTest`), hub_check both, hub_cut --check, start_check on the cut
+(outside-plugin 93fec4d, on update 7's 8f812ad); the relay's tests and tsc. In the local world (the cut with `-ea`):
+every stage passes, the expectations changed for trips (`stagecheck.py`: Vorkath's two kills one trip of three
+recordings, the second begun as the first ended, the walk out the trip's end and sent; Vorkath's and the instanced
+Mole's single kill followed by a walk out kept on the computer; the open lair, the raid, the Inferno and the Colosseum
+as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
+chapters, the marks at 34, 73 and 88.
+
+**Jace's test** (`Try the plugin.bat 93fec4d`, once the relay's deployed):
+1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
+   The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
+2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
+   with a pink mark at each kill; each number opens that kill alone.
+3. A single kill and leave: the kill alone, as before (no trip tile, the walk out not sent).
+4. A death mid-trip: the tile says "fell".
+5. The client log: nothing from wiki.outside failing.
+
 ## Update 9 (planned 11/22/2026 as update 8; moved to 9 on 11/23/2026): alts under one page
 
 **The order since 11/23/2026** (Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships"): update 8 is **trips** (planned in "Update 7 (planned, 11/22/2026)" below, under **Trips**), update 9 is these alts.
