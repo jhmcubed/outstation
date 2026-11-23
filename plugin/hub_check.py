@@ -21,6 +21,9 @@ FORBIDDEN = [
     ("Java reflection", r"java\.lang\.reflect|\.getDeclared(Field|Method|Constructor)|Class\.forName|\.setAccessible\("),
     ("JNI / JNA", r"\bnative\s+\w+\s*\(|com\.sun\.jna|System\.loadLibrary"),
     ("running other programs", r"ProcessBuilder|Runtime\.getRuntime|java\.lang\.Runtime|\.exec\("),
+    # (11/23/2026: rsbfox on runelite/plugin-hub#21195, "all of java.lang.management is a Forbidden language feature
+    # just not listed yet": the moment's memory fix had read the client's heap through it)
+    ("java.lang.management", r"java\.lang\.management\.\w|ManagementFactory|MemoryMXBean"),
     ("downloading code at runtime", r"URLClassLoader|defineClass|ScriptEngine"),
     ("Desktop.open / Desktop.browse / LinkBrowser.open", r"Desktop\.(open|browse)|LinkBrowser\.open"),
     ("Thread.interrupt / Thread.sleep", r"Thread\.(sleep|interrupt)|\.interrupt\(\)"),

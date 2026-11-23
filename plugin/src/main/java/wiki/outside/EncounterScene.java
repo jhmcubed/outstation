@@ -83,25 +83,18 @@ final class EncounterScene
 	static final int PICTURE_MOST = 600 * 1024;
 	/** client cycles between frames (2: 25 a second) */
 	static final int CYCLES = 2;
-	/** the buffer's size at most: past it the oldest frames go, or after the kill, no more are kept */
-	static final long BUFFER_MOST = 96L * 1024 * 1024;
+	/** the buffer's size at most: past it the oldest frames go, or after the kill, no more are kept (64 MB since
+	 *  11/23/2026, from 96: fixed, as the client's memory can't be read on the Hub; rsbfox on runelite/plugin-hub#21195,
+	 *  "all of java.lang.management is a Forbidden language feature") */
+	static final long BUFFER_MOST = 64L * 1024 * 1024;
 
-	/** (11/23/2026) the buffer's size at most in this client: BUFFER_MOST, or an eighth of the most the client's Java may
-	 *  use if that's less, so a client given little memory keeps fewer frames rather than run short building a moment */
+	/** the buffer's size at most in this client: BUFFER_MOST */
 	static long bufferMost()
 	{
-		return Math.max(16L << 20, Math.min(BUFFER_MOST, heapMost() / 8));
+		return BUFFER_MOST;
 	}
 
 	private final long bufferMost = bufferMost();
-
-	/** the most the client's Java may use (its -Xmx), read through java.lang.management (not Runtime: the Hub's checks
-	 *  keep that for starting programs); 768 MB where it isn't said */
-	static long heapMost()
-	{
-		long m = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax();
-		return m > 0 ? m : 768L << 20;
-	}
 	/** tiles round the player a moving thing is kept within (the moment's reach, and a tile for its size) */
 	static final int NEAR = EncounterMoment.REACH + 2;
 
@@ -1471,9 +1464,12 @@ final class EncounterScene
 	 *  recorder's; the rest is worked out here. Returns the gzipped file, at most EncounterMoment.MOST. */
 	/**
 	 * (11/23/2026, SaluteCFlagg's Doom of Mokhaiotl delves: eight of ten went up with "it couldn't be made: Java heap
-	 * space") The most the moving models' tracks may hold while a moment's built, in bytes: a third of what the client's
-	 * Java has free (its most less what it holds now, garbage and all, so never more than is really there), as the
-	 * moment's file is then written from them (about as much again) before it's packed; 256 MB at most, 16 MB at least.
+	 * space") The most the moving models' tracks may hold while a moment's built, in bytes: TRACK_BUDGET, fixed. It was a
+	 * third of what the client's Java had free, read through java.lang.management, which the Hub forbids (rsbfox on
+	 * runelite/plugin-hub#21195), as it does Runtime's; so a budget that fits in a client's default memory beside the
+	 * game's own share and the frames kept: 32 MB, as the file's raw copy is about as big again while it's written
+	 * (checked at 768 MB with 300 MB held elsewhere and 20 to 60 large models: each made; 64 MB ran out at 30). An
+	 * ordinary fight's tracks are far under it (the Giant Mole's 12.8 MB, a local world crowd of 120 NPCs 10.5 MB).
 	 * A moment's tracks had been made whole, every model at 25 frames a second, and only then made smaller (fit): a
 	 * delve's models over a stretch came to hundreds of MB beside the frames kept, and with the game's own share of the
 	 * client's memory there wasn't that. Past the budget, the frames are taken further apart before the tracks are made,
@@ -1483,13 +1479,11 @@ final class EncounterScene
 	 */
 	static long trackBudget()
 	{
-		java.lang.management.MemoryUsage heap = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
-		long most = heap.getMax() > 0 ? heap.getMax() : heapMost();
-		return Math.max(16L << 20, Math.min(TRACK_BUDGET, (most - heap.getUsed()) / 3));
+		return TRACK_BUDGET;
 	}
 
-	/** the most a moment's tracks hold while it's built, however much is free (trackBudget) */
-	static final long TRACK_BUDGET = 256L << 20;
+	/** the most a moment's tracks hold while it's built */
+	static final long TRACK_BUDGET = 32L << 20;
 	/** the furthest apart a moment's frames are taken for its tracks' sake: 8 times (a frame every 16 cycles, 3 a second) */
 	static final int SPACING_MOST = 8;
 

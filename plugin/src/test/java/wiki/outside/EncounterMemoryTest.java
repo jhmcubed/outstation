@@ -106,11 +106,10 @@ public class EncounterMemoryTest
 	}
 
 	@Test
-	public void theBudgetFollowsTheClientsMemory()
+	public void theBudgetsAreFixed()
 	{
-		long b = EncounterScene.trackBudget();
-		assertTrue(b >= 16L << 20 && b <= EncounterScene.TRACK_BUDGET);
-		long most = EncounterScene.bufferMost();
-		assertTrue(most >= 16L << 20 && most <= EncounterScene.BUFFER_MOST);
+		// (the client's memory isn't read: java.lang.management is forbidden on the Hub, rsbfox on #21195)
+		assertEquals(32L << 20, EncounterScene.trackBudget());
+		assertEquals(64L << 20, EncounterScene.bufferMost());
 	}
 }
