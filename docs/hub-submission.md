@@ -712,7 +712,7 @@ hit to the kill, its moment made: `1484 KB, built in 410 ms; the client thread's
 frame) ... the tracks about 12841 KB, built at 12841 KB (frames 1x apart, 6000 dots a model at most)`, nothing thinned;
 the day before's Mole moments on 6bed558 took 254-359 ms at 153-182 us a frame, so no slower. Nothing from wiki.outside
 failing, no assertion, no heap error. The fork's `outside-memory-fix` (from the Hub's master, `plugins/outside` the
-only change): commit=8b6d50ca497f98a61fe5cc2cadcdfc7233d0a1fb, jhmcubed/plugin-hub ffa8784; Jace opens the pull request.
+only change): commit=8b6d50ca497f98a61fe5cc2cadcdfc7233d0a1fb, jhmcubed/plugin-hub ffa8784. Jace opened it 11/23/2026: runelite/plugin-hub#21195, "Update Outside: fix out-of-memory when making a long fight's thumbnail" (plugin change, size-m).
 3. Put it on your page: its tile turns as a moment on your profile.
 4. A short fight (a GWD boss, Vorkath): its moment as before (frames 1x apart, 6000 dots a model at most in the log).
 
