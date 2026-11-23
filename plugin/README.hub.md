@@ -7,19 +7,27 @@
 
 **Your page** (outside.wiki/sburb)
 
-![A player's page on Outside.wiki: their card, their featured fight, their character in 3D with their pet, what they carry and their goal](https://raw.githubusercontent.com/jhmcubed/outside-plugin/fada5e59f25cd471f03182ea714017028edefc5f/assets/page.png)
+![A player's page on Outside.wiki: their card, their featured fight, their character in 3D with their pet, what they carry and their goal](https://raw.githubusercontent.com/jhmcubed/outside-plugin/c19976296d8b76bb29b2688736db731e4d0cbe20/assets/page.png)
 
-**Your boss fights, replayed** in 2D or 3D, every boss of a raid on one line, down to the reward chest
+**Your character, in motion:** press Capture my character and do an emote; your page plays it back, from any side
 
-![A Fractured Archive raid replayed on Outside.wiki: the team at the treasure room's chest in 3D, the subject's gear, the bosses along the timeline](https://raw.githubusercontent.com/jhmcubed/outside-plugin/fada5e59f25cd471f03182ea714017028edefc5f/assets/replay.png)
+![A captured emote played back on Outside.wiki: the subject in a red cape waving a staff, turning slowly, their pet mole beside them](https://raw.githubusercontent.com/jhmcubed/outside-plugin/c19976296d8b76bb29b2688736db731e4d0cbe20/assets/character.gif)
+
+**Your boss fights, replayed** in 2D or 3D, tick by tick
+
+![Ocellus's last phase in the Fractured Archive replayed in 3D: the team on the boss as the floor breaks into the void](https://raw.githubusercontent.com/jhmcubed/outside-plugin/c19976296d8b76bb29b2688736db731e4d0cbe20/assets/replay.gif)
+
+Every boss of a raid on one line, down to the reward chest
+
+![A Fractured Archive raid replayed on Outside.wiki: the team at the treasure room's chest in 3D, its unique called out in the tick log, the bosses along the timeline](https://raw.githubusercontent.com/jhmcubed/outside-plugin/c19976296d8b76bb29b2688736db731e4d0cbe20/assets/replay.png)
 
 **Every kill, every best**
 
-![Entities slain: each boss's kill count, best time and rank](https://raw.githubusercontent.com/jhmcubed/outside-plugin/fada5e59f25cd471f03182ea714017028edefc5f/assets/entities-slain.png)
+![Entities slain: each boss's kill count, best time and rank](https://raw.githubusercontent.com/jhmcubed/outside-plugin/c19976296d8b76bb29b2688736db731e4d0cbe20/assets/entities-slain.png)
 
 **The side tab in RuneLite**
 
-![The Outside side tab's three tabs: Page (goals, who sees it, Dink, the register, the aether, the key), Model (capture your character, a still or a motion) and Encounters (recorded fights, kept for good, featured)](https://raw.githubusercontent.com/jhmcubed/outside-plugin/fada5e59f25cd471f03182ea714017028edefc5f/assets/side-tab.png)
+![The Outside side tab's three tabs: Page (goals, who sees it, Dink, the register, the aether, the key), Model (capture your character, a still or a motion) and Encounters (recorded fights, kept for good, featured)](https://raw.githubusercontent.com/jhmcubed/outside-plugin/c19976296d8b76bb29b2688736db731e4d0cbe20/assets/side-tab.png)
 
 ## What it does
 

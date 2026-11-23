@@ -584,9 +584,9 @@ update 8". Built from the plan under **Trips** in "Update 7 (planned, 11/22/2026
 - **The README** (11/23/2026, Jace: "we should have pictures or video of the website and plugin", after RuneProfile's
   Hub page): install and rank badges from RuneLite's own stats, a one-line pitch ("The hiscores show numbers; Outside
   shows you."), and four pictures, each with a bold line: the page (sburb's own, his character at the angle he chose),
-  his Fractured Archive raid replayed in 3D, the team at its reward chest (tick 7765, his pick), entities slain, and
+  his Fractured Archive raid replayed in 3D, the team at its reward chest (tick 7769, his pick: the tick log's newest line "a player found something special: Ascension crossbows"), entities slain, and
   his own side tab's three tabs (his screenshots; none from the local world, his call). The pictures are in the
-  plugin's `assets/` and linked by the commit that holds them (fada5e5; the Model tab Jace's newer shot), so they don't move. No video yet.
+  plugin's `assets/` and linked by the commit that holds them (fada5e5; the Model tab Jace's newer shot), so they don't move. And two GIFs (11/23/2026, his asks): his character's captured motion (a red cape and staff, the page turning it slowly; 16 s, 5.5 MB) and Ocellus's last phase replayed in 3D (ticks 7418-7450 at his camera angle, yaw 4.0, pitch 1.0, zoom 380; 19 s, 6.6 MB), recorded from the sketch with the replay's tick log newest-first. All linked by c199762.
 - **Not in it** (from the plan): what dropped on the tile (the list carries no loot yet), an open area's kills in a row.
 
 Checked: gradle test (whole 207, the cut 151: `TripsTest`), hub_check both, hub_cut --check, start_check on the cut
