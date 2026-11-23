@@ -660,6 +660,31 @@ on, the bests RuneLite's Chat Commands plugin keeps (`personalbest` on the RuneL
 relay's `gameFields` keeps them; the page's best column shows them as the game's best. The Hub's `warning=` stays as the
 reviewer wrote it ("covering you for current and future uses": "The first update, merged"): update 7 changes only `commit=`.
 
+### Update 7 made ready (11/23/2026, on the memory fix)
+
+Jace: "get update 7 ready". outside-plugin `claude/exciting-lovelace-q14wvd` at
+cf6c3399536f0611c1c88bf423fb7a84bc5a4674: the memory fix's 8b6d50c (the Hub's 6bed558 under it) with update 7's cut
+(charming-wozniak's 84227d0, 0399cde, 72cfb28, 4f82bc4) merged on, no conflict. What's in it: the collection log (the
+Outside button in the log's header, sent as it's read, "Send my collection log" off to begin with), the personal bests
+RuneLite keeps ("Send my personal bests", on: the page's best column has had a place for them, empty till now), a
+moment's ground at the world view's heights (ur_neat's Chambers of Xeric: the ground floated off flat ground), the side
+tab's "The aether and registers" (notes in any register carry the lime star) and the README's register line.
+hub_cut --check matches outstation's branch; gradle test 146; hub_check passed (the one menuAction listed as
+sensitive); start_check passed on cf6c339 itself. The relay that keeps `clog` and `pbs` is live (deployed 11/22/2026
+19:14 UTC, a9f07d6). Goes to the fork once #21195 merges and Jace has tried it.
+
+**Jace's test** (`Try the plugin.bat cf6c339`, `-ea`):
+1. The side tab: Send my collection log (off) and Send my personal bests (on) are there; the Page tab says "The aether
+   and registers".
+2. Personal bests: RuneLite's Chat Commands plugin on; Update my page. On the page, the kills' best column shows his
+   bests as the game's.
+3. The collection log: Send my collection log on, open the log in the game: an Outside button left of the header's
+   other plugins' buttons. Press it: the chat says "your collection log is on your page: N slots", N about his count;
+   the page shows the log's slots.
+4. Send my collection log off: the page's log goes back to RuneProfile's (or dark).
+5. Any fight off flat ground (a raid room, a slope): its moment's ground sits under the models, not floating.
+6. The client log: nothing from wiki.outside failing, no assertion.
+
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
 Jace: "figure out why only one of salutecflagg's doom encounters has a thumbnail", then "yes build the fix".
