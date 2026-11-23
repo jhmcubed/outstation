@@ -586,7 +586,7 @@ update 8". Built from the plan under **Trips** in "Update 7 (planned, 11/22/2026
   shows you."), and four pictures, each with a bold line: the page (sburb's own, his character at the angle he chose),
   his Fractured Archive raid replayed in 3D, the team at its reward chest (tick 7765, his pick), entities slain, and
   his own side tab's three tabs (his screenshots; none from the local world, his call). The pictures are in the
-  plugin's `assets/` and linked by the commit that holds them (9be1c18), so they don't move. No video yet.
+  plugin's `assets/` and linked by the commit that holds them (fada5e5; the Model tab Jace's newer shot), so they don't move. No video yet.
 - **Not in it** (from the plan): what dropped on the tile (the list carries no loot yet), an open area's kills in a row.
 
 Checked: gradle test (whole 207, the cut 151: `TripsTest`), hub_check both, hub_cut --check, start_check on the cut
