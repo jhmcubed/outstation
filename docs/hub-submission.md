@@ -597,7 +597,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**Jace's test** (`Try the plugin.bat abc797a`, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a) on top, start_check passed on it):
+**Jace's test** (`Try the plugin.bat c5ac0ad`, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -752,7 +752,7 @@ like the rest of the options so whenever someone opens their collection log they
 begin with (outstation's OutsideConfig, the README, protocol.md), cut as outside-plugin 8f812ad (gradle test 146,
 hub_check, start_check). It had been off only as the plan's choice for a new kind of data (the bank's and the model's
 are off), not a rule of the Hub's; nothing goes until Outside's pressed but the chat's new slots, as the count already
-sends their names. The build for the Hub: 8f812ad.
+sends their names. The build for the Hub: 8f812ad; since the memory fix's rework (below), 2efd224.
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
@@ -807,6 +807,25 @@ frame) ... the tracks about 12841 KB, built at 12841 KB (frames 1x apart, 6000 d
 the day before's Mole moments on 6bed558 took 254-359 ms at 153-182 us a frame, so no slower. Nothing from wiki.outside
 failing, no assertion, no heap error. The fork's `outside-memory-fix` (from the Hub's master, `plugins/outside` the
 only change): commit=8b6d50ca497f98a61fe5cc2cadcdfc7233d0a1fb, jhmcubed/plugin-hub ffa8784. Jace opened it 11/23/2026: runelite/plugin-hub#21195, "Update Outside: fix out-of-memory when making a long fight's thumbnail" (plugin change, size-m).
+
+**The reviewer's answer and the rework (11/23/2026).** rsbfox on #21195: "Sorry all of java.lang.management is a
+Forbidden language feature just not listed yet. You will need to do this is another way." The fix had read the client's
+heap through it (`heapMost`, `trackBudget`), as Runtime is forbidden too; there's no allowed way to ask how much memory
+is free. Reworked (outstation 221b655): fixed budgets, the tracks 32 MB and the frame buffer 64 MB (from 96), no memory
+read at all; `hub_check.py` now forbids java.lang.management (it finds the old code at both places). Measured with the
+same delve-sized scene in a 768 MB Java (scratchpad OomRun): with 300 MB held elsewhere (the game's share), 20, 30 and 60
+large models each made (1.1-1.3 MB moments, the frames 8x apart and the dots fewer); a 64 MB track budget ran out at 30
+models, as the file's raw copy is about as big again while it's written. At 350 MB held the frames alone filled what
+was left (a 1 MB budget ran out too): past what any budget mends, and the free-memory version couldn't have either. An
+ordinary fight's tracks are far under 32 MB (his Mole kill 12.8 MB), so they're made as before.
+- The fix alone, on what the Hub has: outside-plugin f39ae7f0a798f8a616f6a9e464bfdbe1462442f8 (8b6d50c with the rework, nothing of update 7): gradle
+  test 134, hub_check, start_check. **Jace's test before the fork** (`Try the plugin.bat f39ae7f`, `-ea`): any fight
+  with Record my encounters on; its moment made (no "couldn't be made"), the log's moment line saying `built at` and
+  no java.lang.management anywhere; nothing from wiki.outside failing. Then the fork's `outside-memory-fix` names
+  f39ae7f0a798f8a616f6a9e464bfdbe1462442f8 and #21195 is answered.
+- Update 7 with it: outside-plugin 2efd2241b8953f3f4767ef7ad11207ff6e385134 (8f812ad and f39ae7f merged): gradle test 146, hub_check, start_check.
+- Update 8 with it: outside-plugin c5ac0ad (with the README's replay GIF at Jace's angle): gradle test 151, hub_check,
+  start_check, hub_cut --check matches.
 3. Put it on your page: its tile turns as a moment on your profile.
 4. A short fight (a GWD boss, Vorkath): its moment as before (frames 1x apart, 6000 dots a model at most in the log).
 
