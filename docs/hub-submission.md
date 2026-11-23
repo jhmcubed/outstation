@@ -584,9 +584,9 @@ update 8". Built from the plan under **Trips** in "Update 7 (planned, 11/22/2026
 - **The README** (11/23/2026, Jace: "we should have pictures or video of the website and plugin", after RuneProfile's
   Hub page): install and rank badges from RuneLite's own stats, a one-line pitch ("The hiscores show numbers; Outside
   shows you."), and four pictures, each with a bold line: the page (sburb's own, his character at the angle he chose),
-  his Fractured Archive raid replayed in 3D at its reward chest (tick 7735, the chest's window up), entities slain, and
+  his Fractured Archive raid replayed in 3D, the team at its reward chest (tick 7765, his pick), entities slain, and
   his own side tab's three tabs (his screenshots; none from the local world, his call). The pictures are in the
-  plugin's `assets/` and linked by the commit that holds them (ccc6cc6), so they don't move. No video yet.
+  plugin's `assets/` and linked by the commit that holds them (9be1c18), so they don't move. No video yet.
 - **Not in it** (from the plan): what dropped on the tile (the list carries no loot yet), an open area's kills in a row.
 
 Checked: gradle test (whole 207, the cut 151: `TripsTest`), hub_check both, hub_cut --check, start_check on the cut

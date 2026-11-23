@@ -7,19 +7,19 @@
 
 **Your page** (outside.wiki/sburb)
 
-![A player's page on Outside.wiki: their card, their featured fight, their character in 3D with their pet, what they carry and their goal](https://raw.githubusercontent.com/jhmcubed/outside-plugin/ccc6cc629ff90f7f5d5824728c671c6d21531974/assets/page.png)
+![A player's page on Outside.wiki: their card, their featured fight, their character in 3D with their pet, what they carry and their goal](https://raw.githubusercontent.com/jhmcubed/outside-plugin/9be1c18517f8f983ee359c7bd0e6770607f67fa3/assets/page.png)
 
 **Your boss fights, replayed** in 2D or 3D, every boss of a raid on one line, down to the reward chest
 
-![A Fractured Archive raid replayed on Outside.wiki: the treasure room in 3D with the chest's reward window, the subject's gear, the bosses along the timeline](https://raw.githubusercontent.com/jhmcubed/outside-plugin/ccc6cc629ff90f7f5d5824728c671c6d21531974/assets/replay.png)
+![A Fractured Archive raid replayed on Outside.wiki: the team at the treasure room's chest in 3D, the subject's gear, the bosses along the timeline](https://raw.githubusercontent.com/jhmcubed/outside-plugin/9be1c18517f8f983ee359c7bd0e6770607f67fa3/assets/replay.png)
 
 **Every kill, every best**
 
-![Entities slain: each boss's kill count, best time and rank](https://raw.githubusercontent.com/jhmcubed/outside-plugin/ccc6cc629ff90f7f5d5824728c671c6d21531974/assets/entities-slain.png)
+![Entities slain: each boss's kill count, best time and rank](https://raw.githubusercontent.com/jhmcubed/outside-plugin/9be1c18517f8f983ee359c7bd0e6770607f67fa3/assets/entities-slain.png)
 
 **The side tab in RuneLite**
 
-![The Outside side tab's three tabs: Page (goals, who sees it, Dink, the register, the aether, the key), Model (capture your character, a still or a motion) and Encounters (recorded fights, kept for good, featured)](https://raw.githubusercontent.com/jhmcubed/outside-plugin/ccc6cc629ff90f7f5d5824728c671c6d21531974/assets/side-tab.png)
+![The Outside side tab's three tabs: Page (goals, who sees it, Dink, the register, the aether, the key), Model (capture your character, a still or a motion) and Encounters (recorded fights, kept for good, featured)](https://raw.githubusercontent.com/jhmcubed/outside-plugin/9be1c18517f8f983ee359c7bd0e6770607f67fa3/assets/side-tab.png)
 
 ## What it does
 
