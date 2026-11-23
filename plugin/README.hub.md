@@ -1,5 +1,28 @@
 # Outside
 
+[![Active installs](https://img.shields.io/endpoint?url=https://api.runelite.net/pluginhub/shields/installs/plugin/outside)](https://runelite.net/plugin-hub/show/outside)
+[![Plugin rank](https://img.shields.io/endpoint?url=https://api.runelite.net/pluginhub/shields/rank/plugin/outside)](https://runelite.net/plugin-hub/show/outside)
+
+**A page of your own at [Outside.wiki](https://outside.wiki/sburb), made from your game:** your character in 3D on its own ground, the item you're after and how dry you are for it, your boss fights recorded and replayed, your gear, your collection log and your bests. The hiscores show numbers; Outside shows you.
+
+**Your page** (outside.wiki/sburb)
+
+![A player's page on Outside.wiki: their card, their featured fight, their character in 3D with their pet, what they carry and their goal](https://raw.githubusercontent.com/jhmcubed/outside-plugin/bdd4884199aecc91d20cde2522b0d7b5eb7b082f/assets/page.png)
+
+**Your boss fights, replayed** in 2D or 3D, every boss of a raid on one line
+
+![A Fractured Archive raid replayed on Outside.wiki: the fight in 3D, the subject's gear and prayers, the bosses along the timeline](https://raw.githubusercontent.com/jhmcubed/outside-plugin/bdd4884199aecc91d20cde2522b0d7b5eb7b082f/assets/replay.png)
+
+**Every kill, every best**
+
+![Entities slain: each boss's kill count, best time and rank](https://raw.githubusercontent.com/jhmcubed/outside-plugin/bdd4884199aecc91d20cde2522b0d7b5eb7b082f/assets/entities-slain.png)
+
+**The side tab in RuneLite**
+
+![The Outside side tab: the page's address, Update my page, Open my page, Edit my page, and the Page, Model and Encounters tabs](https://raw.githubusercontent.com/jhmcubed/outside-plugin/bdd4884199aecc91d20cde2522b0d7b5eb7b082f/assets/side-tab.png)
+
+## What it does
+
 Your gear, stats, quests, diaries and slayer task on a page of your own at **Outside.wiki/<your name>**: your equipment, inventory, looting bag, seed box, chugging barrel, rune pouch and Dizana's quiver, each skill's level and experience, your quests, Achievement Diaries, combat achievements and slayer task. Your page updates when you press **Update my page**, and by itself once an hour while you're logged in. It can also show what you're doing, the way RuneLite's own Discord plugin shows it in your Discord status (the skill you're training, the area you're in by name).
 <!-- hub:cut encounters -->
 
