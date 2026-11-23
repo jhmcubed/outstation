@@ -583,9 +583,10 @@ update 8". Built from the plan under **Trips** in "Update 7 (planned, 11/22/2026
   day (runelite.net/plugin-hub/show/outside): the baseline to read it against.
 - **The README** (11/23/2026, Jace: "we should have pictures or video of the website and plugin", after RuneProfile's
   Hub page): install and rank badges from RuneLite's own stats, a one-line pitch ("The hiscores show numbers; Outside
-  shows you."), and four pictures, each with a bold line: the page (sburb's own, his character turned to face the
-  camera), a raid replayed in 3D, entities slain, the side tab (from the local world). The pictures are in the plugin's
-  `assets/` and linked by the commit that holds them (bdd4884), so they don't move. No video yet.
+  shows you."), and four pictures, each with a bold line: the page (sburb's own, his character at the angle he chose),
+  his Fractured Archive raid replayed in 3D at its reward chest (tick 7735, the chest's window up), entities slain, and
+  his own side tab's three tabs (his screenshots; none from the local world, his call). The pictures are in the
+  plugin's `assets/` and linked by the commit that holds them (ccc6cc6), so they don't move. No video yet.
 - **Not in it** (from the plan): what dropped on the tile (the list carries no loot yet), an open area's kills in a row.
 
 Checked: gradle test (whole 207, the cut 151: `TripsTest`), hub_check both, hub_cut --check, start_check on the cut
@@ -596,7 +597,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**Jace's test** (`Try the plugin.bat 59f4adc`, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc) on top, start_check passed on it):
+**Jace's test** (`Try the plugin.bat 8c09303`, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
