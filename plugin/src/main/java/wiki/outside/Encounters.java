@@ -3436,8 +3436,11 @@ final class Encounters
 			{
 				// (Doom's level-end window shows the pile before it's claimed: the claim is its loot, below; but the window
 				// is the level's offer, taken each time it opens; round five, Jace: "I'd like if the replay showed loot too
-				// for each level")
-				shoot("burrow", c.window, null, null, c.inv, false, null);
+				// for each level". Between levels the pile is in DOM_LOOTPILE_DURING (935), DOM_LOOTPILE (923) sent empty
+				// till the claim: the game's own Investigate sends both, then opens 919 (rsprox captures of delves 1-4,
+				// the local world's TSPS session, 11/23/2026); reading 923 here had left every level's picture waiting
+				// on nothing, and SaluteCFlagg's delve showed none)
+				shoot(BURROW, c.window, null, null, InventoryID.DOM_LOOTPILE_DURING, false, null);
 				continue;
 			}
 			if (c.window != group)
@@ -3882,6 +3885,13 @@ final class Encounters
 	static final int CLOSE_LEAST = 2, CLOSE_MOST = 10;
 	/** client cycles after it's asked for before a picture that hasn't come is given up (its line goes without one) */
 	static final int SHOT_WAIT = 50;
+	/** the burrow's kind, and the client cycles after its window opens before its picture (a delver presses Descend a
+	 *  tick or two in: 30 to 60 cycles) */
+	static final String BURROW = "burrow";
+	static final int BURROW_IN = 8;
+	/** client cycles after the early picture's before the burrow's fuller one, if its window's still open (about a second
+	 *  from its opening, as the other windows wait) */
+	static final int BURROW_AGAIN = 42;
 
 	/** A window being taken, and once written, open till its `window_close`. */
 	static final class Shot
@@ -3894,6 +3904,8 @@ final class Encounters
 		List<int[]> items;
 		int in = 3, tries, waited, closeBy = -1, openedAt;
 		boolean asked, closed;
+		/** (the burrow) a second, fuller picture of a window still open about a second in, in the early one's place */
+		boolean again;
 		volatile byte[] png;
 		java.awt.Rectangle box;
 		int cw, ch;
@@ -3911,8 +3923,10 @@ final class Encounters
 			// (a chat row waits for the chatbox to draw it; a chest's inventory can fill a tick or two after its window)
 			this.tries = "chat".equals(kind) ? 12 : 60;
 			// (a window waits about a second before its picture: the Fractured Archive's chest came up as the scene
-			// behind it, or its bare background, taken three cycles in; 11/21/2026, round nine, Jace's three raids)
-			this.in = group >= 0 ? 50 : 3;
+			// behind it, or its bare background, taken three cycles in; 11/21/2026, round nine, Jace's three raids. Doom's
+			// burrow far sooner: a delver presses Descend a tick or two after it opens, and its picture had come after it
+			// closed, never; 11/23/2026, SaluteCFlagg's delve, Jace: "the loot window is not popping up every time")
+			this.in = BURROW.equals(kind) ? BURROW_IN : group >= 0 ? 50 : 3;
 		}
 
 		/** the one window it stands for: another picture of it replaces this one */
@@ -4041,7 +4055,9 @@ final class Encounters
 			}
 			java.awt.Rectangle b = "chat".equals(s.kind) ? chatLineBounds(s.title) : s.group >= 0 ? windowBounds(s.group) : inventoryBounds();
 			List<int[]> got = s.items != null ? s.items : itemsOf(client.getItemContainer(s.inv));
-			boolean ready = b != null && b.width > 0 && b.height > 0 && (s.items != null || !got.isEmpty());
+			// (the burrow's picture isn't held back for its items: they're read from DOM_LOOTPILE_DURING, which comes before
+			// the window, but a picture without them beats none; 11/23/2026)
+			boolean ready = b != null && b.width > 0 && b.height > 0 && (s.items != null || !got.isEmpty() || BURROW.equals(s.kind));
 			if (!ready && --s.tries > 0)
 			{
 				s.in = 2;
@@ -4050,9 +4066,13 @@ final class Encounters
 			s.items = got;
 			if (b == null || b.width <= 0 || b.height <= 0)
 			{
-				// (never drawn where it could be found: written without its picture)
+				// (never drawn where it could be found: written without its picture; a second picture of a window that's
+				// gone since: none, the first stands)
 				it.remove();
-				shotWritten(s);
+				if (!s.again)
+				{
+					shotWritten(s);
+				}
 				continue;
 			}
 			s.asked = true;
@@ -4075,7 +4095,28 @@ final class Encounters
 		{
 			if (shots.remove(s))
 			{
+				if (s.again)
+				{
+					// (the fuller picture: the early one closed where it stood, this one in its place)
+					for (Shot o : new ArrayList<>(shown))
+					{
+						if (o.place().equals(s.place()))
+						{
+							shotClose(o);
+						}
+					}
+				}
 				shotWritten(s);
+				// (the burrow, taken early as a delver presses Descend a tick or two in: again, fuller, if it's still
+				// open about a second in, as the other windows are taken; 11/23/2026)
+				if (BURROW.equals(s.kind) && !s.claim && !s.again && s.group >= 0)
+				{
+					Shot f = new Shot(BURROW, s.group, ++shotNo, null, null, s.inv, false, null);
+					f.again = true;
+					f.in = BURROW_AGAIN;
+					f.tries = 1;
+					shots.add(f);
+				}
 			}
 		}
 	}
