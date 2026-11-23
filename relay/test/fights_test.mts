@@ -71,6 +71,22 @@ test("an upload: its facts cleaned and bounded, public only if said", async () =
   strictEqual(none.meta.foe, "a fight");
 });
 
+test("a trip's fight: its trip kept as said, a bad one refused (update 8)", async () => {
+  const base = { foe: "Vorkath", label: "Vorkath", at: 1795180328946, ticks: 90, died: false, taken: 0, dealt: 750 };
+  const got = await readFight(upload({ ...base, trip: { id: "abcDEF123_-x", no: 3 } }, rec([HEADER])));
+  if (Array.isArray(got)) throw new Error(got[1]);
+  deepStrictEqual(got.meta.trip, { id: "abcDEF123_-x", no: 3 });
+  const ended = await readFight(upload({ ...base, trip: { id: "abcDEF123_-x", no: 4, end: "left\n", x: 1 } }, rec([HEADER])));
+  if (Array.isArray(ended)) throw new Error(ended[1]);
+  deepStrictEqual(ended.meta.trip, { id: "abcDEF123_-x", no: 4, end: "left" });
+  const none = await readFight(upload(base, rec([HEADER])));
+  if (Array.isArray(none)) throw new Error(none[1]);
+  strictEqual("trip" in none.meta, false);
+  deepStrictEqual(await readFight(upload({ ...base, trip: { id: "no/slash!", no: 1 } }, rec([HEADER]))), [400, "a trip's id is 8 to 22 letters, digits, _ or -"]);
+  deepStrictEqual(await readFight(upload({ ...base, trip: { id: "abcDEF123_-x", no: 0 } }, rec([HEADER]))), [400, "a trip's no is 1 to 999"]);
+  deepStrictEqual(await readFight(upload({ ...base, trip: "abc" }, rec([HEADER]))), [400, "a trip is {id, no, end?}"]);
+});
+
 test("an upload that isn't a recording is refused", async () => {
   deepStrictEqual(await readFight(upload({}, new TextEncoder().encode(HEADER + "\n"))), [415, "that isn't an Encounter Recorder recording (gzipped)"]);
   deepStrictEqual(await readFight(upload({}, rec(['{"e":"tick"}']))), [415, "that isn't an Encounter Recorder recording (gzipped)"]);

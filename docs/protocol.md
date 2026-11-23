@@ -878,6 +878,13 @@ The owner is whoever holds the page's key (`?key=`) or a tending token handed in
 the page's chat from the page"), sent as `Authorization: Bearer <token>`: the link the plugin opens to the player's own
 page carries one, so a player with only the plugin can put fights up from their page.
 
+A trip (update 8, 11/23/2026): the Outside plugin records a boss's instance's kills each as its own recording, the next
+begun as the last ends, and writes the trip into each one's header (`"trip": <id>, "tripNo": n`) and, on the recording
+the trip ends with, `"tripEnd": <how>` into its end line (`left`, `died`, `logged out`...). An upload's meta carries it
+as `"trip": {"id", "no", "end"?}` (the id 8 to 22 of `A-Za-z0-9_-`, no 1 to 999; anything else refuses the upload, 400),
+and the Fight keeps it as given, so the page puts a trip's fights together as one card and plays them end to end. The
+walk out after a trip's kills goes up too (its `end` "left"), so the trip plays whole.
+
     GET    /fights/<channel>?code=<watch code>  {"fights": [Fight, …] newest first, "history": [TimeEntry, …] oldest first,
                                                 "owner": bool, "public_default": bool, "most": n, "days": n, "kept": n}: the
                                                 ones shown to anyone and their times; the owner's, all of them, and

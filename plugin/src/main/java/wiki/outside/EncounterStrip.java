@@ -75,6 +75,10 @@ final class EncounterStrip
 		String player;
 		/** (not strip.js's) the part before, for a part past the length limit (round three) */
 		String follows;
+		/** (not strip.js's; update 8, trips) the trip it's part of, its number in it, and how the trip ended, if with it */
+		String trip;
+		int tripNo;
+		String tripEnd;
 
 		boolean diedIn()
 		{
@@ -511,6 +515,9 @@ final class EncounterStrip
 				// (round three: a part after the length limit names the part before; the parts go up joined)
 				Object fw = Js.get(o, "follows");
 				s.follows = fw instanceof String ? (String) fw : null;
+				Object tr = Js.get(o, "trip"), tn = Js.get(o, "tripNo");
+				s.trip = tr instanceof String ? (String) tr : null;
+				s.tripNo = tn instanceof Double ? (int) (double) (Double) tn : 0;
 			}
 			else if ("npcdef".equals(e) && Js.truthy(Js.get(o, "def")))
 			{
@@ -520,6 +527,8 @@ final class EncounterStrip
 			else if ("end".equals(e))
 			{
 				s.end = Js.get(o, "reason");
+				Object te = Js.get(o, "tripEnd");
+				s.tripEnd = te instanceof String ? (String) te : null;
 			}
 			else if ("death".equals(e) && Js.truthy(who) && "me".equals(Js.get(who, "k")) && (s.died == null || s.died == UNDEFINED))
 			{
@@ -621,6 +630,18 @@ final class EncounterStrip
 		if (noMoment != null)
 		{
 			o.put("moment_missing", noMoment);
+		}
+		if (s.trip != null && s.tripNo > 0)
+		{
+			// (update 8: the trip it's part of, so the page puts its kills together)
+			Map<String, Object> t = new LinkedHashMap<>();
+			t.put("id", s.trip);
+			t.put("no", (double) s.tripNo);
+			if (s.tripEnd != null)
+			{
+				t.put("end", s.tripEnd);
+			}
+			o.put("trip", t);
 		}
 		return Js.stringify(o);
 	}

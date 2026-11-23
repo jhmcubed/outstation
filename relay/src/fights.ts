@@ -119,6 +119,34 @@ export interface Fight {
   times?: FightTime[]; // the game's kill times in it, as its page read them ([]: read, none); absent: not read yet (11/22/2026)
   best?: true; // (in a list only, worked out here: it holds a boss's best time on file, so it's kept; 11/22/2026)
   with_kept?: true; // (in a list only: a best whose boss its owner shows with the kept ones, at the top; 11/22/2026)
+  trip?: FightTrip; // the trip it's part of (update 8, 11/23/2026), as the plugin's header said
+}
+
+/** A trip (update 8, 11/23/2026; Jace: "People consider instances with bosses that respawn a 'trip' with multiple kills
+ *  in succession over a period of 1-3 hours"): a boss's instance's kills, each its own recording, the next begun as the
+ *  last ended, so played end to end the trip is whole. The page puts a trip's fights together as one card. */
+export interface FightTrip {
+  id: string; // the trip's (the plugin's, random: TRIP_ID)
+  no: number; // this recording's number in it, from 1
+  end?: string; // how the trip ended, on the recording it ended with ("left", "died", "logged out"...)
+}
+
+export const TRIP_ID = /^[A-Za-z0-9_-]{8,22}$/;
+
+/** A trip as an upload's meta said it, checked: the trip, null for none, or why it's refused. */
+export function readTrip(v: unknown): FightTrip | null | [number, string] {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "object" || Array.isArray(v)) return [400, "a trip is {id, no, end?}"];
+  const o = v as Record<string, unknown>;
+  if (typeof o.id !== "string" || !TRIP_ID.test(o.id)) return [400, "a trip's id is 8 to 22 letters, digits, _ or -"];
+  if (typeof o.no !== "number" || !Number.isInteger(o.no) || o.no < 1 || o.no > 999) return [400, "a trip's no is 1 to 999"];
+  const t: FightTrip = { id: o.id, no: o.no };
+  if (o.end !== undefined) {
+    if (typeof o.end !== "string") return [400, "a trip's end is words"];
+    const end = o.end.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 40);
+    if (end) t.end = end;
+  }
+  return t;
 }
 
 /** A kill's time, as the game's chat line gave it (ghillie's replay/times.js, short()). */
@@ -356,6 +384,10 @@ export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "
     if (timesRefused(times)) return times;
     meta.times = times;
   }
+  // (its trip, if it's part of one: update 8; a bad one refuses the upload)
+  const trip = readTrip(m.trip);
+  if (Array.isArray(trip)) return trip;
+  if (trip) meta.trip = trip;
   // (its moment, if it carries one: checked as the moment route checks it, and the whole upload refused if it's bad)
   let moment: { file: Uint8Array; tick: number } | null = null;
   const mf = form.get("moment");

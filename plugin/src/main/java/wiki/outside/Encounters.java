@@ -491,6 +491,14 @@ final class Encounters
 	private Presence.Area lastArea;
 	private Presence.Area handStopped;
 	private Presence.Area afterKill;
+	// (update 8, trips, 11/23/2026; Jace: "People consider instances with bosses that respawn a 'trip' with multiple kills
+	// in succession over a period of 1-3 hours"; plugin/docs/hub-submission.md, "Trips"): each kill its own recording,
+	// the next begun as the last ends while they stay in a boss's instance, so played end to end a trip is whole; each
+	// carries the trip's id and its number in it (the header's "trip", "tripNo"), and the one a trip ends with says how
+	// ("tripEnd" in its end line: left, died, logged out...). Null: no trip going.
+	private String tripId;
+	private int tripNo;
+	private Presence.Area tripArea;
 	private int tickNow;
 	// (round three, 11/21/2026: a raid whole and its loot)
 	/** the ticks of the parts before this one (the scene counts the whole recording's ticks) */
@@ -753,6 +761,30 @@ final class Encounters
 			header.addProperty("part", partNo);
 			header.addProperty("follows", follows);
 		}
+		// (a trip: the next of one going on, or a new one in a boss's instance; a part past the length limit is the same
+		// recording, so the same number)
+		if (keep == null)
+		{
+			if (tripId != null && auto && sameArea(at, tripArea))
+			{
+				tripNo++;
+			}
+			else if (auto && tripPlace(at))
+			{
+				tripId = newTripId();
+				tripNo = 1;
+				tripArea = at;
+			}
+			else
+			{
+				tripId = null;
+			}
+		}
+		if (tripId != null)
+		{
+			header.addProperty("trip", tripId);
+			header.addProperty("tripNo", tripNo);
+		}
 
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
@@ -928,6 +960,12 @@ final class Encounters
 		}
 		end.addProperty("ticks", stopped.ticks());
 		end.addProperty("endedMs", System.currentTimeMillis());
+		// (a trip ends with this one, unless it's a kill with the next to begin at once, or a part at the length limit)
+		boolean tripGoesOn = tripId != null && (split || tripGoesOn(reason));
+		if (tripId != null && !tripGoesOn)
+		{
+			end.addProperty("tripEnd", reason);
+		}
 		// (its scene moment's makings: nothing from anywhere dangerous; the rest built on the plugin's moment thread)
 		EncounterScene.Taken taken = null;
 		if (scene != null && !dropTick && !split)
@@ -971,7 +1009,12 @@ final class Encounters
 				run = null;
 			}
 		}
-		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason, !split && sendsByItself(reason, automatic, lastFight >= 0));
+		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason, !split && (sendsByItself(reason, automatic, lastFight >= 0)
+			|| tripTail(reason, tripId != null ? tripNo : 0)));
+		if (!tripGoesOn)
+		{
+			tripId = null;
+		}
 		finishing.add(stopped);
 		recording = null;
 		stopped.close(packed ->
@@ -1475,12 +1518,53 @@ final class Encounters
 	private void stopAuto(String why)
 	{
 		Presence.Area a = area;
+		boolean next = tripId != null && tripGoesOn(why);
 		stop(why, false);
+		if (next)
+		{
+			// (a trip: the next kill's recording from this tick, the respawn's wait and the re-gearing in it)
+			start(a.name, true, a, Collections.emptySet(), 1, null, null, 0);
+			return;
+		}
 		if (a != null && ("killed".equals(why) || "died".equals(why) || "completed".equals(why) || "looted".equals(why)
 			|| "claimed".equals(why)))
 		{
 			afterKill = a;
 		}
+	}
+
+	/** Whether a trip goes on past a recording that ends so: a kill (with or without its drop), still in the boss's
+	 *  instance, where one may start. */
+	private boolean tripGoesOn(String why)
+	{
+		// (mayStart's, but for the recording this one is: asked as it ends)
+		return ("killed".equals(why) || "looted".equals(why)) && automatic && instance() && sameArea(bossArea(), tripArea)
+			&& host.autoOn() && host.hasPage() && client.getGameState() == GameState.LOGGED_IN && !danger();
+	}
+
+	/** Whether a place starts a trip: a boss's area (not a raid's, a minigame's, a delve's or a run's: each of those is one
+	 *  recording already) in an instance, where the boss comes again. */
+	private boolean tripPlace(Presence.Area a)
+	{
+		return a != null && Presence.BOSS.equals(a.kind) && instance() && !delve && run == null;
+	}
+
+	/** Whether the recording a trip ends with goes up although nothing in it would send it by itself: the walk out after
+	 *  two kills or more (the trip's last part, so played end to end it's whole and says how it ended). After one kill it
+	 *  stays on the computer, as any walk out with no fight: a trip of one kill is shown as that kill. */
+	static boolean tripTail(String reason, int tripNo)
+	{
+		return tripNo > 2 && "left".equals(reason);
+	}
+
+	private static final java.security.SecureRandom TRIP_RANDOM = new java.security.SecureRandom();
+
+	/** A trip's id: 12 characters of base64url, random. */
+	static String newTripId()
+	{
+		byte[] b = new byte[9];
+		TRIP_RANDOM.nextBytes(b);
+		return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b);
 	}
 
 	/**
