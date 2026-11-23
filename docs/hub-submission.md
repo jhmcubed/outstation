@@ -829,6 +829,10 @@ ordinary fight's tracks are far under 32 MB (his Mole kill 12.8 MB), so they're 
   `outside-memory-fix` names f39ae7f0a798f8a616f6a9e464bfdbe1462442f8 (jhmcubed/plugin-hub 41b03da), so #21195 has it.
   (His first try ran update 8: Try the plugin.bat, double-clicked, took the newest branch; it asks which since.)
   Jace replied on #21195 the same day (fixed budgets, no heap read); waiting on rsbfox's next look.
+  rsbfox: "Thanks. It has been added to the rejected page now." (java.lang.management on the wiki's list.) How the Hub
+  reviews (read off both pull requests 11/23/2026): update 6 (#21147, size-xl) had no human review at all, its checks
+  passed and runelite-github-app[bot] merged it itself within the hour; #21195 got a reviewer's comment and the
+  "waiting for author" label, and once flagged a person has to clear it, so it waits on a volunteer's time.
 - Update 7 with it: outside-plugin 2efd2241b8953f3f4767ef7ad11207ff6e385134 (8f812ad and f39ae7f merged): gradle test 146, hub_check, start_check.
 - Update 8 with it: outside-plugin c5ac0ad (with the README's replay GIF at Jace's angle): gradle test 151, hub_check,
   start_check, hub_cut --check matches.
