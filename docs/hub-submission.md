@@ -15,11 +15,13 @@ for RuneLite's event bus: "Update 5", below). So before any commit= goes on the 
    after. It fails on update 4 as merged. GitHub runs it on every pull request here too (tests.yml, the plugin job).
 3. Tested in the game (11/19/2026, rsbfox on update 5: "Please don't submit code to the Hub without testing it
    in-game", with `-ea`, which turns on RuneLite's assertions, such as a game method called off the client thread:
-   off in release, so the same mistakes are errors for players). Jace runs the exact commit, `py run.py client` in a
-   checkout of jhmcubed/outside-plugin at it (run.py starts RuneLite with `-ea`), logs in, and tries each change from
-   a list Claude writes (what to press, what should happen, what the client log mustn't show); a cloud session can't
-   log in to the game, so this step is his.
-4. Only then the commit= on jhmcubed/plugin-hub's branch, once he says it works.
+   off in release, so the same mistakes are errors for players). Since 11/24/2026 (Jace: "run the test for me unless
+   it is necessary that i do it in the real game") Claude runs the list in the local world (ghillie's
+   `tools/local-world`: the exact commit in its RuneLite with `-ea`, the stages, `world.py`), and Jace only what needs
+   the real game (his account, the live servers, other players, what the local world can't stage), with the exact
+   commit, `py run.py client` in a checkout of jhmcubed/outside-plugin at it (run.py starts RuneLite with `-ea`), from a
+   list Claude writes (what to press, what should happen, what the client log mustn't show).
+4. Only then the commit= on jhmcubed/plugin-hub's branch, once he says to send it.
 
 Keep an update small: a fix alone goes on its own, and a new feature waits for the next update once one is in review
 (update 4 grew from size-s to size-m while it waited, and took 18 hours to merge).
@@ -726,7 +728,7 @@ moment's ground at the world view's heights (ur_neat's Chambers of Xeric: the gr
 tab's "The aether and registers" (notes in any register carry the lime star) and the README's register line.
 hub_cut --check matches outstation's branch; gradle test 146; hub_check passed (the one menuAction listed as
 sensitive); start_check passed on cf6c339 itself. The relay that keeps `clog` and `pbs` is live (deployed 11/22/2026
-19:14 UTC, a9f07d6). Goes to the fork once Jace has tried it (#21195 merged 11/24/2026).
+19:14 UTC, a9f07d6). Tried 11/24/2026 ("Update 7's last checks", below); goes to the fork once Jace says to send it (#21195 merged 11/24/2026).
 
 **Jace's test** (`Try the plugin.bat cf6c339`, `-ea`):
 1. The side tab: Send my collection log and Send my personal bests (both on to begin with) are there; the Page tab says "The aether
@@ -753,6 +755,21 @@ begin with (outstation's OutsideConfig, the README, protocol.md), cut as outside
 hub_check, start_check). It had been off only as the plan's choice for a new kind of data (the bank's and the model's
 are off), not a rule of the Hub's; nothing goes until Outside's pressed but the chat's new slots, as the count already
 sends their names. The build for the Hub: 8f812ad; since the memory fix's rework (below), 2efd224.
+
+**Update 7's last checks, in the local world (11/24/2026; Claude, at Jace's word above).** outside-plugin 2efd224 itself
+in the local world's RuneLite 1.13.7 with `-ea`, offline, the plugin set up by `stagecheck.py prepare`:
+- 5, a fight off flat ground: `stagecheck.py run cox:1 vorkath:a`. The raid: PASS ("completed"). Vorkath: one
+  recording, "killed" (the check's "expected 2" is update 8's trips). Both moments made (the raid's 1,058 KB in 619 ms,
+  Vorkath's 1,381 KB in 446 ms). Measured from the files (ghillie scratch `feet.py`: each player's and NPC's lowest
+  dots against the ground's dots under them): on Vorkath's island, whose ground spans about 860 units of height, Vorkath
+  within 2-8 units of the ground at three frames and the player within 15; in the raid's room the player within 14; the
+  same as 11/23's later local moments. The local world's moment of 11/23 06:41, before the fix, had models 200-440 units
+  off the ground: what ur_neat saw.
+- 6, the client log: nothing from wiki.outside failing, no assertion, no heap error (its only errors RuneLite's own
+  requests failing offline).
+- 1-4 (the side tab, the bests, the collection log): Jace's on 8f812ad (above); 2efd224 differs from it only in the
+  memory budgets (`EncounterScene`), their test and hub_check, so those hold.
+Next: the fork's commit= for update 7 (2efd2241b8953f3f4767ef7ad11207ff6e385134), once Jace says to send it.
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
