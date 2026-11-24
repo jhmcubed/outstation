@@ -772,7 +772,7 @@ in the local world's RuneLite 1.13.7 with `-ea`, offline, the plugin set up by `
 Sent 11/24/2026 (Jace: "send update 7"): the fork's `outside-update-7` (jhmcubed/plugin-hub dcc3236, from the Hub's
 master d244b66, the memory fix's merge) names 2efd2241b8953f3f4767ef7ad11207ff6e385134 (on outside-plugin's main); it
 built and passed its 146 tests against RuneLite 1.13.8 (revision 243, out that day), every game id it uses unchanged
-from 1.13.7. Jace opens the pull request.
+from 1.13.7. Jace opened it the same day: runelite/plugin-hub#21280 (labels plugin change, size-l), watched every two hours.
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
