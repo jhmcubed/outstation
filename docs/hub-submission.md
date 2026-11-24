@@ -608,6 +608,26 @@ chapters, the marks at 34, 73 and 88.
 4. A death mid-trip: the tile says "fell".
 5. The client log: nothing from wiki.outside failing.
 
+**Update 8's checks in the local world (11/24/2026; Claude, at Jace's word "start testing update 8 in the local world").**
+outside-plugin 9d7ddda itself: `start_check` passed (RuneLite started it, nothing of its own failing). In the local
+world's RuneLite with `-ea`, offline, the plugin set up by `stagecheck.py prepare`:
+- 1 and 3: `stagecheck.py run all`, every stage PASS (11): Vorkath b two kills one trip of three, the walk out the trip's
+  end and sent; a and the instanced Mole's d one kill, the walk out kept on the computer; the open lair, the raid, the
+  Inferno and the Colosseum as before.
+- 4, a death mid-trip: a new stage, Vorkath **e** (a kill, then the player dies in the next fight and respawns home 4
+  ticks on, as the game does): PASS: one trip (EaIR19QxCd6s) of two, the second ended "died" with `tripEnd` "died",
+  the teleport home not making it "left".
+- 2, the page: the two trips' real recordings through the sketch against a stand-in relay (the list as the relay keeps
+  it from their headers): two tiles, "2 kills ✼ 0:53 ✼ left" and "1 kill ✼ 0:37 ✼ fell", each with "the trip" and a
+  number for each kill; the trip pages play end to end (88 ticks, marks at 34, 73 and 88 "left"; 61 ticks, 34 and 61
+  "fell"); no page errors.
+- Doom's burrow (the fix in this build): three delve levels, a slow descent, a quick one (a second after the window
+  opened) and the claim: every level's window recorded with its items (2, 4, 6), "claimed" at the end.
+- 5, the client log: nothing from wiki.outside failing, no assertion, no heap error (only RuneLite's own: no sound, no
+  internet).
+Left for the real game (Jace, after the relay's deployed, which goes after update 7 merges): one instanced boss, two
+kills and out, to see the recordings reach his page and its tile there.
+
 ## Update 9 (planned 11/22/2026 as update 8; moved to 9 on 11/23/2026): alts under one page
 
 **The order since 11/23/2026** (Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships"): update 8 is **trips** (planned in "Update 7 (planned, 11/22/2026)" below, under **Trips**), update 9 is these alts.
