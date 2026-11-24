@@ -599,7 +599,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**Jace's test** (`Try the plugin.bat c5ac0ad`, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -859,7 +859,10 @@ ordinary fight's tracks are far under 32 MB (his Mole kill 12.8 MB), so they're 
   with the fix. Update 7 (2efd224, which carries it) is next.
 - Update 7 with it: outside-plugin 2efd2241b8953f3f4767ef7ad11207ff6e385134 (8f812ad and f39ae7f merged): gradle test 146, hub_check, start_check.
 - Update 8 with it: outside-plugin c5ac0ad (with the README's replay GIF at Jace's angle): gradle test 151, hub_check,
-  start_check, hub_cut --check matches.
+  start_check, hub_cut --check matches. Then 9d7ddda (11/24/2026): c5ac0ad with Doom's burrow fix (outstation 079da5a:
+  the burrow's offer read from DOM_LOOTPILE_DURING, 935, the pile between levels, its picture 8 cycles in and again a
+  second on if still open; SaluteCFlagg's delve had shown no window between levels): gradle test 151, hub_check, hub_cut
+  --check matches; start_check with update 8's other checks.
 3. Put it on your page: its tile turns as a moment on your profile.
 4. A short fight (a GWD boss, Vorkath): its moment as before (frames 1x apart, 6000 dots a model at most in the log).
 
