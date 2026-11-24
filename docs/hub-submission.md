@@ -728,7 +728,7 @@ moment's ground at the world view's heights (ur_neat's Chambers of Xeric: the gr
 tab's "The aether and registers" (notes in any register carry the lime star) and the README's register line.
 hub_cut --check matches outstation's branch; gradle test 146; hub_check passed (the one menuAction listed as
 sensitive); start_check passed on cf6c339 itself. The relay that keeps `clog` and `pbs` is live (deployed 11/22/2026
-19:14 UTC, a9f07d6). Tried 11/24/2026 ("Update 7's last checks", below); goes to the fork once Jace says to send it (#21195 merged 11/24/2026).
+19:14 UTC, a9f07d6). Tried and sent 11/24/2026 ("Update 7's last checks", below): the fork's `outside-update-7`, dcc3236.
 
 **Jace's test** (`Try the plugin.bat cf6c339`, `-ea`):
 1. The side tab: Send my collection log and Send my personal bests (both on to begin with) are there; the Page tab says "The aether
@@ -769,7 +769,10 @@ in the local world's RuneLite 1.13.7 with `-ea`, offline, the plugin set up by `
   requests failing offline).
 - 1-4 (the side tab, the bests, the collection log): Jace's on 8f812ad (above); 2efd224 differs from it only in the
   memory budgets (`EncounterScene`), their test and hub_check, so those hold.
-Next: the fork's commit= for update 7 (2efd2241b8953f3f4767ef7ad11207ff6e385134), once Jace says to send it.
+Sent 11/24/2026 (Jace: "send update 7"): the fork's `outside-update-7` (jhmcubed/plugin-hub dcc3236, from the Hub's
+master d244b66, the memory fix's merge) names 2efd2241b8953f3f4767ef7ad11207ff6e385134 (on outside-plugin's main); it
+built and passed its 146 tests against RuneLite 1.13.8 (revision 243, out that day), every game id it uses unchanged
+from 1.13.7. Jace opens the pull request.
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
