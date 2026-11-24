@@ -789,6 +789,12 @@ in the local world's RuneLite 1.13.7 with `-ea`, offline, the plugin set up by `
   requests failing offline).
 - 1-4 (the side tab, the bests, the collection log): Jace's on 8f812ad (above); 2efd224 differs from it only in the
   memory budgets (`EncounterScene`), their test and hub_check, so those hold.
+Araxxor (11/24/2026, Jace: "the araxxor boss arena has a floating floor", bigsneezi's two kills that day): his moments,
+made by the Hub's build (update 6 with the memory fix, recorder 0.3.0, revision 243), have a second floor 240 units
+under the arena's in most tiles, the models standing on the real one: the Scene heights update 7's world-view heights
+replace. Reproduced in the local world (a new stage, `::stage araxxor`: region 14489 as an instance, his tile): f39ae7f
+the same second floor; 2efd224 one floor, every tile at the arena's height. Moments already made keep it until they're
+kept again; new ones are right once update 7 is out.
 Sent 11/24/2026 (Jace: "send update 7"): the fork's `outside-update-7` (jhmcubed/plugin-hub dcc3236, from the Hub's
 master d244b66, the memory fix's merge) names 2efd2241b8953f3f4767ef7ad11207ff6e385134 (on outside-plugin's main); it
 built and passed its 146 tests against RuneLite 1.13.8 (revision 243, out that day), every game id it uses unchanged
