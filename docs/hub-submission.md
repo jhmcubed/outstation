@@ -726,7 +726,7 @@ moment's ground at the world view's heights (ur_neat's Chambers of Xeric: the gr
 tab's "The aether and registers" (notes in any register carry the lime star) and the README's register line.
 hub_cut --check matches outstation's branch; gradle test 146; hub_check passed (the one menuAction listed as
 sensitive); start_check passed on cf6c339 itself. The relay that keeps `clog` and `pbs` is live (deployed 11/22/2026
-19:14 UTC, a9f07d6). Goes to the fork once #21195 merges and Jace has tried it.
+19:14 UTC, a9f07d6). Goes to the fork once Jace has tried it (#21195 merged 11/24/2026).
 
 **Jace's test** (`Try the plugin.bat cf6c339`, `-ea`):
 1. The side tab: Send my collection log and Send my personal bests (both on to begin with) are there; the Page tab says "The aether
@@ -833,6 +833,10 @@ ordinary fight's tracks are far under 32 MB (his Mole kill 12.8 MB), so they're 
   reviews (read off both pull requests 11/23/2026): update 6 (#21147, size-xl) had no human review at all, its checks
   passed and runelite-github-app[bot] merged it itself within the hour; #21195 got a reviewer's comment and the
   "waiting for author" label, and once flagged a person has to clear it, so it waits on a volunteer's time.
+- **Merged 11/24/2026, 19:08 UTC.** Nothing moved for 31 hours (45 other updates merged meanwhile, many opened after
+  it); Jace asked on it whether anything else was needed, as it fixes an out-of-memory error making clients unstable
+  on long fights (SaluteCFlagg's had been since update 6), and it merged soon after. The Hub has f39ae7f: update 6
+  with the fix. Update 7 (2efd224, which carries it) is next.
 - Update 7 with it: outside-plugin 2efd2241b8953f3f4767ef7ad11207ff6e385134 (8f812ad and f39ae7f merged): gradle test 146, hub_check, start_check.
 - Update 8 with it: outside-plugin c5ac0ad (with the README's replay GIF at Jace's angle): gradle test 151, hub_check,
   start_check, hub_cut --check matches.
