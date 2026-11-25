@@ -599,7 +599,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 1c6d7bb with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 49e0298 with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -816,7 +816,14 @@ the screen, private, friends or clan chat (never recorded), or other players' na
 game's own messages; the tile and world only in an encounter; the bank and deathbank while their switches are on, as
 they are to begin with. 8ae70c9276519af6c1e3abc48ceebd1889df9be4: 15c07cb with that line (hub_check and start_check on
 it passed); the fork's 9fe2230 names it (Jace: "go, push it to the PR"). Update 8's build 1c6d7bb (hub_cut --check
-matches).
+matches). Then the whole README checked against the code (Jace: "check the rest of the readme for anything else
+misleading"; outstation's README.hub.md): four more put right: the edit link's 12 hours (it said 2 in one place), the
+theme's ten SoundCloud links and the visitors' own controls (it said they had none), Players around you (it said "on
+your computer only"; an encounter on the page carries them unnamed), Ground under my model on to begin with. The rest
+held: the 60 an hour, the 12 kept for good, 10 goals, once a minute, a click's mark, the account hash kept only as a
+hash, Dink's Wilderness and other players dropped. 12deb7a6995ec895837562cc498527402a83dad3: 8ae70c9 with them
+(hub_check and start_check passed), waiting on Jace's word to go on the fork; update 8's build 49e0298 (hub_cut
+--check matches).
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
