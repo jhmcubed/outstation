@@ -555,6 +555,30 @@ open: nothing naming `wiki.outside` failing, and no "must be called on client th
 Then: the warning with recorded fights (above) on the fork's file, the commit= there, and once merged the page's
 `ON_THE_HUB.goals` on and the revision log's entry for the plugin.
 
+## A fix: a corpse's loot (built 11/25/2026, not sent)
+
+Jace, of BigSneezi's Araxxor tiles: "not sure why dragonwarhammer is showing up as his loot, that is one of the
+weapons he is using". Read from his twenty recordings (the relay's), two faults in `Encounters.corpseLoot`, there since
+round three:
+
+- **The last fight's click.** The click on a corpse (`clickedTick`, `clickedKind`...) was kept from one recording to the
+  next, while each recording's tick count starts again at 0. So in the next fight, any change to the inventory up to six
+  ticks before the last click's tick (a potion drunk) passed `whole() - clickedTick > CORPSE_TAKE` (negative) and was
+  taken for the corpse's loot: everything the inventory had gained since the recording began (the warhammer and
+  defender switched in after his opening special attack, a lower dose), and "corpse" was then looted, so the real
+  loot a few ticks later went unkept. 7 of his 19 fights. Now: the click is cleared with a new encounter, and
+  `clickedWithin(n)` refuses a click from the future (the Gauntlet's chest and the loot line's place too).
+- **A dose drunk.** The first change after the click was taken whole, so a dose drunk or a pie eaten as the corpse was
+  clicked was the loot (a Prayer potion(3) alone, where the corpse gave Rune platelegs × 2). Now `lootGained`: each
+  change against the one before, less what the worn equipment lost over it and any item the change used up in another
+  form (the same name less its dose or "Half a"); the first change with something left is the loot.
+
+The page puts the recordings already up right from their own lines (ghillie's `replay/3d/moment.js`, `corpseCheck`), so
+this is for the recordings to come. Checks: `gradle test` (208, `EncountersTest.aCorpsesLootIsWhatCame` new),
+`hub_check.py` passed. Not yet: the cut, `start_check.py`, the local world's Araxxor (or a boss with a corpse) killed
+twice in a row with a potion drunk before the second harvest, and Jace's word. A fix on its own: it goes after update 7,
+alone or with update 8 as Jace says.
+
 ## Update 8: trips (built 11/23/2026, not sent; after update 7)
 
 Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships", then "start building trips for
