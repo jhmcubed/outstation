@@ -599,7 +599,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 ee48909 with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 ee601c0 with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -804,8 +804,11 @@ pluginhub asap"): outside-plugin ac0bf97131197730d617d3c10fcd269a990c424b, 2efd2
 the pitch, the pictures and GIFs, linked by commit) and its two lines on Send my collection log put right (on to begin
 with since 8f812ad; outstation 7193ff4); the code unchanged. hub_check, gradle test 146 and start_check on ac0bf97
 itself passed; no game test (nothing the game runs changed). The fork's `outside-update-7` names it (652659f), so
-#21280 carries it. The listing's description and tags stay update 6's until update 8 (they name trips). Merged into
-outside-plugin's working branch, so update 8's build is ee48909 (9d7ddda with the same README; hub_cut --check matches).
+#21280 carries it. Merged into outside-plugin's working branch: update 8's build ee48909 (9d7ddda with the same README;
+hub_cut --check matches). Then the listing too (Jace: "yes add the listing to update 7 too"): 15c07cb7243a5a1be26a36ddb0f19a433caf8df2,
+ac0bf97 with update 8's description and tags less "trips" (hub_check, gradle test 146, start_check on it passed); the
+fork's 4cb53b7 names it. Merged into the working branch with update 8's own listing kept: update 8's build ee601c0
+(hub_cut --check matches).
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
