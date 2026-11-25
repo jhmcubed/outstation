@@ -156,7 +156,7 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 
 **In the Wilderness, a PvP area, or on a PvP or Deadman world**, no update is taken (pressed there, it waits and goes once you leave) and what you're doing says nothing. Ferox Enclave, the Wilderness's safe town, counts as safe.
 
-**Never sent:** your screen, your chat (only an item's charges, read from the game's own messages), your exact location or world, your hitpoints or prayer, your bank (unless you switch on Bank), other players (but unnamed in an encounter you put on your page), or anything you type.
+**Never sent:** your screen, your private messages, friends chat or clan chat, or other players' names (an encounter takes them out). Your chat is otherwise read only for the game's own messages (such as an item's charges), except in an encounter you put on your page, which keeps your own public chat and the game's messages as part of the fight. Your exact tile and world go only in an encounter, never with an update or what you're doing. Your bank and deathbank go while their switches are on, as they are to begin with: switch them off under On your page and they stay on your computer.
 
 Your page shows what was sent to anyone who opens it, unless you make it friends only.
 
