@@ -795,6 +795,11 @@ under the arena's in most tiles, the models standing on the real one: the Scene 
 replace. Reproduced in the local world (a new stage, `::stage araxxor`: region 14489 as an instance, his tile): f39ae7f
 the same second floor; 2efd224 one floor, every tile at the arena's height. Moments already made keep it until they're
 kept again; new ones are right once update 7 is out.
+The Leviathan (11/25/2026, Jace: "happening at leviathan too", fastlars's moment): the Hub's build drew the same second
+floor there (about -248 under the real -160), gone in update 7 (12deb7a, `::stage leviathan` in the local world). Not
+fixed by it, open: the raised floor round the player (about -110, the browser's build of his real fight has it whole)
+has no ground in any moment the plugin makes, the Hub's build or update 7's; and in the browser's build the players
+stand about 105 above it, to be read from the client's own heights. A fix for update 8 if Jace says.
 Sent 11/24/2026 (Jace: "send update 7"): the fork's `outside-update-7` (jhmcubed/plugin-hub dcc3236, from the Hub's
 master d244b66, the memory fix's merge) names 2efd2241b8953f3f4767ef7ad11207ff6e385134 (on outside-plugin's main); it
 built and passed its 146 tests against RuneLite 1.13.8 (revision 243, out that day), every game id it uses unchanged
