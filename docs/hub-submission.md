@@ -822,7 +822,7 @@ theme's ten SoundCloud links and the visitors' own controls (it said they had no
 your computer only"; an encounter on the page carries them unnamed), Ground under my model on to begin with. The rest
 held: the 60 an hour, the 12 kept for good, 10 goals, once a minute, a click's mark, the account hash kept only as a
 hash, Dink's Wilderness and other players dropped. 12deb7a6995ec895837562cc498527402a83dad3: 8ae70c9 with them
-(hub_check and start_check passed), waiting on Jace's word to go on the fork; update 8's build 49e0298 (hub_cut
+(hub_check and start_check passed); the fork's b36f03e names it (Jace: "go, push it to the PR"); update 8's build 49e0298 (hub_cut
 --check matches).
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
