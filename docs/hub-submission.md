@@ -599,7 +599,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 49e0298 with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 db6565f with update 7's README and the bridges' floors, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -797,9 +797,16 @@ the same second floor; 2efd224 one floor, every tile at the arena's height. Mome
 kept again; new ones are right once update 7 is out.
 The Leviathan (11/25/2026, Jace: "happening at leviathan too", fastlars's moment): the Hub's build drew the same second
 floor there (about -248 under the real -160), gone in update 7 (12deb7a, `::stage leviathan` in the local world). Not
-fixed by it, open: the raised floor round the player (about -110, the browser's build of his real fight has it whole)
-has no ground in any moment the plugin makes, the Hub's build or update 7's; and in the browser's build the players
-stand about 105 above it, to be read from the client's own heights. A fix for update 8 if Jace says.
+fixed by it: the raised floor round the player had no ground in any moment the plugin made. Found (Jace: "do what you
+think is best"; the local world's new `world.py do tiles`): those tiles are bridges, the level above moved down with an
+invisible floor of its own and the floor seen there the lower tile under it, which the plugin never drew; and a tile's
+heights are its render level's, not its place in the tile array's (RuneLite's GPU plugin, SceneUploader.uploadZoneTile,
+read from the 1.13.7 jar). Fixed for update 8 (outstation's EncounterScene and the captured model's ground,
+OutsidePlugin.groundJson): each floor at its render level's heights, a bridge's lower floor drawn too. In the local
+world the Leviathan's moment now has the rock whole (about -110 round the player, -160 beyond), tile for tile as the
+browser's build of the same fight. The player stands about 100 above that rock in both, as the GPU plugin's own heights
+put them (the player at the bridge's level, the rock at the lower tile's).
+
 Sent 11/24/2026 (Jace: "send update 7"): the fork's `outside-update-7` (jhmcubed/plugin-hub dcc3236, from the Hub's
 master d244b66, the memory fix's merge) names 2efd2241b8953f3f4767ef7ad11207ff6e385134 (on outside-plugin's main); it
 built and passed its 146 tests against RuneLite 1.13.8 (revision 243, out that day), every game id it uses unchanged
