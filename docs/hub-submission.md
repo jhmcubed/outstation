@@ -599,7 +599,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 ee601c0 with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 1c6d7bb with update 7's README, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -808,7 +808,15 @@ itself passed; no game test (nothing the game runs changed). The fork's `outside
 hub_cut --check matches). Then the listing too (Jace: "yes add the listing to update 7 too"): 15c07cb7243a5a1be26a36ddb0f19a433caf8df2,
 ac0bf97 with update 8's description and tags less "trips" (hub_check, gradle test 146, start_check on it passed); the
 fork's 4cb53b7 names it. Merged into the working branch with update 8's own listing kept: update 8's build ee601c0
-(hub_cut --check matches).
+(hub_cut --check matches). Then the README's Never sent line (11/25/2026, a friend of Jace's: "it says never sent but,
+bank and deathbank sharing starts enabled"): it also said chat, the exact location and world, and hitpoints and prayer
+were never sent, where an encounter on the page keeps the player's own public chat, the game's messages, every tile and
+the world, and each update sends the skills' boosted levels; rewritten (outstation c093ee2) to say what's true: never
+the screen, private, friends or clan chat (never recorded), or other players' names; the chat otherwise read only for the
+game's own messages; the tile and world only in an encounter; the bank and deathbank while their switches are on, as
+they are to begin with. 8ae70c9276519af6c1e3abc48ceebd1889df9be4: 15c07cb with that line (hub_check and start_check on
+it passed); the fork's 9fe2230 names it (Jace: "go, push it to the PR"). Update 8's build 1c6d7bb (hub_cut --check
+matches).
 
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
