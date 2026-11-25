@@ -4240,24 +4240,30 @@ public class OutsidePlugin extends Plugin
 					continue;
 				}
 				int bx = x * 128, by = y * 128;
-				SceneTilePaint p = t.getSceneTilePaint();
-				if (p != null)
+				// (the tile's floor at its render level's heights, and under a bridge the tile below it too, as the GPU
+				// plugin draws them; 11/25/2026, the moment's ground's fix for the Leviathan's rock)
+				for (Tile f = t; f != null; f = f == t ? t.getBridge() : null)
 				{
-					int tex = p.getTexture();
-					int[] sw = {bx, hs[plane][x][y], by}, se = {bx + 128, hs[plane][x + 1][y], by};
-					int[] ne = {bx + 128, hs[plane][x + 1][y + 1], by + 128}, nw = {bx, hs[plane][x][y + 1], by + 128};
-					tris.add(tri(ne, nw, se, p.getNeColor(), p.getNwColor(), p.getSeColor(), tex, bx, by, px, py, ph, cs, sn));
-					tris.add(tri(sw, se, nw, p.getSwColor(), p.getSeColor(), p.getNwColor(), tex, bx, by, px, py, ph, cs, sn));
-				}
-				SceneTileModel tm = t.getSceneTileModel();
-				if (tm != null && tm.getFaceX() != null)
-				{
-					int[] fa = tm.getFaceX(), fb = tm.getFaceY(), fc = tm.getFaceZ(), vx = tm.getVertexX(), vy = tm.getVertexY(), vz = tm.getVertexZ();
-					int[] ca = tm.getTriangleColorA(), cb = tm.getTriangleColorB(), cc = tm.getTriangleColorC(), tt = tm.getTriangleTextureId();
-					for (int i = 0; i < fa.length; i++)
+					int[][] h = hs[Math.max(0, Math.min(hs.length - 1, f.getRenderLevel()))];
+					SceneTilePaint p = f.getSceneTilePaint();
+					if (p != null)
 					{
-						int[] a = {vx[fa[i]], vy[fa[i]], vz[fa[i]]}, b = {vx[fb[i]], vy[fb[i]], vz[fb[i]]}, c = {vx[fc[i]], vy[fc[i]], vz[fc[i]]};
-						tris.add(tri(a, b, c, ca[i], cb[i], cc[i], tt == null ? -1 : tt[i], bx, by, px, py, ph, cs, sn));
+						int tex = p.getTexture();
+						int[] sw = {bx, h[x][y], by}, se = {bx + 128, h[x + 1][y], by};
+						int[] ne = {bx + 128, h[x + 1][y + 1], by + 128}, nw = {bx, h[x][y + 1], by + 128};
+						tris.add(tri(ne, nw, se, p.getNeColor(), p.getNwColor(), p.getSeColor(), tex, bx, by, px, py, ph, cs, sn));
+						tris.add(tri(sw, se, nw, p.getSwColor(), p.getSeColor(), p.getNwColor(), tex, bx, by, px, py, ph, cs, sn));
+					}
+					SceneTileModel tm = f.getSceneTileModel();
+					if (tm != null && tm.getFaceX() != null)
+					{
+						int[] fa = tm.getFaceX(), fb = tm.getFaceY(), fc = tm.getFaceZ(), vx = tm.getVertexX(), vy = tm.getVertexY(), vz = tm.getVertexZ();
+						int[] ca = tm.getTriangleColorA(), cb = tm.getTriangleColorB(), cc = tm.getTriangleColorC(), tt = tm.getTriangleTextureId();
+						for (int i = 0; i < fa.length; i++)
+						{
+							int[] a = {vx[fa[i]], vy[fa[i]], vz[fa[i]]}, b = {vx[fb[i]], vy[fb[i]], vz[fb[i]]}, c = {vx[fc[i]], vy[fc[i]], vz[fc[i]]};
+							tris.add(tri(a, b, c, ca[i], cb[i], cc[i], tt == null ? -1 : tt[i], bx, by, px, py, ph, cs, sn));
+						}
 					}
 				}
 			}

@@ -960,23 +960,14 @@ final class EncounterScene
 					{
 						continue;
 					}
-					SceneTilePaint paint = tile.getSceneTilePaint();
-					if (paint != null)
+					// (its floor at its render level's heights, and under a bridge the tile below it too, as RuneLite's GPU
+					// plugin draws them (SceneUploader's uploadZoneTile): a bridged tile is the level above moved down, its
+					// heights that level's, and the floor seen there is often the one below, which wasn't drawn at all; 11/25/2026,
+					// fastlars's Leviathan: the raised rock round the player a hole, the player's tile one of those)
+					floor(out, tile, x, y, heights);
+					if (tile.getBridge() != null)
 					{
-						EncounterMoment.Mesh m = paint(paint, x, y, heights[z]);
-						if (m != null)
-						{
-							out.add(m);
-						}
-					}
-					SceneTileModel tm = tile.getSceneTileModel();
-					if (tm != null)
-					{
-						EncounterMoment.Mesh m = tileModel(tm, x, y);
-						if (m != null)
-						{
-							out.add(m);
-						}
+						floor(out, tile.getBridge(), x, y, heights);
 					}
 					WallObject w = tile.getWallObject();
 					if (w != null)
@@ -1077,6 +1068,30 @@ final class EncounterScene
 
 	/** A tile's paint: two faces over its four corners (north-east, north-west, south-east; south-west, south-east,
 	 *  north-west), each corner its own lit colour; none where the client draws none (12345678). */
+	/** A tile's floor, its paint or its model, at its render level's heights (the client's and the GPU plugin's way). */
+	private void floor(List<EncounterMoment.Mesh> out, Tile tile, int x, int y, int[][][] heights)
+	{
+		SceneTilePaint paint = tile.getSceneTilePaint();
+		if (paint != null)
+		{
+			int level = Math.max(0, Math.min(heights.length - 1, tile.getRenderLevel()));
+			EncounterMoment.Mesh m = paint(paint, x, y, heights[level]);
+			if (m != null)
+			{
+				out.add(m);
+			}
+		}
+		SceneTileModel tm = tile.getSceneTileModel();
+		if (tm != null)
+		{
+			EncounterMoment.Mesh m = tileModel(tm, x, y);
+			if (m != null)
+			{
+				out.add(m);
+			}
+		}
+	}
+
 	private EncounterMoment.Mesh paint(SceneTilePaint p, int x, int y, int[][] heights)
 	{
 		if (p.getNeColor() == 12345678 || x + 1 >= heights.length || y + 1 >= heights[x].length)
