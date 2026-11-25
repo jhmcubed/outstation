@@ -31,7 +31,7 @@ Every boss of a raid on one line, down to the reward chest
 
 ## What it does
 
-Your gear, stats, quests, diaries and slayer task on a page of your own at **Outside.wiki/<your name>**: your equipment, inventory, looting bag, seed box, chugging barrel, rune pouch and Dizana's quiver, each skill's level and experience, your quests, Achievement Diaries, combat achievements and slayer task. Your page updates when you press **Update my page**, and by itself once an hour while you're logged in. It can also show what you're doing, the way RuneLite's own Discord plugin shows it in your Discord status (the skill you're training, the area you're in by name).
+Your gear, stats, quests, diaries and slayer task on a page of your own at **Outside.wiki/<your name>**: your equipment, inventory, looting bag, seed box, chugging barrel, rune pouch and Dizana's quiver, each skill's level and experience, your quests, Achievement Diaries, combat achievements and slayer task. Your page updates when you press **Update my page**, and by itself a minute after you log in and then once an hour while you're logged in. It can also show what you're doing, the way RuneLite's own Discord plugin shows it in your Discord status (the skill you're training, the area you're in by name).
 <!-- hub:cut encounters -->
 
 It also records your fights at bosses and raids to your computer, tick by tick (a raid whole, from entering to leaving its treasure room; a Gauntlet or a Fortis Colosseum run whole, from entering to its chest or claim; the Inferno and the Fight Cave whole; Barrows and the Moons of Peril to their chest), and puts each on your page as it ends (or only when you choose), so anyone can watch it back there, in 2D or 3D, scrubbing to any moment; its moment on your page is the kill and its drop, or the chest you opened with its reward window as you saw it. Played back, each reward window you opened (a raid's chest, each level of a delve) appears as you saw it, and where you clicked shows as the game's own crosses; what's recorded of a click is only whether you walked or clicked something, and where in the game world, never your mouse.
@@ -42,7 +42,7 @@ It also records your fights at bosses and raids to your computer, tick by tick (
 1. Install **Outside** from the Plugin Hub (RuneLite's wrench icon, then Plugin Hub).
 2. Log in, open the **Outside** side tab (a lime ✼) and press **Make my Outside page**. Your page is made under the name you're logged in as, at Outside.wiki/<your name>, and its key is saved in the plugin's settings for you. Its first update goes as it's made.
 3. Prove the name is yours. Until then, the page marks it **unproven**. Gain some experience, stop, press **Update my page**, then log out once the side tab says **ready** (a second or two): within a few minutes the official hiscores confirm it. If you gain more experience after it says ready, the side tab tells you to press Update my page again first. The side tab says whether it's proven, and if it didn't work, why.
-4. From then on, press **Update my page** whenever you want your page to show what you have now (once a minute at most: pressed sooner, the button counts down and it goes by itself when the minute's up). It also updates by itself every hour you're logged in. Your page says when it was last updated.
+4. From then on, press **Update my page** whenever you want your page to show what you have now (once a minute at most: pressed sooner, the button counts down and it goes by itself when the minute's up). It also updates by itself a minute after you log in, and every hour you're logged in after that. Your page says when it was last updated.
 
 **More than one computer:** your page's key is kept with your account on the computer that made it. On another, if the side tab offers to make a page, don't: copy the key on the first (the Page tab's **Copy my station key**) and paste it on the other in the plugin's settings (Advanced, Station key).
 
@@ -121,7 +121,7 @@ Everything goes to the Outside relay, a server on Cloudflare run by the plugin's
 
 **When you make your page** (only when you press Make my Outside page): your character's name and your account hash (the number RuneLite gives plugins for your account), once. The relay keeps only a hash of it, to prove the page is yours, and shows it to nobody.
 
-**With each update** (when you press Update my page, once an hour while you're logged in, and once as your page is made), whatever is switched on:
+**With each update** (when you press Update my page, a minute after you log in, once an hour while you're logged in, and once as your page is made), whatever is switched on:
 
 - your character's name and account type (normal, ironman…)
 - **worn and carried:** your equipment and inventory; the looting bag's contents once you've looked in it; the seed box's and chugging barrel's once you've opened them; your rune pouch's runes; Dizana's quiver's ammunition; and each item's name and Grand Exchange price

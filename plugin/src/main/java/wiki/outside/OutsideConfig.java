@@ -71,7 +71,7 @@ public interface OutsideConfig extends Config
 			+ " unless your page is friends only (the Outside side tab). Off: nothing more is sent, and your gear, stats and progress come off your page.",
 		// hub:end live
 		// hub:only description = "What's switched on below goes to the Outside relay (on Cloudflare) when you press Update my page in the"
-		// hub:only 	+ " Outside side tab, and hourly while you're logged in; what you're doing goes as it changes. Your Outside page"
+		// hub:only 	+ " Outside side tab, a minute after you log in and hourly while you're logged in; what you're doing goes as it changes. Your Outside page"
 		// hub:only 	+ " shows it to anyone, and while you play you show on outside.wiki's globe, unless your page is friends only"
 		// hub:only 	+ " (the side tab). Off: nothing more is sent, and your gear, stats and progress come off your page.",
 		// hub:cut live
@@ -81,7 +81,7 @@ public interface OutsideConfig extends Config
 		// hub:end live
 		// hub:only warning = "This submits your gear, stats, quests, diaries, slayer task, what you're doing (as Discord shows it)"
 		// hub:only 	+ " and your IP address to the Outside relay, a 3rd-party server not controlled or verified by the RuneLite"
-		// hub:only 	+ " developers, when you press Update my page, and hourly. Your Outside page shows them publicly.",
+		// hub:only 	+ " developers, when you press Update my page, a minute after you log in, and hourly. Your Outside page shows them publicly.",
 		position = 0,
 		section = pageSection
 	)
@@ -433,7 +433,7 @@ public interface OutsideConfig extends Config
 			// hub:cut live
 			+ " page each time you use it, where anyone can see it",
 			// hub:end live
-			// hub:only + " page with your next update after you use it (Update my page, or the hourly one), where anyone can see it",
+			// hub:only + " page with your next update after you use it (Update my page, the one after you log in, or the hourly one), where anyone can see it",
 		warning = "On, your whole bank (every item and how many) goes to the Outside relay, a server not controlled"
 			// hub:cut live
 			+ " or verified by the RuneLite developers, each time you use your bank, and your Outside page shows it to"

@@ -8,7 +8,7 @@ It works with or without the outstation program. With both, your page has your t
 Since 11/16/2026 it also does what the Plugin Hub's version does (below: "Update my page", the hourly sync and what you're doing as Discord shows it); the Hub's version is only that (`hub_cut.py`, "live").
 <!-- hub:end live -->
 <!-- hub:else live
-Your gear, stats, quests, diaries and slayer task on your own page at Outside.wiki: your equipment, inventory, looting bag, seed box, chugging barrel, rune pouch and Dizana's quiver, each skill's level and experience, your quests, Achievement Diaries, combat achievements and slayer task. They go when you press **Update my page** in the plugin's side tab, and by themselves once an hour while you're logged in. And what you're doing, as RuneLite's own Discord plugin shows it in your Discord status (the skill you're training, the area you're in by name), so your page and Outside.wiki's globe can show it.
+Your gear, stats, quests, diaries and slayer task on your own page at Outside.wiki: your equipment, inventory, looting bag, seed box, chugging barrel, rune pouch and Dizana's quiver, each skill's level and experience, your quests, Achievement Diaries, combat achievements and slayer task. They go when you press **Update my page** in the plugin's side tab, and by themselves a minute after you log in and once an hour while you're logged in. And what you're doing, as RuneLite's own Discord plugin shows it in your Discord status (the skill you're training, the area you're in by name), so your page and Outside.wiki's globe can show it.
 -->
 
 ## Setting it up
@@ -63,7 +63,7 @@ To your relay (Jace's, on Cloudflare, unless your key says another), over one co
 - your character's name, your world, and your account type (normal, ironman…)
 <!-- hub:end live -->
 <!-- hub:else live
-To Jace's relay on Cloudflare, only while you're logged in, and only when you press **Update my page**, once an hour (after each hour logged in since the last), and once as your page is made: each time, everything of this that's switched on, at once:
+To Jace's relay on Cloudflare, only while you're logged in, and only when you press **Update my page**, a minute after you log in (from the login screen, not a world hop; since 11/25/2026, as Wise Old Man's plugin updates at login), once an hour (after each hour logged in since the last), and once as your page is made: each time, everything of this that's switched on, at once:
 - your character's name and your account type (normal, ironman…)
 -->
 - **worn and carried** (one switch): what's in each equipment slot and inventory slot; the looting bag's contents once you've looked in it; the seed box's and the chugging barrel's once you've opened them (11/14/2026); the rune pouch's runes; Dizana's quiver's ammunition; and each of those items' name and Grand Exchange price, once each
@@ -329,7 +329,7 @@ Checked against RuneLite's own rules (the plugin-hub README, and the wiki's "Plu
 - **Network IO** (a sensitive API, allowed): one WebSocket to the relay named in the station key the player pastes in, through RuneLite's OkHttp. It sends only the player's own game, as listed above; it reads nothing back.
 <!-- hub:end live -->
 <!-- hub:else live
-- **Network IO** (a sensitive API, allowed), through RuneLite's OkHttp, to the relay named in the page's key, and only (11/16/2026, the reviewer's "An 'Update my page' action and an hourly sync should be okay, as should matching Discord activity"): a snapshot when the player presses Update my page (once a minute at most) or after each hour logged in; what they're doing as Discord shows it, as it changes (once a minute at most); "logged out"; and the side tab's own asks (make the page, whether it's proven, who sees it, take it down). No socket, nothing every tick, no location but Discord's area name, no hitpoints or prayer, and no other program: it talks to nothing but the relay.
+- **Network IO** (a sensitive API, allowed), through RuneLite's OkHttp, to the relay named in the page's key, and only (11/16/2026, the reviewer's "An 'Update my page' action and an hourly sync should be okay, as should matching Discord activity"): a snapshot when the player presses Update my page (once a minute at most), a minute after a login from the login screen (11/25/2026, the hourly sync's count set a minute short: `loginTicks`, LoginSyncTest; to be said in update 8's pull request), or after each hour logged in; what they're doing as Discord shows it, as it changes (once a minute at most); "logged out"; and the side tab's own asks (make the page, whether it's proven, who sees it, take it down). No socket, nothing every tick, no location but Discord's area name, no hitpoints or prayer, and no other program: it talks to nothing but the relay.
 -->
 - **The third-party warning:** on the "Send to my Outside page" setting (`@ConfigItem(warning = …)`), and for the Hub's manifest (below).
 - **Jagex's rules and the rejected list:**

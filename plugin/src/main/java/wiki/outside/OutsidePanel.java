@@ -301,8 +301,8 @@ public class OutsidePanel extends PluginPanel
 		// here, under the name they're logged in as; docs/protocol.md "Claiming a name")
 		start.setLayout(new BoxLayout(start, BoxLayout.Y_AXIS));
 		start.add(left(small("<html><div style='width:155px'>No page yet. Log in, then make one: it's named after the character you're logged in as,"
-			+ " and shows what you wear and carry, your stats, quests, diaries and slayer task, updated when you ask and"
-			+ " hourly while you play. Each character has a page and a key of its own.</div></html>")));
+			+ " and shows what you wear and carry, your stats, quests, diaries and slayer task, updated when you ask, a"
+			+ " minute after you log in and hourly while you play. Each character has a page and a key of its own.</div></html>")));
 		otherLine.setVisible(false);
 		start.add(left(otherLine));
 		start.add(Box.createVerticalStrut(4));
@@ -375,7 +375,7 @@ public class OutsidePanel extends PluginPanel
 		// the page: when it goes, and what goes with it
 		JPanel pageTab = tab();
 		pageTab.add(left(small("<html><div style='width:155px'>Your page updates when you press Update my page, and by itself"
-			+ " every hour you're logged in; never from the Wilderness or a PvP world. What goes on it is in the plugin's"
+			+ " a minute after you log in and every hour you're logged in; never from the Wilderness or a PvP world. What goes on it is in the plugin's"
 			+ " settings, each part its own switch.</div></html>")));
 		// hub:cut goal
 		// (the goal item, 11/17/2026; in the Page tab since 11/18/2026, update 4, Jace: set once and left, not one of

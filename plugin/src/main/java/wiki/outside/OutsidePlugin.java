@@ -204,6 +204,11 @@ public class OutsidePlugin extends Plugin
 	 *  while they're logged out */
 	static final int AUTO_SYNC_MINUTES = 60;
 	static final int SYNC_TICKS = AUTO_SYNC_MINUTES * 100;
+	/** an update a minute after logging in (11/25/2026, Jace: "could we update whenever someone logs in so information is
+	 *  fresh rather than late?"; as Wise Old Man's plugin updates at login): the hourly sync's count set this close to
+	 *  due, so its first comes then and the hour counts from it; a minute, so the game has handed over what's read
+	 *  (worn, carried, quests). Not after a world hop: only a login from the login screen. */
+	static final int LOGIN_SYNC_TICKS = 100;
 	/** "Update my page" once a minute at most */
 	static final long UPDATE_EVERY_MS = 60_000L;
 	/** what a snapshot carries (the rest of read()'s fields are the socket's) */
@@ -250,6 +255,8 @@ public class OutsidePlugin extends Plugin
 	 *  for a tick out of anywhere dangerous; when the last went (ms; 0 none this session); whether anything's been posted
 	 *  this session (so logging out says so); a scene just loaded, its area read on the next tick */
 	private int syncTicks;
+	/** whether the next login is from the login screen (not a world hop): the login's update comes a minute after it */
+	private boolean fromLoginScreen = true;
 	private volatile boolean syncDue;
 	private volatile long snapAt, updateAt;
 	/** a press of "Update my page" too soon, waiting for the minute (updateNow) */
@@ -674,6 +681,8 @@ public class OutsidePlugin extends Plugin
 			goalPanel();
 			// hub:end goal
 			readProof();   // (proven since the last logout? the side tab says so)
+			syncTicks = loginTicks(syncTicks, fromLoginScreen);
+			fromLoginScreen = false;
 			sceneDue = true;   // (a scene loaded: its area, as Discord reads it, on the next tick)
 			// hub:cut clog
 			clogLine();
@@ -690,6 +699,7 @@ public class OutsidePlugin extends Plugin
 		}
 		if (e.getGameState() == GameState.LOGIN_SCREEN)
 		{
+			fromLoginScreen = true;   // (the next login's update a minute in: loginTicks)
 			notesSaid = false;   // (the register's new notes, said again at the next login)
 			// (logged out: the snapshot's and what they're doing's, said once if anything went this session)
 			if (posted)
@@ -942,6 +952,13 @@ public class OutsidePlugin extends Plugin
 
 	// ---- the snapshot, and what they're doing as Discord shows it (11/16/2026, the Plugin Hub's answer;
 	// docs/protocol.md, "The snapshot")
+
+	/** The hourly sync's count as a login leaves it: from the login screen, a minute short of due (its update a minute
+	 *  in, the hour counted from that); after a world hop, as it was. */
+	static int loginTicks(int ticks, boolean fromLoginScreen)
+	{
+		return fromLoginScreen ? Math.max(ticks, SYNC_TICKS - LOGIN_SYNC_TICKS) : ticks;
+	}
 
 	/** Each tick logged in: the area read where a scene just loaded (as Discord reads it), the hour counted, a snapshot
 	 *  asked for sent once they're somewhere safe, and what they're doing sent as it changes (cleared at once somewhere
