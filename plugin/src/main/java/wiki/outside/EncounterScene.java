@@ -711,7 +711,9 @@ final class EncounterScene
 		for (GraphicsObject g : wv.getGraphicsObjects())
 		{
 			LocalPoint lp = g.getLocation();
-			if (g.finished() || lp == null || g.getLevel() != plane || !close(lp, mine, near))
+			// (not before its start: the client draws a graphic only from its start cycle; Yama's fire wave is 514
+			// tiles sent in one tick, each starting up to 735 cycles later, and every one was kept at once, 11/26/2026)
+			if (g.finished() || lp == null || g.getLevel() != plane || !close(lp, mine, near) || client.getGameCycle() < g.getStartCycle())
 			{
 				continue;
 			}
