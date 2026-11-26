@@ -76,7 +76,7 @@
 // The Array's fights (11/26/2026; fights.ts, "The Array's fights"): the newest encounters shown to anyone on the open
 // outstations' pages, and the busiest bosses over the last day and week, for outside.wiki's front page; each channel
 // tells the Directory as its fights change, kept in its storage ("fightFeed"):
-//   GET    /array/fights?limit=<1-60>   {"fights": [{"channel", "name", "id", "foe", "label", "at", "up", "ticks", "died",
+//   GET    /array/fights?limit=<1-60>[&boss=<key>]   (boss: only that boss's fights; the counts all the same) {"fights": [{"channel", "name", "id", "foe", "label", "at", "up", "ticks", "died",
 //                                       "moment"?, "time"?, "pb"?, "trip"?}], "bosses": [{"boss", "key", "day", "week"}],
 //                                       "day", "week", "days", "since", "at"}
 //
@@ -330,7 +330,7 @@ export class Directory extends DurableObject<Env> {
       }
       const feed = await this.fightFeedSeeded(), now = Date.now();
       if (feed.expire(now)) await this.ctx.storage.put("fightFeed", feed.saved());
-      const read = feed.read(await this.openNames(), now, parseInt(url.searchParams.get("limit") || "") || FEED_LATEST);
+      const read = feed.read(await this.openNames(), now, parseInt(url.searchParams.get("limit") || "") || FEED_LATEST, (url.searchParams.get("boss") || "").slice(0, 120));
       return new Response(JSON.stringify(read), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "public, max-age=60" } });
     }
     if (url.pathname === "/forget" && request.method === "POST" && this.env.TEST_FORGET === "1") {
@@ -786,6 +786,20 @@ function almanacAnswer(body: unknown, status = 200): Response {
   return new Response(body === null ? null : pyjson(body), { status, headers });
 }
 
+// The keeper's moment for a fight its plugin made none of (11/26/2026, Jace: "post the five missing thumbnails"):
+//   POST /admin/fights/<channel>/<id>/moment?tick=<t>   the file as the owner's upload takes it (fights.ts, readMoment),
+//   only for a fight with no moment. The admin token.
+async function keeperMoment(request: Request, env: Env, parts: string[]): Promise<Response> {
+  const auth = request.headers.get("authorization") || "";
+  if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) return new Response("no", { status: 403 });
+  const name = parts[2] || "", id = parts[3] || "";
+  if (!NAME.test(name) || parts.length !== 5 || parts[4] !== "moment") return new Response("which fight?", { status: 400 });
+  if (request.method !== "POST") return new Response(null, { status: 405 });
+  const url = new URL(request.url);
+  url.searchParams.set("id", id); url.searchParams.set("moment", "1");
+  return channelStub(env, name).fetch(toChannel(new Request(url.toString(), request), name, "/_fights_admin"));
+}
+
 async function admin(request: Request, env: Env, parts: string[]): Promise<Response> {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) {
@@ -907,6 +921,7 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
+    if (parts[0] === "admin" && parts[1] === "fights") return keeperMoment(request, env, parts);
     if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether" || parts[1] === "almanac" || parts[1] === "array")) return admin(request, env, parts);
 
     // the aether (11/07/2026; aether.ts): one room for every outstation and visitor, and its read for a page
@@ -1176,8 +1191,12 @@ export default {
       if (request.method !== "GET" && request.method !== "HEAD") return arrayAnswer(null, 405);
       const limit = url.searchParams.get("limit");
       if (limit !== null && !/^\d{1,3}$/.test(limit)) return arrayAnswer({ error: "limit is how many: 1 to 60" }, 400);
+      const ask = new URLSearchParams();
+      if (limit !== null) ask.set("limit", limit);
+      const boss = url.searchParams.get("boss");
+      if (boss) ask.set("boss", boss.slice(0, 120));
       return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"))
-        .fetch("https://dir/fights-feed" + (limit !== null ? "?limit=" + limit : ""));
+        .fetch("https://dir/fights-feed" + (ask.toString() ? "?" + ask.toString() : ""));
     }
 
     // shooting stars (11/08/2026; stars.ts): the stars the plugins have found, and who found each; any page may read it

@@ -480,6 +480,11 @@ test("the Array's fights: the day's and the week's counts, the busiest first, na
   deepStrictEqual(r.fights.map((e) => e.id), ["4", "5", "6", "1", "2", "3"]);
   deepStrictEqual(feed.read(new Map([["b", null]]), now, 2).fights.map((e) => e.id), ["4", "5"]); // (the limit)
   strictEqual(feed.read(new Map([["b", null]]), now, 500).fights.length, 3);
+  // (?boss=: one boss's alone, "Leviathan" and "The Leviathan" both; the counts all the same)
+  const lev = feed.read(new Map([["a", null], ["b", null], ["c", null]]), now, 60, "leviathan");
+  deepStrictEqual(lev.fights.map((e) => e.id), ["1", "2", "3"]);
+  deepStrictEqual(lev.bosses, r.bosses);
+  deepStrictEqual(feed.read(new Map([["a", null], ["b", null]]), now, 60, "nobody").fights, []);
 });
 
 test("the Array's fights: the oldest go past the most, and the counts say from when they're whole; kept and read back", () => {

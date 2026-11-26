@@ -1337,7 +1337,8 @@ is the keeping). `tests/protocol_test.py`'s `Kept`, against either.
 
 ## The Array's fights (11/26/2026)
 
-    GET <relay>/array/fights?limit=<1-60>   (24 to begin with)
+    GET <relay>/array/fights?limit=<1-60>[&boss=<key>]   (24 to begin with; boss: only that boss's fights, by the key
+                                                          "bosses" gives, the counts all the same; 11/26/2026)
     {"fights": [{"channel", "name", "id", "foe", "label", "at", "up", "ticks", "died", "moment"?: {"tick"}, "time"?, "pb"?,
                  "trip"?: {"id", "no", "end"?}}, ...]   newest first by "up" (when it went up)
      "bosses": [{"boss", "key", "day", "week"}, ...]   the 12 busiest over the week (by label, else foe; bossKey)
@@ -1346,6 +1347,10 @@ is the keeping). `tests/protocol_test.py`'s `Kept`, against either.
 
 Only fights shown to anyone (public), on the open list's pages (GET /channels: handed out, no watch code, not an invite waiting). "name" is the name as the game shows it, else the channel. "time"/"pb": the last kill time its page read, and whether the game called it a personal best. A fight's moment: GET /fights/<channel>/<id>/moment.bin; its page: outside.wiki/<channel>/fight/<id> (?trip=1 for the whole trip). 404 while the relay's FIGHTS switch is off; cache-control: public, max-age=60. The relay keeps it as each channel's fights change; nothing is gathered at a read, except the first read ever.
 
+
+The keeper's moment (11/26/2026): `POST <relay>/admin/fights/<channel>/<id>/moment?tick=<t>` with the admin token, the
+file as the owner's upload takes it, only for a fight that has no moment (409 otherwise); ghillie's `tools/post_moments.py`
+(`Post missing moments.bat`) posts the ones made headlessly for fights whose plugin made none.
 ## Shooting stars (11/08/2026)
 
 The crashed shooting stars the Outside plugins have found, for outside.wiki's globe, with the outstation that found each

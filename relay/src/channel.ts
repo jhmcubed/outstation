@@ -799,6 +799,7 @@ export class Channel extends DurableObject<Env> {
     if (role === "_clips") return this.clips(request, q, ip, false);
     if (role === "_clips_admin") return this.clips(request, q, ip, true);
     if (role === "_fights") return this.fights(request, q, ip);
+    if (role === "_fights_admin") return this.fights(request, q, ip, true);
     if (role === "_keep") return this.kept(request, q, ip);
     if (role === "_emotes") return this.emotes(request, q, ip);
     if (role === "_takedown") return this.takedown(request, q, ip);
@@ -2513,9 +2514,16 @@ export class Channel extends DurableObject<Env> {
 
   /** /fights/<channel>[/<id>] (index.ts, which has checked the switch): the list, an upload, a file, shown or kept, taken
    *  down. fights.ts has the routes. */
-  async fights(request: Request, q: URLSearchParams, ip: string): Promise<Response> {
+  async fights(request: Request, q: URLSearchParams, ip: string, keeper = false): Promise<Response> {
     if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
-    const owner = await this.fightOwner(request, q, ip);
+    // (the keeper's, index.ts's /admin/fights: only a moment for a fight that has none, 11/26/2026)
+    if (keeper) {
+      if (request.method !== "POST" || q.get("moment") !== "1") return json({ error: "only a missing moment" }, 405);
+      const f = FIGHT_ID.test(q.get("id") || "") ? await this.ctx.storage.get<Fight>("fight:" + q.get("id")) : undefined;
+      if (!f) return json({ error: "no such fight" }, 404);
+      if (f.moment) return json({ error: "this fight has its moment" }, 409);
+    }
+    const owner = keeper ? true : await this.fightOwner(request, q, ip);
     if (Array.isArray(owner)) return json({ error: owner[1] }, owner[0]);
     const id = q.get("id") || "";
     // (the fight's scene moment, 11/21/2026: index.ts's /moment and /moment.bin)
