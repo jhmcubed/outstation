@@ -1190,7 +1190,7 @@ export default {
       if (!fightsOn(env)) return Response.json({ error: "fights aren't on here" }, { status: 404, headers: { "access-control-allow-origin": "*" } });
       if (request.method !== "GET" && request.method !== "HEAD") return arrayAnswer(null, 405);
       const limit = url.searchParams.get("limit");
-      if (limit !== null && !/^\d{1,3}$/.test(limit)) return arrayAnswer({ error: "limit is how many: 1 to 60" }, 400);
+      if (limit !== null && !/^\d{1,3}$/.test(limit)) return arrayAnswer({ error: "limit is how many: 1 to 60 (500 for one boss)" }, 400);
       const ask = new URLSearchParams();
       if (limit !== null) ask.set("limit", limit);
       const boss = url.searchParams.get("boss");

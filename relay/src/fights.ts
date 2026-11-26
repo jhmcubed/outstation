@@ -741,7 +741,8 @@ export class FightFeed {
   read(open: Map<string, string | null>, now = Date.now(), limit = FEED_LATEST, boss = ""): FeedAnswer {
     const week = now - FEED_DAYS * FEED_DAY, day = now - FEED_DAY;
     const shown = this.list.filter((e) => open.has(e.channel) && e.up >= week);
-    const n = Math.max(1, Math.min(FEED_PAGE, Math.floor(limit) || FEED_LATEST));
+    // (one boss's: as many as the feed keeps, not a page of them; 11/26/2026)
+    const n = Math.max(1, Math.min(boss ? FEED_KEPT : FEED_PAGE, Math.floor(limit) || FEED_LATEST));
     // (?boss=: only that boss's, by the key the counts below go by; 11/26/2026, Jace: a boss's name under "busiest this
     // week" pressed "shows all of the recent kills/recorded encounters at that boss")
     const keyOf = (e: FeedFight) => { const b = feedBoss(e); return bossKey(b) || b.toLowerCase(); };
