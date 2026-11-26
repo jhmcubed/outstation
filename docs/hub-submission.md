@@ -579,6 +579,39 @@ this is for the recordings to come. Checks: `gradle test` (208, `EncountersTest.
 twice in a row with a potion drunk before the second harvest, and Jace's word. A fix on its own: it goes after update 7,
 alone or with update 8 as Jace says.
 
+## Fixes: the ground under bridges, graphics not started yet, a moment for every fight (built 11/26/2026, not sent)
+
+From Jace's list of what looked wrong on outside.wiki (ghillie's claude/outstation-log.md, "The encounter viewer's
+fixes from Jace's list" and "The encounter viewer, round two"). Three fixes; the page puts the recordings already up
+right where it can (the ground under bridges from the instance's templates; the rest is for the recordings to come).
+
+- **The ground under a bridge** (`Encounters`, the scene's scan; `objectBelow`). Where the tile on plane 1 is a bridge,
+  the client moves that column down a plane and hangs plane 0's own tile under it (`Tile.getBridge()`); the scan read
+  only `tiles[plane][x][y]`, so none of that tile's objects were recorded: the Theatre of Blood's Nylocas room lost its
+  web (the floor went black), the Leviathan's arena its cracked plateau and its edge walls. Now each is written with
+  `"below": true` and `pl` 0.
+- **A graphic before its start** (`EncounterScene`). A moment kept every graphic object, started or not; the client
+  draws one only from its start cycle. Yama's fire wave is 514 tile graphics sent in one tick, each starting up to 735
+  cycles later, and the whole wave was in his moment at once ("flames covering the entire arena").
+- **A moment for every fight** (`EncounterScene`, `EncounterShelf`). Five of the relay's fights had none: vaerric's two
+  Fractured Archive raids ("Java heap space": a raid chest's moment is 26-33 MB before it's packed), a Nex fight he and
+  SendTherapy both left by teleport with her alive ("the map it happened on was gone before its still scene was read"),
+  and don_danz's Phosani's Nightmare (no reason noted: the making never finished that session). Now: a still scene kept
+  while recording (every 5 ticks, or after 2 when you've moved 4 tiles; about 1 ms of the client thread) and used when
+  the map has gone; each try that runs out of memory starts a smaller one (tracks at an eighth of the budget and half
+  the still dots, then the anchor's frame alone at a quarter: `taken.smaller` says how many times); any Error on the
+  moment's thread caught and noted; the summary's follow-up always run so a failure never holds the send; and a
+  `momentDue` mark in index.json, so a moment RuneLite closed before says why on the next upload.
+
+Checks: `gradle test` 216, 0 failures (new: `EncounterMapsTest.aTeleportOutKeepsTheFightsGround` and
+`theKeptGroundIsReadEveryFewTicks`, `EncounterMemoryTest.aClientShortOfMemoryGetsASmallerMomentNotNone`,
+`EncounterQueueTest.aMomentNeverFinishedSaysWhyNextTime` and `aMomentsFailureNeverHoldsTheSend`). Not yet: the cut,
+`hub_check.py`, `start_check.py`, the local world, and Jace's word. To try in the game (the local world where it can):
+the Theatre of Blood's Nylocas room or the Leviathan recorded, its file's `obj` lines with `"below"` there; Yama's fire
+wave in a moment (only the band the game showed); teleport out of a boss with it alive (a "round this tick" moment on
+the boss's ground); stop a recording by hand and close RuneLite at once (the next upload gives the new reason); a raid
+chest (its moment still made, the frame time unchanged).
+
 ## Update 8: trips (built 11/23/2026, not sent; after update 7)
 
 Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships", then "start building trips for

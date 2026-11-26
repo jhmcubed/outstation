@@ -2478,8 +2478,18 @@ export class Channel extends DurableObject<Env> {
     return h;
   }
 
+  /** A fight as it now stands, or fights gone from the page, told to the Directory for the Array's fights (fights.ts,
+   *  "The Array's fights"; 11/26/2026): it keeps only the ones shown to anyone and answers only with the open list's
+   *  pages, so a fight kept to themselves, or a friends-only page's, is never on the front page. One lost is one less
+   *  tile until that fight changes again. */
+  tellFeed(body: { fight: Fight } | { gone: string[]; taken_down: boolean }) {
+    if (!this.name) return;
+    this.ctx.waitUntil(this.tellDirectory("/fights-feed", JSON.stringify({ channel: this.name, ...body })).then(() => undefined, () => undefined));
+  }
+
   /** Fights gone: trimmed (their times stay in the history, without their ids) or taken down (their times go too). */
   async dropFights(gone: Fight[], takenDown = false) {
+    this.tellFeed({ gone: gone.map((f) => f.id), taken_down: takenDown }); // (trimmed: still counted on the front page)
     await this.ctx.storage.put("fightTimes", historyGone(await this.fightTimes(), gone.map((f) => f.id), takenDown));
     await this.ctx.storage.delete(gone.map((f) => "fight:" + f.id));
     // (their scene moments with them, and the page's featured fight if it was one: 11/21/2026)
@@ -2538,6 +2548,7 @@ export class Channel extends DurableObject<Env> {
         await this.env.CLIPS?.delete(momentKey(this.name, id));
         delete f.moment;
         await this.ctx.storage.put("fight:" + id, f);
+        this.tellFeed({ fight: f });
       } else await this.dropFights([f], true);
       return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
     }
@@ -2558,6 +2569,7 @@ export class Channel extends DurableObject<Env> {
         await this.env.CLIPS.put(momentKey(this.name, id), got.file, { httpMetadata: { contentType: "application/octet-stream" } });
         f.moment = { tick: got.tick, size: got.file.length, at: now };
         await this.ctx.storage.put("fight:" + id, f);
+        this.tellFeed({ fight: f });
         return json({ id, moment: f.moment }, 201);
       }
       // its kill times, as its page read them from the file (fights.ts, "Kill times", 11/22/2026)
@@ -2566,6 +2578,7 @@ export class Channel extends DurableObject<Env> {
         if (timesRefused(times)) return json({ error: times[1] }, times[0]);
         f.times = times;
         await this.ctx.storage.put("fight:" + id, f);
+        this.tellFeed({ fight: f });
         await this.ctx.storage.put("fightTimes", historyPut(await this.fightTimes(), f, times));
         return json({ id, times });
       }
@@ -2587,8 +2600,9 @@ export class Channel extends DurableObject<Env> {
       if (keep === true) f.kept = true;
       else if (keep === false) delete f.kept;
       await this.ctx.storage.put("fight:" + id, f);
-      // (its times in the history shown or kept to themselves with it)
+      // (its times in the history shown or kept to themselves with it; and on the front page or off it)
       if (pub !== null) await this.ctx.storage.put("fightTimes", historyPublic(await this.fightTimes(), id, f.public));
+      if (pub !== null) this.tellFeed({ fight: f });
       if (feat === "1") await this.ctx.storage.put("fightFeatured", id);
       else if ((feat === "0" || keep === false) && (await this.ctx.storage.get<string>("fightFeatured")) === id) await this.ctx.storage.delete("fightFeatured");
       return json({ id, public: f.public, featured: (await this.ctx.storage.get<string>("fightFeatured")) === id, kept: !!f.kept });
@@ -2629,7 +2643,8 @@ export class Channel extends DurableObject<Env> {
     await this.ctx.storage.put("fight:" + fight.id, fight);
     // (its kill times, if its meta carried them, into the times' history)
     if (fight.times?.length) await this.ctx.storage.put("fightTimes", historyPut(await this.fightTimes(), fight));
-    await this.fightList(); // (the oldest past the most go)
+    // (the oldest past the most go; then the new one told to the Array's fights, if it's still here)
+    if ((await this.fightList()).some((x) => x.id === fight.id)) this.tellFeed({ fight });
     return json({ fight }, 201);
   }
 

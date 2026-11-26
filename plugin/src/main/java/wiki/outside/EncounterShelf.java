@@ -299,18 +299,26 @@ final class EncounterShelf
 	{
 		run("summarizing " + file, () ->
 		{
-			Filepath d = dir();
-			Filepath f = d.joinSegment(file);
-			if (f.isFile())
+			// (then runs however this goes, 11/26/2026: it's what builds the moment and lets the send go; a summary that
+			// failed here left the recording marked as building till the client closed, and no moment)
+			try
 			{
-				summarized(f);
+				Filepath d = dir();
+				Filepath f = d.joinSegment(file);
+				if (f.isFile())
+				{
+					summarized(f);
+				}
+				for (String gone : EncounterFiles.cap(d, most, busy))
+				{
+					index().remove(gone);
+				}
+				saveIndex();
 			}
-			for (String gone : EncounterFiles.cap(d, most, busy))
+			finally
 			{
-				index().remove(gone);
+				then.run();
 			}
-			saveIndex();
-			then.run();
 		}, null);
 	}
 
@@ -515,9 +523,7 @@ final class EncounterShelf
 			if (p.moment == null)
 			{
 				// (round eight: why it goes without, said in the upload's meta)
-				JsonObject e = entry(file);
-				p.momentWhy = e != null && e.has("momentWhy") ? e.get("momentWhy").getAsString()
-					: mf.isFile() ? "its moment was too big or couldn't be read" : "no moment was made";
+				p.momentWhy = noMomentWhy(entry(file), mf.isFile(), building.contains(file));
 			}
 			ready.accept(p);
 		}, problem);
@@ -684,6 +690,22 @@ final class EncounterShelf
 	void expect(String file)
 	{
 		building.add(file);
+		// (and kept in the index till it's made or said why not, 11/26/2026: a client closed meanwhile sends it next time
+		// saying so, not "no moment was made")
+		run("noting " + file + "'s moment is coming", () ->
+		{
+			JsonObject e = entry(file);
+			if (e == null)
+			{
+				e = new JsonObject();
+				index().add(file, e);
+			}
+			if (!e.has("momentWhy") && !dir().joinSegment(momentName(file)).isFile())
+			{
+				e.addProperty("momentDue", true);
+				saveIndex();
+			}
+		}, null);
 	}
 
 	/** A send to make now: its file, its index entry as it was, and whether its last send went unanswered. */
@@ -846,13 +868,33 @@ final class EncounterShelf
 		building.add(file);
 		run("reading " + file + "'s summary", () ->
 		{
-			JsonObject e = entry(file);
 			Map<String, Object> base = new java.util.LinkedHashMap<>();
-			base.put("fight", null);
-			base.put("foes", e != null && e.has("who") ? e.get("who").getAsString() : null);
-			base.put("label", e != null && e.has("label") ? e.get("label").getAsString() : null);
-			base.put("at", e != null && e.has("at") ? (Object) e.get("at").getAsDouble() : null);
-			Filepath target = dir().joinSegment(momentName(file));
+			Filepath target;
+			try
+			{
+				JsonObject e = entry(file);
+				base.put("fight", null);
+				base.put("foes", e != null && e.has("who") ? e.get("who").getAsString() : null);
+				base.put("label", e != null && e.has("label") ? e.get("label").getAsString() : null);
+				base.put("at", e != null && e.has("at") ? (Object) e.get("at").getAsDouble() : null);
+				target = dir().joinSegment(momentName(file));
+			}
+			catch (IOException | RuntimeException ex)
+			{
+				// (11/26/2026: this used to end here silently, the recording marked as building till the client closed,
+				// and its send waiting with it; now it says why and goes)
+				log.warn("outside: {}'s moment couldn't be begun; it goes without", file, ex);
+				try
+				{
+					noteNoMoment(file, "its moment couldn't be begun: " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
+				}
+				finally
+				{
+					building.remove(file);
+					then.run();
+				}
+				return;
+			}
 			try
 			{
 				moments.execute(() ->
@@ -868,10 +910,12 @@ final class EncounterShelf
 							{
 								target.write(bytes, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
 									java.nio.file.StandardOpenOption.WRITE);
-								log.info("outside: {}'s moment: {} KB, built in {} ms; the client thread's share {} ms over {} frames taken ({} us a frame), the still scene {} ms, the buffer {} KB, {} frames kept; the tracks about {} KB, built at {} KB (frames {}x apart, {} dots a model at most)",
+								noteMomentMade(file);
+								log.info("outside: {}'s moment: {} KB, built in {} ms; the client thread's share {} ms over {} frames taken ({} us a frame), the still scene {} ms, the buffer {} KB, {} frames kept; the tracks about {} KB, built at {} KB (frames {}x apart, {} dots a model at most; made smaller {} times for memory)",
 									file, bytes.length / 1024, ms, taken.clientNanos / 1_000_000, taken.framesTaken,
 									taken.framesTaken == 0 ? 0 : taken.clientNanos / 1000 / taken.framesTaken, taken.stillNanos / 1_000_000,
-									taken.bufferBytes / 1024, taken.frames.size(), taken.trackBytes / 1024, taken.trackBytesBuilt / 1024, taken.spacing, taken.trackMost);
+									taken.bufferBytes / 1024, taken.frames.size(), taken.trackBytes / 1024, taken.trackBytesBuilt / 1024, taken.spacing, taken.trackMost,
+									taken.smaller);
 							}
 							finally
 							{
@@ -880,8 +924,10 @@ final class EncounterShelf
 							}
 						}, null);
 					}
-					catch (IOException | RuntimeException | OutOfMemoryError ex)
+					catch (IOException | RuntimeException | Error ex)
 					{
+						// (any Error too, 11/26/2026: one that wasn't OutOfMemoryError ended this thread with nothing said, the
+						// recording marked as building and its send waiting till the client closed)
 						if (ex instanceof EncounterMoment.NoMoment)
 						{
 							log.info("outside: {}'s moment couldn't be made ({}); it goes without", file, ex.getMessage());
@@ -908,6 +954,7 @@ final class EncounterShelf
 			}
 			catch (java.util.concurrent.RejectedExecutionException ex)
 			{
+				// (the plugin stopping: the index keeps momentDue, so its send says why, next time)
 				building.remove(file);
 			}
 		}, null);
@@ -917,18 +964,60 @@ final class EncounterShelf
 	 *  known, nothing written. */
 	private void noteNoMoment(String file, String why) throws IOException
 	{
+		JsonObject e = entry(file);
 		if (why == null)
 		{
+			// (none known: no longer due, all the same)
+			if (e != null && e.remove("momentDue") != null)
+			{
+				saveIndex();
+			}
 			return;
 		}
-		JsonObject e = entry(file);
 		if (e == null)
 		{
 			e = new JsonObject();
 			index().add(file, e);
 		}
 		e.addProperty("momentWhy", why);
+		e.remove("momentDue");
 		saveIndex();
+	}
+
+	/** Its moment written: no longer due (11/26/2026), on the files thread. */
+	private void noteMomentMade(String file) throws IOException
+	{
+		JsonObject e = entry(file);
+		if (e != null && (e.remove("momentDue") != null | e.remove("momentWhy") != null))
+		{
+			saveIndex();
+		}
+	}
+
+	/** Why a recording that goes up has no moment, from its index entry ({@code e}, or null) and whether its moment's file
+	 *  is there but unread ({@code unread}) or still being made ({@code making}): the reason noted when it couldn't be
+	 *  made; else, due and never made, RuneLite closed (or the plugin stopped) before it was (11/26/2026, Don Danz's
+	 *  Phosani's Nightmare: "no moment was made", its moment's making never finished before the client closed or never
+	 *  said why); else as before. */
+	static String noMomentWhy(JsonObject e, boolean unread, boolean making)
+	{
+		if (e != null && e.has("momentWhy"))
+		{
+			return e.get("momentWhy").getAsString();
+		}
+		if (unread)
+		{
+			return "its moment was too big or couldn't be read";
+		}
+		if (making)
+		{
+			return "its moment was still being made";
+		}
+		if (e != null && e.has("momentDue"))
+		{
+			return "RuneLite closed or the plugin stopped before its moment was made";
+		}
+		return "no moment was made";
 	}
 
 	/** What the index says of one recording (null: nothing), on the files thread. */

@@ -190,4 +190,76 @@ public class EncounterQueueTest
 		assertNull(EncounterQueueTest.<EncounterShelf.Due>await(c -> shelf.nextDue(now, "camo field", Collections.emptySet(), c)));
 		shelf.shutDown();
 	}
+
+	/** a recording in the folder as the recorder leaves one: packed (as a crash's leftover is, at the start), its name */
+	private static String packedRecording(Path root, Path enc, String name) throws Exception
+	{
+		Path plain = enc.resolve(name);
+		Files.write(plain, ("{\"t\":0,\"c\":1,\"e\":\"header\",\"format\":6,\"label\":\"Phosani's Nightmare\",\"startedMs\":1795646372019,\"player\":\"camo field\"}\n"
+			+ "{\"t\":0,\"c\":2,\"e\":\"tick\"}\n{\"t\":1,\"c\":32,\"e\":\"tick\"}\n").getBytes(StandardCharsets.UTF_8));
+		Files.setLastModifiedTime(plain, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - EncounterFiles.IDLE_MS - 1000));
+		EncounterShelf shelf = new EncounterShelf(new Gson(), () -> Filepath.Unchecked.getRooted(root));
+		await(shelf, done -> shelf.tidy(200L << 20, Collections.emptySet(), false, done));
+		shelf.shutDown();
+		assertTrue(Files.exists(enc.resolve(name + EncounterFiles.EXT)));
+		return name + EncounterFiles.EXT;
+	}
+
+	/**
+	 * (11/26/2026, Don Danz's Phosani's Nightmare went up eleven hours after it ended saying only "no moment was made":
+	 * its moment's making never finished, and nothing said why) A recording whose moment was coming as RuneLite closed goes
+	 * up next time saying so; one whose moment couldn't be made says why; one made says nothing.
+	 */
+	@Test
+	public void aMomentNeverFinishedSaysWhyNextTime() throws Exception
+	{
+		Path root = Files.createTempDirectory("outside");
+		Path enc = Files.createDirectories(root.resolve("encounters"));
+		String file = packedRecording(root, enc, "20261125-223932-Sisterhood-Sanctuary.jsonl");
+		// (it ends, its moment's coming; the client closes before it's made)
+		EncounterShelf shelf = new EncounterShelf(new Gson(), () -> Filepath.Unchecked.getRooted(root));
+		shelf.expect(file);
+		EncounterQueueTest.<JsonObject>await(c -> shelf.entryOf(file, c));
+		shelf.shutDown();
+		// (the next start: it goes up saying so, not "no moment was made")
+		EncounterShelf next = new EncounterShelf(new Gson(), () -> Filepath.Unchecked.getRooted(root));
+		EncounterShelf.Prepared p = await(c -> next.prepare(file, c, null));
+		assertNull(p.moment);
+		assertEquals("RuneLite closed or the plugin stopped before its moment was made", p.momentWhy);
+		// (its making ended with a reason: that reason, and it's no longer due)
+		await(next, done -> next.moment(file, EncounterScene.none("the scene's buffer was full"), done));
+		p = await(c -> next.prepare(file, c, null));
+		assertEquals("the scene's buffer was full", p.momentWhy);
+		assertFalse(EncounterQueueTest.<JsonObject>await(c -> next.entryOf(file, c)).has("momentDue"));
+		next.shutDown();
+		// (nothing expected, nothing known: as before)
+		assertEquals("no moment was made", EncounterShelf.noMomentWhy(null, false, false));
+		assertEquals("its moment was too big or couldn't be read", EncounterShelf.noMomentWhy(new JsonObject(), true, false));
+		JsonObject due = new JsonObject();
+		due.addProperty("momentDue", true);
+		assertEquals("its moment was still being made", EncounterShelf.noMomentWhy(due, false, true));
+	}
+
+	/** (11/26/2026) A moment whose making fails anywhere still lets the recording's send go, saying why: a summary that
+	 *  can't be read once it's packed (it used to leave the recording marked as building till the client closed, and its
+	 *  moment never made), and a moment with nothing in it to build. */
+	@Test
+	public void aMomentsFailureNeverHoldsTheSend() throws Exception
+	{
+		Path root = Files.createTempDirectory("outside");
+		Path enc = Files.createDirectories(root.resolve("encounters"));
+		// (packed, but not a recording a summary can be read from)
+		Files.write(enc.resolve("20261126-041049-Nex.jsonl.gz"), new byte[]{1, 2, 3, 4});
+		EncounterShelf shelf = new EncounterShelf(new Gson(), () -> Filepath.Unchecked.getRooted(root));
+		shelf.expect("20261126-041049-Nex.jsonl.gz");
+		await(shelf, done -> shelf.packed("20261126-041049-Nex.jsonl.gz", 200L << 20, Collections.emptySet(), done));
+		// (a Taken with nothing in it: its build fails on the moments thread, and says so)
+		EncounterScene.Taken empty = new EncounterScene.Taken();
+		empty.frames = new ArrayList<>();
+		await(shelf, done -> shelf.moment("20261126-041049-Nex.jsonl.gz", empty, done));
+		JsonObject e = await(c -> shelf.entryOf("20261126-041049-Nex.jsonl.gz", c));
+		assertTrue(e.toString(), e.get("momentWhy").getAsString().startsWith("it couldn't be made"));
+		assertFalse(e.has("momentDue"));
+		shelf.shutDown();
+	}
 }

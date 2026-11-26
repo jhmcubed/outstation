@@ -2465,9 +2465,45 @@ final class Encounters
 					{
 						objectSeen(tile.getGroundObject(), true);
 					}
+					// Under a bridge: the plane below's own tile, which the client hangs under the bridge it moves down a
+					// plane (its objects aren't in the scene's tiles at all: the Nylocas room's web, the Leviathan's
+					// plateau; 11/26/2026). Written with "below" and plane 0, the map's own plane for them.
+					Tile below = tile.getBridge();
+					if (below != null)
+					{
+						for (GameObject obj : below.getGameObjects())
+						{
+							if (obj != null && obj.getSceneMinLocation().equals(below.getSceneLocation()))
+							{
+								objectBelow(obj);
+							}
+						}
+						objectBelow(below.getWallObject());
+						objectBelow(below.getDecorativeObject());
+						objectBelow(below.getGroundObject());
+					}
 				}
 			}
 		}
+	}
+
+	/** An object on the tile under a bridge, written once with the map loaded (see the scene's own scan) */
+	private void objectBelow(TileObject obj)
+	{
+		if (obj == null)
+		{
+			return;
+		}
+		if (definedObjects.add(obj.getId()))
+		{
+			emit("objdef").add("def", EncounterSnap.objectDefinition(client.getObjectDefinition(obj.getId())));
+		}
+		JsonObject o = EncounterSnap.object(obj);
+		o.addProperty("init", true);
+		o.addProperty("below", true);
+		o.addProperty("pl", 0);
+		JsonObject line = emit("obj");
+		o.entrySet().forEach(entry -> line.add(entry.getKey(), entry.getValue()));
 	}
 
 	private void objectSeen(TileObject obj, boolean initial)
