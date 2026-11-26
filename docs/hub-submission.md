@@ -610,7 +610,9 @@ Checks: `gradle test` 216, 0 failures (new: `EncounterMapsTest.aTeleportOutKeeps
 the Theatre of Blood's Nylocas room or the Leviathan recorded, its file's `obj` lines with `"below"` there; Yama's fire
 wave in a moment (only the band the game showed); teleport out of a boss with it alive (a "round this tick" moment on
 the boss's ground); stop a recording by hand and close RuneLite at once (the next upload gives the new reason); a raid
-chest (its moment still made, the frame time unchanged).
+chest (its moment still made, the frame time unchanged). README.hub.md's three new pictures (character.gif and replay.gif at
+50 fps, encounter-page.png) are pinned to outstation 4d3b3d7's plugin/assets for now; at the cut they can be pinned to
+the outside-plugin commit that carries them, as the others are.
 
 ## Update 8: trips (built 11/23/2026, not sent; after update 7)
 

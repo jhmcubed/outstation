@@ -11,11 +11,11 @@
 
 **Your character, in motion:** press Capture my character and do an emote; your page plays it back, from any side
 
-![A captured emote played back on Outside.wiki: the subject in a red cape waving a staff, turning slowly, their pet mole beside them](https://raw.githubusercontent.com/jhmcubed/outside-plugin/PINNED_COMMIT/assets/character.gif)
+![A captured emote played back on Outside.wiki: the subject in a red cape waving a staff, turning slowly, their pet mole beside them](https://raw.githubusercontent.com/jhmcubed/outstation/4d3b3d74ff30cc956557ab70e19286abd177a1a6/plugin/assets/character.gif)
 
 **Your boss fights, recorded and replayed** in 2D or 3D, tick by tick
 
-![Ocellus's last phase in the Fractured Archive replayed in 3D: the team on the boss as the floor breaks into the void](https://raw.githubusercontent.com/jhmcubed/outside-plugin/PINNED_COMMIT/assets/replay.gif)
+![Ocellus's last phase in the Fractured Archive replayed in 3D: the team on the boss as the floor breaks into the void](https://raw.githubusercontent.com/jhmcubed/outstation/4d3b3d74ff30cc956557ab70e19286abd177a1a6/plugin/assets/replay.gif)
 
 Every boss of a raid on one line, down to the reward chest
 
@@ -63,7 +63,7 @@ Outside records your fights at bosses and raids on your computer, tick by tick, 
 2. With **Put each on my page** on (as it is to begin with), each fight with a result goes to your page by itself as it ends, other players' names, their chat and your exact experience taken out first. Off, press **Put on my page** on one: a window says what's taken out, then asks.
 3. **Open** beside it opens its own page, Outside.wiki/&lt;your name&gt;/fight/&lt;id&gt; (it's on your page too, with your other encounters). Play it in **2d** or **3d** (rebuilt from the game's own files), a tick at a time or at ¼× to 4×, from anywhere on its trace; **share** copies a link at the tick it's on; **keep as a video** makes a video file of a stretch of it, there in your browser.
 
-![An encounter's own page on Outside.wiki: Ocellus in the Fractured Archive replayed in 3D, with share, save the file, save the tick log and keep as a video over it, the raid's trace under it and this tick's lines beside it](https://raw.githubusercontent.com/jhmcubed/outside-plugin/PINNED_COMMIT/assets/encounter-page.png)
+![An encounter's own page on Outside.wiki: Ocellus in the Fractured Archive replayed in 3D, with share, save the file, save the tick log and keep as a video over it, the raid's trace under it and this tick's lines beside it](https://raw.githubusercontent.com/jhmcubed/outstation/4d3b3d74ff30cc956557ab70e19286abd177a1a6/plugin/assets/encounter-page.png)
 
 **Saving and sharing it.** On its own page, **save the file** downloads the recording itself (a `.jsonl.gz`: gzipped JSON lines, one event a line, in Encounter Recorder's format, so it opens in Encounter Replay too), and **save the tick log** every tick's lines as text, as "this tick" words them. That file is the copy on your page, with other players' names, their chat and your exact experience taken out: the one to share with anyone who wants the real fight, tick by tick (anyone who can open its page can save it too). The recordings on your computer (RuneLite's folder, plugin-data/outside/encounters: the Encounters tab's **Copy the folder's place**) are whole, other players' names and all.
 
