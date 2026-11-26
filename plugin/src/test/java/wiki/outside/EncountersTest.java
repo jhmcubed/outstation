@@ -83,6 +83,50 @@ public class EncountersTest
 		assertArrayEquals(new int[]{29790, 1}, got.get(1));
 	}
 
+	/** a corpse's loot is what came, not a dose drunk, a pie eaten or gear taken off (11/25/2026, BigSneezi's Araxxor
+	 *  kills, from his recordings) */
+	@Test
+	public void aCorpsesLootIsWhatCame()
+	{
+		java.util.Map<Integer, String> names = new java.util.HashMap<>();
+		names.put(139, "Prayer potion(4)");
+		names.put(141, "Prayer potion(3)");
+		names.put(7208, "Wild pie");
+		names.put(7210, "Half a wild pie");
+		names.put(13576, "Dragon warhammer");
+		names.put(19722, "Dragon defender (t)");
+		names.put(13263, "Abyssal bludgeon");
+		names.put(1079, "Rune platelegs");
+		names.put(384, "Raw shark");
+		java.util.function.IntFunction<String> name = names::get;
+		java.util.Map<Integer, Long> none = new java.util.HashMap<>();
+		assertEquals("prayer potion", Encounters.baseName("Prayer potion(4)"));
+		assertEquals("wild pie", Encounters.baseName("Half a wild pie"));
+		assertEquals("dragon defender (t)", Encounters.baseName("Dragon defender (t)"));
+		// (a dose drunk as the corpse was clicked: nothing came)
+		java.util.Map<Integer, Long> inv = new java.util.HashMap<>();
+		inv.put(139, 1L);
+		inv.put(384, 21L);
+		assertTrue(Encounters.lootGained(inv, Arrays.asList(new int[]{141, 1}, new int[]{384, 21}), none, none, name).isEmpty());
+		// (a pie half eaten)
+		java.util.Map<Integer, Long> pie = new java.util.HashMap<>();
+		pie.put(7208, 1L);
+		assertTrue(Encounters.lootGained(pie, Arrays.asList(new int[]{7210, 1}), none, none, name).isEmpty());
+		// (the warhammer and defender taken off for the bludgeon, the loot in the same change)
+		java.util.Map<Integer, Long> worn = new java.util.HashMap<>(), wornAfter = new java.util.HashMap<>();
+		worn.put(13576, 1L);
+		worn.put(19722, 1L);
+		wornAfter.put(13263, 1L);
+		java.util.Map<Integer, Long> had = new java.util.HashMap<>();
+		had.put(13263, 1L);
+		java.util.List<int[]> got = Encounters.lootGained(had, Arrays.asList(new int[]{13576, 1}, new int[]{19722, 1}, new int[]{1079, 2}), worn, wornAfter, name);
+		assertEquals(1, got.size());
+		assertArrayEquals(new int[]{1079, 2}, got.get(0));
+		// (a stack grown is loot: more sharks)
+		got = Encounters.lootGained(inv, Arrays.asList(new int[]{139, 1}, new int[]{384, 121}), none, none, name);
+		assertArrayEquals(new int[]{384, 100}, got.get(0));
+	}
+
 	/** every reward window RuneLite's Loot Tracker reads (1.13.7) is one this recorder reads */
 	@Test
 	public void theRewardWindowsAreTheLootTrackers()
