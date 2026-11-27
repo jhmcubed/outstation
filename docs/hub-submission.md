@@ -658,7 +658,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/25/2026 9e7ff31 with update 7's README, the bridges' floors and the login update, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/27/2026 9d712d2 with update 7's README, the bridges' floors and objects, the login update and claude/blissful-wright-9vee14's work, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -700,6 +700,16 @@ proxied connections logged on port 9, nothing let out; What I'm doing off): ee60
 at login and once more 60 s on; update 7 (12deb7a), at login only, nothing in the four minutes after. The whole plugin
 210 tests, the cut 154, hub_check, hub_cut --check matches. Update 8's build 9e7ff31. Update 8's pull request says it:
 "Also: the page updates a minute after login (the hourly sync starting at login), as Wise Old Man's plugin does."
+
+**claude/blissful-wright-9vee14 merged into update 8 (11/27/2026, Jace: "2").** That session's work, built on this
+branch: a corpse's loot as it came, a moment keeps no graphic before its start, a moment for every fight, the objects
+on the tile a bridge hangs under written in the recording ("below"), the README's recording section, its picture and
+the GIFs re-made at 50 fps, and the relay's newest encounters on the Array (deployed by it, eb0a55c, which carries the
+trips code, 295711d: the relay that keeps trips is most likely already live). Merged clean (outstation 5062555). With
+it, a moment draws those objects too (EncounterScene's `objects`, for a tile and its bridge's lower tile): at the
+Leviathan the plateau's rocks stand at the player's height, the floor this branch drew under them, and the player on
+them. The whole plugin 216 tests, the cut 160, hub_check, hub_cut --check matches. Update 8's build 9d712d2. The 50 fps
+GIFs on outside-plugin's main too (14721a5), linked from outstation 4d3b3d7.
 
 ## Update 9 (planned 11/22/2026 as update 8; moved to 9 on 11/23/2026): alts under one page
 
