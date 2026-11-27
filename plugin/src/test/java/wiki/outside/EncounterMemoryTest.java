@@ -105,6 +105,53 @@ public class EncounterMemoryTest
 		assertEquals(2.0, EncounterMoment.num(fr.get("cycles")), 0);
 	}
 
+	/**
+	 * (11/26/2026, Vaerric's two Fractured Archive raids: "it couldn't be made: Java heap space", the same raids his
+	 * teammate's client made moments of) A client short of memory gets a smaller moment, never none: each try that runs
+	 * out lets the next, smaller one begin (the tracks an eighth of the budget and half the still dots; then the anchor's
+	 * frame alone with a quarter of them), and only when every try has run out does the error go on to be said.
+	 */
+	@Test
+	public void aClientShortOfMemoryGetsASmallerMomentNotNone() throws Exception
+	{
+		java.util.Map<String, Object> base = EncounterMapsTest.base();
+		// (as ever when nothing runs out)
+		EncounterScene.Taken t = heavy(60, 16);
+		EncounterMoment.Moment whole = EncounterMoment.decode(EncounterScene.buildSmaller(t, base, 7, null));
+		assertEquals(0, t.smaller);
+		assertNull(((java.util.Map<?, ?>) whole.meta.get("taken")).get("smaller"));
+		long wholeHeld = t.trackBytesBuilt;
+		// (the first try out of memory: still moving, its tracks made for an eighth of the budget (each model keeps 200
+		// dots at the least, so a crowd this big holds a little over it), fewer still dots)
+		t = heavy(60, 16);
+		EncounterMoment.Moment light = EncounterMoment.decode(EncounterScene.buildSmaller(t, base, 7, k -> k < 1));
+		assertEquals(1, t.smaller);
+		assertTrue("built holding " + (t.trackBytesBuilt >> 10) + " KB, the whole one " + (wholeHeld >> 10), t.trackBytesBuilt * 4 < wholeHeld);
+		assertEquals(EncounterScene.SPACING_MOST, t.spacing);
+		assertTrue(light.frames > 1);
+		assertTrue(light.count < whole.count);
+		assertEquals(1.0, EncounterMoment.num(((java.util.Map<?, ?>) light.meta.get("taken")).get("smaller")), 0);
+		assertEquals(31.0, EncounterMoment.num(light.meta.get("tick")), 0);
+		// (the second too: the anchor's frame alone, its models standing in it, the tick the same)
+		t = heavy(60, 16);
+		EncounterMoment.Moment one = EncounterMoment.decode(EncounterScene.buildSmaller(t, base, 7, k -> k < 2));
+		assertEquals(2, t.smaller);
+		assertEquals(1, one.frames);
+		assertTrue(one.tracks.size() >= 60);
+		assertTrue(one.count < light.count);
+		assertEquals(31.0, EncounterMoment.num(one.meta.get("tick")), 0);
+		// (every try out: the error, which the shelf notes as why there's none)
+		try
+		{
+			EncounterScene.buildSmaller(heavy(2, 4), base, 7, k -> true);
+			org.junit.Assert.fail("every try ran out of memory");
+		}
+		catch (OutOfMemoryError e)
+		{
+			assertEquals("Java heap space", e.getMessage());
+		}
+	}
+
 	@Test
 	public void theBudgetsAreFixed()
 	{

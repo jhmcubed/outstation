@@ -193,6 +193,64 @@ public class EncounterMapsTest
 		assertEquals(EncounterStrip.meta(sum, true), EncounterStrip.meta(sum, true, null));
 	}
 
+	/**
+	 * (11/26/2026, Vaerric's and SendTherapy's Nex, both teleported out with Nex alive, each put up with "the map it
+	 * happened on was gone before its still scene was read") A fight with no kill, loot, fall or pet whose recording ends
+	 * after a map load stands on the ground kept as it went on, from the fight's own map: round the last hit, in the
+	 * arena, never the place they went to.
+	 */
+	@Test
+	public void aTeleportOutKeepsTheFightsGround() throws Exception
+	{
+		EncounterScene s = scene();
+		List<EncounterScene.Frame> fs = new ArrayList<>();
+		for (int t = 0; t <= 20; t++)
+		{
+			fs.add(frame(t, 0));
+		}
+		// (teleported out at tick 21: two frames of the new place, the recording's end)
+		fs.add(frame(21, 1));
+		fs.add(frame(22, 1));
+		frames(s, fs);
+		set(s, "hitTick", 18);
+		set(s, "tick", 22);
+		set(s, "epoch", 1);
+		// (nothing read on the arena's map: none, as before; and one kept after the teleport is no use)
+		assertEquals("the map it happened on was gone before its still scene was read", s.finish(22).none);
+		set(s, "stillKept", still(1, 22));
+		assertEquals("the map it happened on was gone before its still scene was read", s.finish(22).none);
+		// (the ground kept a few ticks before the teleport, on the arena's map: the moment, round the last hit)
+		EncounterScene.Still arena = still(0, 15);
+		set(s, "stillKept", arena);
+		EncounterScene.Taken t = s.finish(22);
+		assertNull(t.none, t.none);
+		assertEquals("round this tick", t.why);
+		assertSame(arena.meshes, t.still);
+		assertEquals(14, t.from);
+		assertEquals(20, t.to);
+		assertEquals(18, t.anchor);
+		for (EncounterScene.Frame f : t.frames)
+		{
+			assertEquals(0, f.epoch);
+		}
+		// (and it's built, the anchor's tick its own)
+		EncounterMoment.Moment m = EncounterMoment.decode(EncounterScene.build(t, base(), 7));
+		assertEquals(18.0, EncounterMoment.num(m.meta.get("tick")), 0);
+	}
+
+	/** (11/26/2026) The ground kept as the fight goes on is read again every few ticks, sooner once the player's moved,
+	 *  at once on another map; never two ticks running. */
+	@Test
+	public void theKeptGroundIsReadEveryFewTicks()
+	{
+		assertTrue(EncounterScene.stillDue(-1, -1, 3, 0, 0));
+		assertFalse(EncounterScene.stillDue(10, 0, 12, 0, 0));
+		assertTrue(EncounterScene.stillDue(10, 0, 10 + EncounterScene.STILL_EVERY, 0, 0));
+		assertTrue(EncounterScene.stillDue(10, 0, 11, 1, 0));
+		assertTrue(EncounterScene.stillDue(10, 0, 12, 0, EncounterScene.STILL_MOVED));
+		assertFalse(EncounterScene.stillDue(10, 0, 11, 0, 9));
+	}
+
 	/** A long raid's buffer: shapes no frame kept has are let go, and frames come again once it's under its size. */
 	@Test
 	public void theBufferLetsGoOfShapesNoFrameHas() throws Exception

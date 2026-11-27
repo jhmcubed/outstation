@@ -225,6 +225,8 @@ Your picture and sound are passed on as they come and never written down. Only t
 
 While it's live with no watch code, the relay's feed of what's happening across the Array (Outside.wiki's front page, 11/08/2026) also shows, under your channel's name and as each comes from Dink: a kill (the boss and its count), a level (the skill and level), a pet (its name), a drop worth 1,000,000 coins or more (its best item and its value), a collection log slot (the item) and a clue (its tier and count). Nothing that comes while you're dark, or while you have a watch code, ever goes on it.
 
+Encounters you show to anyone (11/26/2026): while your channel has no watch code, the relay's list of the newest shown encounters across the open outstations (Outside.wiki's front page, its "encounters") shows each one's boss, how long it took, how it ended, when it went up and its moment, under your name, and counts it for its boss over the last day and week. Never one kept to yourself, never a friends-only page's; a watch code takes your channel's off at once, and one you hide again or take down goes from it.
+
 **Messages between outstations** (your friends list's "message"):
 - A message waiting for an outstation that's closed is kept until that outstation next opens: who it's from (their channel and chat name), their words and when. At most 20, each for a week.
 - One delivered isn't written down anywhere. Your outstation keeps a conversation only while it's open.

@@ -1975,6 +1975,119 @@ class KeptFights(Base):
         self.assertEqual(len(self.ids()), before)
 
 
+class ArrayFights(Base):
+    """The Array's fights (11/26/2026; relay/src/fights.ts, "The Array's fights"): the newest fights shown to anyone across
+    the open pages, for outside.wiki's front page, with the busiest bosses; never one kept to themselves nor a
+    friends-only page's; kept up as each changes (its channel tells the Directory), trimmed ones still counted. Each test
+    names its fights' boss after its own channel, so the other tests' fights in the one feed don't count."""
+
+    send, up, listed = Fights.send, Fights.up, Fights.listed
+
+    def feed(self, limit=60):
+        st, h, out = self.send("GET", "/array/fights?limit=%d" % limit)
+        self.assertEqual((st, h.get("access-control-allow-origin"), h.get("cache-control")), (200, "*", "public, max-age=60"))
+        return json.loads(out)
+
+    def mine(self, got=None):
+        return [f for f in (got or self.feed())["fights"] if f["channel"] == self.ch]
+
+    def boss(self, got=None):
+        return next((b for b in (got or self.feed())["bosses"] if b["key"] == self.ch), None)
+
+    async def until(self, check, seconds=4.0):
+        # (the channel tells the Directory after it answers: waitUntil)
+        end = time.monotonic() + seconds
+        while True:
+            got = await asyncio.to_thread(self.feed)
+            if check(got) or time.monotonic() > end:
+                return got
+            await asyncio.sleep(0.15)
+
+    def show(self, fid, on):
+        return self.send("POST", "/fights/%s/%s?key=%s&public=%d" % (self.ch, fid, urllib.parse.quote(self.key), on))[0]
+
+    async def test_shown_ones_newest_first_hidden_and_taken_down_go(self):
+        st, got = self.up(meta={"foe": "Vardorvis", "label": self.ch, "ticks": 210})
+        hidden = got["fight"]["id"]
+        st, got = self.up(meta={"foe": "Vardorvis", "label": self.ch, "ticks": 190, "public": True, "died": True,
+                                "times": [{"boss": None, "time": "1:54", "t": 180, "best": True}]})
+        a = got["fight"]["id"]
+        body, ct = fight_upload({"foe": "Vardorvis", "label": self.ch, "ticks": 400, "public": True}, FIGHT, moment=MOMENT, moment_tick=12)
+        st, _, out = self.send("POST", "/fights/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), body, {"Content-Type": ct})
+        b = json.loads(out)["fight"]["id"]
+        got = await self.until(lambda g: len(self.mine(g)) == 2)
+        mine = self.mine(got)
+        self.assertEqual([f["id"] for f in mine], [b, a])                          # (kept to themselves: never there)
+        self.assertEqual({k: mine[1][k] for k in ("channel", "name", "foe", "label", "ticks", "died", "time", "pb")},
+                         {"channel": self.ch, "name": self.ch, "foe": "Vardorvis", "label": self.ch, "ticks": 190, "died": True, "time": "1:54", "pb": True})
+        self.assertEqual((mine[0]["moment"], "moment" in mine[1], "size" in mine[0], "public" in mine[0]), ({"tick": 12}, False, False, False))
+        self.assertEqual(self.boss(got), {"boss": self.ch, "key": self.ch, "day": 2, "week": 2})
+        self.assertEqual((got["days"], got["since"] <= got["at"] - 7 * 86400000 + 5000), (7, True))
+        self.assertTrue(got["week"] >= got["day"] >= 2)                            # (every boss's, in all)
+        # (shown later: in; kept to themselves again: out, and uncounted)
+        self.assertEqual(self.show(hidden, 1), 200)
+        got = await self.until(lambda g: len(self.mine(g)) == 3)
+        self.assertEqual(sorted(f["id"] for f in self.mine(got)), sorted([hidden, a, b]))
+        self.assertEqual(self.show(a, 0), 200)
+        got = await self.until(lambda g: len(self.mine(g)) == 2)
+        self.assertEqual(sorted(f["id"] for f in self.mine(got)), sorted([hidden, b]))
+        self.assertEqual(self.boss(got)["week"], 2)
+        # (its moment taken away, then the fight taken down: gone from the list and the count)
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s/moment?key=%s" % (self.ch, b, urllib.parse.quote(self.key)))[0], 204)
+        got = await self.until(lambda g: any(f["id"] == b and "moment" not in f for f in self.mine(g)))
+        self.assertNotIn("moment", next(f for f in self.mine(got) if f["id"] == b))
+        self.assertEqual(self.send("DELETE", "/fights/%s/%s?key=%s" % (self.ch, b, urllib.parse.quote(self.key)))[0], 204)
+        got = await self.until(lambda g: len(self.mine(g)) == 1)
+        self.assertEqual(([f["id"] for f in self.mine(got)], self.boss(got)["week"]), ([hidden], 1))
+
+    async def test_the_limit_and_whats_refused(self):
+        for i in range(3):
+            self.up(meta={"foe": "Duke", "label": self.ch, "public": True})
+        got = await self.until(lambda g: len(self.mine(g)) == 3)
+        self.assertEqual(len(self.feed(limit=2)["fights"]), 2)
+        self.assertEqual(self.send("GET", "/array/fights?limit=x")[0], 400)
+        self.assertEqual(self.send("POST", "/array/fights")[0], 405)
+        # (the Directory's own tellings aren't reached from outside)
+        self.assertEqual(self.send("PUT", "/fights-feed", b"{}", {"Content-Type": "application/json"})[0], 404)
+
+    async def test_trimmed_stays_counted_without_its_link(self):
+        ids = []
+        for i in range(FIGHTS_MOST + 2):   # (past the page's most: the oldest two trimmed)
+            ids.append(self.up(meta={"foe": "Zulrah", "label": self.ch, "public": True})[1]["fight"]["id"])
+            await asyncio.sleep(0.02)
+        got = await self.until(lambda g: len(self.mine(g)) == FIGHTS_MOST and (self.boss(g) or {}).get("week") == FIGHTS_MOST + 2)
+        self.assertEqual(sorted(f["id"] for f in self.mine(got)), sorted(ids[2:]))
+        self.assertEqual(self.boss(got)["week"], FIGHTS_MOST + 2)
+
+    async def test_a_friends_only_page_is_left_out_until_its_code_comes_off(self):
+        self.up(meta={"foe": "Nex", "label": self.ch, "public": True})
+        await self.until(lambda g: len(self.mine(g)) == 1)
+        code = lambda body: raw("PUT", "/code/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)), json.dumps(body).encode(), {"Content-Type": "application/json"})[0]
+        self.assertEqual(code({"code": "friends1"}), 200)
+        got = await self.until(lambda g: not self.mine(g) and self.boss(g) is None)
+        self.assertEqual((self.mine(got), self.boss(got)), ([], None))
+        self.assertEqual(code({"code": ""}), 200)
+        got = await self.until(lambda g: len(self.mine(g)) == 1)
+        self.assertEqual(len(self.mine(got)), 1)
+
+    async def test_the_first_read_gathers_what_was_up_before(self):
+        self.up(meta={"foe": "Vorkath", "label": self.ch, "public": True})
+        self.up(meta={"foe": "Vorkath", "label": self.ch})          # (kept to themselves)
+        await self.until(lambda g: len(self.mine(g)) == 1)
+        # (the feed as before it began: nothing stored; the next read gathers the open pages' shown fights)
+        self.assertEqual(self.send("DELETE", "/test/fight-feed")[0], 204)
+        got = self.feed()
+        self.assertEqual((len(self.mine(got)), self.boss(got)["week"]), (1, 1))
+
+    async def test_a_page_taken_down_goes(self):
+        self.up(meta={"foe": "Vorkath", "label": self.ch, "public": True})
+        await self.until(lambda g: len(self.mine(g)) == 1)
+        st, _, _ = raw("DELETE", "/channels/%s?key=%s" % (self.ch, urllib.parse.quote(self.key)))
+        self.assertEqual(st, 204)
+        got = await self.until(lambda g: not self.mine(g))
+        self.assertEqual((self.mine(got), self.boss(got)), ([], None))
+
+
 class Clips(Base):
     """Clips on a player's Outside page (docs/protocol.md, "Clips"): uploaded with the channel's key, listed for
     anyone (with the watch code, if it has one), the files served whole or in ranges, told to viewers as they come,

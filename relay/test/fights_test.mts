@@ -4,7 +4,7 @@
 //   node test/fights_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { gzipSync } from "node:zlib";
-import { BEST_SHOWN_MOST, bestIds, bestShowKey, bestShownSet, bossKey, firstLine, fightNumbers, fightsOn, historyCap, historyGone, historyOf, historyPublic, historyPut, historyShown, isHeader, isMoment, keptAsked, listed, markBest, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timeSeconds, timesRefused, trimFights, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight, type FightTime, type TimeEntry } from "../src/fights.ts";
+import { BEST_SHOWN_MOST, FEED_DAYS, FEED_KEPT, FEED_LATEST, FightFeed, feedBoss, feedOf, bestIds, bestShowKey, bestShownSet, bossKey, firstLine, fightNumbers, fightsOn, historyCap, historyGone, historyOf, historyPublic, historyPut, historyShown, isHeader, isMoment, keptAsked, listed, markBest, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timeSeconds, timesRefused, trimFights, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight, type FightTime, type TimeEntry } from "../src/fights.ts";
 
 let passed = 0;
 const tests: [string, () => Promise<void> | void][] = [];
@@ -404,6 +404,108 @@ test("?bestshow=: a boss by its name or key; on and off, kept sorted and once; a
   deepStrictEqual(bestShownSet(full, "one more", true), [409, BEST_SHOWN_MOST + " bosses at most with their best shown with the kept ones"]);
   strictEqual((bestShownSet(full, "boss 3", false) as string[]).length, BEST_SHOWN_MOST - 1);
   strictEqual((bestShownSet(full, "boss 3", true) as string[]).length, BEST_SHOWN_MOST); // (already on: no more)
+});
+
+// ---- the Array's fights (11/26/2026): only the shown ones, the open pages', newest first by when they went up ----
+const H = 3_600_000, D = 86_400_000;
+const shownF = (id: string, up: number, more: Partial<Fight> = {}): Fight => ({ ...fight(id, up), foe: "Vorkath", label: "Vorkath", at: up - 60_000, ticks: 150, ...more });
+
+test("the Array's fights: a fight's tile in the feed's shape, its last kill time, its moment's tick, its trip", () => {
+  const f = shownF("a", 1000, { moment: { tick: 140, size: 9, at: 5 }, times: [{ boss: null, time: "1:30", t: 100 }, { boss: null, time: "1:28", t: 140, best: true }], trip: { id: "tripabcd", no: 2 } });
+  deepStrictEqual(feedOf("sburb", f), { channel: "sburb", id: "a", foe: "Vorkath", label: "Vorkath", at: 1000 - 60_000, up: 1000, ticks: 150, died: false,
+    moment: { tick: 140 }, time: "1:28", pb: true, trip: { id: "tripabcd", no: 2 } });
+  // (nothing it doesn't have: no size, damage, kept, featured or the moment's own size)
+  deepStrictEqual(Object.keys(feedOf("x", shownF("b", 1))).sort(), ["at", "channel", "died", "foe", "id", "label", "ticks", "up"]);
+  strictEqual(feedBoss({ label: "Theatre of Blood", foe: "The Maiden of Sugadinti, Sotetseg and 2 more" }), "Theatre of Blood");
+  strictEqual(feedBoss({ label: "", foe: "Vorkath" }), "Vorkath");
+});
+
+test("the Array's fights: only shown ones, newest first; kept to themselves goes; a change put in its place", () => {
+  const now = 100 * D, feed = new FightFeed();
+  strictEqual(feed.put("sburb", shownF("a", now - 3 * H), now), true);
+  strictEqual(feed.put("sburb", shownF("b", now - H), now), true);
+  strictEqual(feed.put("oran", shownF("c", now - 2 * H, { public: false }), now), false); // (kept to themselves: never in)
+  deepStrictEqual(feed.list.map((e) => e.id), ["b", "a"]);
+  strictEqual(feed.put("sburb", shownF("b", now - H), now), false); // (the same again: nothing to write)
+  strictEqual(feed.put("sburb", shownF("b", now - H, { moment: { tick: 9, size: 1, at: 1 } }), now), true);
+  deepStrictEqual(feed.list[0].moment, { tick: 9 });
+  strictEqual(feed.put("sburb", shownF("b", now - H, { public: false }), now), true); // (hidden again: out)
+  deepStrictEqual(feed.list.map((e) => e.id), ["a"]);
+  // (the same id on another page is another fight)
+  feed.put("oran", shownF("a", now - 30 * 60_000), now);
+  deepStrictEqual(feed.list.map((e) => e.channel + "/" + e.id), ["oran/a", "sburb/a"]);
+});
+
+test("the Array's fights: trimmed stays counted without its link; taken down goes; a page taken back goes", () => {
+  const now = 100 * D, feed = new FightFeed();
+  ["a", "b", "c"].forEach((id, i) => feed.put("sburb", shownF(id, now - (i + 1) * H), now));
+  feed.put("oran", shownF("d", now - 30 * 60_000, { label: "Zulrah", foe: "Zulrah" }), now);
+  strictEqual(feed.gone("sburb", ["c"], false), true);
+  strictEqual(feed.gone("sburb", ["b"], true), true);
+  strictEqual(feed.gone("sburb", ["nope"], true), false);
+  const open = new Map<string, string | null>([["sburb", "Sburb"], ["oran", null]]);
+  const r = feed.read(open, now);
+  deepStrictEqual(r.fights.map((e) => e.id), ["d", "a"]);
+  deepStrictEqual(r.fights.map((e) => e.name), ["oran", "Sburb"]); // (the channel where the game's name isn't known)
+  deepStrictEqual(r.bosses, [{ boss: "Vorkath", key: "vorkath", day: 2, week: 2 }, { boss: "Zulrah", key: "zulrah", day: 1, week: 1 }]);
+  strictEqual(feed.drop("sburb"), true);
+  deepStrictEqual(feed.read(open, now).bosses.map((b) => b.key), ["zulrah"]);
+});
+
+test("the Array's fights: only the open pages' (a friends-only page or one taken back, left out at the read)", () => {
+  const now = 100 * D, feed = new FightFeed();
+  feed.put("sburb", shownF("a", now - H), now);
+  feed.put("coded", shownF("b", now - 2 * H), now);
+  const r = feed.read(new Map([["sburb", "Sburb"]]), now);
+  deepStrictEqual(r.fights.map((e) => e.channel), ["sburb"]);
+  deepStrictEqual(r.bosses, [{ boss: "Vorkath", key: "vorkath", day: 1, week: 1 }]);
+  strictEqual(feed.list.length, 2); // (kept: the page may be opened again)
+});
+
+test("the Array's fights: the day's and the week's counts, the busiest first, named as the newest says", () => {
+  const now = 100 * D, feed = new FightFeed();
+  feed.put("a", shownF("1", now - 2 * D, { label: "The Leviathan" }), now);
+  feed.put("a", shownF("2", now - 3 * D, { label: "The Leviathan" }), now);
+  feed.put("a", shownF("3", now - 4 * D, { label: "Leviathan" }), now);
+  feed.put("b", shownF("4", now - H, { label: "Theatre of Blood", foe: "The Maiden of Sugadinti and 3 more" }), now);
+  feed.put("b", shownF("5", now - 2 * H, { label: "", foe: "Nex" }), now);
+  feed.put("b", shownF("6", now - 3 * H, { label: "", foe: "Nex" }), now);
+  feed.put("c", shownF("7", now - 8 * D), now); // (past the week: never in)
+  const r = feed.read(new Map([["a", null], ["b", null], ["c", null]]), now);
+  deepStrictEqual(r.bosses, [{ boss: "The Leviathan", key: "leviathan", day: 0, week: 3 }, { boss: "Nex", key: "nex", day: 2, week: 2 },
+    { boss: "Theatre of Blood", key: "theatre of blood", day: 1, week: 1 }]);
+  strictEqual(r.days, FEED_DAYS);
+  deepStrictEqual([r.day, r.week], [3, 6]); // (every boss's, in all)
+  strictEqual(r.since, now - FEED_DAYS * D);
+  deepStrictEqual(r.fights.map((e) => e.id), ["4", "5", "6", "1", "2", "3"]);
+  deepStrictEqual(feed.read(new Map([["b", null]]), now, 2).fights.map((e) => e.id), ["4", "5"]); // (the limit)
+  strictEqual(feed.read(new Map([["b", null]]), now, 500).fights.length, 3);
+  // (?boss=: one boss's alone, "Leviathan" and "The Leviathan" both; the counts all the same)
+  const lev = feed.read(new Map([["a", null], ["b", null], ["c", null]]), now, 60, "leviathan");
+  deepStrictEqual(lev.fights.map((e) => e.id), ["1", "2", "3"]);
+  deepStrictEqual(lev.bosses, r.bosses);
+  deepStrictEqual(feed.read(new Map([["a", null], ["b", null]]), now, 60, "nobody").fights, []);
+  strictEqual(feed.read(new Map([["a", null]]), now, 500, "leviathan").fights.length, 3); // (past a page for one boss)
+});
+
+test("the Array's fights: the oldest go past the most, and the counts say from when they're whole; kept and read back", () => {
+  const now = 100 * D, feed = new FightFeed();
+  for (let i = 0; i < FEED_KEPT + 5; i++) feed.put("a", shownF("f" + i, now - D + i * 1000), now);
+  strictEqual(feed.list.length, FEED_KEPT);
+  strictEqual(feed.list[feed.list.length - 1].id, "f5");
+  strictEqual(feed.cut, now - D + 4 * 1000);
+  const r = feed.read(new Map([["a", null]]), now);
+  strictEqual(r.since, now - D + 4000);
+  strictEqual(r.fights.length, FEED_LATEST);
+  strictEqual(r.fights[0].id, "f" + (FEED_KEPT + 4));
+  // (its storage's row, read back as it was)
+  const back = FightFeed.from(JSON.parse(JSON.stringify(feed.saved())));
+  deepStrictEqual(back.saved(), feed.saved());
+  strictEqual(FightFeed.from(undefined).seeded, false);
+  deepStrictEqual(FightFeed.from({ list: [null, { channel: "a", up: 1 }, { up: 2 }], seeded: true }).list, [{ channel: "a", up: 1 }]);
+  // (a week on, all of it gone)
+  strictEqual(feed.expire(now + FEED_DAYS * D), true);
+  strictEqual(feed.list.length, 0);
 });
 
 for (const [name, f] of tests) {

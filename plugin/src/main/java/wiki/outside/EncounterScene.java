@@ -254,6 +254,8 @@ final class EncounterScene
 		 *  held as built, and how many times further apart the frames were taken for it (1: as ever) */
 		long trackBytes, trackBytesBuilt;
 		int spacing = 1, trackMost = EncounterMoment.TRACK_MOST;
+		/** (11/26/2026) how many times it was made smaller for the client's memory (buildSmaller: 0, as ever) */
+		int smaller;
 	}
 
 	private final Client client;
@@ -291,6 +293,9 @@ final class EncounterScene
 	/** the map of the last death */
 	private int deathEpoch = -1;
 	private boolean full, warned;
+	/** (11/26/2026) the still scene kept as the fight goes on (keepStill), and the player's tile when it was read */
+	private Still stillKept;
+	private int stillKeptX, stillKeptY;
 
 	EncounterScene(Client client, Items items, boolean others)
 	{
@@ -308,6 +313,61 @@ final class EncounterScene
 		clock.add(new int[]{t, client.getGameCycle()});
 		trim();
 		sweep();
+		keepStill();
+	}
+
+	/** (11/26/2026) ticks between the still scenes kept as the fight goes on; sooner (but not two ticks running) once the
+	 *  player is this many tiles from where the last was read */
+	static final int STILL_EVERY = 5, STILL_MOVED = 4, STILL_SOONEST = 2;
+
+	/**
+	 * The still scene kept as the fight goes on (11/26/2026; Vaerric's and SendTherapy's Nex, both teleported out with
+	 * Nex alive: "the map it happened on was gone before its still scene was read"). A moment with no kill, loot, fall
+	 * or pet is "round this tick", round the last hit, and its still scene was read only as the recording ended; one that
+	 * ended on a teleport out, or anything that loads a map before the end, had none on the fight's map. So one is read
+	 * every few ticks while recording (about a millisecond of the client's thread each, as a kill's is: the moments'
+	 * stillMs), and the newest on a map is the moment's ground when nothing else read one there.
+	 */
+	private void keepStill()
+	{
+		try
+		{
+			Player me = client.getLocalPlayer();
+			LocalPoint at = me == null ? null : me.getLocalLocation();
+			if (at == null)
+			{
+				return;
+			}
+			int x = at.getSceneX(), y = at.getSceneY();
+			if (!stillDue(stillKept == null ? -1 : stillKept.tick, stillKept == null ? -1 : stillKept.epoch, tick, epoch,
+				Math.max(Math.abs(x - stillKeptX), Math.abs(y - stillKeptY))))
+			{
+				return;
+			}
+			Still s = takeStill();
+			if (s != null)
+			{
+				stillKept = s;
+				stillKeptX = x;
+				stillKeptY = y;
+			}
+		}
+		catch (RuntimeException e)
+		{
+			// (never the tick's undoing: the moment goes without it, as it did before)
+			if (!warned)
+			{
+				warned = true;
+				org.slf4j.LoggerFactory.getLogger(EncounterScene.class).warn("outside: the scene's ground couldn't be kept", e);
+			}
+		}
+	}
+
+	/** Whether the kept still scene is read again on tick {@code t}: none yet, or the last on another map, or
+	 *  STILL_EVERY ticks old, or {@code moved} tiles from where it was read and STILL_SOONEST old. */
+	static boolean stillDue(int lastTick, int lastMap, int t, int map, int moved)
+	{
+		return lastTick < 0 || lastMap != map || t - lastTick >= STILL_EVERY || moved >= STILL_MOVED && t - lastTick >= STILL_SOONEST;
 	}
 
 	/** A map's loading (11/21/2026; Encounters, as the client says LOADING): what's drawn after it is another map, which
@@ -711,7 +771,9 @@ final class EncounterScene
 		for (GraphicsObject g : wv.getGraphicsObjects())
 		{
 			LocalPoint lp = g.getLocation();
-			if (g.finished() || lp == null || g.getLevel() != plane || !close(lp, mine, near))
+			// (not before its start: the client draws a graphic only from its start cycle; Yama's fire wave is 514
+			// tiles sent in one tick, each starting up to 735 cycles later, and every one was kept at once, 11/26/2026)
+			if (g.finished() || lp == null || g.getLevel() != plane || !close(lp, mine, near) || client.getGameCycle() < g.getStartCycle())
 			{
 				continue;
 			}
@@ -1327,13 +1389,18 @@ final class EncounterScene
 				kept.add(f);
 			}
 		}
-		// (the still scene: the anchor's own, else any taken on the same map, else the map now if it's still that one)
+		// (the still scene: the anchor's own, else any taken on the same map, else the map now if it's still that one, else
+		// the one kept as the fight went on, if it's that map's: a teleport out after the last hit, 11/26/2026)
 		Still own = t.lootTick >= 0 ? stillLoot : t.fallTick >= 0 && "the fall".equals(t.why) ? stillFall
 			: t.killTick >= 0 ? stillKill : "the pet".equals(t.why) ? stillPet : null;
 		Still st = pickStill(map, own, stillLoot, stillFall, stillKill, stillPet);
 		if (st == null && map == epoch)
 		{
 			st = takeStill();
+		}
+		if (st == null)
+		{
+			st = pickStill(map, null, stillKept);
 		}
 		if (st == null || st.epoch != map)
 		{
@@ -1578,24 +1645,72 @@ final class EncounterScene
 
 	static byte[] build(Taken t, Map<String, Object> base, int seed) throws java.io.IOException
 	{
-		return build(t, base, seed, trackBudget());
+		return buildSmaller(t, base, seed, null);
+	}
+
+	/**
+	 * (11/26/2026; Vaerric's two Fractured Archive raids went up with "it couldn't be made: Java heap space", the same
+	 * raids his teammate's client made moments of: a raid's chest at the end, its buffer full at 64 MB and its file some
+	 * 30 MB before it's packed) The tries a moment is made in, each smaller than the last, so a client short of memory
+	 * gets a smaller moment rather than none: as ever; the tracks an eighth of the budget and the still scene half its
+	 * dots; the anchor's frame alone (its models standing still) with a quarter of the dots. A try that runs out of memory
+	 * lets go of all it made, and the next begins.
+	 */
+	static final long[] TRY_BUDGET = {TRACK_BUDGET, TRACK_BUDGET / 8, TRACK_BUDGET / 8};
+	static final int[] TRY_POINTS = {EncounterMoment.POINTS, EncounterMoment.POINTS / 2, EncounterMoment.POINTS / 4};
+
+	/** The moment, made smaller each time the client's memory runs out (TRY_BUDGET); {@code outOfMemory}, for the
+	 *  tests, the tries that run out as if it had (null: none). Throws the last try's OutOfMemoryError. */
+	static byte[] buildSmaller(Taken t, Map<String, Object> base, int seed, java.util.function.IntPredicate outOfMemory)
+		throws java.io.IOException
+	{
+		OutOfMemoryError last = null;
+		for (int k = 0; k < TRY_BUDGET.length; k++)
+		{
+			try
+			{
+				if (outOfMemory != null && outOfMemory.test(k))
+				{
+					throw new OutOfMemoryError("Java heap space");
+				}
+				t.smaller = k;
+				return build(t, base, seed, TRY_BUDGET[k], TRY_POINTS[k], k == TRY_BUDGET.length - 1);
+			}
+			catch (OutOfMemoryError e)
+			{
+				last = e;
+				org.slf4j.LoggerFactory.getLogger(EncounterScene.class).info("outside: a moment ran out of memory ({}); made smaller", k);
+			}
+		}
+		throw last;
 	}
 
 	/** The moment, its tracks holding about {@code budget} bytes at most while it's built (trackBudget). */
 	static byte[] build(Taken t, Map<String, Object> base, int seed, long budget) throws java.io.IOException
+	{
+		return build(t, base, seed, budget, EncounterMoment.POINTS, false);
+	}
+
+	/** The same, its still scene {@code points} dots, and with {@code one} only the anchor's frame (no motion). */
+	static byte[] build(Taken t, Map<String, Object> base, int seed, long budget, int points, boolean one) throws java.io.IOException
 	{
 		List<Frame> fr = t.frames;
 		// the frames on the moment's clock: frame k at cycle c0 + 2k, each the newest taken at or before it
 		int c0 = cycleAt(t.clock, t.from, fr), c1 = cycleAt(t.clock, t.to + 1, fr) - 1;
 		c0 = Math.max(c0, fr.get(0).cycle);
 		c1 = Math.min(Math.max(c1, c0), fr.get(fr.size() - 1).cycle);
+		if (one)
+		{
+			// (the anchor's frame alone: one frame, at the anchor's cycle)
+			c0 = c1 = Math.max(c0, Math.min(c1, cycleAt(t.clock, t.anchor, fr)));
+		}
 		Spaced sp = new Spaced(fr, c0, c1, CYCLES);
 		int ka = frameOf(cycleAt(t.clock, t.anchor, fr), c0, sp.count, sp.cyc);
 		Frame anchor = sp.at[ka];
 		// the origin: the camera's followed point at the anchor, on the ground under it
 		double ox = anchor.fx, oz = -anchor.fy, oy = -anchor.ground;
 		EncounterMoment.Builder b = new EncounterMoment.Builder(ox, oy, oz, id -> t.textures.get(id), seed);
-		b.still(t.still, EncounterMoment.POINTS);
+		b.still(t.still, points);
 		// (11/23/2026) the tracks no bigger than the budget: the frames taken further apart till they fit (trackBudget)
 		long held = sp.trackBytes(b);
 		t.trackBytes = held;
@@ -1882,6 +1997,11 @@ final class EncounterScene
 		cost.put("frames", (double) fr.size());
 		cost.put("framesTaken", (double) t.framesTaken);
 		cost.put("frameMs", t.framesTaken == 0 ? 0.0 : Math.round(t.clientNanos / 1e4 / t.framesTaken) / 100.0);
+		if (t.smaller > 0)
+		{
+			// (made smaller for the client's memory: buildSmaller's try, 11/26/2026)
+			cost.put("smaller", (double) t.smaller);
+		}
 		meta.put("taken", cost);
 		EncounterMoment.Moment m = b.moment(meta, count);
 		m.picture = picture;

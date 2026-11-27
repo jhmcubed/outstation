@@ -589,3 +589,177 @@ export function bestShownSet(shown: string[], key: string, on: boolean): string[
   if (rest.length >= BEST_SHOWN_MOST) return [409, `${BEST_SHOWN_MOST} bosses at most with their best shown with the kept ones`];
   return [...rest, key].sort();
 }
+
+// ---- the Array's fights (11/26/2026; Jace: "we should add a feature to the front page of Outside.wiki that shows the
+// most recently uploaded encounters that have been recorded by people's plugins so people can see what others are up to
+// at the moment and how active certain bosses/raids are") ----
+//
+//   GET <relay>/array/fights?limit=<n>   {"fights": [FeedFight with "name", ...] newest first by when each went up, at
+//                                         most n (FEED_LATEST to begin with, FEED_PAGE at most), "bosses": [{"boss", "key",
+//                                         "day", "week"}, ...] the busiest FEED_BOSSES first, "day" and "week" (every
+//                                         boss's, in all), "days", "since", "at"}
+//
+// Only fights shown to anyone, on the open list's pages (GET /channels's: handed out, no watch code, not an invite
+// waiting): never one kept to themselves, nor a friends-only page's. Kept up as they change, not gathered at each read
+// (a read used to wake every channel for GET /channels, and that was undone for the same reason: index.ts's
+// Directory.listed): each channel tells the Directory (Channel.tellFeed) whenever one of its fights goes up, is shown or
+// kept to themselves, gets its moment or its times, is trimmed or taken down, and the Directory keeps the newest
+// FEED_KEPT of the last FEED_DAYS in one row of its storage ("fightFeed"), read once a wake, as the Array's events are.
+// A read asks no channel: the open list's rows say which pages are open now, so a page given a watch code drops out at
+// once and comes back when it's taken off. Except the first read ever: with no feed stored, the Directory gathers each
+// open page's shown fights once (FEED_SEED_MOST pages at most), so what was up before the feed began is in it.
+//
+// A trimmed fight (its page's days up, or past its most) stays counted for its boss without its id: its page is gone,
+// so it isn't listed. Taken down, or kept to themselves, it goes from both. A boss is the fight's label (Encounter
+// Recorder's: the boss, or the raid), else its foe, as the page's kill board names it (bossKey); each recording counts
+// once, a trip's each. The counts are whole from `since` (FEED_DAYS ago, or later where the feed was full and its
+// oldest went): the page says "this week" only when they are. Answered with cache-control max-age=60.
+
+// (FEED_SEED_MOST: the first read's gathering wakes each page it asks, eight at a time, all in that one read's request)
+export const FEED_KEPT = 500, FEED_DAYS = 7, FEED_LATEST = 24, FEED_PAGE = 60, FEED_BOSSES = 12, FEED_SEED_MOST = 40;
+const FEED_DAY = 86_400_000;
+
+/** A fight as the Array's feed keeps it: what its tile says, and its page's name. */
+export interface FeedFight {
+  channel: string;
+  id?: string; // while its fight is on its page (a trimmed one keeps its count, not its link)
+  foe: string;
+  label: string;
+  at: number; // when it began (unix ms)
+  up: number; // when it went up (unix ms): the feed's order
+  ticks: number;
+  died: boolean;
+  moment?: { tick: number }; // its scene moment, if it has one (GET /fights/<channel>/<id>/moment.bin)
+  time?: string; // the game's kill time in it, the last it gave (its page's times), as written
+  pb?: true; // that time a personal best
+  trip?: FightTrip;
+}
+
+/** A fight in the feed's shape. */
+export function feedOf(channel: string, f: Fight): FeedFight {
+  const e: FeedFight = { channel, id: f.id, foe: f.foe, label: f.label, at: f.at, up: f.up, ticks: f.ticks, died: !!f.died };
+  if (f.moment) e.moment = { tick: f.moment.tick };
+  const k = f.times?.length ? f.times[f.times.length - 1] : null;
+  if (k) { e.time = k.time; if (k.best) e.pb = true; }
+  if (f.trip) e.trip = { ...f.trip };
+  return e;
+}
+
+/** The boss a feed entry counts for (its label, else its foe), as shown. */
+export function feedBoss(e: { label?: string; foe?: string }): string {
+  return (e.label || "").trim() || (e.foe || "").trim() || "a fight";
+}
+
+export interface FeedBoss { boss: string; key: string; day: number; week: number }
+
+export interface FeedAnswer {
+  fights: (FeedFight & { name: string })[];
+  bosses: FeedBoss[];
+  day: number; // every boss's over the last day (FEED_BOSSES are listed; these are all of them)
+  week: number; // and over FEED_DAYS
+  days: number;
+  since: number;
+  at: number;
+}
+
+/** The Array's fights, newest first (by `up`), the newest FEED_KEPT of the last FEED_DAYS. `seeded`: the open pages'
+ *  shown fights gathered once (the Directory's first read). `cut`: when the newest one let go for room went up (0:
+ *  none yet), so the counts are whole only from after it. */
+export class FightFeed {
+  list: FeedFight[] = [];
+  seeded = false;
+  cut = 0;
+
+  static from(saved: unknown): FightFeed {
+    const f = new FightFeed();
+    if (saved && typeof saved === "object") {
+      const s = saved as { list?: unknown; seeded?: unknown; cut?: unknown };
+      if (Array.isArray(s.list)) f.list = (s.list as FeedFight[]).filter((e) => e && typeof e.channel === "string" && typeof e.up === "number");
+      f.seeded = s.seeded === true;
+      f.cut = typeof s.cut === "number" ? s.cut : 0;
+    }
+    f.list.sort((a, b) => b.up - a.up);
+    return f;
+  }
+
+  saved(): { list: FeedFight[]; seeded: boolean; cut: number } {
+    return { list: this.list, seeded: this.seeded, cut: this.cut };
+  }
+
+  /** A channel's fight as it now stands: in (or its entry brought up to date) if it's shown to anyone, else out. Whether
+   *  the feed changed. */
+  put(channel: string, f: Fight, now = Date.now()): boolean {
+    const i = this.list.findIndex((e) => e.channel === channel && e.id === f.id);
+    if (!f.public) {
+      if (i < 0) return false;
+      this.list.splice(i, 1);
+      return true;
+    }
+    const e = feedOf(channel, f);
+    if (i >= 0) {
+      if (JSON.stringify(this.list[i]) === JSON.stringify(e)) return false;
+      this.list[i] = e;
+    } else this.list.push(e);
+    this.list.sort((a, b) => b.up - a.up);
+    this.expire(now);
+    return true;
+  }
+
+  /** A channel's fights gone from its page: trimmed (`takenDown` false: still counted, no longer listed) or taken down
+   *  (gone from the feed). Whether the feed changed. */
+  gone(channel: string, ids: Iterable<string>, takenDown: boolean): boolean {
+    const set = new Set(ids);
+    let changed = false;
+    this.list = this.list.flatMap((e) => {
+      if (e.channel !== channel || !e.id || !set.has(e.id)) return [e];
+      changed = true;
+      if (takenDown) return [];
+      const { id: _, ...rest } = e;
+      return [rest];
+    });
+    return changed;
+  }
+
+  /** A channel's every fight out (its page taken back or taken down). Whether the feed changed. */
+  drop(channel: string): boolean {
+    const n = this.list.length;
+    this.list = this.list.filter((e) => e.channel !== channel);
+    return this.list.length !== n;
+  }
+
+  /** What's older than FEED_DAYS out, and past FEED_KEPT the oldest (`cut` noting the newest of those). Whether the
+   *  feed changed. */
+  expire(now = Date.now()): boolean {
+    const n = this.list.length, from = now - FEED_DAYS * FEED_DAY;
+    this.list = this.list.filter((e) => e.up >= from);
+    while (this.list.length > FEED_KEPT) this.cut = Math.max(this.cut, (this.list.pop() as FeedFight).up);
+    return this.list.length !== n;
+  }
+
+  /** The answer for GET /array/fights: only the open pages' (`open`: each open channel and its name as the game shows
+   *  it, null for none), the newest `limit` with their links, and every boss's count over the last day and FEED_DAYS. */
+  read(open: Map<string, string | null>, now = Date.now(), limit = FEED_LATEST, boss = ""): FeedAnswer {
+    const week = now - FEED_DAYS * FEED_DAY, day = now - FEED_DAY;
+    const shown = this.list.filter((e) => open.has(e.channel) && e.up >= week);
+    // (one boss's: as many as the feed keeps, not a page of them; 11/26/2026)
+    const n = Math.max(1, Math.min(boss ? FEED_KEPT : FEED_PAGE, Math.floor(limit) || FEED_LATEST));
+    // (?boss=: only that boss's, by the key the counts below go by; 11/26/2026, Jace: a boss's name under "busiest this
+    // week" pressed "shows all of the recent kills/recorded encounters at that boss")
+    const keyOf = (e: FeedFight) => { const b = feedBoss(e); return bossKey(b) || b.toLowerCase(); };
+    const fights = shown.filter((e) => e.id && (!boss || keyOf(e) === boss)).slice(0, n).map((e) => ({ ...e, name: open.get(e.channel) || e.channel }));
+    const bosses = new Map<string, FeedBoss & { last: number }>();
+    let inDay = 0;
+    for (const e of shown) {
+      if (e.up >= day) inDay++;
+      const boss = feedBoss(e), key = bossKey(boss) || boss.toLowerCase();
+      let b = bosses.get(key);
+      // (named as its newest says it: the list is newest first)
+      if (!b) bosses.set(key, (b = { boss, key, day: 0, week: 0, last: e.up }));
+      b.week++;
+      if (e.up >= day) b.day++;
+    }
+    const top = [...bosses.values()].sort((a, b) => b.week - a.week || b.day - a.day || b.last - a.last).slice(0, FEED_BOSSES)
+      .map(({ last: _, ...b }) => b);
+    return { fights, bosses: top, day: inDay, week: shown.length, days: FEED_DAYS, since: Math.max(week, this.cut), at: now };
+  }
+}

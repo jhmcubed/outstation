@@ -73,6 +73,13 @@
 //   GET    /array/events?since=<cursor>   {"events": [{"id", "at", "channel", "kind", ...}], "next": <cursor>}
 //   POST   /admin/array  {"channel", "events": [{"kind", ..., "at"}]}   the keeper's: a real event the feed lost, put back
 //
+// The Array's fights (11/26/2026; fights.ts, "The Array's fights"): the newest encounters shown to anyone on the open
+// outstations' pages, and the busiest bosses over the last day and week, for outside.wiki's front page; each channel
+// tells the Directory as its fights change, kept in its storage ("fightFeed"):
+//   GET    /array/fights?limit=<1-60>[&boss=<key>]   (boss: only that boss's fights; the counts all the same) {"fights": [{"channel", "name", "id", "foe", "label", "at", "up", "ticks", "died",
+//                                       "moment"?, "time"?, "pb"?, "trip"?}], "bosses": [{"boss", "key", "day", "week"}],
+//                                       "day", "week", "days", "since", "at"}
+//
 // Settling (11/08/2026 to 11/10/2026, gone): an outstation once chose where it stood on outside.wiki's globe. The globe
 // now shows only real positions on the land, and every other outstation at the receiver, so homes have no use (Jace's
 // decision, 11/10/2026). An app built between the two still has the button: its POST /settle, and anything else on
@@ -104,7 +111,7 @@ import { type ArrayEvent, ArrayFeed, type Lost, arrayAnswer, arrayBackfill, arra
 import { PRESENCE_FRESH_MS, type StarReport, WHERE_FRESH_MS } from "./game";
 import { StarList } from "./stars";
 import { fileKey, serveFile, ID } from "./clips";
-import { fightsOn } from "./fights";
+import { FEED_LATEST, FEED_SEED_MOST, FightFeed, fightsOn, type Fight } from "./fights";
 import { emoteKey } from "./emotes";
 const CORS_KEEP = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, POST, DELETE",
                     // (authorization: the page's own editing or tending token, for its layout; 11/21/2026)
@@ -193,6 +200,10 @@ export class Directory extends DurableObject<Env> {
   // the almanac (11/09/2026; almanac.ts): what's kept is in storage ("alm:kept", the two days' prices "alm:latest" and
   // "alm:before", the names "alm:names"), read once a wake; refreshed by the Cron Trigger (POST /almanac/tick)
   alm: Promise<Almanac> | null = null;
+  // the Array's fights (11/26/2026; fights.ts, "The Array's fights"): each told by its channel (Channel.tellFeed) as it
+  // changes, in storage ("fightFeed"), read once a wake (fightFeed); the first read's gathering, while it runs (seeding)
+  feed: Promise<FightFeed> | null = null;
+  seeding: Promise<void> | null = null;
 
   /** The open portals' rows, read from storage once a wake (a failed read is tried again by the next request). */
   listedRows(): Promise<ListedRows> {
@@ -305,6 +316,23 @@ export class Directory extends DurableObject<Env> {
       await this.saveStars(list); // (one gone past its time meanwhile: out of storage too)
       return arrayAnswer(read);
     }
+    if (url.pathname === "/fights-feed") {
+      // the Array's fights (fights.ts): a channel's telling (PUT {channel, fight} as it now stands, or {channel, gone,
+      // taken_down}), or the read (GET ?limit=; index.ts's GET /array/fights). As the Array's events: the whole feed, one
+      // row, written with each telling that changes it, nothing waited on between the change and the put.
+      if (request.method === "PUT") {
+        const b = (await request.json()) as { channel?: string; fight?: Fight; gone?: string[]; taken_down?: boolean };
+        const feed = await this.fightFeed(), ch = typeof b.channel === "string" ? b.channel : "";
+        if (!ch) return new Response(null, { status: 400 });
+        const changed = b.fight ? feed.put(ch, b.fight) : Array.isArray(b.gone) ? feed.gone(ch, b.gone, b.taken_down === true) : false;
+        if (changed) await this.ctx.storage.put("fightFeed", feed.saved());
+        return new Response(null, { status: 204 });
+      }
+      const feed = await this.fightFeedSeeded(), now = Date.now();
+      if (feed.expire(now)) await this.ctx.storage.put("fightFeed", feed.saved());
+      const read = feed.read(await this.openNames(), now, parseInt(url.searchParams.get("limit") || "") || FEED_LATEST, (url.searchParams.get("boss") || "").slice(0, 120));
+      return new Response(JSON.stringify(read), { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "public, max-age=60" } });
+    }
     if (url.pathname === "/forget" && request.method === "POST" && this.env.TEST_FORGET === "1") {
       // (tests only, under `wrangler dev` with TEST_FORGET: this object put to sleep as Cloudflare does it, everything in
       // its memory gone, so a test can see what its storage brings back; never set on Cloudflare)
@@ -315,6 +343,14 @@ export class Directory extends DurableObject<Env> {
       const row = (await request.json()) as Listing, rows = await this.listedRows();
       rows.heard(row);
       await this.saveListed(rows); // (only if what's stored of it changed: a new "where" alone writes nothing)
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/test-feed" && request.method === "DELETE" && this.env.TEST_FORGET === "1") {
+      // (tests only, with TEST_FORGET: the Array's fights as before they began, nothing stored, so the next read gathers
+      // the open pages' shown fights as the first read after the deploy will. Never set on Cloudflare)
+      await this.seeding?.catch(() => null);
+      await this.ctx.storage.delete("fightFeed");
+      this.feed = null;
       return new Response(null, { status: 204 });
     }
     if (url.pathname === "/test-listed" && this.env.TEST_FORGET === "1") {
@@ -366,6 +402,11 @@ export class Directory extends DurableObject<Env> {
       this.given = null;
       const rows = await this.listedRows(); // (a new key: whatever it said before, it's asked again; taken back: gone)
       if (rows.drop(name)) await this.saveListed(rows);
+      // (taken back, or its page taken down: its fights out of the Array's, 11/26/2026)
+      if (request.method === "DELETE") {
+        const feed = await this.fightFeed();
+        if (feed.drop(name)) await this.ctx.storage.put("fightFeed", feed.saved());
+      }
       if (request.method === "PUT" && by !== null) return new Response(null, { status: 204 }); // (an invite's: no list)
     }
     const all = await this.ctx.storage.list({ prefix: "c:" });
@@ -446,6 +487,69 @@ export class Directory extends DurableObject<Env> {
     return this.given;
   }
 
+  /** A channel asked for its row on the open list (one it hasn't told, or an old one), and the answer put in. */
+  async askListing(n: string, listed: ListedRows): Promise<void> {
+    this.asked.set(n, (this.asked.get(n) ?? 0) + 1);
+    try {
+      const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(n))
+        .fetch(new Request("https://channel/_listing", { headers: { "x-channel": n } }));
+      listed.heard((await r.json()) as Listing);
+    } catch { /* (left out this time, and asked again at the next read) */ }
+  }
+
+  /** The open list's channels as they stand (GET /channels's: handed out, its row set, no watch code, not an invite
+   *  waiting), each with its name as the game shows it (null: none told). For the Array's fights: only a channel with
+   *  no row at all is asked (each tells its own as it changes, and GET /channels asks the old ones). */
+  async openNames(): Promise<Map<string, string | null>> {
+    const given = await this.givenNames(), listed = await this.listedRows(), out = new Map<string, string | null>();
+    const missing = [...given.keys()].filter((n) => !listed.rows.has(n));
+    if (missing.length) {
+      await Promise.all(missing.map((n) => this.askListing(n, listed)));
+      await this.saveListed(listed);
+    }
+    for (const n of given.keys()) {
+      const r = listed.rows.get(n)?.row;
+      if (!r || !r.set || r.code || (r.pending && (given.get(n) ?? null) !== null)) continue;
+      out.set(n, typeof r.name === "string" && r.name ? r.name : null);
+    }
+    return out;
+  }
+
+  /** The Array's fights (fights.ts, "The Array's fights"), read from storage once a wake (a failed read is tried again
+   *  by the next request). */
+  fightFeed(): Promise<FightFeed> {
+    this.feed ??= this.ctx.storage.get("fightFeed").then((saved) => FightFeed.from(saved), (e) => { this.feed = null; throw e; });
+    return this.feed;
+  }
+
+  /** The feed, its open pages' shown fights gathered into it once if they never have been (the first read after it
+   *  began: what was up before it), FEED_SEED_MOST pages at most (those heard from most lately), a few at a time; a page that doesn't answer is left
+   *  out, not asked again. One gathering shared by the reads that come meanwhile. */
+  async fightFeedSeeded(): Promise<FightFeed> {
+    const feed = await this.fightFeed();
+    if (feed.seeded) return feed;
+    this.seeding ??= (async () => {
+      // (the pages heard from most lately first, if there are more than it asks)
+      const listed = await this.listedRows(), seen = (n: string) => listed.rows.get(n)?.seen ?? 0;
+      const names = [...(await this.openNames()).keys()].sort((a, b) => seen(b) - seen(a)).slice(0, FEED_SEED_MOST);
+      for (let i = 0; i < names.length; i += 8) {
+        await Promise.all(names.slice(i, i + 8).map(async (n) => {
+          try {
+            const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(n))
+              .fetch(new Request("https://channel/_fights", { headers: { "x-channel": n } }));
+            if (!r.ok) return;
+            const j = (await r.json()) as { fights?: Fight[] };
+            for (const f of Array.isArray(j.fights) ? j.fights : []) if (f && typeof f.id === "string" && f.public === true) feed.put(n, f);
+          } catch { /* (left out) */ }
+        }));
+      }
+      feed.seeded = true;
+      await this.ctx.storage.put("fightFeed", feed.saved());
+    })().finally(() => { this.seeding = null; });
+    await this.seeding;
+    return feed;
+  }
+
   /** GET /channels: every channel handed out that has no watch code, live ones first. Only a channel whose row is
    *  missing or old, or that's live with the plugin and not heard since this wake, is asked (listed.ts's due).
    *  "pending" (11/08/2026, for the keys beside an inviter on outside.wiki's globe): the invites not taken up yet,
@@ -459,14 +563,7 @@ export class Directory extends DurableObject<Env> {
     const given = await this.givenNames(), names = [...given.keys()], now = Date.now(); // (one handed out meanwhile: in the next read)
     const listed = await this.listedRows();
     for (const n of [...listed.rows.keys()]) if (!given.has(n)) listed.drop(n); // (no longer handed out)
-    await Promise.all(listed.due(names, now, this.listingCheck()).map(async (n) => {
-      this.asked.set(n, (this.asked.get(n) ?? 0) + 1);
-      try {
-        const r = await this.env.CHANNEL.get(this.env.CHANNEL.idFromName(n))
-          .fetch(new Request("https://channel/_listing", { headers: { "x-channel": n } }));
-        listed.heard((await r.json()) as Listing);
-      } catch { /* (left out this time, and asked again at the next read) */ }
-    }));
+    await Promise.all(listed.due(names, now, this.listingCheck()).map((n) => this.askListing(n, listed)));
     await this.saveListed(listed); // (what the asks changed, all of it in one write)
     // (an invite not taken up: only an invite's channel, which has an inviter, is ever pending)
     const waits = (r: Listing) => !!r.pending && (given.get(r.channel) ?? null) !== null;
@@ -689,6 +786,20 @@ function almanacAnswer(body: unknown, status = 200): Response {
   return new Response(body === null ? null : pyjson(body), { status, headers });
 }
 
+// The keeper's moment for a fight its plugin made none of (11/26/2026, Jace: "post the five missing thumbnails"):
+//   POST /admin/fights/<channel>/<id>/moment?tick=<t>   the file as the owner's upload takes it (fights.ts, readMoment),
+//   only for a fight with no moment. The admin token.
+async function keeperMoment(request: Request, env: Env, parts: string[]): Promise<Response> {
+  const auth = request.headers.get("authorization") || "";
+  if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) return new Response("no", { status: 403 });
+  const name = parts[2] || "", id = parts[3] || "";
+  if (!NAME.test(name) || parts.length !== 5 || parts[4] !== "moment") return new Response("which fight?", { status: 400 });
+  if (request.method !== "POST") return new Response(null, { status: 405 });
+  const url = new URL(request.url);
+  url.searchParams.set("id", id); url.searchParams.set("moment", "1");
+  return channelStub(env, name).fetch(toChannel(new Request(url.toString(), request), name, "/_fights_admin"));
+}
+
 async function admin(request: Request, env: Env, parts: string[]): Promise<Response> {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) {
@@ -810,6 +921,7 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const upgrade = (request.headers.get("upgrade") || "").toLowerCase() === "websocket";
 
+    if (parts[0] === "admin" && parts[1] === "fights") return keeperMoment(request, env, parts);
     if (parts[0] === "admin" && (parts[1] === "channels" || parts[1] === "requests" || parts[1] === "notice" || parts[1] === "clips" || parts[1] === "reports" || parts[1] === "aether" || parts[1] === "almanac" || parts[1] === "array")) return admin(request, env, parts);
 
     // the aether (11/07/2026; aether.ts): one room for every outstation and visitor, and its read for a page
@@ -1071,6 +1183,22 @@ export default {
         .fetch("https://dir/array" + (since === undefined ? "" : "?since=" + since));
     }
 
+    // the Array's fights (11/26/2026; fights.ts, "The Array's fights"): the newest fights shown to anyone across the open
+    // outstations, and the busiest bosses, for outside.wiki's front page; any page may read it. Not /fights/recent:
+    // "recent" is a name a player can have. Off with the fights (their 404)
+    if (parts[0] === "array" && parts[1] === "fights" && parts.length === 2) {
+      if (!fightsOn(env)) return Response.json({ error: "fights aren't on here" }, { status: 404, headers: { "access-control-allow-origin": "*" } });
+      if (request.method !== "GET" && request.method !== "HEAD") return arrayAnswer(null, 405);
+      const limit = url.searchParams.get("limit");
+      if (limit !== null && !/^\d{1,3}$/.test(limit)) return arrayAnswer({ error: "limit is how many: 1 to 60 (500 for one boss)" }, 400);
+      const ask = new URLSearchParams();
+      if (limit !== null) ask.set("limit", limit);
+      const boss = url.searchParams.get("boss");
+      if (boss) ask.set("boss", boss.slice(0, 120));
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"))
+        .fetch("https://dir/fights-feed" + (ask.toString() ? "?" + ask.toString() : ""));
+    }
+
     // shooting stars (11/08/2026; stars.ts): the stars the plugins have found, and who found each; any page may read it
     if (parts[0] === "stars" && parts.length === 1) {
       if (request.method !== "GET") return arrayAnswer(null, 405);
@@ -1081,6 +1209,10 @@ export default {
     if (url.pathname === "/test/forget" && request.method === "POST" && env.TEST_FORGET === "1") {
       await env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/forget", { method: "POST" }).catch(() => null);
       return new Response(null, { status: 204 });
+    }
+    // (tests only, with TEST_FORGET: the Array's fights' storage emptied, so the next read gathers them as the first does)
+    if (url.pathname === "/test/fight-feed" && request.method === "DELETE" && env.TEST_FORGET === "1") {
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory")).fetch("https://dir/test-feed", { method: "DELETE" });
     }
     // (tests only, with TEST_FORGET: what the Directory's storage holds of a channel's row on the open list, and how
     // often it's asked that channel since it woke; a POST's fields put into the row, as a telling that was lost)
