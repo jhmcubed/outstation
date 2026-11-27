@@ -658,7 +658,7 @@ Mole's single kill followed by a walk out kept on the computer; the open lair, t
 as before). The real trip's three recordings played through the page against a mocked relay: 88 ticks, both kills as
 chapters, the marks at 34, 73 and 88.
 
-**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/27/2026 9d712d2 with update 7's README, the bridges' floors and objects, the login update and claude/blissful-wright-9vee14's work, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
+**The test** (since 11/24/2026 in the local world first, Jace only for what needs the real game; the build 9d7ddda, c5ac0ad with Doom's burrow fix, since 11/27/2026 4c5740a with update 7's README, the bridges' floors and objects, the login update and claude/blissful-wright-9vee14's work, once the relay's deployed; 93fec4d with the listing's new description and tags (25fe3ac) and the README's pitch, badges and pictures (59f4adc, the pictures redone at Jace's word in 8c09303, the replay at tick 7765 in 66b1d6e, the Model tab in 67a840a, the GIFs and the chest at 7769 in abc797a; the memory fix reworked and the replay GIF at his angle in c5ac0ad) on top, start_check passed on it):
 1. An instanced boss with respawns (Vorkath, Zulrah, the Mole's instance, a DT2 boss): two kills or more, then leave.
    The side tab lists each kill and the walk out as their own recordings; each goes up as it ends.
 2. Your page: one tile for the trip, saying the kills, the whole time and "left"; "the trip ->" plays them end to end
@@ -709,7 +709,7 @@ trips code, 295711d: the relay that keeps trips is most likely already live). Me
 it, a moment draws those objects too (EncounterScene's `objects`, for a tile and its bridge's lower tile): at the
 Leviathan the plateau's rocks stand at the player's height, the floor this branch drew under them, and the player on
 them. The whole plugin 216 tests, the cut 160, hub_check, hub_cut --check matches. Update 8's build 9d712d2. The 50 fps
-GIFs on outside-plugin's main too (14721a5), linked from outstation 4d3b3d7.
+GIFs on outside-plugin's main too (14721a5), linked from outstation 4d3b3d7; and in update 7 (Jace: "the whole point is so the hub and github page have the new higher fps gifs asap"): a25c70d2dcb44c1705d54abcbeef533ad16ac545, 12deb7a with main's README (the two GIF links), hub_check and start_check on it passed, the fork's 467bd7f names it; update 8's build 4c5740a.
 
 ## Update 9 (planned 11/22/2026 as update 8; moved to 9 on 11/23/2026): alts under one page
 
