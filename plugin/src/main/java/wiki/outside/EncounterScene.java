@@ -1027,38 +1027,48 @@ final class EncounterScene
 					// heights that level's, and the floor seen there is often the one below, which wasn't drawn at all; 11/25/2026,
 					// fastlars's Leviathan: the raised rock round the player a hole, the player's tile one of those)
 					floor(out, tile, x, y, heights);
+					objects(out, tile);
+					// (and the bridge's lower tile's objects: the client draws the tile it hangs under the bridge whole, its
+					// objects not in the scene's tiles at all; the Nylocas room's web, the Leviathan's plateau; as the
+					// recording writes them since 11/26/2026, Encounters' "below")
 					if (tile.getBridge() != null)
 					{
 						floor(out, tile.getBridge(), x, y, heights);
-					}
-					WallObject w = tile.getWallObject();
-					if (w != null)
-					{
-						scenery(out, w.getRenderable1(), w.getX(), w.getY(), w.getZ(), 0);
-						scenery(out, w.getRenderable2(), w.getX(), w.getY(), w.getZ(), 0);
-					}
-					DecorativeObject d = tile.getDecorativeObject();
-					if (d != null)
-					{
-						scenery(out, d.getRenderable(), d.getX() + d.getXOffset(), d.getY() + d.getYOffset(), d.getZ(), 0);
-						scenery(out, d.getRenderable2(), d.getX() + d.getXOffset2(), d.getY() + d.getYOffset2(), d.getZ(), 0);
-					}
-					GroundObject g = tile.getGroundObject();
-					if (g != null)
-					{
-						scenery(out, g.getRenderable(), g.getX(), g.getY(), g.getZ(), 0);
-					}
-					for (GameObject o : tile.getGameObjects())
-					{
-						if (o != null && tile.getSceneLocation().equals(o.getSceneMinLocation()))
-						{
-							scenery(out, o.getRenderable(), o.getX(), o.getY(), o.getZ(), o.getModelOrientation());
-						}
+						objects(out, tile.getBridge());
 					}
 				}
 			}
 		}
 		return out.isEmpty() ? null : new Still(out, epoch, tick, plane, System.nanoTime() - t0);
+	}
+
+	/** A tile's still objects: its walls, wall decorations, ground object and the game objects whose corner it is. */
+	private void objects(List<EncounterMoment.Mesh> out, Tile tile)
+	{
+		WallObject w = tile.getWallObject();
+		if (w != null)
+		{
+			scenery(out, w.getRenderable1(), w.getX(), w.getY(), w.getZ(), 0);
+			scenery(out, w.getRenderable2(), w.getX(), w.getY(), w.getZ(), 0);
+		}
+		DecorativeObject d = tile.getDecorativeObject();
+		if (d != null)
+		{
+			scenery(out, d.getRenderable(), d.getX() + d.getXOffset(), d.getY() + d.getYOffset(), d.getZ(), 0);
+			scenery(out, d.getRenderable2(), d.getX() + d.getXOffset2(), d.getY() + d.getYOffset2(), d.getZ(), 0);
+		}
+		GroundObject g = tile.getGroundObject();
+		if (g != null)
+		{
+			scenery(out, g.getRenderable(), g.getX(), g.getY(), g.getZ(), 0);
+		}
+		for (GameObject o : tile.getGameObjects())
+		{
+			if (o != null && tile.getSceneLocation().equals(o.getSceneMinLocation()))
+			{
+				scenery(out, o.getRenderable(), o.getX(), o.getY(), o.getZ(), o.getModelOrientation());
+			}
+		}
 	}
 
 	/** A still object's model (an animated one is a frame's, not the still scene's), placed as the scene draws it. */
