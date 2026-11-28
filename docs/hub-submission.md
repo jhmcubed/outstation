@@ -614,6 +614,45 @@ chest (its moment still made, the frame time unchanged). README.hub.md's three n
 50 fps, encounter-page.png) are pinned to outstation 4d3b3d7's plugin/assets for now; at the cut they can be pinned to
 the outside-plugin commit that carries them, as the others are.
 
+## A fix: Yama's fire wave (built 11/28/2026, not sent)
+
+A friend of Jace's: "4 fps at Yama; turned off plugin and it went back to normal. bro, everytime Yama sent the waves, the
+FPS legit went to single digit". Not fixed by update 7 (runelite/plugin-hub#21280, 2efd224): update 8's "a graphic
+before its start" (above) was only part of it.
+
+**Why.** While a fight records, the scene moment takes a frame every 2 cycles (25 a second): every moving thing within
+17 tiles, each one's model asked of the client and its corners copied. Yama's wave is graphics 3265 and 3266 on each of
+514 tiles in one tick, each starting 120 to 735 cycles later (salutecflagg's Yama on the relay, its ticks 109, 316 and
+372: 1,028 graphics at once for about 15 seconds). So about 25,000 posed models a second built for the plugin alone, a
+mesh kept for each graphic, and the frames' copies filling the 64 MB buffer. His real moment says so in its `taken`
+block: 35.5 s of the client thread over a 399-tick fight, the buffer at 66 MB, one frame kept.
+
+**The fix** (`EncounterScene`): a graphic's pose (its model at one frame of its animation, `GraphicsObject
+.getAnimationFrame()`) is taken from the client once for its id and frame and kept (4,096 at most); every graphic of a
+look shares one mesh; a frame holds only where each graphic stands, its corners worked out as the moment's built, off the
+client's thread (`Sample.xyz()`); no graphic before its start cycle (update 8's line, now in update 7's too); and a frame
+that cost more than an eighth of the time to the next puts the next further off (`SHARE`, at most 25 cycles apart), so no
+boss can do this again whatever it throws.
+
+**Measured in the local world** (ghillie's `tools/local-world`, its new `::stage yama`: the wave as salutecflagg's
+recording has it, twice, in Vorkath's instance, then the kill; the client's frame rate read once a second by the helper's
+new `do fps`; RuneLite 1.13.7 with `-ea`, the CPU renderer, 50 fps capped):
+
+| build | fps through a wave | the moment's `taken` | the moment |
+|---|---|---|---|
+| the Hub's now (f39ae7f: update 6 and the memory fix) | 50, then 16, 10, 8, 6, 5, 4, 3 ... 3 | 23.16 ms a frame, buffer 68,652 KB (full) | 1 frame, no drop |
+| update 7 with the fix (a8d3c15) | 50, dipping to 35-46 late in each wave | 0.46 ms a frame, buffer 5,141 KB | 15 frames, the wave and the drop |
+| the recorder off (the game alone) | 50, dipping to 40-48 late in each wave | - | - |
+
+The dips left are the client drawing some 500 animated fires itself. Checks: `gradle test` 216 here (148 on a8d3c15, 162 on
+update 8's 72eaecd), 0 failures (new: `EncounterGfxTest`, a graphic's late corners the same as place() made them);
+`hub_check.py` passed on both cuts; `start_check.py` passed on a8d3c15 itself; `hub_cut --check` matches outside-plugin
+25fab08 (update 8's line with a8d3c15 merged); the fix's client log nothing from wiki.outside failing, no assertion.
+
+Two builds on outside-plugin: **a8d3c15** (update 7, a25c70d, with only this fix: for #21280 if Jace says to add it, as
+the README was) and update 8's line **25fab08**. Not yet: Jace's word on sending it, and Yama in the real game (his
+friend's fight, or his own): the frame rate through a wave, and its moment on the page showing the fire band by band.
+
 ## Update 8: trips (built 11/23/2026, not sent; after update 7)
 
 Jace: "let's swap update 8 for update 9. i want trips to come after update 7 ships", then "start building trips for
