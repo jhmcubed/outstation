@@ -614,6 +614,31 @@ chest (its moment still made, the frame time unchanged). README.hub.md's three n
 50 fps, encounter-page.png) are pinned to outstation 4d3b3d7's plugin/assets for now; at the cut they can be pinned to
 the outside-plugin commit that carries them, as the others are.
 
+## Visits: the Corporeal Beast's teleport in and out as one trip (built 11/28/2026, for update 8; not cut yet)
+
+Jace: "the meta strategy for killing the Corporeal Beast is to teleport in, lower his defence, and then teleport out, and
+repeat this many times. As you can see from phas3r_im's page, he has many 15-20 second recordings doing just this
+strategy. How can we make it so these short trips don't spam someone's profile?", then "yes build the fix". Each dip was
+a recording of its own (phas3r_im: 15 of 11-38 ticks, each ended "left", Corp alive), and a page keeps its newest 20, so
+they pushed his older fights off it.
+
+- **The plugin** (`Encounters`): a recording at a boss's area outside an instance (`visitPlace`: the Corporeal Beast's
+  cave; not a raid, a delve or a run) that ends "left" keeps a trip open; the next at the same boss within ten minutes
+  (`VISIT_GAP_MS`, `visitJoins`) joins it, and so does the kill, which ends it as any trip ends. The first visit's header
+  was written before anyone knew, so its trip goes in its end line (`EncounterStrip` reads it there when the header has
+  none). The trip's id starts "visit" (`newVisitId`, 14 characters: the relay's 8 to 22 hold), so the page counts it in
+  visits. A visit's walk out isn't sent as a trip's tail. Nothing new is sent. Tests: `TripsTest` (three new); `gradle
+  test` 221, 0 failures.
+- **The relay** (`fights.ts`, `fightGroups`, deployed 11/28/2026): a trip, or a run of short visits (each under 100
+  ticks and survived, the next within ten minutes of its end, the run ended by the first that isn't one), counts once
+  against a page's 20 (`trimFights`), so dips never push a page's other fights off. Test: fights_test's "visits".
+- **The page** (ghillie's `replay/visits.js`, `fights.js`, `fight.js`): the same rule groups the recordings sent before
+  update 8 (no trip) into a trip of their own, so a run is one tile ("15 visits ✼ 2:56 ✼ left") played end to end on its
+  own page ("a trip ✼ 15 visits", each mark "visit n"). A fight kept for good stays its own tile, as in any trip.
+
+To cut: update 8's build (outside-plugin 25fab08) doesn't carry it yet; cut it with the rest when update 8 goes, then the
+local world (`::stage` at the Corporeal Beast: in, a hit, teleport out, back within ten minutes, the kill: one trip).
+
 ## A fix: Yama's fire wave (built 11/28/2026, not sent)
 
 A friend of Jace's: "4 fps at Yama; turned off plugin and it went back to normal. bro, everytime Yama sent the waves, the
