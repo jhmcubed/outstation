@@ -1502,7 +1502,19 @@ final class Encounters
 		{
 			// (a boss Discord has no area for, started by its fight: left once none of its NPCs has been in sight a while
 			// (the moons aren't between fights: not theirs); then as a boss's area below; 11/22/2026)
-			if (endAt < 0 && own.goneEnds(whole(), bossSeenAt))
+			// (on a trip in its instance (update 8, 11/28/2026: the Mad Angel's): left by leaving the instance's region, a
+			// few ticks out as an area's leaving; waiting for its respawn, out of sight, is still the trip)
+			if (tripId != null && tripRegion >= 0 && placeless(area))
+			{
+				boolean in = instance() && hereRegion() == tripRegion;
+				outside = in ? 0 : outside + 1;
+				if (!in && outside > LEFT_BOSS)
+				{
+					stopAuto(endAt >= 0 && endWhy != null ? endWhy : "left");
+					return;
+				}
+			}
+			else if (endAt < 0 && own.goneEnds(whole(), bossSeenAt))
 			{
 				stopAuto("left");
 				return;
