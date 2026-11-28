@@ -11,11 +11,11 @@
 
 **Your character, in motion:** press Capture my character and do an emote; your page plays it back, from any side
 
-![A captured emote played back on Outside.wiki: the subject in a red cape waving a staff, turning slowly, their pet mole beside them](https://raw.githubusercontent.com/jhmcubed/outstation/4d3b3d74ff30cc956557ab70e19286abd177a1a6/plugin/assets/character.gif)
+![A captured emote played back on Outside.wiki: the subject in a red cape waving a staff, turning slowly, their pet mole beside them](https://raw.githubusercontent.com/jhmcubed/outside-plugin/ca057446b5d5dc012389a84baddd3402683153f9/assets/character.webp)
 
 **Your boss fights, recorded and replayed** in 2D or 3D, tick by tick
 
-![Ocellus's last phase in the Fractured Archive replayed in 3D: the team on the boss as the floor breaks into the void](https://raw.githubusercontent.com/jhmcubed/outstation/4d3b3d74ff30cc956557ab70e19286abd177a1a6/plugin/assets/replay.gif)
+![Ocellus's last phase in the Fractured Archive replayed in 3D: the team on the boss as the floor breaks into the void](https://raw.githubusercontent.com/jhmcubed/outside-plugin/ca057446b5d5dc012389a84baddd3402683153f9/assets/replay.webp)
 
 Every boss of a raid on one line, down to the reward chest
 
