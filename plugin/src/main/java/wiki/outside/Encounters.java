@@ -509,8 +509,10 @@ final class Encounters
 	private int visitNo;
 	private Presence.Area visitArea;
 	private long visitLeftMs;
-	/** the area the recording going on began in (null: none's going on, or it began in none) */
+	/** the area the recording going on began in (null: none's going on, or it began in none), and whether it began in an
+	 *  instance (asked as it ends, the player may have left it: a walk out of Vorkath's isn't a visit) */
 	private Presence.Area recArea;
+	private boolean recInstance;
 	private int tickNow;
 	// (round three, 11/21/2026: a raid whole and its loot)
 	/** the ticks of the parts before this one (the scene counts the whole recording's ticks) */
@@ -788,6 +790,7 @@ final class Encounters
 		if (keep == null)
 		{
 			recArea = at;
+			recInstance = instance();
 			if (tripId == null && auto && visitJoins(visitTrip, visitArea, visitLeftMs, at, System.currentTimeMillis()))
 			{
 				// (back at the boss left alive a little while ago: the next visit of its run)
@@ -994,7 +997,7 @@ final class Encounters
 		// (a trip ends with this one, unless it's a kill with the next to begin at once, or a part at the length limit)
 		boolean tripGoesOn = tripId != null && (split || tripGoesOn(reason));
 		// (a visit: left alive at a boss outside an instance; its trip stays open for the next, VISIT_GAP_MS)
-		boolean visit = !split && !dropTick && automatic && "left".equals(reason) && visitPlace(recArea);
+		boolean visit = !split && !dropTick && automatic && "left".equals(reason) && !recInstance && visitPlace(recArea);
 		if (visit && tripId == null)
 		{
 			// (the run's first: its trip given at its end, as its header was written before anyone knew)
@@ -1602,11 +1605,11 @@ final class Encounters
 		return a != null && Presence.BOSS.equals(a.kind) && instance() && !delve && run == null;
 	}
 
-	/** Whether a place's recordings left alive make visits: a boss's area outside an instance (the Corporeal Beast's
-	 *  cave; in an instance the boss is gone when you leave), not a raid's, a delve's or a run's. */
+	/** Whether a place's recordings left alive make visits: a boss's area (the Corporeal Beast's cave), not a raid's, a
+	 *  delve's or a run's; outside an instance, which the recording's start says (in one the boss is gone when you leave). */
 	private boolean visitPlace(Presence.Area a)
 	{
-		return a != null && Presence.BOSS.equals(a.kind) && !instance() && !delve && run == null;
+		return a != null && Presence.BOSS.equals(a.kind) && !delve && run == null;
 	}
 
 	/** Whether a recording beginning at {@code at} now joins the visits' run left open at {@code area}: the same boss's
