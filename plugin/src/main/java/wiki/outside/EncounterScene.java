@@ -83,6 +83,35 @@ final class EncounterScene
 	static final int PICTURE_MOST = 600 * 1024;
 	/** client cycles between frames (2: 25 a second) */
 	static final int CYCLES = 2;
+	/** (11/28/2026) the frames' share of the client's time at most: 1 in SHARE (a client cycle is 20 ms) */
+	static final long SHARE = 8, CYCLE_NANOS = 20_000_000L;
+	/** (11/28/2026) the furthest apart frames are taken for it: 25 cycles, two a second */
+	static final int GAP_MOST = 25;
+	/** (11/28/2026) graphics' poses kept at most before they're let go and taken again */
+	static final int GFX_POSES_MOST = 4096;
+
+	/** A graphic's model at one frame of its animation (11/28/2026): the same for every graphic of that id at that frame,
+	 *  so taken from the client once, not once a tile (Yama's fire is up to 1,028 graphics at once) */
+	static final class GfxPose
+	{
+		final int fc, vc, hash;
+		final float[] x, y, z;
+		final byte[] alpha;
+		/** the look it's drawn with (the shape key's faces, colours and textures), shared by every graphic with it */
+		final String look;
+
+		GfxPose(int fc, int vc, int hash, float[] x, float[] y, float[] z, byte[] alpha, String look)
+		{
+			this.fc = fc;
+			this.vc = vc;
+			this.hash = hash;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+			this.alpha = alpha;
+			this.look = look;
+		}
+	}
 	/** the buffer's size at most: past it the oldest frames go, or after the kill, no more are kept (64 MB since
 	 *  11/23/2026, from 96: fixed, as the client's memory can't be read on the Hub; rsbfox on runelite/plugin-hub#21195,
 	 *  "all of java.lang.management is a Forbidden language feature") */
@@ -128,14 +157,48 @@ final class EncounterScene
 	static final class Sample
 	{
 		final Shape shape;
-		final short[] xyz;
+		private final short[] xyz;
 		final byte[] alpha;
+		/** (11/28/2026) a graphic's: its pose and where it stands, its corners worked out only as the moment's built */
+		private final GfxPose gfx;
+		private final float gx, gy, gh;
 
 		Sample(Shape shape, short[] xyz, byte[] alpha)
 		{
 			this.shape = shape;
 			this.xyz = xyz;
 			this.alpha = alpha;
+			gfx = null;
+			gx = gy = gh = 0;
+		}
+
+		Sample(Shape shape, GfxPose gfx, float x, float y, float h)
+		{
+			this.shape = shape;
+			this.xyz = null;
+			this.alpha = gfx.alpha;
+			this.gfx = gfx;
+			gx = x;
+			gy = y;
+			gh = h;
+		}
+
+		/** its corners (whole units, the moment's axes) */
+		short[] xyz()
+		{
+			if (gfx == null)
+			{
+				return xyz;
+			}
+			int vc = gfx.vc;
+			short[] out = new short[vc * 3];
+			for (int v = 0; v < vc; v++)
+			{
+				out[v * 3] = EncounterMoment.Builder.unit(gx + gfx.x[v]);
+				out[v * 3 + 1] = EncounterMoment.Builder.unit(-(gh + gfx.y[v]));
+				out[v * 3 + 2] = EncounterMoment.Builder.unit(-(gy + gfx.z[v]));
+			}
+			return out;
 		}
 	}
 
@@ -277,6 +340,12 @@ final class EncounterScene
 	private int framesTaken;
 	private boolean anyFrame;
 	private int lastCycle;
+	/** (11/28/2026) the cycles until the next frame: CYCLES, or more after a frame that cost the client much (SHARE) */
+	private int gap = CYCLES;
+	/** (11/28/2026) a graphic's pose for its id and frame, taken from the client once (gfxPose), and the shape a graphic
+	 *  of that look shares its faces with (one mesh for all of Yama's fire, not one a tile) */
+	private final Map<Long, GfxPose> gfxPoses = new HashMap<>();
+	private final Map<String, Shape> gfxLooks = new HashMap<>();
 	private int tick;
 	private int killTick = -1, dropTick = -1, deathTick = -1, hitTick = -1;
 	private String killNpc;
@@ -576,7 +645,7 @@ final class EncounterScene
 	void cycle()
 	{
 		int c = client.getGameCycle();
-		if (anyFrame && c - lastCycle < CYCLES)
+		if (anyFrame && c - lastCycle < gap)
 		{
 			return;
 		}
@@ -608,8 +677,12 @@ final class EncounterScene
 				org.slf4j.LoggerFactory.getLogger(EncounterScene.class).warn("outside: a frame of the scene couldn't be taken", e);
 			}
 		}
-		clientNanos += System.nanoTime() - t0;
+		long took = System.nanoTime() - t0;
+		clientNanos += took;
 		framesTaken++;
+		// (11/28/2026: a frame never takes more than about 1/SHARE of the client's time: one that cost more puts the next
+		// further off, so a boss that fills the floor with graphics slows the moment's frames, never the game's)
+		gap = Math.max(CYCLES, (int) Math.min(GAP_MOST, (took * SHARE + CYCLE_NANOS - 1) / CYCLE_NANOS));
 	}
 
 	/**
@@ -777,7 +850,7 @@ final class EncounterScene
 			{
 				continue;
 			}
-			place(f, "g" + System.identityHashCode(g), EncounterMoment.KIND_GFX, g.getModel(), lp.getX(), lp.getY(), g.getZ(), 0);
+			placeGfx(f, "g" + System.identityHashCode(g), g, lp.getX(), lp.getY(), g.getZ());
 		}
 		// (the scene round the player: items on the ground, and objects that animate)
 		Scene scene = wv.getScene();
@@ -931,6 +1004,81 @@ final class EncounterScene
 		byte[] alpha = tr == null ? null : java.util.Arrays.copyOf(tr, fc);
 		f.samples.add(new Sample(s, xyz, alpha));
 		f.bytes += 48 + xyz.length * 2L + (alpha == null ? 0 : fc);
+	}
+
+	/**
+	 * A graphic placed (11/28/2026): as place, from its pose for its id and frame (taken from the client the first time
+	 * it's seen), its shape sharing the faces of every graphic of the same look. Yama's fire wave is two graphics on each
+	 * of 514 tiles: each one's model asked for every frame, 25 a second, and a mesh kept for each, took the client to 4
+	 * frames a second and filled the buffer.
+	 */
+	private void placeGfx(Frame f, String key, GraphicsObject g, float x, float y, float h)
+	{
+		GfxPose p = gfxPose(g);
+		if (p == null)
+		{
+			return;
+		}
+		String sk = key + "#" + p.fc + ":" + p.vc + ":" + p.hash;
+		Shape s = shapes.get(sk);
+		if (s == null)
+		{
+			Shape look = gfxLooks.get(p.look);
+			if (look == null)
+			{
+				Model m = g.getModel();
+				if (m == null || m.getFaceCount() != p.fc || m.getVerticesCount() != p.vc)
+				{
+					return;
+				}
+				look = shape(p.look, EncounterMoment.KIND_GFX, m, p.fc);
+				gfxLooks.put(p.look, look);
+			}
+			s = new Shape(sk, EncounterMoment.KIND_GFX, look.mesh);
+			s.texFaces = look.texFaces;
+			s.tp = look.tp;
+			s.tm = look.tm;
+			s.tn = look.tn;
+			s.bytes = 64;
+			bytes += s.bytes;
+			shapes.put(sk, s);
+		}
+		// (its corners only as the moment's built, off the client's thread: a frame holds where it stands, not 1,028 copies)
+		f.samples.add(new Sample(s, p, x, y, h));
+		f.bytes += 64;
+	}
+
+	/** A graphic's pose for its id and frame: kept from the first time it's seen (null: the client has no model for it) */
+	private GfxPose gfxPose(GraphicsObject g)
+	{
+		long k = ((long) g.getId() << 32) | (g.getAnimationFrame() & 0xffffffffL);
+		GfxPose p = gfxPoses.get(k);
+		if (p != null)
+		{
+			return p;
+		}
+		Model m = g.getModel();
+		if (m == null || m.getFaceCount() == 0 || m.getVerticesCount() == 0)
+		{
+			return null;
+		}
+		int fc = m.getFaceCount(), vc = m.getVerticesCount();
+		int[] c1 = m.getFaceColors1();
+		int hash = fc * 31 + vc;
+		for (int i = 0; i < fc; i += Math.max(1, fc / 16))
+		{
+			hash = hash * 31 + c1[i];
+		}
+		byte[] tr = m.getFaceTransparencies();
+		p = new GfxPose(fc, vc, hash, java.util.Arrays.copyOf(m.getVerticesX(), vc), java.util.Arrays.copyOf(m.getVerticesY(), vc),
+			java.util.Arrays.copyOf(m.getVerticesZ(), vc), tr == null ? null : java.util.Arrays.copyOf(tr, fc),
+			"G" + g.getId() + "#" + fc + ":" + vc + ":" + hash);
+		if (gfxPoses.size() >= GFX_POSES_MOST)
+		{
+			gfxPoses.clear();
+		}
+		gfxPoses.put(k, p);
+		return p;
 	}
 
 	private Shape shape(String key, int kind, Model m, int fc)
@@ -2022,7 +2170,7 @@ final class EncounterScene
 	// (11/23/2026: the frame's own corners, not a float copy of them: Pose reads them where they are)
 	private static EncounterMoment.Pose pose(Sample s)
 	{
-		return new EncounterMoment.Pose(s.xyz, s.alpha);
+		return new EncounterMoment.Pose(s.xyz(), s.alpha);
 	}
 
 	/** The cycle a tick of the recording began on (from the ticks seen; else the first frame of that tick). */
