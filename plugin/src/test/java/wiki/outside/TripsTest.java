@@ -103,4 +103,18 @@ public class TripsTest
 		assertTrue(id, id.matches("visit[A-Za-z0-9_-]{9}"));
 		assertNotEquals(id, Encounters.newVisitId());
 	}
+
+	@Test
+	public void aTripAtABossWithNoAreaGoesOnInTheSameRegion()
+	{
+		// (11/28/2026, Jace at the Mad Angel: each kill its own trip; it has no area of Discord's, only its own place)
+		Presence.Area angel = Encounters.placeOf("Mad Angel"), vork = Presence.area(9023, 0);
+		assertTrue(Encounters.placeless(angel));
+		assertTrue(Encounters.stillTripPlace(null, angel, 10018, 10018));
+		assertFalse(Encounters.stillTripPlace(null, angel, 10274, 10018));
+		assertFalse(Encounters.stillTripPlace(null, angel, -1, -1));
+		// (a boss with Discord's area: by the area, as before)
+		assertTrue(Encounters.stillTripPlace(vork, vork, 9023, 9023));
+		assertFalse(Encounters.stillTripPlace(null, vork, 9023, 9023));
+	}
 }

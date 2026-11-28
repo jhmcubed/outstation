@@ -499,6 +499,10 @@ final class Encounters
 	private String tripId;
 	private int tripNo;
 	private Presence.Area tripArea;
+	/** the region the trip began in (an instance's template's): where a boss with no area of Discord's (the Mad Angel,
+	 *  Brutus, the King Black Dragon...) has its trip go on; 11/28/2026, Jace at the Mad Angel on update 8's build: "each
+	 *  kill is still separated and not 'one trip'" (bossArea() is null there, so no kill went on) */
+	private int tripRegion = -1;
 	// (visits, 11/28/2026, Jace: "the meta strategy for killing the Corporeal Beast is to teleport in, lower his defence,
 	// and then teleport out, and repeat this many times ... How can we make it so these short trips don't spam someone's
 	// profile?"): a recording at a boss outside an instance that ends with the player leaving it alive keeps a trip open,
@@ -808,6 +812,7 @@ final class Encounters
 				tripId = newTripId();
 				tripNo = 1;
 				tripArea = at;
+				tripRegion = hereRegion();
 			}
 			else
 			{
@@ -1594,8 +1599,22 @@ final class Encounters
 	private boolean tripGoesOn(String why)
 	{
 		// (mayStart's, but for the recording this one is: asked as it ends)
-		return ("killed".equals(why) || "looted".equals(why)) && automatic && instance() && sameArea(bossArea(), tripArea)
-			&& host.autoOn() && host.hasPage() && client.getGameState() == GameState.LOGGED_IN && !danger();
+		return ("killed".equals(why) || "looted".equals(why)) && automatic && instance() && stillTripPlace(bossArea(), tripArea,
+			hereRegion(), tripRegion) && host.autoOn() && host.hasPage() && client.getGameState() == GameState.LOGGED_IN && !danger();
+	}
+
+	/** Whether where they stand is still the trip's place: its area of Discord's; or, for a boss with none (its own place,
+	 *  placeOf's: the Mad Angel, Brutus...), the same region the trip began in. */
+	static boolean stillTripPlace(Presence.Area now, Presence.Area tripArea, int region, int tripRegion)
+	{
+		return sameArea(now, tripArea) || now == null && placeless(tripArea) && region >= 0 && region == tripRegion;
+	}
+
+	/** The region they stand in (an instance's template's), or -1. */
+	private int hereRegion()
+	{
+		WorldPoint at = OutsidePlugin.here(client, client.getLocalPlayer());
+		return at == null ? -1 : at.getRegionID();
 	}
 
 	/** Whether a place starts a trip: a boss's area (not a raid's, a minigame's, a delve's or a run's: each of those is one
