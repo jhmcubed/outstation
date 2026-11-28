@@ -641,6 +641,29 @@ of the first version: whether a recording was in an instance was asked as it end
 every instance's walk out counted as a visit (mole d, vorkath a, b: the trip's end lost; c sent; e one recording). Now
 it's asked as it begins (`recInstance`); ca05744. The README's two animations as animated WebP (below): 6d74301.
 
+## Update 8 again (11/28/2026): outside-plugin 61df679584856273d189c38b974cf2146cd0dc8c
+
+Jace's real trip on 6d74301, at the Mad Angel: "each kill is still separated and not 'one trip'" (sburb's three that
+day: each its own trip, no 1, ended "killed"). Two faults, both reproduced in the local world first and fixed:
+- **A boss with no area of Discord's** (the Mad Angel, Brutus, the King Black Dragon, Scurrius, the Maggot King...:
+  placeless, its own place by its name): a trip began there (its start passes the place) but `tripGoesOn` asked
+  `bossArea()`, null at such a boss, so no kill went on. Now `stillTripPlace`: Discord's area, or for a placeless boss
+  the region the trip began in (`tripRegion`, an instance's template's). And in such a trip, leaving is out of that
+  region (a few ticks, as an area's), not the boss out of sight, which the respawn's wait is too. New stage
+  `::stage kbd` (the King Black Dragon's lair as an instance, two kills and out): on 6d74301 FAIL (two trips of one),
+  on the fix PASS (one trip of three, the walk out "left" at once). Test: TripsTest's
+  `aTripAtABossWithNoAreaGoesOnInTheSameRegion`.
+- **A trip's next recording lost** (one run in two of Vorkath e, older than today's work): its writer lists the
+  encounters folder to number its file, and a file going as it's read (index.json.part, the index saved beside it as
+  the last recording's moment is kept) threw `UncheckedIOException` out of the walk and killed the writer: RuneLite's
+  "Uncaught exception" in the client log, no file. Trips make it likely: the next begins at that very moment.
+  `EncounterFiles.files` reads the folder again (5 tries); the writer and the leftovers' tidying catch it too. Vorkath
+  e six times on the fix: six PASS, no uncaught exception.
+
+On 61df679 itself: `hub_cut --check` matches, `hub_check` passed, `gradle test` 166, 0 failures, `start_check` passed;
+the local world, every stage PASS (14: the Mole a-d, Vorkath a-e, the raid, the Inferno, the Colosseum, corp, kbd).
+Left: Jace's real trip again (the Mad Angel), then his word.
+
 ## Update 8 made ready (11/28/2026): outside-plugin 6d74301dbb1431ab254091b636fd801529b893fd
 
 Update 8's line (claude/zen-davinci-gq5c8b's 25fab08: trips, the bridges, a moment for every fight, Yama's fix, the
