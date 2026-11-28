@@ -38,6 +38,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -179,7 +180,7 @@ final class EncounterFiles
 					}
 					out = new BufferedWriter(Channels.newWriter(channel, StandardCharsets.UTF_8.newEncoder(), -1));
 				}
-				catch (IOException | IllegalArgumentException e)
+				catch (IOException | IllegalArgumentException | UncheckedIOException e)
 				{
 					log.warn("outside: couldn't open encounter {}", fileName, e);
 					failed = true;
@@ -667,7 +668,7 @@ final class EncounterFiles
 		{
 			files = walk.filter(Filepath::isFile).collect(Collectors.toList());
 		}
-		catch (IOException e)
+		catch (IOException | UncheckedIOException e)
 		{
 			return packed;
 		}
@@ -912,15 +913,31 @@ final class EncounterFiles
 		{
 			return new ArrayList<>();
 		}
-		try (Stream<Filepath> walk = dir.walk(1))
+		// (a file that goes while the folder's read, index.json.part as the index is saved beside it, throws out of the
+		// walk: read again; 11/28/2026, the local world's Vorkath e on update 8's build: a trip's next recording began as
+		// the last one's index was written, its writer died on it and the recording was lost, one run in two)
+		for (int tries = 1; ; tries++)
 		{
-			List<Filepath> found = walk.filter(f -> isRecordingName(f.getFileName()) && f.isFile()).collect(Collectors.toList());
-			// A plain recording whose packed copy is there too is on its way out: list it once
-			Set<String> names = found.stream().map(Filepath::getFileName).collect(Collectors.toSet());
-			found.removeIf(f -> names.contains(f.getFileName() + EXT));
-			return found;
+			try (Stream<Filepath> walk = dir.walk(1))
+			{
+				List<Filepath> found = walk.filter(f -> isRecordingName(f.getFileName()) && f.isFile()).collect(Collectors.toList());
+				// A plain recording whose packed copy is there too is on its way out: list it once
+				Set<String> names = found.stream().map(Filepath::getFileName).collect(Collectors.toSet());
+				found.removeIf(f -> names.contains(f.getFileName() + EXT));
+				return found;
+			}
+			catch (UncheckedIOException e)
+			{
+				if (tries >= LIST_TRIES)
+				{
+					throw e.getCause();
+				}
+			}
 		}
 	}
+
+	/** How many times the folder is read when a file goes from it as it's read */
+	static final int LIST_TRIES = 5;
 
 	static boolean isRecordingName(String fileName)
 	{
