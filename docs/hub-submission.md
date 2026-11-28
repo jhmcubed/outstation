@@ -636,8 +636,33 @@ they pushed his older fights off it.
   update 8 (no trip) into a trip of their own, so a run is one tile ("15 visits ✼ 2:56 ✼ left") played end to end on its
   own page ("a trip ✼ 15 visits", each mark "visit n"). A fight kept for good stays its own tile, as in any trip.
 
-To cut: update 8's build (outside-plugin 25fab08) doesn't carry it yet; cut it with the rest when update 8 goes, then the
-local world (`::stage` at the Corporeal Beast: in, a hit, teleport out, back within ten minutes, the kill: one trip).
+Cut into update 8 (11/28/2026, Jace: "yes start 1 and 2"): outside-plugin 41b2f8e, then the local world caught a fault
+of the first version: whether a recording was in an instance was asked as it ended, when the player had walked out, so
+every instance's walk out counted as a visit (mole d, vorkath a, b: the trip's end lost; c sent; e one recording). Now
+it's asked as it begins (`recInstance`); ca05744. The README's two animations as animated WebP (below): 6d74301.
+
+## Update 8 made ready (11/28/2026): outside-plugin 6d74301dbb1431ab254091b636fd801529b893fd
+
+Update 8's line (claude/zen-davinci-gq5c8b's 25fab08: trips, the bridges, a moment for every fight, Yama's fix, the
+login update) with visits. On 6d74301 itself: `hub_cut --check` matches, `hub_check` passed, `gradle test` 165, 0
+failures, `start_check` passed (RuneLite started it, nothing of its own failing). The plugin's own: 221, 0 failures.
+
+**The local world** (ca05744, whose code 6d74301 is; RuneLite 1.13.7, `-ea`, offline, `stagecheck.py prepare`):
+`stagecheck.py run all`, every stage PASS (13): the Mole a-d, Vorkath a-e (trips, the walk out, a death mid-trip),
+the raid, the Inferno, the Colosseum, and the new **corp** (ghillie's tools/local-world `::stage corp`: the real cave,
+three visits, the first two teleported out with the Beast alive, the third the kill): three recordings, each begun with
+its fight, one trip "visit…" numbered 1-3 (the first's in its end line), the first two "left" and sent, the third
+"killed" with the trip's end "killed".
+
+**The README's animations** (Jace: "it made the gifs into links on the Outside hub page, maybe because they are too
+big?"): not their size. runelite.net's plugin page (runelite/runelite.net, src/modules/plugin-hub.js) turns any README
+image whose address ends in `.gif` into a link ("people like to use massive (50+ MiB) gifs, so turn these into links"),
+whatever its size or host; Encounter Recorder's moving pictures are animated WebP. So character.gif and replay.gif are
+character.webp and replay.webp in plugin/assets (lossless, every frame the GIFs' own pixel for pixel, 20 ms a frame;
+1.4 MB and 4.6 MB against 2.6 and 5.2), linked from outside-plugin ca05744. They show on the Hub's page from update 8.
+
+Left: Jace's one real trip (any instanced boss, two kills or more, then leave: one trip tile on his page, played
+through), then his word to send it.
 
 ## A fix: Yama's fire wave (built 11/28/2026, not sent)
 
