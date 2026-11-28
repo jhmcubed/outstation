@@ -529,6 +529,13 @@ final class EncounterStrip
 				s.end = Js.get(o, "reason");
 				Object te = Js.get(o, "tripEnd");
 				s.tripEnd = te instanceof String ? (String) te : null;
+				// (a visits' run's first recording: its trip given at its end; 11/28/2026, Encounters' visits)
+				Object tr = Js.get(o, "trip"), tn = Js.get(o, "tripNo");
+				if (s.trip == null && tr instanceof String)
+				{
+					s.trip = (String) tr;
+					s.tripNo = tn instanceof Double ? (int) (double) (Double) tn : 1;
+				}
 			}
 			else if ("death".equals(e) && Js.truthy(who) && "me".equals(Js.get(who, "k")) && (s.died == null || s.died == UNDEFINED))
 			{

@@ -70,4 +70,37 @@ public class TripsTest
 		assertTrue(a, a.matches("[A-Za-z0-9_-]{12}"));
 		assertNotEquals(a, b);
 	}
+
+	@Test
+	public void aVisitsRunsFirstCarriesItsTripInItsEndLine()
+	{
+		// (11/28/2026, the Corporeal Beast's teleport in and out: the first visit's header was written before anyone knew)
+		EncounterStrip.Summary s = EncounterStrip.summary(file("", ",\"trip\":\"visitAbC12_-xY\",\"tripNo\":1"));
+		assertEquals("visitAbC12_-xY", s.trip);
+		assertEquals(1, s.tripNo);
+		assertTrue(EncounterStrip.meta(s, null).contains("\"trip\":{\"id\":\"visitAbC12_-xY\",\"no\":1}"));
+		// (a header's trip wins over an end line's)
+		assertEquals("abcDEF123_-x", EncounterStrip.summary(file(",\"trip\":\"abcDEF123_-x\",\"tripNo\":2", ",\"trip\":\"visitAbC12_-xY\",\"tripNo\":1")).trip);
+	}
+
+	@Test
+	public void aVisitJoinsTheRunAtTheSameBossWithinTenMinutes()
+	{
+		Presence.Area corp = Presence.area(11842, 0), zul = Presence.area(9007, 0);
+		long left = 1_795_673_522_363L;
+		assertTrue(Encounters.visitJoins("visitAbC12_-xY", corp, left, corp, left + 60_000));
+		assertTrue(Encounters.visitJoins("visitAbC12_-xY", corp, left, corp, left + Encounters.VISIT_GAP_MS));
+		assertFalse(Encounters.visitJoins("visitAbC12_-xY", corp, left, corp, left + Encounters.VISIT_GAP_MS + 1));
+		assertFalse(Encounters.visitJoins("visitAbC12_-xY", corp, left, zul, left + 60_000));
+		assertFalse(Encounters.visitJoins(null, corp, left, corp, left + 60_000));
+		assertFalse(Encounters.visitJoins("visitAbC12_-xY", corp, left, null, left + 60_000));
+	}
+
+	@Test
+	public void aVisitsIdSaysVisitsAndTheRelayTakesIt()
+	{
+		String id = Encounters.newVisitId();
+		assertTrue(id, id.matches("visit[A-Za-z0-9_-]{9}"));
+		assertNotEquals(id, Encounters.newVisitId());
+	}
 }

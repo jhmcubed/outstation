@@ -499,6 +499,18 @@ final class Encounters
 	private String tripId;
 	private int tripNo;
 	private Presence.Area tripArea;
+	// (visits, 11/28/2026, Jace: "the meta strategy for killing the Corporeal Beast is to teleport in, lower his defence,
+	// and then teleport out, and repeat this many times ... How can we make it so these short trips don't spam someone's
+	// profile?"): a recording at a boss outside an instance that ends with the player leaving it alive keeps a trip open,
+	// and the next at the same boss within VISIT_GAP_MS joins it, the kill too; the page shows the run as one tile in
+	// visits. Its id starts "visit" (newVisitId), so the page knows it from a trip of kills.
+	static final long VISIT_GAP_MS = 10 * 60_000L;
+	private String visitTrip;
+	private int visitNo;
+	private Presence.Area visitArea;
+	private long visitLeftMs;
+	/** the area the recording going on began in (null: none's going on, or it began in none) */
+	private Presence.Area recArea;
 	private int tickNow;
 	// (round three, 11/21/2026: a raid whole and its loot)
 	/** the ticks of the parts before this one (the scene counts the whole recording's ticks) */
@@ -775,7 +787,16 @@ final class Encounters
 		// recording, so the same number)
 		if (keep == null)
 		{
-			if (tripId != null && auto && sameArea(at, tripArea))
+			recArea = at;
+			if (tripId == null && auto && visitJoins(visitTrip, visitArea, visitLeftMs, at, System.currentTimeMillis()))
+			{
+				// (back at the boss left alive a little while ago: the next visit of its run)
+				tripId = visitTrip;
+				tripNo = visitNo + 1;
+				tripArea = at;
+				visitTrip = null;
+			}
+			else if (tripId != null && auto && sameArea(at, tripArea))
 			{
 				tripNo++;
 			}
@@ -972,9 +993,31 @@ final class Encounters
 		end.addProperty("endedMs", System.currentTimeMillis());
 		// (a trip ends with this one, unless it's a kill with the next to begin at once, or a part at the length limit)
 		boolean tripGoesOn = tripId != null && (split || tripGoesOn(reason));
-		if (tripId != null && !tripGoesOn)
+		// (a visit: left alive at a boss outside an instance; its trip stays open for the next, VISIT_GAP_MS)
+		boolean visit = !split && !dropTick && automatic && "left".equals(reason) && visitPlace(recArea);
+		if (visit && tripId == null)
+		{
+			// (the run's first: its trip given at its end, as its header was written before anyone knew)
+			tripId = newVisitId();
+			tripNo = 1;
+			tripArea = recArea;
+			end.addProperty("trip", tripId);
+			end.addProperty("tripNo", tripNo);
+		}
+		if (tripId != null && !tripGoesOn && !visit)
 		{
 			end.addProperty("tripEnd", reason);
+		}
+		if (visit)
+		{
+			visitTrip = tripId;
+			visitNo = tripNo;
+			visitArea = recArea;
+			visitLeftMs = System.currentTimeMillis();
+		}
+		else if (!split)
+		{
+			visitTrip = null;
 		}
 		// (its scene moment's makings: nothing from anywhere dangerous; the rest built on the plugin's moment thread)
 		EncounterScene.Taken taken = null;
@@ -1020,7 +1063,7 @@ final class Encounters
 			}
 		}
 		host.ended(stopped.fileName() + EncounterFiles.EXT, taken, reason, !split && (sendsByItself(reason, automatic, lastFight >= 0)
-			|| tripTail(reason, tripId != null ? tripNo : 0)));
+			|| tripTail(reason, tripId != null && !visit ? tripNo : 0)));
 		if (!tripGoesOn)
 		{
 			tripId = null;
@@ -1557,6 +1600,26 @@ final class Encounters
 	private boolean tripPlace(Presence.Area a)
 	{
 		return a != null && Presence.BOSS.equals(a.kind) && instance() && !delve && run == null;
+	}
+
+	/** Whether a place's recordings left alive make visits: a boss's area outside an instance (the Corporeal Beast's
+	 *  cave; in an instance the boss is gone when you leave), not a raid's, a delve's or a run's. */
+	private boolean visitPlace(Presence.Area a)
+	{
+		return a != null && Presence.BOSS.equals(a.kind) && !instance() && !delve && run == null;
+	}
+
+	/** Whether a recording beginning at {@code at} now joins the visits' run left open at {@code area}: the same boss's
+	 *  area, within VISIT_GAP_MS of leaving it. */
+	static boolean visitJoins(String trip, Presence.Area area, long leftMs, Presence.Area at, long nowMs)
+	{
+		return trip != null && area != null && sameArea(at, area) && nowMs - leftMs >= 0 && nowMs - leftMs <= VISIT_GAP_MS;
+	}
+
+	/** A visits' run's trip id: "visit" and 9 characters of base64url, random (14 in all; the relay takes 8 to 22). */
+	static String newVisitId()
+	{
+		return "visit" + newTripId().substring(0, 9);
 	}
 
 	/** Whether the recording a trip ends with goes up although nothing in it would send it by itself: the walk out after
