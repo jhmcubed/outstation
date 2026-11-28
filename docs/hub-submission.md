@@ -961,6 +961,11 @@ hash, Dink's Wilderness and other players dropped. 12deb7a6995ec895837562cc49852
 (hub_check and start_check passed); the fork's b36f03e names it (Jace: "go, push it to the PR"); the same README on outside-plugin's main, the repository's front page, 11/27/2026 (3affa9c; Jace: "update the outside plugin github repo with the new readme"); update 8's build 49e0298 (hub_cut
 --check matches).
 
+**Merged 11/28/2026** (runelite/plugin-hub#21280, 10:48 UTC; the fork's `outside-update-7` at 75473b4, naming
+outside-plugin a8d3c153a838924b6d96cb7d38db96bcdabc8f31: 12deb7a with the 50 fps GIFs (a25c70d) and Yama's fix ("A fix:
+Yama's fire wave", below)). The Hub's page now has the README's pictures, the 50 fps GIFs and the new listing. Moments made
+before it keep Araxxor's and the Leviathan's second floor until they're kept again. Next: update 8 (outside-plugin 25fab08).
+
 ### A fix: the moment's memory (11/23/2026; on update 6 as the Hub has it, before update 7)
 
 Jace: "figure out why only one of salutecflagg's doom encounters has a thumbnail", then "yes build the fix".
