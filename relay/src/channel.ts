@@ -2516,12 +2516,13 @@ export class Channel extends DurableObject<Env> {
    *  down. fights.ts has the routes. */
   async fights(request: Request, q: URLSearchParams, ip: string, keeper = false): Promise<Response> {
     if (this.meta.keyHash === null) return json({ error: "no outstation called that here" }, 404);
-    // (the keeper's, index.ts's /admin/fights: only a moment for a fight that has none, 11/26/2026)
+    // (the keeper's, index.ts's /admin/fights: only a moment for a fight that has none, 11/26/2026; or, with replace=1,
+    // one made again over a moment an older plugin made wrong, 11/28/2026)
     if (keeper) {
-      if (request.method !== "POST" || q.get("moment") !== "1") return json({ error: "only a missing moment" }, 405);
+      if (request.method !== "POST" || q.get("moment") !== "1") return json({ error: "only a moment" }, 405);
       const f = FIGHT_ID.test(q.get("id") || "") ? await this.ctx.storage.get<Fight>("fight:" + q.get("id")) : undefined;
       if (!f) return json({ error: "no such fight" }, 404);
-      if (f.moment) return json({ error: "this fight has its moment" }, 409);
+      if (f.moment && q.get("replace") !== "1") return json({ error: "this fight has its moment" }, 409);
     }
     const owner = keeper ? true : await this.fightOwner(request, q, ip);
     if (Array.isArray(owner)) return json({ error: owner[1] }, owner[0]);

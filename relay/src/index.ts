@@ -788,7 +788,8 @@ function almanacAnswer(body: unknown, status = 200): Response {
 
 // The keeper's moment for a fight its plugin made none of (11/26/2026, Jace: "post the five missing thumbnails"):
 //   POST /admin/fights/<channel>/<id>/moment?tick=<t>   the file as the owner's upload takes it (fights.ts, readMoment),
-//   only for a fight with no moment. The admin token.
+//   only for a fight with no moment; with &replace=1 (11/28/2026, Jace: "make the change and then lets re-scan"), over
+//   the one it has, for a moment an older plugin made wrong (update 7's second floor, Yama's fire). The admin token.
 async function keeperMoment(request: Request, env: Env, parts: string[]): Promise<Response> {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 16 || !sameText(auth, "Bearer " + env.ADMIN_TOKEN)) return new Response("no", { status: 403 });
