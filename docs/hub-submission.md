@@ -649,9 +649,11 @@ update 8's 72eaecd), 0 failures (new: `EncounterGfxTest`, a graphic's late corne
 `hub_check.py` passed on both cuts; `start_check.py` passed on a8d3c15 itself; `hub_cut --check` matches outside-plugin
 25fab08 (update 8's line with a8d3c15 merged); the fix's client log nothing from wiki.outside failing, no assertion.
 
-Two builds on outside-plugin: **a8d3c15** (update 7, a25c70d, with only this fix: for #21280 if Jace says to add it, as
-the README was) and update 8's line **25fab08**. Not yet: Jace's word on sending it, and Yama in the real game (his
-friend's fight, or his own): the frame rate through a wave, and its moment on the page showing the fire band by band.
+Two builds on outside-plugin: **a8d3c15** (update 7, a25c70d, with only this fix) and update 8's line **25fab08**.
+Sent 11/28/2026 (Jace: "add it to update 7, push it to the PR"): the fork's `outside-update-7` 75473b4 names
+a8d3c153a838924b6d96cb7d38db96bcdabc8f31, so runelite/plugin-hub#21280 carries it. Still to try: Yama in the real game
+(his friend's fight, or his own) on `Try the plugin.bat a8d3c15`: the frame rate through a wave, and its moment on the
+page showing the fire band by band.
 
 ## Update 8: trips (built 11/23/2026, not sent; after update 7)
 
