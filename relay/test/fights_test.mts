@@ -4,7 +4,7 @@
 //   node test/fights_test.mts   (or npm test)
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { gzipSync } from "node:zlib";
-import { BEST_SHOWN_MOST, FEED_DAYS, FEED_KEPT, FEED_LATEST, FightFeed, feedBoss, feedOf, bestIds, bestShowKey, bestShownSet, bossKey, firstLine, fightNumbers, fightsOn, historyCap, historyGone, historyOf, historyPublic, historyPut, historyShown, isHeader, isMoment, keptAsked, listed, markBest, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timeSeconds, timesRefused, trimFights, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight, type FightTime, type TimeEntry } from "../src/fights.ts";
+import { BEST_SHOWN_MOST, FEED_DAYS, FEED_KEPT, FEED_LATEST, FightFeed, feedBoss, feedOf, bestIds, bestShowKey, bestShownSet, bossKey, firstLine, fightNumbers, fightsOn, historyCap, historyGone, historyOf, historyPublic, historyPut, historyShown, isHeader, isMoment, keptAsked, listed, markBest, momentKey, momentTick, newFightId, readFight, readMoment, readTimes, readTimesBody, timeSeconds, timesRefused, trimFights, fightGroups, FIGHT_ID, MAX_MOMENT, MAX_TIMES, type Fight, type FightTime, type TimeEntry } from "../src/fights.ts";
 
 let passed = 0;
 const tests: [string, () => Promise<void> | void][] = [];
@@ -42,7 +42,7 @@ test("an id: 22 base64url characters", () => {
   strictEqual(FIGHT_ID.test("../../etc"), false);
 });
 
-const fight = (id: string, up: number): Fight => ({ id, foe: "x", label: "x", at: up, ticks: 1, died: false, taken: 0, dealt: 0, size: 1, public: true, up });
+const fight = (id: string, up: number): Fight => ({ id, foe: "x", label: "x", at: up, ticks: 200, died: false, taken: 0, dealt: 0, size: 1, public: true, up });
 
 test("the list: newest first, past the most and too old go", () => {
   const now = 100 * 86_400_000;
@@ -506,6 +506,32 @@ test("the Array's fights: the oldest go past the most, and the counts say from w
   // (a week on, all of it gone)
   strictEqual(feed.expire(now + FEED_DAYS * D), true);
   strictEqual(feed.list.length, 0);
+});
+
+
+test("visits: a run of short survived visits to one boss is one group, counted once against the most (11/28/2026)", () => {
+  const m = 60_000, t0 = 50 * 86_400_000;
+  const v = (id: string, at: number, ticks: number, foe = "Corporeal Beast", died = false): Fight =>
+    ({ id, foe, label: foe, at, ticks, died, taken: 0, dealt: 0, size: 1, public: true, up: at + ticks * 600 + 1000 });
+  // (phas3r_im's: dips of 15-30 ticks a minute apart, then the kill; then, an hour on, one more dip alone)
+  const list = [v("d1", t0, 17), v("d2", t0 + m, 15), v("d3", t0 + 2 * m, 20), v("kill", t0 + 3 * m, 514),
+    v("other", t0 + 10 * m, 300, "Zulrah"), v("late", t0 + 70 * m, 16), v("z1", t0 + 80 * m, 300, "Zulrah")];
+  const g = fightGroups(list);
+  deepStrictEqual(["d1", "d2", "d3", "kill"].map((id) => g.get(id)), ["v:d1", "v:d1", "v:d1", "v:d1"]);
+  strictEqual(g.has("late"), false); // (one dip alone is no run)
+  strictEqual(g.has("other"), false);
+  // (a death ends a run as the kill does: the fall is in it, as a trip's)
+  const fell = fightGroups([v("a", t0, 17), v("b", t0 + m, 15, "Corporeal Beast", true)]);
+  deepStrictEqual([fell.get("a"), fell.get("b")], ["v:a", "v:a"]);
+  // (a gap past ten minutes starts afresh)
+  strictEqual(fightGroups([v("a", t0, 17), v("b", t0 + 12 * m, 15)]).size, 0);
+  // (counted once: four groups, newest first z1, the late dip, Zulrah, then the run's four recordings as one)
+  const now = t0 + 90 * m;
+  deepStrictEqual(trimFights(list, 4, 30, now).gone.map((f) => f.id), []);
+  deepStrictEqual(trimFights(list, 3, 30, now).gone.map((f) => f.id).sort(), ["d1", "d2", "d3", "kill"]);
+  // (a trip's recordings are one group by their trip)
+  const tr = [v("k1", t0, 300), v("k2", t0 + 5 * m, 300)].map((f, i) => ({ ...f, trip: { id: "tripAAAAAAAA", no: i + 1 } }));
+  deepStrictEqual(trimFights(tr.concat([v("z", t0 + 20 * m, 300, "Zulrah")]), 1, 30, now).stay.map((f) => f.id), ["z"]);
 });
 
 for (const [name, f] of tests) {

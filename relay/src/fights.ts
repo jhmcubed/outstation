@@ -415,14 +415,49 @@ export async function readFight(request: Request): Promise<{ meta: Omit<Fight, "
 export function trimFights(list: Fight[], most: number, days: number, now = Date.now(), featured: string | null = null): { stay: Fight[]; gone: Fight[] } {
   const sorted = [...list].sort((a, b) => b.up - a.up);
   const best = bestIds(list);
+  const group = fightGroups(list);
   const stay: Fight[] = [], gone: Fight[] = [];
-  let counted = 0;
+  // (a trip, or a run of short visits to one boss, counts once against the most: 11/28/2026, the Corporeal Beast's)
+  const counted = new Set<string>();
   for (const f of sorted) {
+    const g = group.get(f.id) ?? f.id;
     if (f.kept || f.id === featured || best.has(f.id)) stay.push(f);
-    else if (counted < most && (days <= 0 || now - f.up <= days * 86_400_000)) { stay.push(f); counted++; }
+    else if ((counted.has(g) || counted.size < most) && (days <= 0 || now - f.up <= days * 86_400_000)) { stay.push(f); counted.add(g); }
     else gone.push(f);
   }
   return { stay, gone };
+}
+
+/** Visits (11/28/2026, Jace: "the meta strategy for killing the Corporeal Beast is to teleport in, lower his defence, and
+ *  then teleport out, and repeat this many times ... How can we make it so these short trips don't spam someone's
+ *  profile?"): a recording of a boss under VISIT_TICKS that the player survived, followed within VISIT_GAP_MS of its end
+ *  by another of the same boss, is one visit of a run; the run ends with the first that isn't a short one (the kill, as a
+ *  rule). Update 8's plugin gives such a run a trip of its own; this finds the ones sent before it (ghillie's fights.js,
+ *  visitRuns, the same rule). */
+export const VISIT_TICKS = 100, VISIT_GAP_MS = 10 * 60_000;
+
+/** Each fight's group: its trip's id ("t:" + id), its visit run's ("v:" + its first fight's id), or none (its own id). */
+export function fightGroups(list: Fight[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of list) if (f.trip && f.trip.id) out.set(f.id, "t:" + f.trip.id);
+  const byTime = list.filter((f) => !(f.trip && f.trip.id)).sort((a, b) => a.at - b.at);
+  let run: Fight[] = [];
+  const close = () => { if (run.length > 1) for (const x of run) out.set(x.id, "v:" + run[0].id); run = []; };
+  for (const f of byTime) {
+    const last = run[run.length - 1];
+    const joins = last && last.foe === f.foe && f.at - (last.at + last.ticks * 600) <= VISIT_GAP_MS && f.at >= last.at;
+    if (!joins) close();
+    if (!joins && !shortVisit(f)) continue;
+    run.push(f);
+    if (!shortVisit(f)) close();
+  }
+  close();
+  return out;
+}
+
+/** A visit that's part of a run: short, and survived. */
+export function shortVisit(f: Fight): boolean {
+  return !f.died && f.ticks > 0 && f.ticks <= VISIT_TICKS;
 }
 
 // ---- the times' history and each boss's best (11/22/2026; the header's "The times' history" and "Each boss's best") --
